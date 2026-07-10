@@ -1,0 +1,16 @@
+{
+  "rewrites": [
+    { "source": "/about", "destination": "/about.html" },
+    { "source": "/programs", "destination": "/programs.html" },
+    { "source": "/impact", "destination": "/impact.html" },
+    { "source": "/team", "destination": "/team.html" },
+    { "source": "/submit-bio", "destination": "/submit-bio.html" },
+    { "source": "/stories", "destination": "/stories.html" },
+    { "source": "/get-involved", "destination": "/get-involved.html" },
+    { "source": "/academy", "destination": "/academy.html" },
+    { "source": "/donate", "destination": "/donate.html" },
+    { "source": "/resources", "destination": "/resources.html" },
+    { "source": "/faq", "destination": "/faq.html" },
+    { "source": "/contact", "destination": "/contact.html" }
+  ]
+}
