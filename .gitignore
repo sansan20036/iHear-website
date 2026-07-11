@@ -8,6 +8,7 @@ out/
 public/
 .env
 .env.*
+!.env.example
 *.log
 server.log
 server.err.log

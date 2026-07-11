@@ -41,15 +41,19 @@ async function copyDir(source, target) {
   }
 }
 
-function withAuthScript(html) {
+function withClientScripts(html) {
   const withoutExisting = html.replace(
-    /\s*<script\s+src=["']\/?assets\/auth\.js["']\s+defer><\/script>\s*/g,
+    /\s*<script\s+src=["']\/?assets\/(?:auth|inline-edit)\.js["']\s+defer><\/script>\s*/g,
     "\n"
   );
 
   return withoutExisting.replace(
     "</body>",
-    '  <script src="/assets/auth.js" defer></script>\n</body>'
+    [
+      '  <script src="/assets/auth.js" defer></script>',
+      '  <script src="/assets/inline-edit.js" defer></script>',
+      "</body>",
+    ].join("\n")
   );
 }
 
@@ -61,7 +65,7 @@ for (const file of htmlFiles) {
   const sourcePath = path.join(root, file);
   const targetPath = path.join(publicDir, file);
   const html = await readFile(sourcePath, "utf8");
-  await writeFile(targetPath, withAuthScript(html), "utf8");
+  await writeFile(targetPath, withClientScripts(html), "utf8");
 }
 
 for (const file of passthroughFiles) {

@@ -1,0 +1,55 @@
+import { NextResponse } from "next/server";
+
+// auth.js is intentionally kept at the project root for the existing Auth.js setup.
+// @ts-ignore
+import { auth } from "../../../../auth.js";
+import { isAllowedAdmin, normalizeEmail } from "../../../../lib/admins";
+import { updateContentItem } from "../../../../lib/content-store";
+
+export const dynamic = "force-dynamic";
+
+function isValidField(value: unknown) {
+  return typeof value === "string" && value.trim().length > 0 && value.length <= 5000;
+}
+
+export async function POST(request: Request) {
+  const session = await auth();
+  const email = normalizeEmail(session?.user?.email);
+
+  if (!isAllowedAdmin(email)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  let body: unknown;
+
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  const payload = body as Partial<{
+    page: string;
+    key: string;
+    value: string;
+  }>;
+
+  if (!isValidField(payload.page) || !isValidField(payload.key) || typeof payload.value !== "string") {
+    return NextResponse.json(
+      { error: "Expected JSON body with page, key, and value strings" },
+      { status: 400 },
+    );
+  }
+
+  const content = await updateContentItem({
+    page: payload.page!.trim(),
+    key: payload.key!.trim(),
+    value: payload.value,
+    updatedBy: email,
+  });
+
+  return NextResponse.json({
+    ok: true,
+    content,
+  });
+}

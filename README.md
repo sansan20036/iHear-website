@@ -38,6 +38,8 @@ AUTH_GOOGLE_ID=
 AUTH_GOOGLE_SECRET=
 ```
 
+`AUTH_SECRET` is required locally and in production. Use a random 32+ character value.
+
 Create Google OAuth credentials and add these redirect URIs:
 
 ```text
@@ -64,7 +66,45 @@ The nav login widget also exposes:
 
 ```text
 window.iHearAuth.getSession()
+window.iHearAuth.isSignedIn()
 ```
+
+There is no domain allowlist in `auth.js`, so any Google account can sign in once the OAuth consent screen and credentials are configured.
+
+## Inline Editing
+
+Logged-in admins can edit simple text directly on the page. The current admin fallback list is:
+
+```text
+sansan20036@gmail.com
+shuchen.peng@gmail.com
+```
+
+You can override this later with:
+
+```text
+AUTH_ADMIN_EMAILS=sansan20036@gmail.com,shuchen.peng@gmail.com
+```
+
+Text overrides are read from and written to:
+
+```text
+content.json
+```
+
+The browser loads saved text from:
+
+```text
+/api/content/get
+```
+
+Saving posts JSON to:
+
+```text
+/api/content/update
+```
+
+The update API checks the Auth.js session again on the server before writing. Local filesystem writes work for local development and a persistent Node server. For serverless hosts such as Vercel, filesystem writes are not durable; move the same read/write interface to Supabase or another database before relying on it in production.
 
 ## Vercel
 

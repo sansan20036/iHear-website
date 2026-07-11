@@ -49,8 +49,17 @@
     return source.slice(0, 1).toUpperCase();
   }
 
-  function signInUrl() {
-    return `/api/auth/signin/google?callbackUrl=${encodeURIComponent(window.location.href)}`;
+  function authUrl(path) {
+    return `/api/auth/${path}`;
+  }
+
+  async function getCsrfToken() {
+    const response = await fetch(authUrl("csrf"), {
+      credentials: "same-origin",
+      cache: "no-store",
+    });
+    const csrf = await response.json();
+    return csrf.csrfToken;
   }
 
   function installStyles() {
@@ -67,6 +76,7 @@
       }
       .auth-google{ min-height:44px; display:inline-flex; align-items:center; gap:8px; padding:9px 14px; font-size:.88rem; box-shadow:var(--shadow); }
       .auth-google:hover,.auth-profile:hover,.auth-signout:hover{ transform:translateY(-1px); box-shadow:var(--shadow-lg); }
+      .auth-google:disabled,.auth-signout:disabled{ opacity:.64; cursor:wait; transform:none; box-shadow:var(--shadow); }
       .auth-gmark{
         width:22px; height:22px; border-radius:50%; display:grid; place-items:center; flex:none;
         color:#fff; background:linear-gradient(135deg,#4285f4,#34a853 45%,#fbbc05 72%,#ea4335);
@@ -131,10 +141,10 @@
     const labels = getLabels();
     const text = mode === "mobile" ? labels.signInFull : labels.signIn;
     return `
-      <a class="auth-google" href="${signInUrl()}" aria-label="${labels.signInFull}">
+      <button class="auth-google" type="button" data-auth-signin aria-label="${labels.signInFull}">
         <span class="auth-gmark" aria-hidden="true">G</span>
         <span>${text}</span>
-      </a>
+      </button>
     `;
   }
 
@@ -191,6 +201,10 @@
       button.addEventListener("click", signOut);
     });
 
+    document.querySelectorAll("[data-auth-signin]").forEach((button) => {
+      button.addEventListener("click", signIn);
+    });
+
     window.dispatchEvent(new CustomEvent("ihear:auth", { detail: { session: currentSession } }));
   }
 
@@ -208,24 +222,70 @@
   async function signOut(event) {
     event.preventDefault();
 
-    const csrfResponse = await fetch("/api/auth/csrf", {
-      credentials: "same-origin",
-      cache: "no-store",
-    });
-    const csrf = await csrfResponse.json();
-    const body = new URLSearchParams({
-      csrfToken: csrf.csrfToken,
-      callbackUrl: window.location.href,
-    });
+    const button = event.currentTarget;
+    button.disabled = true;
 
-    await fetch("/api/auth/signout", {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body,
-    });
+    try {
+      const csrfToken = await getCsrfToken();
+      const body = new URLSearchParams({
+        csrfToken,
+        callbackUrl: window.location.href,
+      });
 
-    window.location.reload();
+      const response = await fetch(authUrl("signout"), {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "X-Auth-Return-Redirect": "1",
+        },
+        body,
+      });
+      const data = await response.json().catch(() => null);
+      const redirectUrl = data?.url || window.location.href;
+
+      currentSession = null;
+      render(null);
+
+      if (redirectUrl === window.location.href) {
+        window.location.reload();
+      } else {
+        window.location.href = redirectUrl;
+      }
+    } catch {
+      button.disabled = false;
+      currentSession = null;
+      render(null);
+    }
+  }
+
+  async function signIn(event) {
+    event.preventDefault();
+
+    const button = event.currentTarget;
+    button.disabled = true;
+
+    try {
+      const csrfToken = await getCsrfToken();
+      const body = new URLSearchParams({
+        csrfToken,
+        callbackUrl: window.location.href,
+      });
+      const response = await fetch(authUrl("signin/google"), {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "X-Auth-Return-Redirect": "1",
+        },
+        body,
+      });
+      const data = await response.json().catch(() => null);
+      window.location.href = data?.url || authUrl("signin");
+    } catch {
+      button.disabled = false;
+      window.location.href = authUrl("signin");
+    }
   }
 
   async function boot() {
@@ -244,6 +304,9 @@
   window.iHearAuth = {
     getSession: function () {
       return currentSession;
+    },
+    isSignedIn: function () {
+      return Boolean(currentSession && currentSession.user);
     },
     refresh: boot,
   };
