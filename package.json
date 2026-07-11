@@ -1,6 +1,17 @@
 {
   "scripts": {
-    "start": "node server.js"
+    "dev": "node scripts/prepare-public.mjs && next dev",
+    "build": "node scripts/prepare-public.mjs && next build",
+    "start": "next start",
+    "serve:legacy": "node server.js"
   },
-  "dependencies": {}
+  "dependencies": {
+    "next": "^16.2.10",
+    "next-auth": "beta",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
+  "overrides": {
+    "postcss": "^8.5.10"
+  }
 }

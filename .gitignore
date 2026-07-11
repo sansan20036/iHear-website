@@ -3,6 +3,9 @@
 data/
 scheduling/
 node_modules/
+.next/
+out/
+public/
 .env
 .env.*
 *.log

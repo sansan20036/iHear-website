@@ -1,4 +1,5 @@
 {
+  "buildCommand": "npm run build",
   "rewrites": [
     { "source": "/about", "destination": "/about.html" },
     { "source": "/programs", "destination": "/programs.html" },
