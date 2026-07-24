@@ -21,6 +21,7 @@ const htmlFiles = [
 ];
 
 const passthroughFiles = ["robots.txt", "sitemap.xml", "CNAME"];
+const clientAssetVersion = "20260723-impact-milestones";
 
 async function copyDir(source, target) {
   await mkdir(target, { recursive: true });
@@ -43,15 +44,16 @@ async function copyDir(source, target) {
 
 function withClientScripts(html) {
   const withoutExisting = html.replace(
-    /\s*<script\s+src=["']\/?assets\/(?:auth|inline-edit)\.js["']\s+defer><\/script>\s*/g,
+    /\s*<script\s+src=["']\/?assets\/(?:auth|inline-edit|impact-milestones)\.js(?:\?[^"']*)?["']\s+defer><\/script>\s*/g,
     "\n"
   );
 
   return withoutExisting.replace(
     "</body>",
     [
-      '  <script src="/assets/auth.js" defer></script>',
-      '  <script src="/assets/inline-edit.js" defer></script>',
+      `  <script src="/assets/auth.js?v=${clientAssetVersion}" defer></script>`,
+      `  <script src="/assets/impact-milestones.js?v=${clientAssetVersion}" defer></script>`,
+      `  <script src="/assets/inline-edit.js?v=${clientAssetVersion}" defer></script>`,
       "</body>",
     ].join("\n")
   );

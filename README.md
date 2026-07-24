@@ -78,19 +78,27 @@ Logged-in admins can edit simple text directly on the page. The current admin fa
 ```text
 sansan20036@gmail.com
 shuchen.peng@gmail.com
+ihearprogram@gmail.com
 ```
 
 You can override this later with:
 
 ```text
-AUTH_ADMIN_EMAILS=sansan20036@gmail.com,shuchen.peng@gmail.com
+AUTH_ADMIN_EMAILS=sansan20036@gmail.com,shuchen.peng@gmail.com,ihearprogram@gmail.com
 ```
 
-Text overrides are read from and written to:
+With `POSTGRES_URL` or `DATABASE_URL` configured, text overrides are read from and
+written to the `content_overrides` Postgres table. Its schema is in:
 
 ```text
-content.json
+db/migrations/004_content_overrides.sql
 ```
+
+The table has a composite `(page, key)` primary key, audit metadata, validation
+constraints, and Row Level Security enabled without public policies. The application
+uses the server-side Postgres connection, so browser clients never receive database
+credentials. In local development only, when no database URL is configured, the same
+API falls back to `content.json`.
 
 The browser loads saved text from:
 
@@ -104,7 +112,105 @@ Saving posts JSON to:
 /api/content/update
 ```
 
-The update API checks the Auth.js session again on the server before writing. Local filesystem writes work for local development and a persistent Node server. For serverless hosts such as Vercel, filesystem writes are not durable; move the same read/write interface to Supabase or another database before relying on it in production.
+The update API checks the Auth.js session again on the server before writing. Hosted
+production refuses to use the filesystem fallback, preventing a serverless deployment
+from reporting a successful but non-durable save.
+
+Create the table and safely insert any missing `content.json` overrides. Existing
+database rows win on conflicts, so rerunning this command will not overwrite newer
+inline edits:
+
+```powershell
+npm run db:migrate-content
+```
+
+Verify the table, row count, and RLS status:
+
+```powershell
+npm run db:check-content
+```
+
+## Database migrations and backups
+
+Apply all pending SQL files from `db/migrations` and record their SHA-256 checksums
+in the server-only `public.schema_migrations` table:
+
+```powershell
+npm run db:migrate
+```
+
+The command is safe to rerun. Applied migrations are skipped, and changing an
+already-recorded migration file is rejected. Add a new numbered migration instead.
+
+Run the repeatable database health audit:
+
+```powershell
+npm run db:audit
+```
+
+It exits with an error when a required table or constraint is missing, migration
+checksums differ, RLS is disabled, or stored data violates the application rules.
+
+Create a local baseline backup:
+
+```powershell
+npm run db:backup
+```
+
+Backups are written beneath the gitignored `backups/` directory. They contain the
+three application-data tables, migration history, constraints, indexes, and a
+SHA-256 checksum, but never contain the database connection URL or API keys.
+
+Verify the newest backup and simulate restoring it inside a transaction:
+
+```powershell
+npm run db:verify-backup
+```
+
+The restore simulation is always rolled back and confirms the live database is
+unchanged. Pass a backup path after `--` to verify a specific snapshot.
+
+## Impact milestone management
+
+The complete About-page journey timeline is data-driven. Each record is either a
+translated journey event (date, title, and description) or an impact-metrics item.
+Public visitors read published records from:
+
+```text
+GET /api/impact-milestones
+```
+
+Allowed admins can use the management controls on `/about` to edit every timeline
+date, title, description, and metric, and to add, save as draft, publish, or permanently
+delete records. Deletion is version-checked, requires confirmation in the UI, and cannot
+be undone. The editor includes Traditional Chinese, Simplified Chinese, and English tabs
+with a live preview. With `OPENAI_API_KEY` configured, typing in one language automatically
+translates the title and description into the other languages after an 800 ms pause;
+languages manually edited during the current session are not overwritten. Admin APIs use:
+
+```text
+POST   /api/impact-milestones
+PATCH  /api/impact-milestones/:id
+DELETE /api/impact-milestones/:id
+POST   /api/impact-milestones/translate
+```
+
+Automatic translation is server-side and admin-only, so the OpenAI key is never sent to
+the browser. `OPENAI_TRANSLATION_MODEL` can override the default `gpt-5.6-luna` model.
+Without an API key, manual multilingual editing continues to work normally.
+
+Set either `POSTGRES_URL` or `DATABASE_URL` in hosted production. The schema is in
+`db/migrations/001_impact_milestones.sql` with the journey upgrade in
+`db/migrations/002_journey_timeline_items.sql` and the permanent-delete seed marker in
+`db/migrations/003_permanent_delete_seed_marker.sql`; the application also creates the table
+and seeds the nine initial timeline records only on first initialization. This prevents
+permanently deleted seed records from returning after a restart. In local development,
+when no Postgres URL is present, edits are written to the ignored
+`data/impact-milestones.json` file.
+
+Published reads use a versioned journey-timeline Next.js data-cache tag. Successful admin
+mutations expire the tag and revalidate `/about`. The static About HTML remains CDN
+cacheable while its milestone data is refreshed independently.
 
 ## Vercel
 

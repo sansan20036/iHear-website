@@ -8,8 +8,21 @@ import { updateContentItem } from "../../../../lib/content-store";
 
 export const dynamic = "force-dynamic";
 
-function isValidField(value: unknown) {
+function isValidPage(value: unknown) {
+  return (
+    typeof value === "string" &&
+    value.startsWith("/") &&
+    value.trim().length > 0 &&
+    value.length <= 500
+  );
+}
+
+function isValidKey(value: unknown) {
   return typeof value === "string" && value.trim().length > 0 && value.length <= 5000;
+}
+
+function isValidValue(value: unknown) {
+  return typeof value === "string" && value.length <= 5000;
 }
 
 export async function POST(request: Request) {
@@ -34,7 +47,7 @@ export async function POST(request: Request) {
     value: string;
   }>;
 
-  if (!isValidField(payload.page) || !isValidField(payload.key) || typeof payload.value !== "string") {
+  if (!isValidPage(payload.page) || !isValidKey(payload.key) || !isValidValue(payload.value)) {
     return NextResponse.json(
       { error: "Expected JSON body with page, key, and value strings" },
       { status: 400 },

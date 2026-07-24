@@ -2,6 +2,7 @@ export const ALLOWED_ADMINS = (
   process.env.AUTH_ADMIN_EMAILS?.split(",") ?? [
     "sansan20036@gmail.com",
     "shuchen.peng@gmail.com",
+    "ihearprogram@gmail.com",
   ]
 )
   .map((email) => email.trim().toLowerCase())

@@ -62,6 +62,14 @@
     return csrf.csrfToken;
   }
 
+  async function clearStaleAuthCookies() {
+    await fetch(authUrl("clear-stale"), {
+      method: "POST",
+      credentials: "same-origin",
+      cache: "no-store",
+    }).catch(() => null);
+  }
+
   function installStyles() {
     if (document.getElementById("ihear-auth-styles")) return;
 
@@ -226,6 +234,7 @@
     button.disabled = true;
 
     try {
+      await clearStaleAuthCookies();
       const csrfToken = await getCsrfToken();
       const body = new URLSearchParams({
         csrfToken,

@@ -1,18 +1,27 @@
 {
   "scripts": {
-    "dev": "node scripts/prepare-public.mjs && next dev",
+    "dev": "node scripts/dev.mjs",
     "build": "node scripts/prepare-public.mjs && next build",
     "start": "next start",
-    "serve:legacy": "node server.js"
+    "serve:legacy": "node server.js",
+    "db:audit": "node scripts/audit-database.mjs",
+    "db:backup": "node scripts/backup-database.mjs",
+    "db:migrate": "node scripts/migrate-database.mjs",
+    "db:migrate-content": "node scripts/migrate-content-overrides.mjs",
+    "db:check-content": "node scripts/check-content-db.mjs",
+    "db:verify-backup": "node scripts/verify-backup.mjs"
   },
   "dependencies": {
-    "next": "^16.2.10",
-    "next-auth": "beta",
+    "next": "^16.2.11",
+    "next-auth": "^5.0.0-beta.32",
+    "postgres": "^3.4.9",
     "react": "^19.2.7",
-    "react-dom": "^19.2.7"
+    "react-dom": "^19.2.7",
+    "sharp": "^0.35.3"
   },
   "overrides": {
-    "postcss": "^8.5.10"
+    "postcss": "^8.5.10",
+    "sharp": "^0.35.3"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",
