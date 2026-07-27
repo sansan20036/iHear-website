@@ -22,7 +22,7 @@
       basicData: "Basic data",
       basicDataHint: "Choose the date and enter structured impact numbers.",
       localizedContent: "Multilingual content",
-      localizedContentHint: "Edit one language and optionally translate it into the others.",
+      localizedContentHint: "Fill each language tab manually. Drafts may be incomplete; publishing requires all three languages.",
       kind: "Item type",
       eventKind: "Journey event",
       metricsKind: "Impact metrics",
@@ -38,7 +38,6 @@
       previewEmpty: "Not entered yet",
       filled: "Filled",
       missing: "Missing",
-      translatingShort: "Translating",
       saveDraft: "Save draft",
       publish: "Publish",
       cancel: "Cancel",
@@ -51,17 +50,16 @@
       conflict: "Someone else updated this milestone. Your draft is still here; reload before saving again.",
       validation: "Please review the highlighted fields.",
       requiredTranslations: "All three descriptions are required before publishing.",
+      requiredEventTranslations: "Complete titles and descriptions in all three languages before publishing.",
       draftDescription: "Add at least one description before saving a draft.",
+      draftEventContent: "Add at least one title and description before saving a draft.",
       unsaved: "Discard your unsaved changes?",
       deleteConfirm: "Permanently delete this timeline item? This cannot be undone.",
-      autoTranslate: "Automatically translate into the other languages",
-      translationHint: "Translation starts 0.8 seconds after you stop typing. Manually edited languages are preserved.",
-      translateNow: "Translate now",
-      translating: "Translating…",
-      translated: "Other languages updated.",
-      translationUnavailable: "Add OPENAI_API_KEY on the server to enable automatic translation.",
-      translationFailed: "Automatic translation failed. Your text is safe; you can keep editing manually.",
-      noTranslationTargets: "The other languages were manually edited, so they were not overwritten.",
+      manualMode: "Manual translation mode",
+      manualHint: "Enter or paste each translation yourself. You can copy another language as a starting point, then revise it manually.",
+      copyFrom: "Copy from",
+      copyConfirm: "This will replace the current language title and description. Continue?",
+      copiedFrom: "Copied from {language}. Review and revise the text before publishing.",
       zhHant: "繁體中文",
       zhHans: "简体中文",
       english: "English",
@@ -86,7 +84,7 @@
       basicData: "基本資料",
       basicDataHint: "設定年月，並輸入可獨立管理的成果數字。",
       localizedContent: "多語文案",
-      localizedContentHint: "編輯其中一種語言，並視需要自動翻譯至其他語言。",
+      localizedContentHint: "請逐一手動填寫三種語言；草稿可暫時不完整，發布前須完成三語。",
       kind: "項目類型",
       eventKind: "一般歷程",
       metricsKind: "成果數據",
@@ -102,7 +100,6 @@
       previewEmpty: "尚未填寫",
       filled: "已填寫",
       missing: "未填寫",
-      translatingShort: "翻譯中",
       saveDraft: "儲存草稿",
       publish: "發布",
       cancel: "取消",
@@ -115,17 +112,16 @@
       conflict: "另一位管理員已更新這筆資料。你的草稿仍保留，請重新載入後再儲存。",
       validation: "請檢查標示的欄位。",
       requiredTranslations: "發布前必須完成三種語言的說明文案。",
+      requiredEventTranslations: "發布前必須完成三種語言的標題與說明文案。",
       draftDescription: "儲存草稿前至少填寫一種語言的說明。",
+      draftEventContent: "儲存草稿前至少填寫一種語言的標題與說明文案。",
       unsaved: "要放棄尚未儲存的修改嗎？",
       deleteConfirm: "確定要永久刪除本歷程嗎？刪除後無法復原。",
-      autoTranslate: "自動翻譯成其他語言",
-      translationHint: "停止輸入 0.8 秒後自動翻譯；手動改過的語言不會被覆蓋。",
-      translateNow: "立即翻譯",
-      translating: "翻譯中…",
-      translated: "其他語言已更新。",
-      translationUnavailable: "請先在伺服器設定 OPENAI_API_KEY，才能使用自動翻譯。",
-      translationFailed: "自動翻譯失敗，原文仍完整保留，可繼續手動編輯。",
-      noTranslationTargets: "其他語言已手動修改，因此沒有覆蓋。",
+      manualMode: "人工翻譯模式",
+      manualHint: "請自行輸入或貼上各語言內容；也可先複製其他語言作為底稿，再手動調整。",
+      copyFrom: "複製自",
+      copyConfirm: "這會覆蓋目前語言的標題與說明文案，確定繼續嗎？",
+      copiedFrom: "已複製自「{language}」，發布前請人工檢查並調整內容。",
       zhHant: "繁體中文",
       zhHans: "简体中文",
       english: "English",
@@ -150,7 +146,7 @@
       basicData: "基本数据",
       basicDataHint: "设置年月，并输入可独立管理的成果数字。",
       localizedContent: "多语言文案",
-      localizedContentHint: "编辑其中一种语言，并按需自动翻译至其他语言。",
+      localizedContentHint: "请逐一手动填写三种语言；草稿可暂时不完整，发布前须完成三语。",
       kind: "项目类型",
       eventKind: "一般历程",
       metricsKind: "成果数据",
@@ -166,7 +162,6 @@
       previewEmpty: "尚未填写",
       filled: "已填写",
       missing: "未填写",
-      translatingShort: "翻译中",
       saveDraft: "保存草稿",
       publish: "发布",
       cancel: "取消",
@@ -179,17 +174,16 @@
       conflict: "另一位管理员已更新这笔数据。你的草稿仍保留，请重新加载后再保存。",
       validation: "请检查标示的字段。",
       requiredTranslations: "发布前必须完成三种语言的说明文案。",
+      requiredEventTranslations: "发布前必须完成三种语言的标题与说明文案。",
       draftDescription: "保存草稿前至少填写一种语言的说明。",
+      draftEventContent: "保存草稿前至少填写一种语言的标题与说明文案。",
       unsaved: "要放弃尚未保存的修改吗？",
       deleteConfirm: "确定要永久删除本历程吗？删除后无法恢复。",
-      autoTranslate: "自动翻译成其他语言",
-      translationHint: "停止输入 0.8 秒后自动翻译；手动修改过的语言不会被覆盖。",
-      translateNow: "立即翻译",
-      translating: "翻译中…",
-      translated: "其他语言已更新。",
-      translationUnavailable: "请先在服务器设置 OPENAI_API_KEY，才能使用自动翻译。",
-      translationFailed: "自动翻译失败，原文仍完整保留，可继续手动编辑。",
-      noTranslationTargets: "其他语言已手动修改，因此没有覆盖。",
+      manualMode: "人工翻译模式",
+      manualHint: "请自行输入或粘贴各语言内容；也可先复制其他语言作为底稿，再手动调整。",
+      copyFrom: "复制自",
+      copyConfirm: "这会覆盖当前语言的标题与说明文案，确定继续吗？",
+      copiedFrom: "已复制自“{language}”，发布前请人工检查并调整内容。",
       zhHant: "繁體中文",
       zhHans: "简体中文",
       english: "English",
@@ -209,13 +203,7 @@
     activeLocale: "zhHant",
     previewLocale: "zhHant",
     busy: false,
-    autoTranslate: true,
-    translationStatus: "",
-    manualLocales: new Set(),
-    translationTimer: null,
-    translationAbort: null,
-    translationRequestId: 0,
-    translatingLocales: new Set(),
+    manualStatus: "",
   };
 
   const fallbackHtml = mount.innerHTML;
@@ -438,11 +426,7 @@
     state.originalDraft = JSON.stringify(state.draft);
     state.activeLocale = locale() === "en" ? "en" : locale();
     state.previewLocale = state.activeLocale;
-    state.autoTranslate = true;
-    state.translationStatus = "";
-    state.manualLocales = new Set();
-    state.translatingLocales = new Set();
-    state.translationRequestId += 1;
+    state.manualStatus = "";
     buildEditor();
     if (typeof dialog.showModal === "function") dialog.showModal();
     else dialog.setAttribute("open", "");
@@ -456,7 +440,6 @@
 
   function closeEditor(force) {
     if (!force && isDirty() && !window.confirm(labels().unsaved)) return;
-    cancelPendingTranslation();
     state.busy = false;
     state.draft = null;
     state.originalDraft = "";
@@ -519,20 +502,20 @@
                 ${tabMarkup("zhHans", l.zhHans)}
                 ${tabMarkup("en", l.english)}
               </div>
-              <div class="impact-translation-tools">
-                <label class="impact-auto-translate">
-                  <input type="checkbox" data-auto-translate ${state.autoTranslate ? "checked" : ""}>
-                  <span>${l.autoTranslate}</span>
-                </label>
-                <button class="impact-button impact-translate-now" type="button" data-translate-now>${l.translateNow}</button>
+              <div class="impact-manual-tools">
+                <span class="impact-manual-mode">${l.manualMode}</span>
+                <div class="impact-copy-actions" aria-label="${l.copyFrom}">
+                  ${copyButtonMarkup("zhHant", l.zhHant)}
+                  ${copyButtonMarkup("zhHans", l.zhHans)}
+                  ${copyButtonMarkup("en", l.english)}
+                </div>
               </div>
-              <p class="impact-translation-hint">${l.translationHint}</p>
-              <p class="impact-translation-status" data-translation-status aria-live="polite"></p>
+              <p class="impact-manual-hint">${l.manualHint}</p>
+              <p class="impact-manual-status" data-manual-status aria-live="polite"></p>
               ${descriptionPanelMarkup("zhHant", l.zhHant)}
               ${descriptionPanelMarkup("zhHans", l.zhHans)}
               ${descriptionPanelMarkup("en", l.english)}
-              <span class="impact-field-error" data-error="title"></span>
-              <span class="impact-field-error" data-error="description"></span>
+              <span class="impact-field-error" data-error="translations"></span>
             </div>
           </section>
           <div class="impact-form-error" data-impact-form-error hidden></div>
@@ -587,6 +570,10 @@
     return `<button type="button" data-preview-locale="${key}" aria-pressed="false">${label}</button>`;
   }
 
+  function copyButtonMarkup(key, label) {
+    return `<button class="impact-button impact-copy-language" type="button" data-copy-locale="${key}">${labels().copyFrom} ${label}</button>`;
+  }
+
   function descriptionPanelMarkup(key, label) {
     const l = labels();
     return `<div role="tabpanel" id="impact-panel-${key}" data-locale-panel="${key}">
@@ -631,15 +618,10 @@
     });
     form.addEventListener("input", handleEditorInput);
     form.addEventListener("change", handleEditorInput);
-    dialog.querySelector("[data-auto-translate]").addEventListener("change", (event) => {
-      state.autoTranslate = event.currentTarget.checked;
-      if (!state.autoTranslate) cancelPendingTranslation();
-      state.translationStatus = "";
-      updateEditor();
-      updateTranslationStatus();
-    });
-    dialog.querySelector("[data-translate-now]").addEventListener("click", () => {
-      translateFrom(state.activeLocale, true);
+    dialog.querySelectorAll("[data-copy-locale]").forEach((copyButton) => {
+      copyButton.addEventListener("click", () => {
+        copyLocaleIntoActive(copyButton.dataset.copyLocale);
+      });
     });
     dialog.querySelectorAll("[data-locale-tab]").forEach((tab) => {
       tab.addEventListener("click", () => setActiveLocale(tab.dataset.localeTab));
@@ -677,116 +659,49 @@
     }
     if (sourceLocale) {
       state.activeLocale = sourceLocale;
-      state.manualLocales.add(sourceLocale);
-      scheduleAutoTranslation(sourceLocale);
+      state.manualStatus = "";
     }
     clearEditorErrors();
     updateEditor();
   }
 
-  function cancelPendingTranslation() {
-    if (state.translationTimer) window.clearTimeout(state.translationTimer);
-    state.translationTimer = null;
-    if (state.translationAbort) state.translationAbort.abort();
-    state.translationAbort = null;
-    state.translatingLocales = new Set();
+  function localeLabel(key) {
+    const l = labels();
+    return key === "zhHant" ? l.zhHant : key === "zhHans" ? l.zhHans : l.english;
   }
 
-  function scheduleAutoTranslation(sourceLocale) {
-    state.translationRequestId += 1;
-    cancelPendingTranslation();
-    state.translationStatus = "";
-    if (!state.autoTranslate || !state.draft) return;
-    const requestId = state.translationRequestId;
-    state.translationTimer = window.setTimeout(() => {
-      state.translationTimer = null;
-      translateFrom(sourceLocale, false, requestId);
-    }, 800);
-  }
-
-  async function translateFrom(sourceLocale, force, scheduledRequestId) {
-    if (!state.draft || state.busy) return;
-    const title = (state.draft.title[sourceLocale] || "").trim();
-    const description = (state.draft.description[sourceLocale] || "").trim();
-    if (!title && !description) return;
-
-    cancelPendingTranslation();
-    const targetLocales = ["zhHant", "zhHans", "en"].filter(
-      (key) => key !== sourceLocale && !state.manualLocales.has(key),
+  function copyLocaleIntoActive(sourceLocale) {
+    if (!state.draft || sourceLocale === state.activeLocale) return;
+    const targetLocale = state.activeLocale;
+    const targetHasContent = Boolean(
+      (state.draft.title[targetLocale] || "").trim() ||
+      (state.draft.description[targetLocale] || "").trim(),
     );
-    if (!targetLocales.length) {
-      state.translationStatus = labels().noTranslationTargets;
-      updateTranslationStatus();
-      return;
-    }
+    if (targetHasContent && !window.confirm(labels().copyConfirm)) return;
 
-    const requestId = scheduledRequestId || ++state.translationRequestId;
-    if (!force && requestId !== state.translationRequestId) return;
-    const controller = new AbortController();
-    state.translationAbort = controller;
-    state.translatingLocales = new Set(targetLocales);
-    state.translationStatus = labels().translating;
+    state.draft.title[targetLocale] = state.draft.title[sourceLocale] || "";
+    state.draft.description[targetLocale] = state.draft.description[sourceLocale] || "";
+
+    const titleInput = dialog.querySelector(`[name="title.${targetLocale}"]`);
+    const descriptionInput = dialog.querySelector(`[name="description.${targetLocale}"]`);
+    if (titleInput) titleInput.value = state.draft.title[targetLocale];
+    if (descriptionInput) descriptionInput.value = state.draft.description[targetLocale];
+
+    state.manualStatus = labels().copiedFrom.replace("{language}", localeLabel(sourceLocale));
+    clearEditorErrors();
     updateEditor();
-    updateTranslationStatus(true);
-
-    try {
-      const response = await fetch("/api/impact-milestones/translate", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        signal: controller.signal,
-        body: JSON.stringify({ sourceLocale, targetLocales, title, description }),
-      });
-      const data = await response.json().catch(() => null);
-      if (!response.ok) {
-        const error = new Error((data && data.error) || labels().translationFailed);
-        error.status = response.status;
-        error.code = data && data.code;
-        throw error;
-      }
-      if (!state.draft || requestId !== state.translationRequestId) return;
-
-      Object.entries(data.translations || {}).forEach(([key, translation]) => {
-        if (!targetLocales.includes(key) || state.manualLocales.has(key) || !translation) return;
-        state.draft.title[key] = translation.title || "";
-        state.draft.description[key] = translation.description || "";
-        const titleInput = dialog.querySelector(`[name="title.${key}"]`);
-        const descriptionInput = dialog.querySelector(`[name="description.${key}"]`);
-        if (titleInput) titleInput.value = state.draft.title[key];
-        if (descriptionInput) descriptionInput.value = state.draft.description[key];
-      });
-      state.translatingLocales = new Set();
-      state.translationStatus = labels().translated;
-      clearEditorErrors();
-      updateEditor();
-    } catch (error) {
-      if (error.name === "AbortError") return;
-      state.translatingLocales = new Set();
-      if (error.code === "TRANSLATION_NOT_CONFIGURED" || error.status === 503) {
-        state.autoTranslate = false;
-        const toggle = dialog.querySelector("[data-auto-translate]");
-        if (toggle) toggle.checked = false;
-        state.translationStatus = labels().translationUnavailable;
-      } else {
-        state.translationStatus = labels().translationFailed;
-      }
-      updateEditor();
-      updateTranslationStatus(false, true);
-    } finally {
-      if (state.translationAbort === controller) state.translationAbort = null;
-    }
+    if (descriptionInput) descriptionInput.focus();
   }
 
-  function updateTranslationStatus(isLoading, isError) {
-    const node = dialog.querySelector("[data-translation-status]");
+  function updateManualStatus() {
+    const node = dialog.querySelector("[data-manual-status]");
     if (!node) return;
-    node.textContent = state.translationStatus;
-    node.classList.toggle("is-loading", Boolean(isLoading));
-    node.classList.toggle("is-error", Boolean(isError));
+    node.textContent = state.manualStatus;
   }
 
   function setActiveLocale(key) {
     state.activeLocale = key;
+    state.manualStatus = "";
     updateEditor();
     const textarea = dialog.querySelector(`[name="description.${key}"]`);
     if (textarea) textarea.focus();
@@ -810,16 +725,12 @@
       tab.tabIndex = selected ? 0 : -1;
       const hasDescription = Boolean((state.draft.description[key] || "").trim());
       const hasTitle = state.draft.kind !== "event" || Boolean((state.draft.title[key] || "").trim());
-      const status = state.translatingLocales.has(key)
-        ? "translating"
-        : hasDescription && hasTitle
-          ? "complete"
-          : "empty";
+      const status = hasDescription && hasTitle ? "complete" : "empty";
       tab.dataset.state = status;
       tab.dataset.complete = String(status === "complete");
       const statusText = tab.querySelector("[data-tab-state-text]");
       if (statusText) {
-        statusText.textContent = `(${status === "translating" ? labels().translatingShort : status === "complete" ? labels().filled : labels().missing})`;
+        statusText.textContent = `(${status === "complete" ? labels().filled : labels().missing})`;
       }
     });
     dialog.querySelectorAll("[data-locale-panel]").forEach((panel) => {
@@ -835,6 +746,15 @@
     dialog.querySelectorAll("[data-preview-locale]").forEach((tab) => {
       tab.setAttribute("aria-pressed", String(tab.dataset.previewLocale === state.previewLocale));
     });
+    dialog.querySelectorAll("[data-copy-locale]").forEach((copyButton) => {
+      const sourceLocale = copyButton.dataset.copyLocale;
+      const sourceHasContent = Boolean(
+        (state.draft.title[sourceLocale] || "").trim() ||
+        (state.draft.description[sourceLocale] || "").trim(),
+      );
+      copyButton.hidden = sourceLocale === state.activeLocale;
+      copyButton.disabled = !sourceHasContent;
+    });
 
     const previewTitle = state.draft.kind === "event"
       ? (state.draft.title[state.previewLocale] || "").trim()
@@ -845,7 +765,7 @@
       ? previewTitle || labels().previewEmpty
       : previewTitle;
     dialog.querySelector("[data-preview-description]").textContent = previewDescription || labels().previewEmpty;
-    updateTranslationStatus(state.translationStatus === labels().translating, false);
+    updateManualStatus();
   }
 
   function clearEditorErrors() {
@@ -866,13 +786,12 @@
     });
     const completed = ["zhHant", "zhHans", "en"].filter((key) => (state.draft.description[key] || "").trim());
     const completedTitles = ["zhHant", "zhHans", "en"].filter((key) => (state.draft.title[key] || "").trim());
-    if (status === "published" && completed.length !== 3) errors.description = labels().requiredTranslations;
-    if (status === "draft" && completed.length === 0) errors.description = labels().draftDescription;
-    if (state.draft.kind === "event" && status === "published" && completedTitles.length !== 3) {
-      errors.title = labels().requiredTranslations;
+    const isEvent = state.draft.kind === "event";
+    if (status === "published" && (completed.length !== 3 || (isEvent && completedTitles.length !== 3))) {
+      errors.translations = isEvent ? labels().requiredEventTranslations : labels().requiredTranslations;
     }
-    if (state.draft.kind === "event" && status === "draft" && completedTitles.length === 0) {
-      errors.title = labels().draftDescription;
+    if (status === "draft" && (completed.length === 0 || (isEvent && completedTitles.length === 0))) {
+      errors.translations = isEvent ? labels().draftEventContent : labels().draftDescription;
     }
     return errors;
   }

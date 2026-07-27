@@ -351,7 +351,7 @@
   overflow-x: auto;
 }
 
-.impact-translation-tools {
+.impact-manual-tools {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -359,47 +359,51 @@
   margin-top: 10px;
 }
 
-.impact-auto-translate {
+.impact-manual-mode {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 1px solid rgba(59, 139, 100, .3);
+  border-radius: 999px;
+  background: rgba(59, 139, 100, .08);
+  color: #2f7152;
+  font-size: .76rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.impact-copy-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.impact-copy-language {
+  min-height: 34px;
+  padding: 6px 10px;
   color: var(--navy);
-  font-size: .84rem;
-  font-weight: 800;
+  font-size: .75rem;
 }
 
-.impact-auto-translate input {
-  width: 18px;
-  height: 18px;
-  accent-color: var(--orange);
+.impact-copy-language:disabled {
+  opacity: .45;
+  cursor: not-allowed;
 }
 
-.impact-translate-now {
-  min-height: 36px;
-  padding: 7px 11px;
-  font-size: .78rem;
-}
-
-.impact-translation-hint,
-.impact-translation-status {
+.impact-manual-hint,
+.impact-manual-status {
   margin: 7px 0 0;
   color: var(--ink-soft);
   font-size: .78rem;
   line-height: 1.45;
 }
 
-.impact-translation-status {
+.impact-manual-status {
   min-height: 1.2em;
   color: #317054;
   font-weight: 800;
-}
-
-.impact-translation-status.is-loading {
-  color: var(--orange);
-}
-
-.impact-translation-status.is-error {
-  color: #9b2f39;
 }
 
 .impact-tab {
@@ -445,20 +449,6 @@
 
 .impact-tab[data-state="complete"] .impact-tab-status {
   background: #3b8b64;
-}
-
-.impact-tab[data-state="translating"] .impact-tab-status {
-  background: var(--orange);
-  box-shadow: 0 0 0 4px rgba(220, 130, 57, .16);
-  animation: impact-translation-pulse 1.2s ease-in-out infinite;
-}
-
-.impact-tab[data-state="translating"] .impact-tab-state-text {
-  color: var(--orange);
-}
-
-@keyframes impact-translation-pulse {
-  50% { transform: scale(.72); opacity: .65; }
 }
 
 .impact-field-error,
@@ -664,9 +654,13 @@
     flex: 1 0 auto;
   }
 
-  .impact-translation-tools {
+  .impact-manual-tools {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .impact-copy-actions {
+    justify-content: flex-start;
   }
 
   .impact-preview-header,

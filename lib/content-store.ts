@@ -1,7 +1,10 @@
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
+import { unstable_cache } from "next/cache";
 import postgres from "postgres";
+
+export const CONTENT_CACHE_TAG = "inline-content-v1";
 
 export type ContentPages = Record<string, Record<string, string>>;
 
@@ -148,7 +151,7 @@ async function withFileMutation<T>(callback: () => Promise<T>) {
   return operation;
 }
 
-export async function readContentStore() {
+async function readContentStoreUncached() {
   assertPersistenceAvailable();
   const sql = sqlClient();
 
@@ -163,6 +166,16 @@ export async function readContentStore() {
   }
 
   return readFileStore();
+}
+
+const readContentStoreCached = unstable_cache(
+  readContentStoreUncached,
+  [CONTENT_CACHE_TAG],
+  { tags: [CONTENT_CACHE_TAG], revalidate: 86_400 },
+);
+
+export async function readContentStore() {
+  return readContentStoreCached();
 }
 
 export async function updateContentItem(params: {
@@ -184,7 +197,7 @@ export async function updateContentItem(params: {
         updated_at = EXCLUDED.updated_at,
         updated_by = EXCLUDED.updated_by
     `;
-    return readContentStore();
+    return readContentStoreUncached();
   }
 
   return withFileMutation(async () => {

@@ -1,10 +1,14 @@
 import { NextResponse } from "next/server";
+import { revalidatePath, revalidateTag } from "next/cache";
 
 // auth.js is intentionally kept at the project root for the existing Auth.js setup.
 // @ts-ignore
 import { auth } from "../../../../auth.js";
 import { isAllowedAdmin, normalizeEmail } from "../../../../lib/admins";
-import { updateContentItem } from "../../../../lib/content-store";
+import {
+  CONTENT_CACHE_TAG,
+  updateContentItem,
+} from "../../../../lib/content-store";
 
 export const dynamic = "force-dynamic";
 
@@ -60,6 +64,9 @@ export async function POST(request: Request) {
     value: payload.value,
     updatedBy: email,
   });
+  revalidateTag(CONTENT_CACHE_TAG, { expire: 0 });
+  revalidatePath(payload.page!.trim());
+  revalidatePath("/api/content/get");
 
   return NextResponse.json({
     ok: true,

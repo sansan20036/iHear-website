@@ -6,6 +6,7 @@ scheduling/
 node_modules/
 .next/
 out/
+output/
 public/
 .env
 .env.*

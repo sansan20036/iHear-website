@@ -1,9 +1,9 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
-const crypto = require("crypto");
 
 const root = __dirname;
+const staticRoot = path.join(root, "public");
 const dataDir = path.join(root, "data");
 const dbPath = path.join(dataDir, "db.json");
 const port = Number(process.env.PORT || 4173);
@@ -159,8 +159,9 @@ function sendError(res, status, message, code = "ERROR") {
 
 function safeFilePath(urlPath) {
   const cleanPath = decodeURIComponent(urlPath.split("?")[0]);
-  const filePath = path.normalize(path.join(root, cleanPath));
-  if (!filePath.startsWith(root)) return null;
+  const filePath = path.normalize(path.join(staticRoot, cleanPath));
+  const relativePath = path.relative(staticRoot, filePath);
+  if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) return null;
   return filePath;
 }
 
@@ -829,7 +830,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    send(res, 200, fs.readFileSync(path.join(root, "index.html")), types[".html"]);
+    send(res, 200, fs.readFileSync(path.join(staticRoot, "index.html")), types[".html"]);
   } catch (error) {
     console.error(error);
     sendError(res, 500, error.message || "Internal server error");

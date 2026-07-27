@@ -30,14 +30,24 @@ export async function GET(request: Request) {
       const milestones = await listAllImpactMilestones();
       return NextResponse.json(
         { milestones, admin: true },
-        { headers: { "Cache-Control": "private, no-store" } },
+        {
+          headers: {
+            "Cache-Control": "private, no-store",
+            "Vercel-CDN-Cache-Control": "no-store",
+          },
+        },
       );
     }
 
     const milestones = (await listPublishedImpactMilestones()).map(publicImpactMilestone);
     return NextResponse.json(
       { milestones },
-      { headers: { "Cache-Control": "public, max-age=0, must-revalidate" } },
+      {
+        headers: {
+          "Cache-Control": "public, max-age=0, must-revalidate",
+          "Vercel-CDN-Cache-Control": "public, s-maxage=1",
+        },
+      },
     );
   } catch (error) {
     return impactApiError(error);

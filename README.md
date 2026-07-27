@@ -28,6 +28,40 @@ The legacy static server is still available if needed:
 npm run serve:legacy
 ```
 
+It prepares and serves the same sanitized `public/` output as Next.js, so local
+preview never loads the production-only Cloudflare analytics beacon.
+
+## Quality checks
+
+Run the JavaScript linter:
+
+```powershell
+npm run lint
+```
+
+Run the automated browser regression tests:
+
+```powershell
+npm test
+```
+
+This runs Vitest coverage for the API authorization, cache headers, validation,
+create/update/delete, and conflict responses, followed by Playwright browser tests.
+
+The first test run on a new computer may require the Playwright browser:
+
+```powershell
+npx playwright install chromium
+```
+
+Run lint, TypeScript, browser tests, and the production build together:
+
+```powershell
+npm run check
+```
+
+Browser-test artifacts are written below the gitignored `output/playwright/` directory.
+
 ## Google Sign-In
 
 Auth.js reads these environment variables:
@@ -60,6 +94,7 @@ When signed in, the session exposes basic Google profile fields:
 session.user.name
 session.user.email
 session.user.image
+session.user.isAdmin
 ```
 
 The nav login widget also exposes:
@@ -87,6 +122,10 @@ You can override this later with:
 AUTH_ADMIN_EMAILS=sansan20036@gmail.com,shuchen.peng@gmail.com,ihearprogram@gmail.com
 ```
 
+Auth.js calculates `session.user.isAdmin` from this server-side list. Browser editing
+controls consume that boolean instead of duplicating admin email addresses in client code;
+all write APIs still repeat the authorization check on the server.
+
 With `POSTGRES_URL` or `DATABASE_URL` configured, text overrides are read from and
 written to the `content_overrides` Postgres table. Its schema is in:
 
@@ -105,6 +144,10 @@ The browser loads saved text from:
 ```text
 /api/content/get
 ```
+
+Public content reads use a 24-hour tagged server data cache plus a one-second Vercel
+edge cache. Successful admin updates immediately expire the data tag and revalidate
+both the edited page and the public content API.
 
 Saving posts JSON to:
 
@@ -180,24 +223,30 @@ Public visitors read published records from:
 GET /api/impact-milestones
 ```
 
+Published records use a 24-hour tagged server data cache plus a one-second Vercel
+edge cache. Every successful create, update, or delete immediately expires the data
+tag and revalidates `/about` and the public milestone API. Draft reads remain private
+and use `no-store`.
+
 Allowed admins can use the management controls on `/about` to edit every timeline
 date, title, description, and metric, and to add, save as draft, publish, or permanently
 delete records. Deletion is version-checked, requires confirmation in the UI, and cannot
 be undone. The editor includes Traditional Chinese, Simplified Chinese, and English tabs
-with a live preview. With `OPENAI_API_KEY` configured, typing in one language automatically
-translates the title and description into the other languages after an 800 ms pause;
-languages manually edited during the current session are not overwritten. Admin APIs use:
+with completion indicators and a live preview. The editor currently uses manual translation
+mode: admins enter or paste each language themselves, or copy another language into the
+active tab as a starting point before revising it. Drafts may contain incomplete languages,
+while publishing requires all three descriptions and, for journey events, all three titles.
+Admin APIs use:
 
 ```text
 POST   /api/impact-milestones
 PATCH  /api/impact-milestones/:id
 DELETE /api/impact-milestones/:id
-POST   /api/impact-milestones/translate
 ```
 
-Automatic translation is server-side and admin-only, so the OpenAI key is never sent to
-the browser. `OPENAI_TRANSLATION_MODEL` can override the default `gpt-5.6-luna` model.
-Without an API key, manual multilingual editing continues to work normally.
+The server-side automatic translation route remains available for future evaluation, but
+the current browser editor does not call it. Manual multilingual editing therefore does not
+depend on an OpenAI key or any external translation service.
 
 Set either `POSTGRES_URL` or `DATABASE_URL` in hosted production. The schema is in
 `db/migrations/001_impact_milestones.sql` with the journey upgrade in

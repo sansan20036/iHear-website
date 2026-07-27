@@ -1,5 +1,4 @@
 (function () {
-  const ALLOWED_ADMINS = ["sansan20036@gmail.com", "shuchen.peng@gmail.com", "ihearprogram@gmail.com"];
   const EDITABLE_SELECTOR = [
     "main h1",
     "main h2",
@@ -47,10 +46,6 @@
     return labelsByLang.en;
   }
 
-  function normalizeEmail(email) {
-    return String(email || "").trim().toLowerCase();
-  }
-
   function normalizePage(pathname) {
     let path = pathname || "/";
     if (path.endsWith(".html")) path = path.slice(0, -5);
@@ -60,8 +55,7 @@
   }
 
   function isAdminSession(session) {
-    const email = normalizeEmail(session && session.user && session.user.email);
-    return ALLOWED_ADMINS.includes(email);
+    return Boolean(session && session.user && session.user.isAdmin);
   }
 
   function installStyles() {
