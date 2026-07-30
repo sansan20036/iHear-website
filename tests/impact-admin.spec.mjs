@@ -291,8 +291,12 @@ test("mobile editor has no horizontal overflow", async ({ page }) => {
   await page.getByRole("button", { name: "新增歷程" }).click();
 
   const sizes = await page.evaluate(() => ({
-    viewport: window.innerWidth,
+    viewport: document.documentElement.clientWidth,
     document: document.documentElement.scrollWidth,
+    dialogLeft: document.querySelector("dialog")?.getBoundingClientRect().left ?? 0,
+    dialogRight: document.querySelector("dialog")?.getBoundingClientRect().right ?? 0,
   }));
   expect(sizes.document).toBeLessThanOrEqual(sizes.viewport);
+  expect(sizes.dialogLeft).toBeGreaterThanOrEqual(-1);
+  expect(sizes.dialogRight).toBeLessThanOrEqual(sizes.viewport + 1);
 });

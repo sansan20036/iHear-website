@@ -603,8 +603,8 @@
   }
 
   .impact-milestone-editor {
-    width: 100vw;
-    max-width: none;
+    width: 100%;
+    max-width: 100%;
     max-height: 100dvh;
     margin: 0;
     border-radius: 20px 20px 0 0;
