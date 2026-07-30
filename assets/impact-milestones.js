@@ -31,6 +31,8 @@
       volunteers: "Volunteers",
       students: "Students",
       sessions: "Sessions",
+      countries: "Countries served",
+      countryNames: "Country names",
       showPlus: "Show + after number",
       description: "Description",
       preview: "Live preview",
@@ -49,7 +51,7 @@
       saveFailed: "Could not save this milestone.",
       conflict: "Someone else updated this milestone. Your draft is still here; reload before saving again.",
       validation: "Please review the highlighted fields.",
-      requiredTranslations: "All three descriptions are required before publishing.",
+      requiredTranslations: "All three descriptions and country-name fields are required before publishing.",
       requiredEventTranslations: "Complete titles and descriptions in all three languages before publishing.",
       draftDescription: "Add at least one description before saving a draft.",
       draftEventContent: "Add at least one title and description before saving a draft.",
@@ -58,7 +60,7 @@
       manualMode: "Manual translation mode",
       manualHint: "Enter or paste each translation yourself. You can copy another language as a starting point, then revise it manually.",
       copyFrom: "Copy from",
-      copyConfirm: "This will replace the current language title and description. Continue?",
+      copyConfirm: "This will replace the current language title, country names, and description. Continue?",
       copiedFrom: "Copied from {language}. Review and revise the text before publishing.",
       zhHant: "繁體中文",
       zhHans: "简体中文",
@@ -93,6 +95,8 @@
       volunteers: "志工人數",
       students: "學生人數",
       sessions: "堂數",
+      countries: "服務國家數",
+      countryNames: "服務國家名稱",
       showPlus: "數字後顯示 +",
       description: "說明文案",
       preview: "即時預覽",
@@ -111,7 +115,7 @@
       saveFailed: "無法儲存這筆成果資料。",
       conflict: "另一位管理員已更新這筆資料。你的草稿仍保留，請重新載入後再儲存。",
       validation: "請檢查標示的欄位。",
-      requiredTranslations: "發布前必須完成三種語言的說明文案。",
+      requiredTranslations: "發布前必須完成三種語言的說明文案與國家名稱。",
       requiredEventTranslations: "發布前必須完成三種語言的標題與說明文案。",
       draftDescription: "儲存草稿前至少填寫一種語言的說明。",
       draftEventContent: "儲存草稿前至少填寫一種語言的標題與說明文案。",
@@ -120,7 +124,7 @@
       manualMode: "人工翻譯模式",
       manualHint: "請自行輸入或貼上各語言內容；也可先複製其他語言作為底稿，再手動調整。",
       copyFrom: "複製自",
-      copyConfirm: "這會覆蓋目前語言的標題與說明文案，確定繼續嗎？",
+      copyConfirm: "這會覆蓋目前語言的標題、國家名稱與說明文案，確定繼續嗎？",
       copiedFrom: "已複製自「{language}」，發布前請人工檢查並調整內容。",
       zhHant: "繁體中文",
       zhHans: "简体中文",
@@ -155,6 +159,8 @@
       volunteers: "志愿者人数",
       students: "学生人数",
       sessions: "课数",
+      countries: "服务国家数",
+      countryNames: "服务国家名称",
       showPlus: "数字后显示 +",
       description: "说明文案",
       preview: "即时预览",
@@ -173,7 +179,7 @@
       saveFailed: "无法保存这笔成果数据。",
       conflict: "另一位管理员已更新这笔数据。你的草稿仍保留，请重新加载后再保存。",
       validation: "请检查标示的字段。",
-      requiredTranslations: "发布前必须完成三种语言的说明文案。",
+      requiredTranslations: "发布前必须完成三种语言的说明文案与国家名称。",
       requiredEventTranslations: "发布前必须完成三种语言的标题与说明文案。",
       draftDescription: "保存草稿前至少填写一种语言的说明。",
       draftEventContent: "保存草稿前至少填写一种语言的标题与说明文案。",
@@ -182,7 +188,7 @@
       manualMode: "人工翻译模式",
       manualHint: "请自行输入或粘贴各语言内容；也可先复制其他语言作为底稿，再手动调整。",
       copyFrom: "复制自",
-      copyConfirm: "这会覆盖当前语言的标题与说明文案，确定继续吗？",
+      copyConfirm: "这会覆盖当前语言的标题、国家名称与说明文案，确定继续吗？",
       copiedFrom: "已复制自“{language}”，发布前请人工检查并调整内容。",
       zhHant: "繁體中文",
       zhHans: "简体中文",
@@ -404,11 +410,13 @@
       kind: "event",
       period,
       volunteers: 0,
-      volunteersPlus: true,
+      volunteersPlus: false,
       students: 0,
-      studentsPlus: true,
+      studentsPlus: false,
       sessions: 0,
-      sessionsPlus: true,
+      sessionsPlus: false,
+      countries: 0,
+      countryNames: { zhHant: "", zhHans: "", en: "" },
       title: { zhHant: "", zhHans: "", en: "" },
       description: { zhHant: "", zhHans: "", en: "" },
       status: "draft",
@@ -418,7 +426,10 @@
   }
 
   function copyDraft(item) {
-    return JSON.parse(JSON.stringify(item || newDraft()));
+    const draft = JSON.parse(JSON.stringify(item || newDraft()));
+    draft.countries = Number(draft.countries || 0);
+    draft.countryNames = draft.countryNames || { zhHant: "", zhHans: "", en: "" };
+    return draft;
   }
 
   function openEditor(item) {
@@ -485,6 +496,7 @@
               ${numberFieldMarkup("volunteers", l.volunteers)}
               ${numberFieldMarkup("students", l.students)}
               ${numberFieldMarkup("sessions", l.sessions)}
+              ${countryCountFieldMarkup()}
             </div>
           </section>
 
@@ -562,6 +574,17 @@
     `;
   }
 
+  function countryCountFieldMarkup() {
+    const l = labels();
+    return `
+      <div class="impact-field impact-number-field" data-metrics-field>
+        <label for="impact-countries">${l.countries}</label>
+        <input id="impact-countries" name="countries" type="number" min="0" max="250" step="1" required>
+        <span class="impact-field-error" data-error="countries"></span>
+      </div>
+    `;
+  }
+
   function tabMarkup(key, label) {
     return `<button class="impact-tab" type="button" role="tab" data-locale-tab="${key}" aria-controls="impact-panel-${key}"><span>${label}</span><span class="impact-tab-state-text" data-tab-state-text></span><span class="impact-tab-status" aria-hidden="true"></span></button>`;
   }
@@ -582,6 +605,11 @@
         <input id="impact-title-${key}" name="title.${key}" type="text" maxlength="200">
         <span class="impact-field-error" data-error="title.${key}"></span>
       </div>
+      <div class="impact-localized-country" data-country-names-field>
+        <label for="impact-country-names-${key}">${l.countryNames} — ${label}</label>
+        <input id="impact-country-names-${key}" name="countryNames.${key}" type="text" maxlength="500">
+        <span class="impact-field-error" data-error="countryNames.${key}"></span>
+      </div>
       <label class="impact-localized-description" for="impact-description-${key}">${l.description} — ${label}</label>
       <textarea id="impact-description-${key}" name="description.${key}" maxlength="2000"></textarea>
       <span class="impact-field-error" data-error="description.${key}"></span>
@@ -599,8 +627,11 @@
       form.elements[name].value = state.draft[name];
       form.elements[`${name}Plus`].checked = Boolean(state.draft[`${name}Plus`]);
     });
+    form.elements.countries.value = state.draft.countries ?? 0;
     ["zhHant", "zhHans", "en"].forEach((key) => {
       form.elements[`title.${key}`].value = (state.draft.title && state.draft.title[key]) || "";
+      form.elements[`countryNames.${key}`].value =
+        (state.draft.countryNames && state.draft.countryNames[key]) || "";
       form.elements[`description.${key}`].value = state.draft.description[key] || "";
     });
 
@@ -644,12 +675,15 @@
     if (target.name.startsWith("title.")) {
       sourceLocale = target.name.split(".")[1];
       state.draft.title[sourceLocale] = target.value;
+    } else if (target.name.startsWith("countryNames.")) {
+      sourceLocale = target.name.split(".")[1];
+      state.draft.countryNames[sourceLocale] = target.value;
     } else if (target.name.startsWith("description.")) {
       sourceLocale = target.name.split(".")[1];
       state.draft.description[sourceLocale] = target.value;
     } else if (target.type === "checkbox") {
       state.draft[target.name] = target.checked;
-    } else if (["volunteers", "students", "sessions"].includes(target.name)) {
+    } else if (["volunteers", "students", "sessions", "countries"].includes(target.name)) {
       state.draft[target.name] = target.value === "" ? "" : Number(target.value);
     } else {
       state.draft[target.name] = target.value;
@@ -675,16 +709,20 @@
     const targetLocale = state.activeLocale;
     const targetHasContent = Boolean(
       (state.draft.title[targetLocale] || "").trim() ||
+      (state.draft.countryNames[targetLocale] || "").trim() ||
       (state.draft.description[targetLocale] || "").trim(),
     );
     if (targetHasContent && !window.confirm(labels().copyConfirm)) return;
 
     state.draft.title[targetLocale] = state.draft.title[sourceLocale] || "";
+    state.draft.countryNames[targetLocale] = state.draft.countryNames[sourceLocale] || "";
     state.draft.description[targetLocale] = state.draft.description[sourceLocale] || "";
 
     const titleInput = dialog.querySelector(`[name="title.${targetLocale}"]`);
+    const countryNamesInput = dialog.querySelector(`[name="countryNames.${targetLocale}"]`);
     const descriptionInput = dialog.querySelector(`[name="description.${targetLocale}"]`);
     if (titleInput) titleInput.value = state.draft.title[targetLocale];
+    if (countryNamesInput) countryNamesInput.value = state.draft.countryNames[targetLocale];
     if (descriptionInput) descriptionInput.value = state.draft.description[targetLocale];
 
     state.manualStatus = labels().copiedFrom.replace("{language}", localeLabel(sourceLocale));
@@ -725,7 +763,9 @@
       tab.tabIndex = selected ? 0 : -1;
       const hasDescription = Boolean((state.draft.description[key] || "").trim());
       const hasTitle = state.draft.kind !== "event" || Boolean((state.draft.title[key] || "").trim());
-      const status = hasDescription && hasTitle ? "complete" : "empty";
+      const hasCountryNames =
+        state.draft.kind !== "metrics" || Boolean((state.draft.countryNames[key] || "").trim());
+      const status = hasDescription && hasTitle && hasCountryNames ? "complete" : "empty";
       tab.dataset.state = status;
       tab.dataset.complete = String(status === "complete");
       const statusText = tab.querySelector("[data-tab-state-text]");
@@ -742,6 +782,9 @@
     dialog.querySelectorAll("[data-title-field]").forEach((field) => {
       field.hidden = state.draft.kind !== "event";
     });
+    dialog.querySelectorAll("[data-country-names-field]").forEach((field) => {
+      field.hidden = state.draft.kind !== "metrics";
+    });
 
     dialog.querySelectorAll("[data-preview-locale]").forEach((tab) => {
       tab.setAttribute("aria-pressed", String(tab.dataset.previewLocale === state.previewLocale));
@@ -750,6 +793,7 @@
       const sourceLocale = copyButton.dataset.copyLocale;
       const sourceHasContent = Boolean(
         (state.draft.title[sourceLocale] || "").trim() ||
+        (state.draft.countryNames[sourceLocale] || "").trim() ||
         (state.draft.description[sourceLocale] || "").trim(),
       );
       copyButton.hidden = sourceLocale === state.activeLocale;
@@ -780,14 +824,33 @@
   function validateDraft(status) {
     const errors = {};
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(state.draft.period || "")) errors.period = labels().validation;
-    ["volunteers", "students", "sessions"].forEach((name) => {
-      const value = state.draft[name];
-      if (!Number.isInteger(value) || value < 0 || value > 10000000) errors[name] = labels().validation;
-    });
+    const isEvent = state.draft.kind === "event";
+    if (!isEvent) {
+      ["volunteers", "students", "sessions"].forEach((name) => {
+        const value = state.draft[name];
+        if (!Number.isInteger(value) || value < 0 || value > 10000000) errors[name] = labels().validation;
+      });
+      if (
+        !Number.isInteger(state.draft.countries) ||
+        state.draft.countries < (status === "published" ? 1 : 0) ||
+        state.draft.countries > 250
+      ) {
+        errors.countries = labels().validation;
+      }
+    }
     const completed = ["zhHant", "zhHans", "en"].filter((key) => (state.draft.description[key] || "").trim());
     const completedTitles = ["zhHant", "zhHans", "en"].filter((key) => (state.draft.title[key] || "").trim());
-    const isEvent = state.draft.kind === "event";
-    if (status === "published" && (completed.length !== 3 || (isEvent && completedTitles.length !== 3))) {
+    const completedCountryNames = ["zhHant", "zhHans", "en"].filter(
+      (key) => (state.draft.countryNames[key] || "").trim(),
+    );
+    if (
+      status === "published" &&
+      (
+        completed.length !== 3 ||
+        (isEvent && completedTitles.length !== 3) ||
+        (!isEvent && completedCountryNames.length !== 3)
+      )
+    ) {
       errors.translations = isEvent ? labels().requiredEventTranslations : labels().requiredTranslations;
     }
     if (status === "draft" && (completed.length === 0 || (isEvent && completedTitles.length === 0))) {
@@ -808,19 +871,26 @@
   }
 
   function payloadFor(item, status) {
+    const isEvent = item.kind === "event";
     return {
       kind: item.kind || "metrics",
       period: item.period,
-      volunteers: Number(item.volunteers),
-      volunteersPlus: Boolean(item.volunteersPlus),
-      students: Number(item.students),
-      studentsPlus: Boolean(item.studentsPlus),
-      sessions: Number(item.sessions),
-      sessionsPlus: Boolean(item.sessionsPlus),
+      volunteers: isEvent ? 0 : Number(item.volunteers),
+      volunteersPlus: isEvent ? false : Boolean(item.volunteersPlus),
+      students: isEvent ? 0 : Number(item.students),
+      studentsPlus: isEvent ? false : Boolean(item.studentsPlus),
+      sessions: isEvent ? 0 : Number(item.sessions),
+      sessionsPlus: isEvent ? false : Boolean(item.sessionsPlus),
+      countries: isEvent ? 0 : Number(item.countries),
+      countryNames: {
+        zhHant: isEvent ? "" : (item.countryNames.zhHant || "").trim(),
+        zhHans: isEvent ? "" : (item.countryNames.zhHans || "").trim(),
+        en: isEvent ? "" : (item.countryNames.en || "").trim(),
+      },
       title: {
-        zhHant: ((item.title && item.title.zhHant) || "").trim(),
-        zhHans: ((item.title && item.title.zhHans) || "").trim(),
-        en: ((item.title && item.title.en) || "").trim(),
+        zhHant: isEvent ? ((item.title && item.title.zhHant) || "").trim() : "",
+        zhHans: isEvent ? ((item.title && item.title.zhHans) || "").trim() : "",
+        en: isEvent ? ((item.title && item.title.en) || "").trim() : "",
       },
       description: {
         zhHant: (item.description.zhHant || "").trim(),
@@ -874,12 +944,12 @@
       showToast(labels().saved, false);
     } catch (error) {
       setBusy(false);
-      if (error.status === 409) {
+      if (error.issues) {
+        showValidation(error.issues);
+      } else if (error.status === 409) {
         const formError = dialog.querySelector("[data-impact-form-error]");
         formError.textContent = labels().conflict;
         formError.hidden = false;
-      } else if (error.issues) {
-        showValidation(error.issues);
       } else {
         showToast(error.message || labels().saveFailed, true);
       }

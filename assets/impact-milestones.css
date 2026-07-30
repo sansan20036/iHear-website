@@ -157,6 +157,12 @@
   overflow: auto;
 }
 
+.impact-editor-shell,
+.impact-editor-shell * {
+  box-sizing: border-box;
+  min-width: 0;
+}
+
 .impact-editor-header {
   position: sticky;
   top: 0;
@@ -309,7 +315,14 @@
   margin-top: 12px;
 }
 
+.impact-localized-country {
+  display: grid;
+  gap: 7px;
+  margin-top: 12px;
+}
+
 .impact-localized-title label,
+.impact-localized-country label,
 .impact-localized-description {
   display: block;
   margin: 12px 0 7px;
@@ -647,11 +660,15 @@
   }
 
   .impact-tabs {
-    display: flex;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    overflow-x: visible;
   }
 
   .impact-tab {
-    flex: 1 0 auto;
+    padding: 8px 6px;
+    line-height: 1.2;
+    white-space: normal;
   }
 
   .impact-manual-tools {

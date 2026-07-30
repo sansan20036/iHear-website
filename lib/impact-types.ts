@@ -20,6 +20,8 @@ export type ImpactMilestone = {
   studentsPlus: boolean;
   sessions: number;
   sessionsPlus: boolean;
+  countries: number;
+  countryNames: ImpactDescriptions;
   title: ImpactDescriptions;
   description: ImpactDescriptions;
   status: ImpactStatus;
@@ -42,6 +44,8 @@ export type ImpactMilestoneInput = Pick<
   | "studentsPlus"
   | "sessions"
   | "sessionsPlus"
+  | "countries"
+  | "countryNames"
   | "title"
   | "description"
   | "status"
@@ -88,6 +92,54 @@ function parseBoolean(
     return false;
   }
   return value;
+}
+
+function parseCountries(
+  value: unknown,
+  kind: ImpactKind,
+  status: ImpactStatus,
+  issues: Record<string, string>,
+) {
+  const countries = value == null ? 0 : Number(value);
+  const maximum = 250;
+
+  if (!Number.isInteger(countries) || countries < 0 || countries > maximum) {
+    issues.countries = `Must be an integer between 0 and ${maximum}`;
+    return 0;
+  }
+  if (kind === "event" && countries !== 0) {
+    issues.countries = "Journey events cannot include country metrics";
+  }
+  if (kind === "metrics" && status === "published" && countries < 1) {
+    issues.countries = "Published impact metrics must include at least one country";
+  }
+  return countries;
+}
+
+function parseCountryNames(
+  value: unknown,
+  kind: ImpactKind,
+  status: ImpactStatus,
+  issues: Record<string, string>,
+): ImpactDescriptions {
+  const source = isRecord(value) ? value : {};
+  const result: ImpactDescriptions = { zhHant: "", zhHans: "", en: "" };
+
+  for (const locale of Object.keys(result) as Array<keyof ImpactDescriptions>) {
+    const text = typeof source[locale] === "string" ? source[locale].trim() : "";
+    if (text.length > 500) {
+      issues[`countryNames.${locale}`] = "Must be 500 characters or fewer";
+    }
+    if (kind === "event" && text) {
+      issues[`countryNames.${locale}`] = "Journey events cannot include country names";
+    }
+    if (kind === "metrics" && status === "published" && !text) {
+      issues[`countryNames.${locale}`] = "Required before publishing";
+    }
+    result[locale] = text;
+  }
+
+  return result;
 }
 
 function parseDescription(
@@ -179,6 +231,8 @@ export function parseImpactMilestoneInput(
     studentsPlus: parseBoolean(source.studentsPlus, "studentsPlus", issues),
     sessions: parseCount(source.sessions, "sessions", issues),
     sessionsPlus: parseBoolean(source.sessionsPlus, "sessionsPlus", issues),
+    countries: parseCountries(source.countries, kind, status, issues),
+    countryNames: parseCountryNames(source.countryNames, kind, status, issues),
     title: parseTitle(source.title, kind, status, issues),
     description: parseDescription(source.description, status, issues),
     status,
@@ -207,6 +261,8 @@ export function publicImpactMilestone(milestone: ImpactMilestone) {
     studentsPlus: milestone.studentsPlus,
     sessions: milestone.sessions,
     sessionsPlus: milestone.sessionsPlus,
+    countries: milestone.countries,
+    countryNames: milestone.countryNames,
     title: milestone.title,
     description: milestone.description,
     status: milestone.status,

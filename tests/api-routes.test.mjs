@@ -12,15 +12,23 @@ vi.mock("next/cache", () => ({
 vi.mock("../lib/impact-store", () => {
   class ImpactNotFoundError extends Error {}
   class ImpactConflictError extends Error {}
+  class ImpactDuplicatePeriodError extends Error {
+    constructor() {
+      super("A published impact metric already exists for this month");
+      this.issues = { period: "這個月份已有一筆已發布成果" };
+    }
+  }
   class ImpactConfigurationError extends Error {}
 
   return {
     IMPACT_CACHE_TAG: "journey-timeline-v2",
     ImpactNotFoundError,
     ImpactConflictError,
+    ImpactDuplicatePeriodError,
     ImpactConfigurationError,
     createImpactMilestone: vi.fn(),
     deleteImpactMilestone: vi.fn(),
+    getCurrentSiteMetrics: vi.fn(),
     listAllImpactMilestones: vi.fn(),
     listPublishedImpactMilestones: vi.fn(),
     updateImpactMilestone: vi.fn(),
@@ -47,6 +55,7 @@ import {
   PATCH as updateMilestone,
 } from "../app/api/impact-milestones/[id]/route";
 import { POST as translateMilestone } from "../app/api/impact-milestones/translate/route";
+import { GET as getSiteMetrics } from "../app/api/site-metrics/route";
 import * as contentStore from "../lib/content-store";
 import * as impactStore from "../lib/impact-store";
 
@@ -60,6 +69,12 @@ const validPayload = {
   studentsPlus: false,
   sessions: 0,
   sessionsPlus: false,
+  countries: 0,
+  countryNames: {
+    zhHant: "",
+    zhHans: "",
+    en: "",
+  },
   title: {
     zhHant: "測試標題",
     zhHans: "测试标题",
@@ -82,6 +97,25 @@ const storedMilestone = {
   createdBy: adminEmail,
   updatedBy: adminEmail,
 };
+const currentMetrics = {
+  ...storedMilestone,
+  id: "impact-2026-06",
+  kind: "metrics",
+  period: "2026-06",
+  volunteers: 35,
+  volunteersPlus: true,
+  students: 50,
+  studentsPlus: true,
+  sessions: 1200,
+  sessionsPlus: true,
+  countries: 4,
+  countryNames: {
+    zhHant: "臺灣 · 中國 · 美國 · 加拿大",
+    zhHans: "台湾 · 中国 · 美国 · 加拿大",
+    en: "Taiwan · China · United States · Canada",
+  },
+  title: { zhHant: "", zhHans: "", en: "" },
+};
 
 function jsonRequest(url, method, body) {
   return new Request(url, {
@@ -99,6 +133,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   auth.mockResolvedValue({ user: { email: adminEmail, isAdmin: true } });
   impactStore.listPublishedImpactMilestones.mockResolvedValue([storedMilestone]);
+  impactStore.getCurrentSiteMetrics.mockResolvedValue(currentMetrics);
   impactStore.listAllImpactMilestones.mockResolvedValue([storedMilestone]);
   impactStore.createImpactMilestone.mockResolvedValue(storedMilestone);
   impactStore.updateImpactMilestone.mockResolvedValue({ ...storedMilestone, version: 2 });
@@ -212,6 +247,27 @@ describe("OAuth cookie cleanup", () => {
     expect(cookies.find((cookie) => cookie.startsWith("__Host-authjs.csrf-token="))).toContain("Path=/;");
     expect(cookies.every((cookie) => cookie.includes("Max-Age=0"))).toBe(true);
   });
+
+  test("current site metrics use shared one-second edge caching", async () => {
+    const response = await getSiteMetrics();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("public, max-age=0, must-revalidate");
+    expect(response.headers.get("vercel-cdn-cache-control")).toBe("public, s-maxage=1");
+    expect((await response.json()).metrics).toMatchObject({
+      id: "impact-2026-06",
+      countries: 4,
+    });
+  });
+
+  test("current site metrics return null when no published metrics exist", async () => {
+    impactStore.getCurrentSiteMetrics.mockResolvedValue(null);
+
+    const response = await getSiteMetrics();
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ metrics: null });
+  });
 });
 
 describe("authorized mutations", () => {
@@ -224,7 +280,9 @@ describe("authorized mutations", () => {
     expect(impactStore.createImpactMilestone).toHaveBeenCalledWith(validPayload, adminEmail);
     expect(revalidateTag).toHaveBeenCalledWith("journey-timeline-v2", { expire: 0 });
     expect(revalidatePath).toHaveBeenCalledWith("/about");
+    expect(revalidatePath).toHaveBeenCalledWith("/");
     expect(revalidatePath).toHaveBeenCalledWith("/api/impact-milestones");
+    expect(revalidatePath).toHaveBeenCalledWith("/api/site-metrics");
   });
 
   test("returns 409 when an update loses optimistic concurrency", async () => {
@@ -280,11 +338,52 @@ describe("authorized mutations", () => {
     expect(revalidatePath).toHaveBeenCalledWith("/api/content/get");
   });
 
+  test("returns a period field issue for duplicate published metrics", async () => {
+    impactStore.createImpactMilestone.mockRejectedValue(
+      new impactStore.ImpactDuplicatePeriodError(),
+    );
+    const payload = {
+      ...currentMetrics,
+      id: undefined,
+      version: undefined,
+      createdAt: undefined,
+      updatedAt: undefined,
+      createdBy: undefined,
+      updatedBy: undefined,
+      status: "published",
+      sortOrder: 202606,
+    };
+
+    const response = await createMilestone(
+      jsonRequest("http://localhost/api/impact-milestones", "POST", payload),
+    );
+
+    expect(response.status).toBe(409);
+    expect((await response.json()).issues).toEqual({
+      period: "這個月份已有一筆已發布成果",
+    });
+  });
+
   test("rejects incomplete published translations before persistence", async () => {
     const response = await createMilestone(
       jsonRequest("http://localhost/api/impact-milestones", "POST", {
         ...validPayload,
         title: { ...validPayload.title, en: "" },
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(impactStore.createImpactMilestone).not.toHaveBeenCalled();
+  });
+
+  test("rejects published metrics without complete country data", async () => {
+    const response = await createMilestone(
+      jsonRequest("http://localhost/api/impact-milestones", "POST", {
+        ...currentMetrics,
+        countries: 0,
+        countryNames: { zhHant: "", zhHans: "", en: "" },
+        status: "published",
+        sortOrder: 202606,
       }),
     );
 

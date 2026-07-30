@@ -61,6 +61,8 @@ const milestone = {
   studentsPlus: false,
   sessions: 0,
   sessionsPlus: false,
+  countries: 0,
+  countryNames: { zhHant: "", zhHans: "", en: "" },
   title: {
     zhHant: "試辦階段開始",
     zhHans: "试办阶段开始",
@@ -77,6 +79,34 @@ const milestone = {
   createdAt: "2024-06-01T00:00:00.000Z",
   updatedAt: "2024-06-01T00:00:00.000Z",
   updatedBy: "test@example.com",
+};
+
+const siteMetrics = {
+  id: "impact-2027-01",
+  kind: "metrics",
+  period: "2027-01",
+  volunteers: 41,
+  volunteersPlus: true,
+  students: 63,
+  studentsPlus: true,
+  sessions: 1299,
+  sessionsPlus: true,
+  countries: 5,
+  countryNames: {
+    zhHant: "臺灣 · 中國 · 美國 · 加拿大 · 日本",
+    zhHans: "台湾 · 中国 · 美国 · 加拿大 · 日本",
+    en: "Taiwan · China · United States · Canada · Japan",
+  },
+  title: { zhHant: "", zhHans: "", en: "" },
+  description: {
+    zhHant: "測試目前成果",
+    zhHans: "测试目前成果",
+    en: "Current metrics fixture",
+  },
+  status: "published",
+  sortOrder: 202701,
+  version: 1,
+  updatedAt: "2027-01-01T00:00:00.000Z",
 };
 
 async function mockApplication(page) {
@@ -99,6 +129,12 @@ async function mockApplication(page) {
     status: 200,
     contentType: "application/json",
     body: JSON.stringify({ version: 1, updatedAt: "", pages: {} }),
+  }));
+
+  await page.route("**/api/site-metrics", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ metrics: siteMetrics }),
   }));
 
   await page.route("**/api/impact-milestones**", async (route) => {
@@ -152,6 +188,48 @@ test("favicon is linked and served from the generated public directory", async (
   expect(response.headers()["content-type"]).toContain("image/x-icon");
   expect((await response.body()).byteLength).toBeGreaterThan(0);
 });
+
+test("homepage uses current metrics across counters, languages, and inline editing", async ({ page }) => {
+  await mockApplication(page);
+  await page.goto("/");
+
+  await expect(page.locator('[data-site-metric-value="sessions"]').first()).toHaveText("1,299+");
+  await expect(page.locator('[data-site-metric-value="students"]').first()).toHaveText("63+");
+  await expect(page.locator('[data-site-metric-value="volunteers"]')).toHaveText("41");
+  await expect(page.locator('[data-site-metric-value="countries"]')).toHaveText("5");
+  await expect(page.locator("[data-site-metric-asof]")).toHaveText("as of January 2027");
+  await expect(page.locator("[data-site-metric-country-names]")).toHaveText(
+    "Taiwan · China · United States · Canada · Japan",
+  );
+  await expect(page.locator("[data-no-inline-edit] .ihear-inline-edit-button")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "繁" }).click();
+  await expect(page.locator("[data-site-metric-asof]")).toHaveText("截至 2027 年 1 月");
+  await expect(page.locator("[data-site-metric-country-names]")).toHaveText(
+    "臺灣 · 中國 · 美國 · 加拿大 · 日本",
+  );
+});
+
+for (const fallbackCase of [
+  { name: "null metrics", status: 200, body: { metrics: null } },
+  { name: "API failure", status: 503, body: { error: "Unavailable" } },
+]) {
+  test(`homepage preserves static fallback for ${fallbackCase.name}`, async ({ page }) => {
+    await mockApplication(page);
+    await page.route("**/api/site-metrics", (route) => route.fulfill({
+      status: fallbackCase.status,
+      contentType: "application/json",
+      body: JSON.stringify(fallbackCase.body),
+    }));
+    await page.goto("/");
+
+    await expect(page.locator('[data-site-metric-value="sessions"]').first()).toHaveText("1,200+");
+    await expect(page.locator("[data-site-metric-asof]")).toHaveText("as of June 2026");
+    await expect(page.locator("[data-site-metric-country-names]")).toHaveText(
+      "Taiwan · China · US · Canada",
+    );
+  });
+}
 
 test("content overrides still apply when admin controls render before content finishes loading", async ({ page }) => {
   await page.route("**/api/auth/session", (route) => route.fulfill({
@@ -283,20 +361,22 @@ test("manual multilingual editor clears stale copy status and publishes once com
   expect(mocked.requests.some((request) => request.includes("/translate"))).toBe(false);
 });
 
-test("mobile editor has no horizontal overflow", async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
+test("mobile editor has no horizontal overflow at supported narrow widths", async ({ page }) => {
   await mockApplication(page);
-  await page.goto("/about");
-  await page.getByRole("button", { name: "繁" }).click();
-  await page.getByRole("button", { name: "新增歷程" }).click();
+  for (const width of [390, 375, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto("/about");
+    await page.getByRole("button", { name: "繁" }).click();
+    await page.getByRole("button", { name: "新增歷程" }).click();
 
-  const sizes = await page.evaluate(() => ({
-    viewport: document.documentElement.clientWidth,
-    document: document.documentElement.scrollWidth,
-    dialogLeft: document.querySelector("dialog")?.getBoundingClientRect().left ?? 0,
-    dialogRight: document.querySelector("dialog")?.getBoundingClientRect().right ?? 0,
-  }));
-  expect(sizes.document).toBeLessThanOrEqual(sizes.viewport);
-  expect(sizes.dialogLeft).toBeGreaterThanOrEqual(-1);
-  expect(sizes.dialogRight).toBeLessThanOrEqual(sizes.viewport + 1);
+    const sizes = await page.evaluate(() => ({
+      viewport: document.documentElement.clientWidth,
+      document: document.documentElement.scrollWidth,
+      dialogLeft: document.querySelector("dialog")?.getBoundingClientRect().left ?? 0,
+      dialogRight: document.querySelector("dialog")?.getBoundingClientRect().right ?? 0,
+    }));
+    expect(sizes.document).toBeLessThanOrEqual(sizes.viewport);
+    expect(sizes.dialogLeft).toBeGreaterThanOrEqual(-1);
+    expect(sizes.dialogRight).toBeLessThanOrEqual(sizes.viewport + 1);
+  }
 });

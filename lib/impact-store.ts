@@ -29,6 +29,18 @@ export class ImpactConflictError extends Error {
   }
 }
 
+export class ImpactDuplicatePeriodError extends Error {
+  issues: Record<string, string>;
+
+  constructor() {
+    super("A published impact metric already exists for this month");
+    this.name = "ImpactDuplicatePeriodError";
+    this.issues = {
+      period: "這個月份已有一筆已發布成果",
+    };
+  }
+}
+
 export class ImpactConfigurationError extends Error {
   constructor() {
     super("POSTGRES_URL or DATABASE_URL is required for production persistence");
@@ -51,6 +63,10 @@ type ImpactRow = {
   students_plus: boolean;
   sessions: number;
   sessions_plus: boolean;
+  countries: number;
+  country_names_zh_hant: string;
+  country_names_zh_hans: string;
+  country_names_en: string;
   title_zh_hant: string;
   title_zh_hans: string;
   title_en: string;
@@ -75,7 +91,7 @@ const isHostedProduction =
 
 const globalForImpact = globalThis as typeof globalThis & {
   ihearImpactSql?: ReturnType<typeof postgres>;
-  ihearImpactSchemaV3Ready?: Promise<void>;
+  ihearImpactSchemaV4Ready?: Promise<void>;
 };
 
 let fileMutationQueue: Promise<unknown> = Promise.resolve();
@@ -100,6 +116,12 @@ function fromRow(row: ImpactRow): ImpactMilestone {
     studentsPlus: Boolean(row.students_plus),
     sessions: Number(row.sessions),
     sessionsPlus: Boolean(row.sessions_plus),
+    countries: Number(row.countries),
+    countryNames: {
+      zhHant: row.country_names_zh_hant,
+      zhHans: row.country_names_zh_hans,
+      en: row.country_names_en,
+    },
     title: {
       zhHant: row.title_zh_hant,
       zhHans: row.title_zh_hans,
@@ -136,8 +158,8 @@ function sqlClient() {
 async function ensurePostgresSchema() {
   const sql = sqlClient();
   if (!sql) return;
-  if (!globalForImpact.ihearImpactSchemaV3Ready) {
-    globalForImpact.ihearImpactSchemaV3Ready = (async () => {
+  if (!globalForImpact.ihearImpactSchemaV4Ready) {
+    globalForImpact.ihearImpactSchemaV4Ready = (async () => {
       await sql`
         CREATE TABLE IF NOT EXISTS impact_milestones (
           id TEXT PRIMARY KEY,
@@ -149,6 +171,10 @@ async function ensurePostgresSchema() {
           students_plus BOOLEAN NOT NULL DEFAULT FALSE,
           sessions INTEGER NOT NULL CHECK (sessions >= 0),
           sessions_plus BOOLEAN NOT NULL DEFAULT FALSE,
+          countries INTEGER NOT NULL DEFAULT 0,
+          country_names_zh_hant TEXT NOT NULL DEFAULT '',
+          country_names_zh_hans TEXT NOT NULL DEFAULT '',
+          country_names_en TEXT NOT NULL DEFAULT '',
           title_zh_hant TEXT NOT NULL DEFAULT '',
           title_zh_hans TEXT NOT NULL DEFAULT '',
           title_en TEXT NOT NULL DEFAULT '',
@@ -169,6 +195,10 @@ async function ensurePostgresSchema() {
       await sql`ALTER TABLE impact_milestones ADD COLUMN IF NOT EXISTS title_zh_hant TEXT NOT NULL DEFAULT ''`;
       await sql`ALTER TABLE impact_milestones ADD COLUMN IF NOT EXISTS title_zh_hans TEXT NOT NULL DEFAULT ''`;
       await sql`ALTER TABLE impact_milestones ADD COLUMN IF NOT EXISTS title_en TEXT NOT NULL DEFAULT ''`;
+      await sql`ALTER TABLE impact_milestones ADD COLUMN IF NOT EXISTS countries INTEGER NOT NULL DEFAULT 0`;
+      await sql`ALTER TABLE impact_milestones ADD COLUMN IF NOT EXISTS country_names_zh_hant TEXT NOT NULL DEFAULT ''`;
+      await sql`ALTER TABLE impact_milestones ADD COLUMN IF NOT EXISTS country_names_zh_hans TEXT NOT NULL DEFAULT ''`;
+      await sql`ALTER TABLE impact_milestones ADD COLUMN IF NOT EXISTS country_names_en TEXT NOT NULL DEFAULT ''`;
       await sql`
         CREATE INDEX IF NOT EXISTS impact_milestones_public_idx
         ON impact_milestones (status, sort_order, period)
@@ -195,13 +225,16 @@ async function ensurePostgresSchema() {
             await sql`
               INSERT INTO impact_milestones (
                 id, kind, period, volunteers, volunteers_plus, students, students_plus,
-                sessions, sessions_plus, title_zh_hant, title_zh_hans, title_en,
+                sessions, sessions_plus, countries, country_names_zh_hant,
+                country_names_zh_hans, country_names_en, title_zh_hant, title_zh_hans, title_en,
                 description_zh_hant, description_zh_hans, description_en,
                 status, sort_order, version, created_at, updated_at,
                 created_by, updated_by
               ) VALUES (
                 ${item.id}, ${item.kind}, ${item.period}, ${item.volunteers}, ${item.volunteersPlus},
                 ${item.students}, ${item.studentsPlus}, ${item.sessions}, ${item.sessionsPlus},
+                ${item.countries}, ${item.countryNames.zhHant}, ${item.countryNames.zhHans},
+                ${item.countryNames.en},
                 ${item.title.zhHant}, ${item.title.zhHans}, ${item.title.en},
                 ${item.description.zhHant}, ${item.description.zhHans}, ${item.description.en},
                 ${item.status}, ${item.sortOrder}, ${item.version}, ${item.createdAt},
@@ -216,9 +249,24 @@ async function ensurePostgresSchema() {
           ON CONFLICT (key) DO NOTHING
         `;
       }
+
+      await sql`
+        UPDATE impact_milestones
+        SET
+          countries = 4,
+          country_names_zh_hant = '臺灣 · 中國 · 美國 · 加拿大',
+          country_names_zh_hans = '台湾 · 中国 · 美国 · 加拿大',
+          country_names_en = 'Taiwan · China · United States · Canada'
+        WHERE kind = 'metrics' AND status = 'published' AND countries = 0
+      `;
+      await sql`
+        CREATE UNIQUE INDEX IF NOT EXISTS impact_milestones_unique_published_metrics_period
+        ON impact_milestones (period)
+        WHERE kind = 'metrics' AND status = 'published'
+      `;
     })();
   }
-  await globalForImpact.ihearImpactSchemaV3Ready;
+  await globalForImpact.ihearImpactSchemaV4Ready;
 }
 
 async function readFileStore(): Promise<ImpactFileStore> {
@@ -229,6 +277,8 @@ async function readFileStore(): Promise<ImpactFileStore> {
       ? parsed.milestones.map((item) => ({
           ...item,
           kind: item.kind || "metrics",
+          countries: Number(item.countries || 0),
+          countryNames: item.countryNames || { zhHant: "", zhHans: "", en: "" },
           title: item.title || { zhHant: "", zhHans: "", en: "" },
         }))
       : cloneSeed();
@@ -262,6 +312,33 @@ function assertPersistenceAvailable() {
   if (!databaseUrl && isHostedProduction) throw new ImpactConfigurationError();
 }
 
+function isDuplicatePublishedMetricsPeriod(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const postgresError = error as { code?: string; constraint_name?: string };
+  return (
+    postgresError.code === "23505" &&
+    postgresError.constraint_name === "impact_milestones_unique_published_metrics_period"
+  );
+}
+
+function hasPublishedMetricsForPeriod(
+  milestones: ImpactMilestone[],
+  input: ImpactMilestoneInput,
+  excludedId?: string,
+) {
+  return (
+    input.kind === "metrics" &&
+    input.status === "published" &&
+    milestones.some(
+      (item) =>
+        item.id !== excludedId &&
+        item.kind === "metrics" &&
+        item.status === "published" &&
+        item.period === input.period,
+    )
+  );
+}
+
 async function listPublishedUncached() {
   assertPersistenceAvailable();
   const sql = sqlClient();
@@ -288,6 +365,37 @@ const listPublishedCached = unstable_cache(
 
 export async function listPublishedImpactMilestones() {
   return listPublishedCached();
+}
+
+async function currentSiteMetricsUncached() {
+  assertPersistenceAvailable();
+  const sql = sqlClient();
+  if (sql) {
+    await ensurePostgresSchema();
+    const rows = await sql<ImpactRow[]>`
+      SELECT * FROM impact_milestones
+      WHERE kind = 'metrics' AND status = 'published'
+      ORDER BY period DESC
+      LIMIT 1
+    `;
+    return rows[0] ? fromRow(rows[0]) : null;
+  }
+  const store = await readFileStore();
+  return (
+    store.milestones
+      .filter((item) => item.kind === "metrics" && item.status === "published")
+      .sort((left, right) => right.period.localeCompare(left.period))[0] || null
+  );
+}
+
+const currentSiteMetricsCached = unstable_cache(
+  currentSiteMetricsUncached,
+  ["current-site-metrics-v1"],
+  { tags: [IMPACT_CACHE_TAG], revalidate: 86_400 },
+);
+
+export async function getCurrentSiteMetrics() {
+  return currentSiteMetricsCached();
 }
 
 export async function listAllImpactMilestones() {
@@ -319,13 +427,16 @@ export async function createImpactMilestone(input: ImpactMilestoneInput, email: 
       const rows = await sql<ImpactRow[]>`
         INSERT INTO impact_milestones (
           id, kind, period, volunteers, volunteers_plus, students, students_plus,
-          sessions, sessions_plus, title_zh_hant, title_zh_hans, title_en,
+          sessions, sessions_plus, countries, country_names_zh_hant,
+          country_names_zh_hans, country_names_en, title_zh_hant, title_zh_hans, title_en,
           description_zh_hant, description_zh_hans, description_en,
           status, sort_order, version, created_at, updated_at,
           created_by, updated_by, archived_at
         ) VALUES (
           ${id}, ${input.kind}, ${input.period}, ${input.volunteers}, ${input.volunteersPlus},
           ${input.students}, ${input.studentsPlus}, ${input.sessions}, ${input.sessionsPlus},
+          ${input.countries}, ${input.countryNames.zhHant}, ${input.countryNames.zhHans},
+          ${input.countryNames.en},
           ${input.title.zhHant}, ${input.title.zhHans}, ${input.title.en},
           ${input.description.zhHant}, ${input.description.zhHans}, ${input.description.en},
           ${input.status}, ${input.sortOrder}, 1, ${now}, ${now}, ${email}, ${email},
@@ -334,12 +445,16 @@ export async function createImpactMilestone(input: ImpactMilestoneInput, email: 
       `;
       return fromRow(rows[0]);
     } catch (error) {
+      if (isDuplicatePublishedMetricsPeriod(error)) throw new ImpactDuplicatePeriodError();
       throw error;
     }
   }
 
   return withFileMutation(async () => {
     const store = await readFileStore();
+    if (hasPublishedMetricsForPeriod(store.milestones, input)) {
+      throw new ImpactDuplicatePeriodError();
+    }
     const milestone: ImpactMilestone = {
       id,
       ...input,
@@ -379,6 +494,10 @@ export async function updateImpactMilestone(
           students_plus = ${input.studentsPlus},
           sessions = ${input.sessions},
           sessions_plus = ${input.sessionsPlus},
+          countries = ${input.countries},
+          country_names_zh_hant = ${input.countryNames.zhHant},
+          country_names_zh_hans = ${input.countryNames.zhHans},
+          country_names_en = ${input.countryNames.en},
           title_zh_hant = ${input.title.zhHant},
           title_zh_hans = ${input.title.zhHans},
           title_en = ${input.title.en},
@@ -399,6 +518,7 @@ export async function updateImpactMilestone(
       if (!existing[0]) throw new ImpactNotFoundError();
       throw new ImpactConflictError();
     } catch (error) {
+      if (isDuplicatePublishedMetricsPeriod(error)) throw new ImpactDuplicatePeriodError();
       throw error;
     }
   }
@@ -408,6 +528,9 @@ export async function updateImpactMilestone(
     const index = store.milestones.findIndex((item) => item.id === id);
     if (index < 0) throw new ImpactNotFoundError();
     if (store.milestones[index].version !== input.version) throw new ImpactConflictError();
+    if (hasPublishedMetricsForPeriod(store.milestones, input, id)) {
+      throw new ImpactDuplicatePeriodError();
+    }
     const updated: ImpactMilestone = {
       ...store.milestones[index],
       ...input,

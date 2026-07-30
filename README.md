@@ -221,12 +221,18 @@ Public visitors read published records from:
 
 ```text
 GET /api/impact-milestones
+GET /api/site-metrics
 ```
+
+`/api/site-metrics` returns the latest-period published metrics record and powers the
+homepage volunteer, student, session, country, and as-of values. Future-dated records
+become current as soon as they are published. If no published metrics exist, it returns
+`{ "metrics": null }` and the homepage keeps its static fallback.
 
 Published records use a 24-hour tagged server data cache plus a one-second Vercel
 edge cache. Every successful create, update, or delete immediately expires the data
-tag and revalidates `/about` and the public milestone API. Draft reads remain private
-and use `no-store`.
+tag and revalidates `/`, `/about`, and both public milestone APIs. Draft reads remain
+private and use `no-store`.
 
 Allowed admins can use the management controls on `/about` to edit every timeline
 date, title, description, and metric, and to add, save as draft, publish, or permanently
@@ -236,6 +242,8 @@ with completion indicators and a live preview. The editor currently uses manual 
 mode: admins enter or paste each language themselves, or copy another language into the
 active tab as a starting point before revising it. Drafts may contain incomplete languages,
 while publishing requires all three descriptions and, for journey events, all three titles.
+Published impact-metrics records also require a country count and country names in all
+three languages. Only one metrics record may be published for a given month.
 Admin APIs use:
 
 ```text
@@ -249,9 +257,8 @@ the current browser editor does not call it. Manual multilingual editing therefo
 depend on an OpenAI key or any external translation service.
 
 Set either `POSTGRES_URL` or `DATABASE_URL` in hosted production. The schema is in
-`db/migrations/001_impact_milestones.sql` with the journey upgrade in
-`db/migrations/002_journey_timeline_items.sql` and the permanent-delete seed marker in
-`db/migrations/003_permanent_delete_seed_marker.sql`; the application also creates the table
+`db/migrations/`; migration 006 adds the single-source homepage country fields and
+published-period uniqueness. The application also creates the table
 and seeds the nine initial timeline records only on first initialization. This prevents
 permanently deleted seed records from returning after a restart. In local development,
 when no Postgres URL is present, edits are written to the ignored

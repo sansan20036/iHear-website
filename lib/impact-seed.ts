@@ -19,6 +19,8 @@ function journeyEvent(
     studentsPlus: false,
     sessions: 0,
     sessionsPlus: false,
+    countries: 0,
+    countryNames: { zhHant: "", zhHans: "", en: "" },
     title,
     description,
     status: "published",
@@ -147,6 +149,12 @@ export const IMPACT_MILESTONE_SEED: ImpactMilestone[] = [
     studentsPlus: true,
     sessions: 639,
     sessionsPlus: false,
+    countries: 4,
+    countryNames: {
+      zhHant: "臺灣 · 中國 · 美國 · 加拿大",
+      zhHans: "台湾 · 中国 · 美国 · 加拿大",
+      en: "Taiwan · China · United States · Canada",
+    },
     title: { zhHant: "", zhHans: "", en: "" },
     description: {
       zhHant: "達成來自 6+ 所高中的 36 位活躍志工，支持 4 個國家（臺灣、中國、美國、加拿大）超過 40 位學生，共完成 639 堂輔導課程。",
@@ -171,6 +179,12 @@ export const IMPACT_MILESTONE_SEED: ImpactMilestone[] = [
     studentsPlus: true,
     sessions: 1200,
     sessionsPlus: true,
+    countries: 4,
+    countryNames: {
+      zhHant: "臺灣 · 中國 · 美國 · 加拿大",
+      zhHans: "台湾 · 中国 · 美国 · 加拿大",
+      en: "Taiwan · China · United States · Canada",
+    },
     title: { zhHant: "", zhHans: "", en: "" },
     description: {
       zhHant: "匯聚來自 6+ 所高中的 35+ 位活躍志工，支持超過 50 位學生，累計完成 1200+ 堂一對一英語溝通課程。",

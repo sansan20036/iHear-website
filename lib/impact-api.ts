@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import {
   ImpactConfigurationError,
   ImpactConflictError,
+  ImpactDuplicatePeriodError,
   ImpactNotFoundError,
   IMPACT_CACHE_TAG,
 } from "./impact-store";
@@ -11,8 +12,10 @@ import { ImpactValidationError } from "./impact-types";
 
 export function invalidateImpactMilestones() {
   revalidateTag(IMPACT_CACHE_TAG, { expire: 0 });
+  revalidatePath("/");
   revalidatePath("/about");
   revalidatePath("/api/impact-milestones");
+  revalidatePath("/api/site-metrics");
 }
 
 export function impactApiError(error: unknown) {
@@ -27,6 +30,15 @@ export function impactApiError(error: unknown) {
   }
   if (error instanceof ImpactConflictError) {
     return NextResponse.json({ error: error.message }, { status: 409 });
+  }
+  if (error instanceof ImpactDuplicatePeriodError) {
+    return NextResponse.json(
+      {
+        error: error.message,
+        issues: error.issues,
+      },
+      { status: 409 },
+    );
   }
   if (error instanceof ImpactConfigurationError) {
     return NextResponse.json(

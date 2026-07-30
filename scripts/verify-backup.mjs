@@ -59,6 +59,23 @@ async function currentCounts(client) {
   };
 }
 
+function countryFields(row) {
+  const legacyPublishedMetrics =
+    row.kind === "metrics" && row.status === "published" && row.countries == null;
+  return {
+    countries: legacyPublishedMetrics ? 4 : Number(row.countries || 0),
+    country_names_zh_hant:
+      row.country_names_zh_hant ??
+      (legacyPublishedMetrics ? "臺灣 · 中國 · 美國 · 加拿大" : ""),
+    country_names_zh_hans:
+      row.country_names_zh_hans ??
+      (legacyPublishedMetrics ? "台湾 · 中国 · 美国 · 加拿大" : ""),
+    country_names_en:
+      row.country_names_en ??
+      (legacyPublishedMetrics ? "Taiwan · China · United States · Canada" : ""),
+  };
+}
+
 try {
   const backupPath = await resolveBackupPath();
   const backup = JSON.parse(await readFile(backupPath, "utf8"));
@@ -109,16 +126,20 @@ try {
       }
 
       for (const row of impactMilestones) {
+        const countries = countryFields(row);
         await transaction`
           INSERT INTO impact_milestones (
             id, kind, period, volunteers, volunteers_plus, students, students_plus,
-            sessions, sessions_plus, title_zh_hant, title_zh_hans, title_en,
+            sessions, sessions_plus, countries, country_names_zh_hant,
+            country_names_zh_hans, country_names_en, title_zh_hant, title_zh_hans, title_en,
             description_zh_hant, description_zh_hans, description_en,
             status, sort_order, version, created_at, updated_at,
             created_by, updated_by, archived_at
           ) VALUES (
             ${row.id}, ${row.kind}, ${row.period}, ${row.volunteers}, ${row.volunteers_plus},
             ${row.students}, ${row.students_plus}, ${row.sessions}, ${row.sessions_plus},
+            ${countries.countries}, ${countries.country_names_zh_hant},
+            ${countries.country_names_zh_hans}, ${countries.country_names_en},
             ${row.title_zh_hant}, ${row.title_zh_hans}, ${row.title_en},
             ${row.description_zh_hant}, ${row.description_zh_hans}, ${row.description_en},
             ${row.status}, ${row.sort_order}, ${row.version}, ${row.created_at}, ${row.updated_at},
@@ -133,6 +154,10 @@ try {
             students_plus = EXCLUDED.students_plus,
             sessions = EXCLUDED.sessions,
             sessions_plus = EXCLUDED.sessions_plus,
+            countries = EXCLUDED.countries,
+            country_names_zh_hant = EXCLUDED.country_names_zh_hant,
+            country_names_zh_hans = EXCLUDED.country_names_zh_hans,
+            country_names_en = EXCLUDED.country_names_en,
             title_zh_hant = EXCLUDED.title_zh_hant,
             title_zh_hans = EXCLUDED.title_zh_hans,
             title_en = EXCLUDED.title_en,
@@ -148,6 +173,33 @@ try {
             updated_by = EXCLUDED.updated_by,
             archived_at = EXCLUDED.archived_at
         `;
+      }
+
+      const restoredImpact = impactMilestones.length
+        ? await transaction`
+            SELECT
+              id,
+              countries,
+              country_names_zh_hant,
+              country_names_zh_hans,
+              country_names_en
+            FROM impact_milestones
+            WHERE id IN ${transaction(impactMilestones.map((row) => row.id))}
+          `
+        : [];
+      const restoredImpactById = new Map(restoredImpact.map((row) => [row.id, row]));
+      for (const row of impactMilestones) {
+        const expected = countryFields(row);
+        const restored = restoredImpactById.get(row.id);
+        if (
+          !restored ||
+          Number(restored.countries) !== expected.countries ||
+          restored.country_names_zh_hant !== expected.country_names_zh_hant ||
+          restored.country_names_zh_hans !== expected.country_names_zh_hans ||
+          restored.country_names_en !== expected.country_names_en
+        ) {
+          throw new Error(`Country fields did not round-trip for impact milestone ${row.id}.`);
+        }
       }
 
       for (const row of contentOverrides) {

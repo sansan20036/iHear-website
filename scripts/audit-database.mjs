@@ -34,6 +34,8 @@ const expectedConstraints = [
   "content_overrides_pkey",
   "impact_milestones_actor_length",
   "impact_milestones_archive_state",
+  "impact_milestones_countries_range",
+  "impact_milestones_country_names_length",
   "impact_milestones_description_length",
   "impact_milestones_event_metrics_shape",
   "impact_milestones_id_length",
@@ -50,6 +52,10 @@ const expectedConstraints = [
   "impact_milestones_title_length",
   "impact_milestones_version_positive",
   "impact_milestones_volunteers_nonnegative",
+];
+
+const expectedIndexes = [
+  "impact_milestones_unique_published_metrics_period",
 ];
 
 try {
@@ -80,6 +86,20 @@ try {
     WHERE namespace.nspname = 'public'
       AND relation.relname IN ('impact_milestones', 'content_overrides')
     ORDER BY relation.relname, con.conname
+  `;
+
+  const indexes = await sql`
+    SELECT
+      relation.relname AS table_name,
+      index_relation.relname AS index_name,
+      pg_get_indexdef(index_relation.oid) AS definition
+    FROM pg_index AS idx
+    JOIN pg_class AS relation ON relation.oid = idx.indrelid
+    JOIN pg_class AS index_relation ON index_relation.oid = idx.indexrelid
+    JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+    WHERE namespace.nspname = 'public'
+      AND relation.relname = 'impact_milestones'
+    ORDER BY index_relation.relname
   `;
 
   const policies = await sql`
@@ -119,12 +139,17 @@ try {
       COUNT(*) FILTER (WHERE sort_order < 0)::INTEGER AS invalid_sort_order,
       COUNT(*) FILTER (
         WHERE volunteers < 0 OR students < 0 OR sessions < 0
+          OR countries < 0 OR countries > 250
       )::INTEGER AS invalid_metrics,
       COUNT(*) FILTER (
         WHERE kind = 'event' AND (
           volunteers <> 0 OR volunteers_plus OR
           students <> 0 OR students_plus OR
-          sessions <> 0 OR sessions_plus
+          sessions <> 0 OR sessions_plus OR
+          countries <> 0 OR
+          country_names_zh_hant <> '' OR
+          country_names_zh_hans <> '' OR
+          country_names_en <> ''
         )
       )::INTEGER AS invalid_event_metrics,
       COUNT(*) FILTER (
@@ -146,6 +171,11 @@ try {
           OR char_length(description_en) > 2000
       )::INTEGER AS invalid_description_length,
       COUNT(*) FILTER (
+        WHERE char_length(country_names_zh_hant) > 500
+          OR char_length(country_names_zh_hans) > 500
+          OR char_length(country_names_en) > 500
+      )::INTEGER AS invalid_country_names_length,
+      COUNT(*) FILTER (
         WHERE char_length(created_by) NOT BETWEEN 1 AND 320
           OR char_length(updated_by) NOT BETWEEN 1 AND 320
       )::INTEGER AS invalid_actor_length,
@@ -163,6 +193,14 @@ try {
           OR (
             kind = 'event' AND (
               title_zh_hant = '' OR title_zh_hans = '' OR title_en = ''
+            )
+          )
+          OR (
+            kind = 'metrics' AND (
+              countries NOT BETWEEN 1 AND 250
+              OR country_names_zh_hant = ''
+              OR country_names_zh_hans = ''
+              OR country_names_en = ''
             )
           )
         )
@@ -237,10 +275,12 @@ try {
     .filter((table) => table.table_schema === "public")
     .map((table) => table.table_name);
   const constraintNames = constraints.map((constraint) => constraint.constraint_name);
+  const indexNames = indexes.map((index) => index.index_name);
   const missingTables = expectedTables.filter((table) => !tableNames.includes(table));
   const missingConstraints = expectedConstraints.filter(
     (constraint) => !constraintNames.includes(constraint),
   );
+  const missingIndexes = expectedIndexes.filter((index) => !indexNames.includes(index));
   const invalidCounts = [...Object.values(invalid), ...Object.values(invalidContent)].map(Number);
   const disabledRls = rowLevelSecurity
     .filter((table) => !table.enabled)
@@ -248,6 +288,7 @@ try {
   const healthy =
     missingTables.length === 0 &&
     missingConstraints.length === 0 &&
+    missingIndexes.length === 0 &&
     invalidCounts.every((count) => count === 0) &&
     migrationIssues.length === 0 &&
     disabledRls.length === 0;
@@ -259,6 +300,7 @@ try {
     rowCounts: counts,
     rowLevelSecurity,
     constraints,
+    indexes,
     policies,
     trackedMigrations,
     invalidData: invalid,
@@ -266,6 +308,7 @@ try {
     issues: {
       missingTables,
       missingConstraints,
+      missingIndexes,
       disabledRls,
       migrationIssues,
     },
