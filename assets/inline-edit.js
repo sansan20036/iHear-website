@@ -137,10 +137,14 @@
 
   function isEditableElement(element) {
     if (element.closest("[data-no-inline-edit], .auth-widget, .auth-mobile-item")) return false;
-    if (element.querySelector("input,textarea,select,button,script,style,svg")) return false;
-    if (element.childElementCount > 0) return false;
 
-    const text = getText(element);
+    const clone = element.cloneNode(true);
+    clone.querySelectorAll(".ihear-inline-edit-button,.ihear-inline-form").forEach((node) => node.remove());
+
+    if (clone.querySelector("input,textarea,select,button,script,style,svg")) return false;
+    if (clone.childElementCount > 0) return false;
+
+    const text = clone.textContent.trim();
     return text.length >= 2 && text.length <= 5000;
   }
 

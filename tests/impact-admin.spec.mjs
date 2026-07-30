@@ -140,6 +140,50 @@ test("environment-defined admin receives inline editing controls", async ({ page
   expect(requestedUrls.some((url) => url.includes("/cdn-cgi/rum"))).toBe(false);
 });
 
+test("content overrides still apply when admin controls render before content finishes loading", async ({ page }) => {
+  await page.route("**/api/auth/session", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      user: {
+        name: "Environment Admin",
+        email: "configured-only-in-env@example.com",
+        isAdmin: true,
+      },
+    }),
+  }));
+
+  await page.route("**/api/content/get", async (route) => {
+    await new Promise((resolve) => {
+      setTimeout(resolve, 150);
+    });
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        version: 1,
+        updatedAt: "2026-07-31T00:00:00.000Z",
+        pages: {
+          "/about": {
+            "section:nth-of-type(1)>div:nth-of-type(1)>div:nth-of-type(1)>h2:nth-of-type(1)": "Production override loaded",
+          },
+        },
+      }),
+    });
+  });
+
+  await page.route("**/api/impact-milestones**", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ milestones: [milestone], admin: false }),
+  }));
+
+  await page.goto("/about");
+
+  await expect(page.getByRole("heading", { name: /Production override loaded/ })).toBeVisible();
+  await expect(page.locator(".ihear-inline-edit-button").first()).toBeVisible();
+});
+
 test("Google sign-in clears stale OAuth cookies before creating a new PKCE flow", async ({ page }) => {
   const authRequests = [];
 
