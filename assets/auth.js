@@ -275,6 +275,7 @@
     button.disabled = true;
 
     try {
+      await clearStaleAuthCookies();
       const csrfToken = await getCsrfToken();
       const body = new URLSearchParams({
         csrfToken,

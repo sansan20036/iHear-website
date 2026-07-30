@@ -21,7 +21,7 @@ const htmlFiles = [
 ];
 
 const passthroughFiles = ["robots.txt", "sitemap.xml", "CNAME"];
-const clientAssetVersion = "20260731-public-launch";
+const clientAssetVersion = "20260731-oauth-cookie-reset";
 
 async function copyDir(source, target) {
   await mkdir(target, { recursive: true });

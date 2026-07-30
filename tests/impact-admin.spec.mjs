@@ -140,6 +140,63 @@ test("environment-defined admin receives inline editing controls", async ({ page
   expect(requestedUrls.some((url) => url.includes("/cdn-cgi/rum"))).toBe(false);
 });
 
+test("Google sign-in clears stale OAuth cookies before creating a new PKCE flow", async ({ page }) => {
+  const authRequests = [];
+
+  await page.route("**/api/auth/session", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({}),
+  }));
+
+  await page.route("**/api/content/get", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ version: 1, updatedAt: "", pages: {} }),
+  }));
+
+  await page.route("**/api/impact-milestones**", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ milestones: [milestone], admin: false }),
+  }));
+
+  await page.route("**/api/auth/clear-stale", (route) => {
+    authRequests.push("clear-stale");
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true }),
+    });
+  });
+
+  await page.route("**/api/auth/csrf", (route) => {
+    authRequests.push("csrf");
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ csrfToken: "fresh-csrf-token" }),
+    });
+  });
+
+  await page.route("**/api/auth/signin/google", (route) => {
+    authRequests.push("signin");
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ url: "http://127.0.0.1:3210/about?oauth=started" }),
+    });
+  });
+
+  await page.goto("/about");
+  const signInButton = page.locator("[data-auth-desktop] [data-auth-signin]");
+  await expect(signInButton).toBeVisible();
+  await signInButton.click();
+  await expect(page).toHaveURL("http://127.0.0.1:3210/about?oauth=started");
+
+  expect(authRequests).toEqual(["clear-stale", "csrf", "signin"]);
+});
+
 test("manual multilingual editor clears stale copy status and publishes once complete", async ({ page }) => {
   const mocked = await mockApplication(page);
   await page.goto("/about");
