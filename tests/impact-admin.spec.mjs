@@ -7,6 +7,7 @@ const publicDir = path.resolve("public");
 const contentTypes = {
   ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",
+  ".ico": "image/x-icon",
   ".js": "text/javascript; charset=utf-8",
   ".png": "image/png",
   ".svg": "image/svg+xml",
@@ -138,6 +139,18 @@ test("environment-defined admin receives inline editing controls", async ({ page
   await expect(page.locator(".ihear-inline-edit-button").first()).toBeVisible();
   await expect(page.locator('script[src*="cloudflareinsights.com"]')).toHaveCount(0);
   expect(requestedUrls.some((url) => url.includes("/cdn-cgi/rum"))).toBe(false);
+});
+
+test("favicon is linked and served from the generated public directory", async ({ page }) => {
+  await mockApplication(page);
+  await page.goto("/about");
+
+  await expect(page.locator('link[rel="icon"][href="/favicon.ico"]')).toHaveCount(1);
+
+  const response = await page.request.get("/favicon.ico");
+  expect(response.status()).toBe(200);
+  expect(response.headers()["content-type"]).toContain("image/x-icon");
+  expect((await response.body()).byteLength).toBeGreaterThan(0);
 });
 
 test("content overrides still apply when admin controls render before content finishes loading", async ({ page }) => {

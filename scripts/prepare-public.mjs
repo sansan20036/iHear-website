@@ -20,7 +20,7 @@ const htmlFiles = [
   "contact.html",
 ];
 
-const passthroughFiles = ["robots.txt", "sitemap.xml", "CNAME"];
+const passthroughFiles = ["robots.txt", "sitemap.xml", "CNAME", "favicon.ico"];
 const clientAssetVersion = "20260731-inline-content-race-fix";
 
 async function copyDir(source, target) {
@@ -52,7 +52,12 @@ function withClientScripts(html) {
     "\n"
   );
 
-  return withoutExisting.replace(
+  const withFavicon = withoutExisting.replace(
+    "</head>",
+    '  <link rel="icon" href="/favicon.ico" sizes="any">\n</head>'
+  );
+
+  return withFavicon.replace(
     "</body>",
     [
       `  <script src="/assets/auth.js?v=${clientAssetVersion}" defer></script>`,
