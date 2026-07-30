@@ -28,7 +28,6 @@ vi.mock("../lib/impact-store", () => {
 });
 
 vi.mock("../lib/content-store", () => ({
-  CONTENT_CACHE_TAG: "inline-content-v1",
   readContentStore: vi.fn(),
   updateContentItem: vi.fn(),
 }));
@@ -255,7 +254,7 @@ describe("authorized mutations", () => {
       value: "更新內容",
       updatedBy: adminEmail,
     });
-    expect(revalidateTag).toHaveBeenCalledWith("inline-content-v1", { expire: 0 });
+    expect(revalidateTag).not.toHaveBeenCalled();
     expect(revalidatePath).toHaveBeenCalledWith("/about");
     expect(revalidatePath).toHaveBeenCalledWith("/api/content/get");
   });
@@ -270,5 +269,15 @@ describe("authorized mutations", () => {
 
     expect(response.status).toBe(400);
     expect(impactStore.createImpactMilestone).not.toHaveBeenCalled();
+  });
+});
+
+describe("migration checksums", () => {
+  test("uses the same checksum for LF and Windows CRLF files", async () => {
+    const { migrationChecksum } = await import("../scripts/migration-checksum.mjs");
+
+    expect(migrationChecksum("SELECT 1;\nSELECT 2;\n")).toBe(
+      migrationChecksum("SELECT 1;\r\nSELECT 2;\r\n"),
+    );
   });
 });

@@ -1,10 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { unstable_cache } from "next/cache";
 import postgres from "postgres";
-
-export const CONTENT_CACHE_TAG = "inline-content-v1";
 
 export type ContentPages = Record<string, Record<string, string>>;
 
@@ -168,14 +165,11 @@ async function readContentStoreUncached() {
   return readFileStore();
 }
 
-const readContentStoreCached = unstable_cache(
-  readContentStoreUncached,
-  [CONTENT_CACHE_TAG],
-  { tags: [CONTENT_CACHE_TAG], revalidate: 86_400 },
-);
-
 export async function readContentStore() {
-  return readContentStoreCached();
+  // The public API already has a one-second Vercel edge cache. Keeping a
+  // second, long-lived Next data cache here can return stale content from a
+  // different function instance after an administrator saves an override.
+  return readContentStoreUncached();
 }
 
 export async function updateContentItem(params: {

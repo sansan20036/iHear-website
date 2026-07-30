@@ -1,9 +1,9 @@
-import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
 import nextEnv from "@next/env";
 import postgres from "postgres";
+import { migrationChecksum } from "./migration-checksum.mjs";
 
 const { loadEnvConfig } = nextEnv;
 loadEnvConfig(process.cwd());
@@ -28,10 +28,6 @@ function migrationVersion(fileName) {
   return fileName.split("_", 1)[0];
 }
 
-function checksum(contents) {
-  return createHash("sha256").update(contents).digest("hex");
-}
-
 try {
   await sql`
     CREATE TABLE IF NOT EXISTS public.schema_migrations (
@@ -53,7 +49,7 @@ try {
   for (const fileName of fileNames) {
     const version = migrationVersion(fileName);
     const contents = await readFile(path.join(migrationsDirectory, fileName), "utf8");
-    const fileChecksum = checksum(contents);
+    const fileChecksum = migrationChecksum(contents);
     const [existing] = await sql`
       SELECT version, name, checksum
       FROM public.schema_migrations

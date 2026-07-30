@@ -1,9 +1,9 @@
-import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
 import nextEnv from "@next/env";
 import postgres from "postgres";
+import { migrationChecksum } from "./migration-checksum.mjs";
 
 const { loadEnvConfig } = nextEnv;
 loadEnvConfig(process.cwd());
@@ -51,10 +51,6 @@ const expectedConstraints = [
   "impact_milestones_version_positive",
   "impact_milestones_volunteers_nonnegative",
 ];
-
-function fileChecksum(contents) {
-  return createHash("sha256").update(contents).digest("hex");
-}
 
 try {
   const tables = await sql`
@@ -221,7 +217,7 @@ try {
       path.join(process.cwd(), "db", "migrations", fileName),
       "utf8",
     );
-    const expectedChecksum = fileChecksum(contents);
+    const expectedChecksum = migrationChecksum(contents);
     const tracked = trackedMigrations.find((migration) => migration.version === version);
 
     if (!tracked) {
