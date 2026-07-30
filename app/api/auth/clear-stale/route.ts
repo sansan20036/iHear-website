@@ -25,18 +25,29 @@ const AUTH_COOKIE_NAMES = [
 
 const COOKIE_PATHS = ["/", "/api/auth"];
 
+function expiredCookie(name: string, path: string) {
+  const attributes = [
+    `${name}=`,
+    `Path=${path}`,
+    "Expires=Thu, 01 Jan 1970 00:00:00 GMT",
+    "Max-Age=0",
+    "SameSite=Lax",
+  ];
+  if (name.startsWith("__Secure-") || name.startsWith("__Host-")) {
+    attributes.push("Secure");
+  }
+  return attributes.join("; ");
+}
+
 export async function POST() {
   const response = NextResponse.json({ ok: true });
 
   for (const name of AUTH_COOKIE_NAMES) {
-    for (const path of COOKIE_PATHS) {
-      response.cookies.set(name, "", {
-        path,
-        maxAge: 0,
-        expires: new Date(0),
-        secure: name.startsWith("__Secure-") || name.startsWith("__Host-"),
-        sameSite: "lax",
-      });
+    // __Host- cookies are only valid with Path=/; all other legacy and current
+    // Auth.js cookies may exist at either path and must be expired separately.
+    const paths = name.startsWith("__Host-") ? ["/"] : COOKIE_PATHS;
+    for (const path of paths) {
+      response.headers.append("Set-Cookie", expiredCookie(name, path));
     }
   }
 

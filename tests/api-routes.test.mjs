@@ -35,6 +35,7 @@ vi.mock("../lib/content-store", () => ({
 import { revalidatePath, revalidateTag } from "next/cache";
 
 import { auth } from "../auth.js";
+import { POST as clearStaleAuth } from "../app/api/auth/clear-stale/route";
 import { GET as getContent } from "../app/api/content/get/route";
 import { POST as updateContent } from "../app/api/content/update/route";
 import {
@@ -190,6 +191,26 @@ describe("authorization", () => {
     expect(impactStore.updateImpactMilestone).not.toHaveBeenCalled();
     expect(impactStore.deleteImpactMilestone).not.toHaveBeenCalled();
     expect(contentStore.updateContentItem).not.toHaveBeenCalled();
+  });
+});
+
+describe("OAuth cookie cleanup", () => {
+  test("expires stale Auth.js cookies at both supported paths", async () => {
+    const response = await clearStaleAuth();
+    const cookies = response.headers.getSetCookie();
+
+    expect(response.status).toBe(200);
+    expect(cookies).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("authjs.state=; Path=/;"),
+        expect.stringContaining("authjs.state=; Path=/api/auth;"),
+        expect.stringContaining("__Secure-authjs.pkce.code_verifier=; Path=/;"),
+        expect.stringContaining("__Secure-authjs.pkce.code_verifier=; Path=/api/auth;"),
+      ]),
+    );
+    expect(cookies.filter((cookie) => cookie.startsWith("__Host-authjs.csrf-token="))).toHaveLength(1);
+    expect(cookies.find((cookie) => cookie.startsWith("__Host-authjs.csrf-token="))).toContain("Path=/;");
+    expect(cookies.every((cookie) => cookie.includes("Max-Age=0"))).toBe(true);
   });
 });
 
