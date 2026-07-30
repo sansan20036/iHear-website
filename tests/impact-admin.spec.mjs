@@ -82,10 +82,6 @@ async function mockApplication(page) {
   const requests = [];
   let publishedPayload = null;
 
-  await page.addInitScript(() => {
-    localStorage.setItem("ihear_passcode_verified", "true");
-  });
-
   await page.route("**/api/auth/session", (route) => route.fulfill({
     status: 200,
     contentType: "application/json",

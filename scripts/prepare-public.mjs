@@ -21,7 +21,7 @@ const htmlFiles = [
 ];
 
 const passthroughFiles = ["robots.txt", "sitemap.xml", "CNAME"];
-const clientAssetVersion = "20260731-main-merge";
+const clientAssetVersion = "20260731-public-launch";
 
 async function copyDir(source, target) {
   await mkdir(target, { recursive: true });
@@ -48,14 +48,13 @@ function withClientScripts(html) {
     "\n"
   );
   const withoutExisting = withoutCloudflareBeacon.replace(
-    /\s*<script\s+src=["']\/?assets\/(?:passcode|auth|inline-edit|impact-milestones)\.js(?:\?[^"']*)?["']\s+defer><\/script>\s*/g,
+    /\s*<script\s+src=["']\/?assets\/(?:auth|inline-edit|impact-milestones)\.js(?:\?[^"']*)?["']\s+defer><\/script>\s*/g,
     "\n"
   );
 
   return withoutExisting.replace(
     "</body>",
     [
-      `  <script src="/assets/passcode.js?v=${clientAssetVersion}" defer></script>`,
       `  <script src="/assets/auth.js?v=${clientAssetVersion}" defer></script>`,
       `  <script src="/assets/impact-milestones.js?v=${clientAssetVersion}" defer></script>`,
       `  <script src="/assets/inline-edit.js?v=${clientAssetVersion}" defer></script>`,
