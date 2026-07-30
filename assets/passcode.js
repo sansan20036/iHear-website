@@ -18,25 +18,28 @@
       left: 0;
       width: 100%;
       height: 100%;
-      background: #ffffff;
+      background: linear-gradient(135deg, #f5f7fa 0%, #ffffff 100%);
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
       z-index: 9999999;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      overflow-y: auto;
+      padding: 20px;
     `;
 
     const content = document.createElement("div");
     content.style.cssText = `
-      max-width: 400px;
-      width: 90%;
+      max-width: 450px;
+      width: 100%;
       text-align: center;
       padding: 40px 30px;
       border-radius: 24px;
       box-shadow: 0 20px 50px rgba(0,0,0,0.1);
       border: 1px solid #f0f0f0;
       background: #ffffff;
+      margin: auto;
     `;
 
     content.innerHTML = `
@@ -62,6 +65,7 @@
           outline: none;
           transition: border-color 0.2s;
           color: #263974;
+          box-sizing: border-box;
         ">
       </div>
       <button id="passcode-submit" style="
@@ -75,10 +79,23 @@
         cursor: pointer;
         font-weight: 600;
         transition: opacity 0.2s, transform 0.1s;
+        margin-bottom: 20px;
       ">Enter Site</button>
       <p id="passcode-error" style="color: #ef4444; margin-top: 16px; font-size: 14px; display: none; font-weight: 500;">
         Incorrect passcode. Please try again.
       </p>
+      
+      <div style="
+        margin-top: 28px;
+        padding-top: 20px;
+        border-top: 1px solid #e5e7eb;
+        text-align: left;
+      ">
+        <p style="margin: 0 0 12px 0; color: #263974; font-weight: 600; font-size: 14px;">📢 Important Notice</p>
+        <p style="margin: 0; color: #666; font-size: 13px; line-height: 1.6;">
+          The iHear Program has moved to a new domain. Please visit us at <strong style="color: #263974;">ihearus.org</strong> for the latest information and updates.
+        </p>
+      </div>
     `;
 
     overlay.appendChild(content);
