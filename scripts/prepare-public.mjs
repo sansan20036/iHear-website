@@ -43,13 +43,14 @@ async function copyDir(source, target) {
 
 function withClientScripts(html) {
   const withoutExisting = html.replace(
-    /\s*<script\s+src=["']\/?assets\/(?:auth|inline-edit)\.js["']\s+defer><\/script>\s*/g,
+    /\s*<script\s+src=["']\/?assets\/(?:passcode|auth|inline-edit)\.js["']\s+defer><\/script>\s*/g,
     "\n"
   );
 
   return withoutExisting.replace(
     "</body>",
     [
+      '  <script src="/assets/passcode.js" defer></script>',
       '  <script src="/assets/auth.js" defer></script>',
       '  <script src="/assets/inline-edit.js" defer></script>',
       "</body>",
