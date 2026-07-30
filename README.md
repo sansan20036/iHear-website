@@ -273,3 +273,15 @@ Use these settings:
 Add the same Auth.js environment variables in Vercel Project Settings.
 
 Clean URLs such as `/team` are mapped by `next.config.mjs`.
+
+## Phase 2 maintenance backlog
+
+The production launch is not blocked by these items. Schedule them after the site
+has accumulated enough real usage to justify the additional operational complexity:
+
+- Add an authenticated non-admin regression test for every admin write endpoint.
+- Add application-level rate limiting for authentication and admin mutation APIs.
+- Connect uptime and server-error monitoring with an agreed alert recipient.
+- On the Supabase Free plan, create an off-site database export at least weekly and
+  run `npm run db:verify-backup` as a documented restore drill. Revisit managed daily
+  backups or point-in-time recovery if the project moves to a paid plan.
