@@ -1,0 +1,188 @@
+import type { ImpactMilestone } from "./impact-types";
+
+const seededAt = "2026-07-23T00:00:00.000Z";
+
+function journeyEvent(
+  id: string,
+  period: string,
+  sortOrder: number,
+  title: ImpactMilestone["title"],
+  description: ImpactMilestone["description"],
+): ImpactMilestone {
+  return {
+    id,
+    kind: "event",
+    period,
+    volunteers: 0,
+    volunteersPlus: false,
+    students: 0,
+    studentsPlus: false,
+    sessions: 0,
+    sessionsPlus: false,
+    title,
+    description,
+    status: "published",
+    sortOrder,
+    version: 1,
+    createdAt: seededAt,
+    updatedAt: seededAt,
+    createdBy: "system-migration",
+    updatedBy: "system-migration",
+  };
+}
+
+export const IMPACT_MILESTONE_SEED: ImpactMilestone[] = [
+  journeyEvent(
+    "journey-2024-06",
+    "2024-06",
+    202406,
+    {
+      zhHant: "試辦階段開始",
+      zhHans: "试办阶段开始",
+      en: "Pilot phase begins",
+    },
+    {
+      zhHant: "Zoe Lu 開始為兩位配戴人工耳蝸的兒童提供個別化英語溝通支持（由奇美醫學中心轉介）。",
+      zhHans: "Zoe Lu 开始为两位佩戴人工耳蜗的儿童提供个别化英语沟通支持（由奇美医学中心转介）。",
+      en: "Zoe Lu began providing individualized English communication support to two children with cochlear implants, referred through Chi-Mei Medical Center.",
+    },
+  ),
+  journeyEvent(
+    "journey-2024-11",
+    "2024-11",
+    202411,
+    {
+      zhHant: "與婦聯聽障文教基金會合作",
+      zhHans: "与妇联听障文教基金会合作",
+      en: "Partnership with Fu-Lian Foundation",
+    },
+    {
+      zhHant: "Howard Ren 加入擔任共同會長。與婦聯聽覺健康基金會的合作將服務擴展至另外 13 位學生。",
+      zhHans: "Howard Ren 加入担任共同会长。与妇联听觉健康基金会的合作将服务扩展至另外 13 位学生。",
+      en: "Howard Ren joined as Co-President. Partnership with Fu-Lian Hearing Health Foundation expanded reach to 13 additional students.",
+    },
+  ),
+  journeyEvent(
+    "journey-2024-12",
+    "2024-12",
+    202412,
+    {
+      zhHant: "成為 CAPA-MC 旗下計畫",
+      zhHans: "成为 CAPA-MC 旗下计划",
+      en: "Affiliation with CAPA-MC",
+    },
+    {
+      zhHant: "iHear 正式獲准成為 501(c)(3) 非營利組織 CAPA-MC 旗下的計畫，取得正式架構與種子資金。",
+      zhHans: "iHear 正式获准成为 501(c)(3) 非营利组织 CAPA-MC 旗下的计划，取得正式架构与种子资金。",
+      en: "iHear was officially approved as a program under CAPA-MC, a 501(c)(3) nonprofit, providing formal structure and seed funding.",
+    },
+  ),
+  journeyEvent(
+    "journey-2025-06",
+    "2025-06",
+    202506,
+    {
+      zhHant: "正式啟動會議",
+      zhHans: "正式启动会议",
+      en: "Official kick-off meeting",
+    },
+    {
+      zhHant: "正式啟動，匯聚志工導師與領導團隊，確立使命與倡議目標。",
+      zhHans: "正式启动，汇聚志愿导师与领导团队，确立使命与倡议目标。",
+      en: "Formal launch bringing together volunteer mentors and leadership to establish mission and advocacy goals.",
+    },
+  ),
+  journeyEvent(
+    "journey-2025-09",
+    "2025-09",
+    202509,
+    {
+      zhHant: "社區推廣啟動",
+      zhHans: "社区推广启动",
+      en: "Community outreach begins",
+    },
+    {
+      zhHant: "在銀髮中心舉辦第一場聽力健康講座。每月導師培訓工作坊啟動。",
+      zhHans: "在老年中心举办第一场听力健康讲座。每月导师培训工作坊启动。",
+      en: "The first hearing wellness seminar was held at a senior center, and monthly tutor training workshops launched.",
+    },
+  ),
+  journeyEvent(
+    "journey-2025-10",
+    "2025-10",
+    202510,
+    {
+      zhHant: "MBHS 分部與組長制度",
+      zhHans: "MBHS 分部与组长制度",
+      en: "MBHS chapter & Team Lead system",
+    },
+    {
+      zhHant: "於 Montgomery Blair 高中成立分部。導入組長（Team Lead）制度與課後反思表，落實品質管理。",
+      zhHans: "于 Montgomery Blair 高中成立分部。引入组长（Team Lead）制度与课后反思表，落实质量管理。",
+      en: "Established a chapter at Montgomery Blair High School and introduced the Team Lead system and post-session reflection forms for quality management.",
+    },
+  ),
+  journeyEvent(
+    "journey-2025-11",
+    "2025-11",
+    202511,
+    {
+      zhHant: "獲頒 AAHI 補助",
+      zhHans: "获颁 AAHI 资助",
+      en: "AAHI Grant awarded",
+    },
+    {
+      zhHant: "獲蒙哥馬利郡 AAHI 補助（頒予 CAPA-MC），支持長者聽力健康相關的社區推廣活動。",
+      zhHans: "获蒙哥马利县 AAHI 资助（颁予 CAPA-MC），支持长者听力健康相关的社区推广活动。",
+      en: "Received AAHI Grant funding from Montgomery County (awarded to CAPA-MC) to support community outreach on hearing health for seniors.",
+    },
+  ),
+  {
+    id: "impact-2025-12",
+    kind: "metrics",
+    period: "2025-12",
+    volunteers: 36,
+    volunteersPlus: false,
+    students: 40,
+    studentsPlus: true,
+    sessions: 639,
+    sessionsPlus: false,
+    title: { zhHant: "", zhHans: "", en: "" },
+    description: {
+      zhHant: "達成來自 6+ 所高中的 36 位活躍志工，支持 4 個國家（臺灣、中國、美國、加拿大）超過 40 位學生，共完成 639 堂輔導課程。",
+      zhHans: "汇聚来自 6+ 所高中的 36 位活跃志愿者，支持 4 个国家（台湾、中国、美国、加拿大）超过 40 位学生，共完成 639 节辅导课程。",
+      en: "Reached 36 active volunteers from 6+ high schools supporting over 40 students across 4 countries (Taiwan, China, US, and Canada), with 639 tutoring sessions delivered.",
+    },
+    status: "published",
+    sortOrder: 202512,
+    version: 1,
+    createdAt: seededAt,
+    updatedAt: seededAt,
+    createdBy: "system-migration",
+    updatedBy: "system-migration",
+  },
+  {
+    id: "impact-2026-06",
+    kind: "metrics",
+    period: "2026-06",
+    volunteers: 35,
+    volunteersPlus: true,
+    students: 50,
+    studentsPlus: true,
+    sessions: 1200,
+    sessionsPlus: true,
+    title: { zhHant: "", zhHans: "", en: "" },
+    description: {
+      zhHant: "匯聚來自 6+ 所高中的 35+ 位活躍志工，支持超過 50 位學生，累計完成 1200+ 堂一對一英語溝通課程。",
+      zhHans: "汇聚来自 6+ 所高中的 35+ 位活跃志愿者，支持超过 50 位学生，累计完成 1200+ 节一对一英语沟通课程。",
+      en: "Brought together 35+ active volunteers from 6+ high schools, supported more than 50 students, and delivered 1,200+ one-on-one English communication sessions.",
+    },
+    status: "published",
+    sortOrder: 202606,
+    version: 1,
+    createdAt: seededAt,
+    updatedAt: seededAt,
+    createdBy: "system-migration",
+    updatedBy: "system-migration",
+  },
+];

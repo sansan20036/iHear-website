@@ -1,5 +1,4 @@
 (function () {
-  const ALLOWED_ADMINS = ["sansan20036@gmail.com", "shuchen.peng@gmail.com"];
   const EDITABLE_SELECTOR = [
     "main h1",
     "main h2",
@@ -47,10 +46,6 @@
     return labelsByLang.en;
   }
 
-  function normalizeEmail(email) {
-    return String(email || "").trim().toLowerCase();
-  }
-
   function normalizePage(pathname) {
     let path = pathname || "/";
     if (path.endsWith(".html")) path = path.slice(0, -5);
@@ -60,8 +55,7 @@
   }
 
   function isAdminSession(session) {
-    const email = normalizeEmail(session && session.user && session.user.email);
-    return ALLOWED_ADMINS.includes(email);
+    return Boolean(session && session.user && session.user.isAdmin);
   }
 
   function installStyles() {
@@ -79,10 +73,14 @@
       }
       .ihear-inline-edit-button:hover{ opacity:1; transform:translateY(-1px); }
       .ihear-inline-form{ display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap; max-width:100%; }
+      .ihear-inline-form[data-multiline="true"]{ display:flex; align-items:flex-start; width:100%; }
       .ihear-inline-input{
         width:min(100%, 42rem); min-width:min(100%, 16rem); border:2px solid var(--orange);
         border-radius:12px; padding:.32em .58em; background:#fff; color:inherit; font:inherit;
         line-height:1.25; box-shadow:0 5px 18px rgba(38,57,116,.10);
+      }
+      textarea.ihear-inline-input{
+        width:100%; min-height:9rem; padding:.72em .8em; line-height:1.55; resize:vertical;
       }
       .ihear-inline-action{
         border:2px solid var(--navy); border-radius:999px; padding:7px 12px;
@@ -143,7 +141,7 @@
     if (element.childElementCount > 0) return false;
 
     const text = getText(element);
-    return text.length >= 2 && text.length <= 500;
+    return text.length >= 2 && text.length <= 5000;
   }
 
   function editableElements() {
@@ -197,13 +195,17 @@
     const labels = getLabels();
     const original = getText(element);
     const form = document.createElement("span");
-    const input = document.createElement("input");
+    const isMultiline = original.length > 160;
+    const input = document.createElement(isMultiline ? "textarea" : "input");
     const save = document.createElement("button");
     const cancel = document.createElement("button");
 
     form.className = "ihear-inline-form";
+    form.dataset.multiline = String(isMultiline);
     input.className = "ihear-inline-input";
-    input.type = "text";
+    if (!isMultiline) input.type = "text";
+    else input.rows = Math.min(14, Math.max(6, Math.ceil(original.length / 90)));
+    input.maxLength = 5000;
     input.value = original;
     input.setAttribute("aria-label", labels.edit);
 
@@ -244,7 +246,10 @@
     save.addEventListener("click", saveChange);
     cancel.addEventListener("click", restore);
     input.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") saveChange();
+      if (event.key === "Enter" && (!isMultiline || event.ctrlKey || event.metaKey)) {
+        event.preventDefault();
+        saveChange();
+      }
       if (event.key === "Escape") restore();
     });
 

@@ -21,6 +21,7 @@ const htmlFiles = [
 ];
 
 const passthroughFiles = ["robots.txt", "sitemap.xml", "CNAME"];
+const clientAssetVersion = "20260731-main-merge";
 
 async function copyDir(source, target) {
   await mkdir(target, { recursive: true });
@@ -42,17 +43,22 @@ async function copyDir(source, target) {
 }
 
 function withClientScripts(html) {
-  const withoutExisting = html.replace(
-    /\s*<script\s+src=["']\/?assets\/(?:passcode|auth|inline-edit)\.js["']\s+defer><\/script>\s*/g,
+  const withoutCloudflareBeacon = html.replace(
+    /\s*<script\b[^>]*\bsrc=["']https:\/\/static\.cloudflareinsights\.com\/beacon\.min\.js[^"']*["'][^>]*><\/script>\s*/gi,
+    "\n"
+  );
+  const withoutExisting = withoutCloudflareBeacon.replace(
+    /\s*<script\s+src=["']\/?assets\/(?:passcode|auth|inline-edit|impact-milestones)\.js(?:\?[^"']*)?["']\s+defer><\/script>\s*/g,
     "\n"
   );
 
   return withoutExisting.replace(
     "</body>",
     [
-      '  <script src="/assets/passcode.js" defer></script>',
-      '  <script src="/assets/auth.js" defer></script>',
-      '  <script src="/assets/inline-edit.js" defer></script>',
+      `  <script src="/assets/passcode.js?v=${clientAssetVersion}" defer></script>`,
+      `  <script src="/assets/auth.js?v=${clientAssetVersion}" defer></script>`,
+      `  <script src="/assets/impact-milestones.js?v=${clientAssetVersion}" defer></script>`,
+      `  <script src="/assets/inline-edit.js?v=${clientAssetVersion}" defer></script>`,
       "</body>",
     ].join("\n")
   );

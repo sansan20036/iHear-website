@@ -1,15 +1,32 @@
 import { NextResponse } from "next/server";
+import { revalidatePath, revalidateTag } from "next/cache";
 
 // auth.js is intentionally kept at the project root for the existing Auth.js setup.
 // @ts-ignore
 import { auth } from "../../../../auth.js";
 import { isAllowedAdmin, normalizeEmail } from "../../../../lib/admins";
-import { updateContentItem } from "../../../../lib/content-store";
+import {
+  CONTENT_CACHE_TAG,
+  updateContentItem,
+} from "../../../../lib/content-store";
 
 export const dynamic = "force-dynamic";
 
-function isValidField(value: unknown) {
+function isValidPage(value: unknown) {
+  return (
+    typeof value === "string" &&
+    value.startsWith("/") &&
+    value.trim().length > 0 &&
+    value.length <= 500
+  );
+}
+
+function isValidKey(value: unknown) {
   return typeof value === "string" && value.trim().length > 0 && value.length <= 5000;
+}
+
+function isValidValue(value: unknown) {
+  return typeof value === "string" && value.length <= 5000;
 }
 
 export async function POST(request: Request) {
@@ -34,7 +51,7 @@ export async function POST(request: Request) {
     value: string;
   }>;
 
-  if (!isValidField(payload.page) || !isValidField(payload.key) || typeof payload.value !== "string") {
+  if (!isValidPage(payload.page) || !isValidKey(payload.key) || !isValidValue(payload.value)) {
     return NextResponse.json(
       { error: "Expected JSON body with page, key, and value strings" },
       { status: 400 },
@@ -47,6 +64,9 @@ export async function POST(request: Request) {
     value: payload.value,
     updatedBy: email,
   });
+  revalidateTag(CONTENT_CACHE_TAG, { expire: 0 });
+  revalidatePath(payload.page!.trim());
+  revalidatePath("/api/content/get");
 
   return NextResponse.json({
     ok: true,

@@ -9,7 +9,8 @@ export async function GET() {
 
   return NextResponse.json(content, {
     headers: {
-      "Cache-Control": "no-store",
+      "Cache-Control": "public, max-age=0, must-revalidate",
+      "Vercel-CDN-Cache-Control": "public, s-maxage=1",
     },
   });
 }
