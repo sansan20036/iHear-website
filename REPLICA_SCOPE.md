@@ -1,6 +1,6 @@
 # Current Replica Scope
 
-The active interface is now the static site from `https://ihearprogram.org/`.
+The active interface is now the static site at `https://www.ihearus.org/`.
 
 ## Current Frontend
 

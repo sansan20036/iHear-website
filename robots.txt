@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://ihearprogram.org/sitemap.xml
+Sitemap: https://www.ihearus.org/sitemap.xml

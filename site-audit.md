@@ -1,6 +1,6 @@
 # iHear Demo Static Site Audit
 
-Source checked: `https://ihearprogram.org/team#main`
+Source checked: `https://www.ihearus.org/team#main`
 
 ## Summary
 

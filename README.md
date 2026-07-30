@@ -77,8 +77,8 @@ AUTH_GOOGLE_SECRET=
 Create Google OAuth credentials and add these redirect URIs:
 
 ```text
-https://ihearprogram.org/api/auth/callback/google
-https://i-hear-website.vercel.app/api/auth/callback/google
+https://www.ihearus.org/api/auth/callback/google
+https://ihearus.org/api/auth/callback/google
 http://localhost:3000/api/auth/callback/google
 ```
 
