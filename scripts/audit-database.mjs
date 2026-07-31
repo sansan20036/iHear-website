@@ -25,6 +25,7 @@ const sql = postgres(databaseUrl, {
 const expectedTables = [
   "api_rate_limits",
   "content_overrides",
+  "localized_content_overrides",
   "impact_milestone_settings",
   "impact_milestones",
   "schema_migrations",
@@ -40,6 +41,7 @@ const expectedConstraints = [
   "api_rate_limits_timestamp_order",
   "content_overrides_page_path",
   "content_overrides_pkey",
+  "localized_content_overrides_pkey",
   "impact_milestones_actor_length",
   "impact_milestones_archive_state",
   "impact_milestones_countries_range",
@@ -76,11 +78,13 @@ const expectedConstraints = [
 const expectedIndexes = [
   "api_rate_limits_updated_at_idx",
   "impact_milestones_unique_published_metrics_period",
+  "localized_content_overrides_updated_at_idx",
   "team_profiles_public_order_idx",
 ];
 
 const expectedTriggers = [
   "content_overrides_live_revision",
+  "localized_content_overrides_live_revision",
   "impact_milestone_settings_live_revision",
   "impact_milestones_live_revision",
   "team_people_live_revision",
@@ -97,6 +101,7 @@ try {
         'impact_milestones',
         'impact_milestone_settings',
         'content_overrides',
+        'localized_content_overrides',
         'schema_migrations',
         'site_content_revisions',
         'team_people',
@@ -117,7 +122,7 @@ try {
     JOIN pg_class AS relation ON relation.oid = con.conrelid
     JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
     WHERE namespace.nspname = 'public'
-      AND relation.relname IN ('api_rate_limits', 'impact_milestones', 'content_overrides', 'site_content_revisions', 'team_people', 'team_profiles')
+      AND relation.relname IN ('api_rate_limits', 'impact_milestones', 'content_overrides', 'localized_content_overrides', 'site_content_revisions', 'team_people', 'team_profiles')
     ORDER BY relation.relname, con.conname
   `;
 
@@ -131,7 +136,7 @@ try {
     JOIN pg_class AS index_relation ON index_relation.oid = idx.indexrelid
     JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
     WHERE namespace.nspname = 'public'
-      AND relation.relname IN ('api_rate_limits', 'impact_milestones', 'team_people', 'team_profiles')
+      AND relation.relname IN ('api_rate_limits', 'impact_milestones', 'localized_content_overrides', 'team_people', 'team_profiles')
     ORDER BY index_relation.relname
   `;
 
@@ -139,7 +144,7 @@ try {
     SELECT schemaname, tablename, policyname, roles, cmd
     FROM pg_policies
     WHERE schemaname = 'public'
-      AND tablename IN ('api_rate_limits', 'impact_milestones', 'content_overrides', 'site_content_revisions', 'team_people', 'team_profiles')
+      AND tablename IN ('api_rate_limits', 'impact_milestones', 'content_overrides', 'localized_content_overrides', 'site_content_revisions', 'team_people', 'team_profiles')
     ORDER BY tablename, policyname
   `;
 
@@ -153,6 +158,7 @@ try {
         'impact_milestones',
         'impact_milestone_settings',
         'content_overrides',
+        'localized_content_overrides',
         'schema_migrations',
         'site_content_revisions',
         'team_people',
@@ -259,12 +265,26 @@ try {
     FROM content_overrides
   `;
 
+  const [invalidLocalizedContent] = await sql`
+    SELECT
+      COUNT(*) FILTER (WHERE left(page, 1) <> '/')::INTEGER AS invalid_page_path,
+      COUNT(*) FILTER (WHERE locale NOT IN ('en', 'zhHant', 'zhHans'))::INTEGER AS invalid_locale,
+      COUNT(*) FILTER (
+        WHERE char_length(page) NOT BETWEEN 1 AND 500
+          OR char_length(key) NOT BETWEEN 1 AND 5000
+          OR char_length(value) > 5000
+          OR char_length(updated_by) NOT BETWEEN 1 AND 320
+      )::INTEGER AS invalid_content_length
+    FROM localized_content_overrides
+  `;
+
   const triggers = await sql`
     SELECT event_object_table AS table_name, trigger_name, action_timing, event_manipulation
     FROM information_schema.triggers
     WHERE trigger_schema = 'public'
       AND trigger_name IN (
         'content_overrides_live_revision',
+        'localized_content_overrides_live_revision',
         'impact_milestone_settings_live_revision',
         'impact_milestones_live_revision',
         'team_people_live_revision',
@@ -358,6 +378,9 @@ try {
     SELECT 'content_overrides', COUNT(*)::INTEGER
     FROM content_overrides
     UNION ALL
+    SELECT 'localized_content_overrides', COUNT(*)::INTEGER
+    FROM localized_content_overrides
+    UNION ALL
     SELECT 'team_people', COUNT(*)::INTEGER
     FROM team_people
     UNION ALL
@@ -442,6 +465,7 @@ try {
   const invalidCounts = [
     ...Object.values(invalid),
     ...Object.values(invalidContent),
+    ...Object.values(invalidLocalizedContent),
     ...Object.values(invalidTeam),
     ...Object.values(invalidRevisions),
     ...Object.values(invalidRateLimits),
@@ -474,6 +498,7 @@ try {
     trackedMigrations,
     invalidData: invalid,
     invalidContent,
+    invalidLocalizedContent,
     invalidTeam,
     invalidRevisions,
     invalidRateLimits,

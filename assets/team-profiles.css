@@ -11,25 +11,25 @@
 .team-admin-actions,.team-card-actions,.team-editor-actions{display:flex;gap:8px;flex-wrap:wrap}
 .team-admin-button{
   border:1.5px solid var(--navy);border-radius:999px;background:#fff;color:var(--navy);
-  padding:8px 13px;font:800 .86rem/1 var(--font-b);cursor:pointer
+  min-height:44px;padding:8px 13px;font:800 .86rem/1 var(--font-b);cursor:pointer
 }
 .team-admin-button.primary{background:var(--navy);color:#fff}
-.team-admin-button.accent{background:var(--orange);border-color:var(--orange);color:#fff}
+.team-admin-button.accent{background:var(--orange);border-color:var(--orange);color:#3A2410}
 .team-admin-button.danger{border-color:#a52626;color:#a52626}
 .team-admin-button:disabled{opacity:.55;cursor:wait}
 .team-profile-admin-card{position:relative}
 .team-profile-admin-card[data-status="draft"]{outline:2px dashed var(--orange);outline-offset:4px}
 .team-profile-drag-handle{
   box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;gap:6px;
-  min-width:44px;min-height:40px;padding:7px 10px;border:1.5px dashed rgba(38,57,116,.5);
+  min-width:44px;min-height:44px;padding:7px 10px;border:1.5px dashed rgba(38,57,116,.5);
   border-radius:11px;background:#fff;color:var(--navy);font:800 .76rem/1 var(--font-b);
   cursor:grab;touch-action:none;white-space:nowrap;z-index:2
 }
 .team-profile-drag-handle:hover,.team-profile-drag-handle:focus-visible{background:var(--orange-soft);border-style:solid;outline:2px solid transparent}
 .team-profile-drag-handle:active,.team-profile-drag-handle[aria-pressed="true"]{cursor:grabbing;background:var(--orange-soft)}
 .leader>.team-profile-drag-handle{position:absolute;right:14px;top:14px}
-.tutor-prof summary .team-profile-drag-handle{flex:none;margin-left:auto}
-.tutor-prof summary .team-profile-drag-handle+.chev{margin-left:0}
+.team-profile-tutor-shell{display:grid;gap:6px}
+.team-profile-tutor-shell>.team-profile-drag-handle{justify-self:end;margin:0 10px -2px 0}
 .team-profile-admin-card.team-profile-dragging{
   opacity:.72;z-index:20;box-shadow:0 16px 38px rgba(20,35,80,.24);border-color:var(--orange);
   transform:scale(.985);transition:none
@@ -40,7 +40,7 @@ body.team-profile-reordering,body.team-profile-reordering *{cursor:grabbing!impo
   background:var(--orange-soft);color:#8b4b12;font-size:.72rem;font-weight:800
 }
 .team-card-actions{padding:0 20px 14px}
-.team-card-actions .team-admin-button{padding:6px 10px;font-size:.78rem}
+.team-card-actions .team-admin-button{padding:6px 10px;font-size:.78rem;min-height:44px}
 .team-directory-message{
   grid-column:1/-1;margin:0;padding:24px;text-align:center;border:1.5px dashed var(--line);
   border-radius:16px;color:var(--ink-soft);background:#fff
@@ -86,7 +86,7 @@ body.team-profile-modal-open{overflow:hidden}
 .team-check input{width:auto;margin-top:4px}
 .team-locale-tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin:22px 0 14px}
 .team-locale-tab{
-  min-width:0;border:1.5px solid var(--line);border-radius:11px;background:#fff;padding:9px 8px;
+  min-width:0;min-height:44px;border:1.5px solid var(--line);border-radius:11px;background:#fff;padding:9px 8px;
   color:var(--navy);font-weight:800;cursor:pointer
 }
 .team-locale-tab[aria-selected="true"]{background:var(--navy);color:#fff;border-color:var(--navy)}

@@ -134,14 +134,17 @@ HMAC-SHA256 identifiers; raw IP addresses and email addresses are never persiste
 `RATE_LIMIT_SECRET` to a separate random secret if desired, otherwise `AUTH_SECRET` is used.
 Rate-limited responses return HTTP `429` with `Retry-After` and `RateLimit-*` headers.
 
-With `POSTGRES_URL` or `DATABASE_URL` configured, text overrides are read from and
-written to the `content_overrides` Postgres table. Its schema is in:
+With `POSTGRES_URL` or `DATABASE_URL` configured, localized text overrides are read
+from and written to `localized_content_overrides`. The legacy `content_overrides`
+table remains during rolling deployments, and Traditional Chinese writes are mirrored
+to it for compatibility. The schemas are in:
 
 ```text
 db/migrations/004_content_overrides.sql
+db/migrations/010_localized_content_overrides.sql
 ```
 
-The table has a composite `(page, key)` primary key, audit metadata, validation
+The localized table has a composite `(page, key, locale)` primary key, audit metadata, validation
 constraints, and Row Level Security enabled without public policies. The application
 uses the server-side Postgres connection, so browser clients never receive database
 credentials. In local development only, when no database URL is configured, the same
@@ -153,9 +156,9 @@ The browser loads saved text from:
 /api/content/get
 ```
 
-Public content reads use a one-second Vercel edge cache. The public response contains
-the text values and per-item update timestamps required for optimistic locking, but
-never exposes `updated_by` or administrator email addresses.
+Public content reads use a one-second Vercel edge cache. Version 3 responses group
+`pages` and `itemUpdatedAt` beneath `locales.en`, `locales.zhHant`, and
+`locales.zhHans`; they never expose `updated_by` or administrator email addresses.
 
 Saving posts JSON to:
 
@@ -164,7 +167,7 @@ Saving posts JSON to:
 ```
 
 The update API checks the Auth.js session again on the server before writing and
-requires the current item timestamp. Concurrent updates return `409`, while stale
+requires `page`, `key`, `locale`, `value`, and the current item timestamp. Concurrent updates return `409`, while stale
 clients that omit the precondition receive `428`. Hosted production refuses to use
 the filesystem fallback, preventing a serverless deployment from reporting a
 successful but non-durable save.

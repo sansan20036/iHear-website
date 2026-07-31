@@ -6,7 +6,8 @@ Source checked: `https://www.ihearus.org/team#main`
 
 - The target is a static generated site, not the previous React SPA bundle.
 - Sitemap exposes 13 pages.
-- Most styling and scripts are inline in each HTML file.
+- Shared styling and interaction code live in `assets/site.css` and `assets/site.js`;
+  page-specific admin modules are injected only where their mounts exist.
 - Required visual assets are local images under `assets/`.
 - The target references `assets/og-image.jpg`, but that file returns 404 on the source site. A local placeholder was created from `assets/logo.png` so the reference does not break locally.
 

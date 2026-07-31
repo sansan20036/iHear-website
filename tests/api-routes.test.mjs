@@ -42,6 +42,7 @@ vi.mock("../lib/impact-store", () => {
 vi.mock("../lib/content-store", () => {
   class ContentConflictError extends Error {}
   return {
+    CONTENT_LOCALES: ["en", "zhHant", "zhHans"],
     ContentConflictError,
     publicContentStore: vi.fn((store) => {
       const content = { ...store };
@@ -212,18 +213,27 @@ beforeEach(() => {
   impactStore.updateImpactMilestone.mockResolvedValue({ ...storedMilestone, version: 2 });
   impactStore.deleteImpactMilestone.mockResolvedValue(storedMilestone.id);
   contentStore.readContentStore.mockResolvedValue({
-    version: 2,
+    version: 3,
     updatedAt: "",
     updatedBy: adminEmail,
-    pages: {},
-    itemUpdatedAt: {},
+    locales: {
+      en: { pages: {}, itemUpdatedAt: {} },
+      zhHant: { pages: {}, itemUpdatedAt: {} },
+      zhHans: { pages: {}, itemUpdatedAt: {} },
+    },
   });
   contentStore.updateContentItem.mockResolvedValue({
-    version: 2,
+    version: 3,
     updatedAt: "2026-07-28T00:00:00.000Z",
     updatedBy: adminEmail,
-    pages: { "/about": { "main>h2:nth-of-type(1)": "更新內容" } },
-    itemUpdatedAt: { "/about": { "main>h2:nth-of-type(1)": "2026-07-28T00:00:00.000Z" } },
+    locales: {
+      en: { pages: {}, itemUpdatedAt: {} },
+      zhHant: {
+        pages: { "/about": { "main>h2:nth-of-type(1)": "更新內容" } },
+        itemUpdatedAt: { "/about": { "main>h2:nth-of-type(1)": "2026-07-28T00:00:00.000Z" } },
+      },
+      zhHans: { pages: {}, itemUpdatedAt: {} },
+    },
   });
   liveRevisions.revisionAfterMutation.mockResolvedValue({
     revision: "2",
@@ -303,7 +313,7 @@ describe("public API caching", () => {
     expect(response.headers.get("vercel-cdn-cache-control")).toBe("public, s-maxage=1");
     const body = await response.json();
     expect(body.updatedBy).toBeUndefined();
-    expect(body.version).toBe(2);
+    expect(body.version).toBe(3);
   });
 
   test("draft listing is private and never cached", async () => {
@@ -589,6 +599,7 @@ describe("authorized mutations", () => {
       jsonRequest("http://localhost/api/content/update", "POST", {
         page: "/about",
         key: "main>h2:nth-of-type(1)",
+        locale: "zhHant",
         value: "更新內容",
         expectedUpdatedAt: null,
       }),
@@ -598,6 +609,7 @@ describe("authorized mutations", () => {
     expect(contentStore.updateContentItem).toHaveBeenCalledWith({
       page: "/about",
       key: "main>h2:nth-of-type(1)",
+      locale: "zhHant",
       value: "更新內容",
       expectedUpdatedAt: null,
       updatedBy: adminEmail,
@@ -614,11 +626,27 @@ describe("authorized mutations", () => {
       jsonRequest("http://localhost/api/content/update", "POST", {
         page: "/about",
         key: "main>h2:nth-of-type(1)",
+        locale: "zhHant",
         value: "更新內容",
       }),
     );
 
     expect(response.status).toBe(428);
+    expect(contentStore.updateContentItem).not.toHaveBeenCalled();
+  });
+
+  test("requires a supported inline-content locale", async () => {
+    const response = await updateContent(
+      jsonRequest("http://localhost/api/content/update", "POST", {
+        page: "/about",
+        key: "i18n:mission_h2",
+        locale: "fr",
+        value: "Contenu",
+        expectedUpdatedAt: null,
+      }),
+    );
+
+    expect(response.status).toBe(400);
     expect(contentStore.updateContentItem).not.toHaveBeenCalled();
   });
 
@@ -628,6 +656,7 @@ describe("authorized mutations", () => {
       jsonRequest("http://localhost/api/content/update", "POST", {
         page: "/about",
         key: "main>h2:nth-of-type(1)",
+        locale: "zhHant",
         value: "更新內容",
         expectedUpdatedAt: "2026-07-28T00:00:00.000Z",
       }),

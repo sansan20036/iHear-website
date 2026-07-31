@@ -37,7 +37,7 @@ try {
   }
   if (
     backup.payload?.format !== "ihear-postgres-backup" ||
-    ![1, 2].includes(backup.payload?.version)
+    ![1, 2, 3].includes(backup.payload?.version)
   ) {
     throw new Error("Unsupported backup format.");
   }
@@ -53,6 +53,7 @@ try {
     "schema_migrations",
   ];
   if (backup.payload.version >= 2) required.push("team_people", "team_profiles");
+  if (backup.payload.version >= 3) required.push("localized_content_overrides");
   for (const tableName of required) {
     if (!Array.isArray(tables[tableName])) {
       throw new Error(`Backup is missing ${tableName}.`);
@@ -62,14 +63,22 @@ try {
   assertUnique(tables.impact_milestones, (row) => row.id, "impact_milestones");
   assertUnique(tables.impact_milestone_settings, (row) => row.key, "impact_milestone_settings");
   assertUnique(tables.content_overrides, (row) => `${row.page}\u0000${row.key}`, "content_overrides");
+  if (backup.payload.version >= 3) {
+    assertUnique(
+      tables.localized_content_overrides,
+      (row) => `${row.page}\u0000${row.key}\u0000${row.locale}`,
+      "localized_content_overrides",
+    );
+  }
   assertUnique(tables.schema_migrations, (row) => row.version, "schema_migrations");
   if (backup.payload.version >= 2) {
     assertUnique(tables.team_people, (row) => row.id, "team_people");
     assertUnique(tables.team_profiles, (row) => row.id, "team_profiles");
   }
 
-  if (!tables.schema_migrations.some((row) => String(row.version) === "009")) {
-    throw new Error("Backup does not include migration 009.");
+  const requiredMigration = backup.payload.version >= 3 ? "010" : "009";
+  if (!tables.schema_migrations.some((row) => String(row.version) === requiredMigration)) {
+    throw new Error(`Backup does not include migration ${requiredMigration}.`);
   }
 
   console.log(

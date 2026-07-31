@@ -21,7 +21,7 @@ const htmlFiles = [
 ];
 
 const passthroughFiles = ["robots.txt", "sitemap.xml", "CNAME", "favicon.ico"];
-const clientAssetVersion = "20260731-team-modal-scroll";
+const clientAssetVersion = "20260801-site-ux-v3";
 
 async function copyDir(source, target) {
   await mkdir(target, { recursive: true });
@@ -42,30 +42,55 @@ async function copyDir(source, target) {
   }
 }
 
-function withClientScripts(html) {
+function withClientScripts(html, file) {
   const withoutCloudflareBeacon = html.replace(
     /\s*<script\b[^>]*\bsrc=["']https:\/\/static\.cloudflareinsights\.com\/beacon\.min\.js[^"']*["'][^>]*><\/script>\s*/gi,
     "\n"
   );
   const withoutExisting = withoutCloudflareBeacon.replace(
-    /\s*<script\s+src=["']\/?assets\/(?:auth|live-content|inline-edit|impact-milestones|site-metrics|team-profiles)\.js(?:\?[^"']*)?["']\s+defer><\/script>\s*/g,
+    /\s*<script\s+src=["']\/?assets\/(?:site|auth|live-content|inline-edit|impact-milestones|site-metrics|team-profiles)\.js(?:\?[^"']*)?["']\s+defer><\/script>\s*/g,
     "\n"
   );
 
-  const withFavicon = withoutExisting.replace(
-    "</head>",
-    `  <link rel="icon" href="/favicon.ico" sizes="any">\n  <link rel="stylesheet" href="/assets/team-profiles.css?v=${clientAssetVersion}">\n</head>`
+  const withoutManagedStyles = withoutExisting.replace(
+    /\s*<link\s+rel=["']stylesheet["']\s+href=["']\/?assets\/(?:site|impact-milestones|team-profiles)\.css(?:\?[^"']*)?["']\s*\/?>\s*/g,
+    "\n",
   );
+  const managedStyles = [
+    `  <link rel="stylesheet" href="/assets/site.css?v=${clientAssetVersion}">`,
+  ];
+  if (html.includes("data-impact-milestones")) {
+    managedStyles.push(`  <link rel="stylesheet" href="/assets/impact-milestones.css?v=${clientAssetVersion}">`);
+  }
+  if (html.includes("data-team-")) {
+    managedStyles.push(`  <link rel="stylesheet" href="/assets/team-profiles.css?v=${clientAssetVersion}">`);
+  }
+
+  const withFavicon = withoutManagedStyles.replace(
+    "</head>",
+    `  <link rel="icon" href="/favicon.ico" sizes="any">\n${managedStyles.join("\n")}\n</head>`
+  );
+
+  const scripts = [
+    `  <script src="/assets/site.js?v=${clientAssetVersion}" defer></script>`,
+    `  <script src="/assets/auth.js?v=${clientAssetVersion}" defer></script>`,
+    `  <script src="/assets/live-content.js?v=${clientAssetVersion}" defer></script>`,
+  ];
+  if (html.includes("data-impact-milestones")) {
+    scripts.push(`  <script src="/assets/impact-milestones.js?v=${clientAssetVersion}" defer></script>`);
+  }
+  if (file === "index.html") {
+    scripts.push(`  <script src="/assets/site-metrics.js?v=${clientAssetVersion}" defer></script>`);
+  }
+  if (html.includes("data-team-")) {
+    scripts.push(`  <script src="/assets/team-profiles.js?v=${clientAssetVersion}" defer></script>`);
+  }
+  scripts.push(`  <script src="/assets/inline-edit.js?v=${clientAssetVersion}" defer></script>`);
 
   return withFavicon.replace(
     "</body>",
     [
-      `  <script src="/assets/auth.js?v=${clientAssetVersion}" defer></script>`,
-      `  <script src="/assets/live-content.js?v=${clientAssetVersion}" defer></script>`,
-      `  <script src="/assets/impact-milestones.js?v=${clientAssetVersion}" defer></script>`,
-      `  <script src="/assets/site-metrics.js?v=${clientAssetVersion}" defer></script>`,
-      `  <script src="/assets/team-profiles.js?v=${clientAssetVersion}" defer></script>`,
-      `  <script src="/assets/inline-edit.js?v=${clientAssetVersion}" defer></script>`,
+      ...scripts,
       "</body>",
     ].join("\n")
   );
@@ -79,7 +104,7 @@ for (const file of htmlFiles) {
   const sourcePath = path.join(root, file);
   const targetPath = path.join(publicDir, file);
   const html = await readFile(sourcePath, "utf8");
-  await writeFile(targetPath, withClientScripts(html), "utf8");
+  await writeFile(targetPath, withClientScripts(html, file), "utf8");
 }
 
 for (const file of passthroughFiles) {

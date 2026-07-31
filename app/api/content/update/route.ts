@@ -6,6 +6,8 @@ import { revalidatePath } from "next/cache";
 import { auth } from "../../../../auth.js";
 import { isAllowedAdmin, normalizeEmail } from "../../../../lib/admins";
 import {
+  CONTENT_LOCALES,
+  type ContentLocale,
   ContentConflictError,
   publicContentStore,
   updateContentItem,
@@ -34,6 +36,10 @@ function isValidKey(value: unknown) {
 
 function isValidValue(value: unknown) {
   return typeof value === "string" && value.length <= 5000;
+}
+
+function isValidLocale(value: unknown): value is ContentLocale {
+  return typeof value === "string" && CONTENT_LOCALES.includes(value as ContentLocale);
 }
 
 function isValidExpectedUpdatedAt(value: unknown) {
@@ -66,6 +72,7 @@ export async function POST(request: Request) {
   const payload = body as Partial<{
     page: string;
     key: string;
+    locale: ContentLocale;
     value: string;
     expectedUpdatedAt: string | null;
   }>;
@@ -80,11 +87,12 @@ export async function POST(request: Request) {
   if (
     !isValidPage(payload.page) ||
     !isValidKey(payload.key) ||
+    !isValidLocale(payload.locale) ||
     !isValidValue(payload.value) ||
     !isValidExpectedUpdatedAt(payload.expectedUpdatedAt)
   ) {
     return respond(NextResponse.json(
-      { error: "Expected JSON body with page, key, and value strings" },
+      { error: "Expected JSON body with page, key, locale, and value" },
       { status: 400 },
     ));
   }
@@ -93,6 +101,7 @@ export async function POST(request: Request) {
     const content = await updateContentItem({
       page: payload.page!.trim(),
       key: payload.key!.trim(),
+      locale: payload.locale!,
       value: payload.value,
       updatedBy: email,
       expectedUpdatedAt: payload.expectedUpdatedAt!,

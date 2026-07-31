@@ -545,7 +545,7 @@
               <span class="impact-field-error" data-error="translations"></span>
             </div>
           </section>
-          <div class="impact-form-error" data-impact-form-error hidden></div>
+          <div class="impact-form-error" data-impact-form-error role="alert" tabindex="-1" hidden></div>
           <section class="impact-preview">
             <header class="impact-preview-header">
               <span class="impact-preview-label">${l.preview}</span>
@@ -831,6 +831,7 @@
     dialog.querySelectorAll("[data-error]").forEach((node) => {
       node.textContent = "";
     });
+    dialog.querySelectorAll('[aria-invalid="true"]').forEach((field) => field.removeAttribute("aria-invalid"));
     const formError = dialog.querySelector("[data-impact-form-error]");
     formError.hidden = true;
     formError.textContent = "";
@@ -876,13 +877,27 @@
 
   function showValidation(errors) {
     clearEditorErrors();
+    const firstLocalizedKey = Object.keys(errors).find((key) => /\.(zhHant|zhHans|en)$/.test(key));
+    if (firstLocalizedKey) setActiveLocale(firstLocalizedKey.split(".")[1]);
+    let firstField = null;
     Object.entries(errors).forEach(([key, message]) => {
       const target = dialog.querySelector(`[data-error="${key}"]`);
-      if (target) target.textContent = message;
+      if (target) {
+        target.textContent = message;
+        if (!target.id) target.id = `impact-error-${key.replace(/[^a-z0-9_-]/gi, "-")}`;
+      }
+      const field = dialog.querySelector(`[name="${CSS.escape(key)}"]`);
+      if (field) {
+        field.setAttribute("aria-invalid", "true");
+        if (target) field.setAttribute("aria-describedby", target.id);
+        if (!firstField) firstField = field;
+      }
     });
     const formError = dialog.querySelector("[data-impact-form-error]");
     formError.textContent = labels().validation;
     formError.hidden = false;
+    if (!firstField && errors.translations) firstField = dialog.querySelector(`[data-locale-panel="${state.activeLocale}"] textarea, [data-locale-tab="${state.activeLocale}"]`);
+    (firstField || formError).focus();
   }
 
   function payloadFor(item, status) {
@@ -966,6 +981,7 @@
         const formError = dialog.querySelector("[data-impact-form-error]");
         formError.textContent = labels().conflict;
         formError.hidden = false;
+        formError.focus();
       } else {
         showToast(error.message || labels().saveFailed, true);
       }
