@@ -7,12 +7,12 @@ into Git, issues, logs, or screenshots.
 ## 1. Uptime monitoring
 
 The `Production uptime monitor` GitHub Actions workflow checks two HTTPS targets every
-30 minutes from infrastructure outside Vercel and Supabase:
+hourly from infrastructure outside Vercel and Supabase:
 
 | Monitor | URL | Interval | Success condition |
 | --- | --- | --- | --- |
-| Application and database | `https://www.ihearus.org/api/health` | 30 minutes | HTTP 200 and body contains `"status":"ok"` |
-| Public homepage | `https://www.ihearus.org/` | 30 minutes | HTTP 200 |
+| Application and database | `https://www.ihearus.org/api/health` | 1 hour | HTTP 200 and body contains `"status":"ok"` |
+| Public homepage | `https://www.ihearus.org/` | 1 hour | HTTP 200 |
 
 Recommended alert policy:
 

@@ -50,7 +50,7 @@ describe("production operations configuration", () => {
 
   it("monitors Production externally and manages a single recoverable incident", async () => {
     const workflow = await read(".github/workflows/production-uptime.yml");
-    expect(workflow).toContain('cron: "*/30 * * * *"');
+    expect(workflow).toContain('cron: "17 * * * *"');
     expect(workflow).toContain("https://www.ihearus.org/api/health");
     expect(workflow).toContain("https://www.ihearus.org/");
     expect(workflow).toContain("issues: write");
