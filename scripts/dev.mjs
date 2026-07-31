@@ -1,9 +1,28 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import path from "node:path";
 
 await import("./prepare-public.mjs");
 
 const root = process.cwd();
+const instrumentationSources = [
+  "instrumentation.js",
+  "instrumentation.ts",
+  path.join("src", "instrumentation.js"),
+  path.join("src", "instrumentation.ts"),
+];
+const staleInstrumentation = path.join(root, ".next", "dev", "server", "instrumentation.js");
+
+if (
+  existsSync(staleInstrumentation) &&
+  !instrumentationSources.some((source) => existsSync(path.join(root, source)))
+) {
+  const devCache = path.join(root, ".next", "dev");
+  await rm(devCache, { recursive: true, force: true });
+  console.warn("Removed stale Next.js development instrumentation cache.");
+}
+
 const nextCli = path.join(root, "node_modules", "next", "dist", "bin", "next");
 const args = ["dev", ...process.argv.slice(2)];
 let opened = false;
