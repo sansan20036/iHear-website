@@ -407,6 +407,8 @@
     .bf-field input:focus, .bf-field textarea:focus{ outline:3px solid var(--orange-soft); border-color:var(--orange); }
     .bf-hp{ position:absolute; left:-9999px; width:1px; height:1px; overflow:hidden; }
     .bf-note{ margin:18px 0; color:var(--ink-soft); font-size:.88rem; }
+    .bf-consent{ display:flex; align-items:flex-start; gap:10px; margin:18px 0 6px; color:var(--ink); font-size:.9rem; }
+    .bf-consent input{ width:auto; margin-top:4px; flex:none; }
     @media (max-width: 640px){
       .bf-grid{ grid-template-columns:1fr; }
       .bio-form{ padding:28px 20px; }
@@ -675,6 +677,10 @@
               <input id="bfWebsite" name="website" type="text" tabindex="-1" autocomplete="off">
             </div>
           </div>
+          <label class="bf-consent" for="bfConsent">
+            <input id="bfConsent" name="publication_consent" type="checkbox" required>
+            <span data-i18n="bf_consent">I consent to iHear publishing the submitted name, school/grade (if provided), and biography on the public Team page. If I am a minor, I confirm that applicable parent or guardian permission has been obtained.</span>
+          </label>
           <p class="bf-note" data-i18n="bf_note">Submitting opens a pre-filled email to ihearprogram@gmail.com in your mail app. Nothing is stored on this site.</p>
           <button class="btn btn-primary" type="submit" data-i18n="bf_send">Email My Bio</button>
         </form>
@@ -821,6 +827,7 @@
         bf_short: "簡短介紹：一到兩句話描述您的教學方式 *",
         bf_long: "完整介紹：您加入 iHear 的原因與課程的樣貌",
         bf_hobbies: "興趣與愛好",
+        bf_consent: "我同意 iHear 將所提交的姓名、學校／年級（如有提供）及簡介發布於公開的團隊頁面。若我未滿法定年齡，我確認已取得適用的家長或監護人同意。",
         bf_note: "送出後會在您的郵件程式中開啟一封寄給 ihearprogram@gmail.com 的預填郵件。本網站不會儲存任何資料。",
         bf_send: "寄出我的簡介",
         testi_eyebrow: "成功故事", testi_h2: "家長與學生見證",
@@ -1022,6 +1029,7 @@
         bf_short: "简短介绍：一到两句话描述您的教学方式 *",
         bf_long: "完整介绍：您加入 iHear 的原因与课程的样子",
         bf_hobbies: "兴趣与爱好",
+        bf_consent: "我同意 iHear 将所提交的姓名、学校／年级（如有提供）及简介发布于公开的团队页面。若我未满法定年龄，我确认已取得适用的家长或监护人同意。",
         bf_note: "提交后会在您的邮件程序中打开一封发给 ihearprogram@gmail.com 的预填邮件。本网站不会存储任何数据。",
         bf_send: "发送我的简介",
         testi_eyebrow: "成功故事", testi_h2: "家长与学生见证",
@@ -1246,7 +1254,8 @@
       var body = [
         line('Name', 'name'), line('School', 'school'), line('Grade', 'grade'),
         line('Languages', 'languages'), line('Teaching strengths', 'strengths'),
-        line('Short bio', 'short_bio'), line('Full bio', 'long_bio'), line('Hobbies', 'hobbies')
+        line('Short bio', 'short_bio'), line('Full bio', 'long_bio'), line('Hobbies', 'hobbies'),
+        'Publication consent: Confirmed'
       ].filter(Boolean).join('\n\n');
       location.href = 'mailto:ihearprogram@gmail.com?subject=' +
         encodeURIComponent('Tutor bio submission') + '&body=' + encodeURIComponent(body);

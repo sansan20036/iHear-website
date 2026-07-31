@@ -21,7 +21,7 @@ const htmlFiles = [
 ];
 
 const passthroughFiles = ["robots.txt", "sitemap.xml", "CNAME", "favicon.ico"];
-const clientAssetVersion = "20260731-site-metrics-single-source";
+const clientAssetVersion = "20260731-team-profiles";
 
 async function copyDir(source, target) {
   await mkdir(target, { recursive: true });
@@ -48,13 +48,13 @@ function withClientScripts(html) {
     "\n"
   );
   const withoutExisting = withoutCloudflareBeacon.replace(
-    /\s*<script\s+src=["']\/?assets\/(?:auth|inline-edit|impact-milestones|site-metrics)\.js(?:\?[^"']*)?["']\s+defer><\/script>\s*/g,
+    /\s*<script\s+src=["']\/?assets\/(?:auth|inline-edit|impact-milestones|site-metrics|team-profiles)\.js(?:\?[^"']*)?["']\s+defer><\/script>\s*/g,
     "\n"
   );
 
   const withFavicon = withoutExisting.replace(
     "</head>",
-    '  <link rel="icon" href="/favicon.ico" sizes="any">\n</head>'
+    '  <link rel="icon" href="/favicon.ico" sizes="any">\n  <link rel="stylesheet" href="/assets/team-profiles.css">\n</head>'
   );
 
   return withFavicon.replace(
@@ -63,6 +63,7 @@ function withClientScripts(html) {
       `  <script src="/assets/auth.js?v=${clientAssetVersion}" defer></script>`,
       `  <script src="/assets/impact-milestones.js?v=${clientAssetVersion}" defer></script>`,
       `  <script src="/assets/site-metrics.js?v=${clientAssetVersion}" defer></script>`,
+      `  <script src="/assets/team-profiles.js?v=${clientAssetVersion}" defer></script>`,
       `  <script src="/assets/inline-edit.js?v=${clientAssetVersion}" defer></script>`,
       "</body>",
     ].join("\n")

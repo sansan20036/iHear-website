@@ -52,10 +52,23 @@ async function currentCounts(client) {
   const settings =
     await client`SELECT COUNT(*)::INTEGER AS count FROM impact_milestone_settings`;
   const content = await client`SELECT COUNT(*)::INTEGER AS count FROM content_overrides`;
+  const [teamTables] = await client`
+    SELECT
+      to_regclass('public.team_people') IS NOT NULL AS people,
+      to_regclass('public.team_profiles') IS NOT NULL AS profiles
+  `;
+  const teamPeople = teamTables.people
+    ? await client`SELECT COUNT(*)::INTEGER AS count FROM team_people`
+    : [{ count: 0 }];
+  const teamProfiles = teamTables.profiles
+    ? await client`SELECT COUNT(*)::INTEGER AS count FROM team_profiles`
+    : [{ count: 0 }];
   return {
     impact_milestones: Number(impact[0].count),
     impact_milestone_settings: Number(settings[0].count),
     content_overrides: Number(content[0].count),
+    team_people: Number(teamPeople[0].count),
+    team_profiles: Number(teamProfiles[0].count),
   };
 }
 
@@ -83,7 +96,10 @@ try {
   if (backup.checksumAlgorithm !== "sha256") {
     throw new Error("Unsupported backup checksum algorithm.");
   }
-  if (backup.payload?.format !== "ihear-postgres-backup" || backup.payload?.version !== 1) {
+  if (
+    backup.payload?.format !== "ihear-postgres-backup" ||
+    ![1, 2].includes(backup.payload?.version)
+  ) {
     throw new Error("Unsupported backup format.");
   }
   if (backup.checksum !== checksum(backup.payload)) {
@@ -95,12 +111,16 @@ try {
   const impactMilestoneSettings = tables.impact_milestone_settings;
   const contentOverrides = tables.content_overrides;
   const schemaMigrations = tables.schema_migrations;
+  const teamPeople = backup.payload.version >= 2 ? tables.team_people : [];
+  const teamProfiles = backup.payload.version >= 2 ? tables.team_profiles : [];
 
   if (
     !Array.isArray(impactMilestones) ||
     !Array.isArray(impactMilestoneSettings) ||
     !Array.isArray(contentOverrides) ||
-    !Array.isArray(schemaMigrations)
+    !Array.isArray(schemaMigrations) ||
+    !Array.isArray(teamPeople) ||
+    !Array.isArray(teamProfiles)
   ) {
     throw new Error("Backup is missing one or more required tables.");
   }
@@ -109,6 +129,8 @@ try {
   assertUnique(impactMilestoneSettings, (row) => row.key, "impact_milestone_settings");
   assertUnique(contentOverrides, (row) => `${row.page}\u0000${row.key}`, "content_overrides");
   assertUnique(schemaMigrations, (row) => row.version, "schema_migrations");
+  assertUnique(teamPeople, (row) => row.id, "team_people");
+  assertUnique(teamProfiles, (row) => row.id, "team_profiles");
 
   const countsBefore = await currentCounts(sql);
   const rollbackMarker = "IHEAR_BACKUP_VERIFICATION_ROLLBACK";
@@ -213,11 +235,143 @@ try {
         `;
       }
 
+      for (const row of teamPeople) {
+        await transaction`
+          INSERT INTO team_people (
+            id, name, initials, publication_consent_at, publication_consent_by,
+            version, created_at, updated_at, created_by, updated_by
+          ) VALUES (
+            ${row.id}, ${row.name}, ${row.initials}, ${row.publication_consent_at},
+            ${row.publication_consent_by}, ${row.version}, ${row.created_at},
+            ${row.updated_at}, ${row.created_by}, ${row.updated_by}
+          )
+          ON CONFLICT (id) DO UPDATE SET
+            name = EXCLUDED.name,
+            initials = EXCLUDED.initials,
+            publication_consent_at = EXCLUDED.publication_consent_at,
+            publication_consent_by = EXCLUDED.publication_consent_by,
+            version = EXCLUDED.version,
+            created_at = EXCLUDED.created_at,
+            updated_at = EXCLUDED.updated_at,
+            created_by = EXCLUDED.created_by,
+            updated_by = EXCLUDED.updated_by
+        `;
+      }
+
+      for (const row of teamProfiles) {
+        await transaction`
+          INSERT INTO team_profiles (
+            id, person_id, section, status, sort_order, school, grade, show_school, show_grade,
+            role_en, role_zh_hant, role_zh_hans,
+            school_display_en, school_display_zh_hant, school_display_zh_hans,
+            languages_en, languages_zh_hant, languages_zh_hans,
+            strengths_en, strengths_zh_hant, strengths_zh_hans,
+            summary_en, summary_zh_hant, summary_zh_hans,
+            bio_en, bio_zh_hant, bio_zh_hans,
+            hobbies_en, hobbies_zh_hant, hobbies_zh_hans,
+            version, created_at, updated_at, created_by, updated_by
+          ) VALUES (
+            ${row.id}, ${row.person_id}, ${row.section}, ${row.status}, ${row.sort_order},
+            ${row.school}, ${row.grade}, ${row.show_school}, ${row.show_grade},
+            ${row.role_en}, ${row.role_zh_hant}, ${row.role_zh_hans},
+            ${row.school_display_en}, ${row.school_display_zh_hant}, ${row.school_display_zh_hans},
+            ${row.languages_en}, ${row.languages_zh_hant}, ${row.languages_zh_hans},
+            ${row.strengths_en}, ${row.strengths_zh_hant}, ${row.strengths_zh_hans},
+            ${row.summary_en}, ${row.summary_zh_hant}, ${row.summary_zh_hans},
+            ${row.bio_en}, ${row.bio_zh_hant}, ${row.bio_zh_hans},
+            ${row.hobbies_en}, ${row.hobbies_zh_hant}, ${row.hobbies_zh_hans},
+            ${row.version}, ${row.created_at}, ${row.updated_at}, ${row.created_by}, ${row.updated_by}
+          )
+          ON CONFLICT (id) DO UPDATE SET
+            person_id = EXCLUDED.person_id,
+            section = EXCLUDED.section,
+            status = EXCLUDED.status,
+            sort_order = EXCLUDED.sort_order,
+            school = EXCLUDED.school,
+            grade = EXCLUDED.grade,
+            show_school = EXCLUDED.show_school,
+            show_grade = EXCLUDED.show_grade,
+            role_en = EXCLUDED.role_en,
+            role_zh_hant = EXCLUDED.role_zh_hant,
+            role_zh_hans = EXCLUDED.role_zh_hans,
+            school_display_en = EXCLUDED.school_display_en,
+            school_display_zh_hant = EXCLUDED.school_display_zh_hant,
+            school_display_zh_hans = EXCLUDED.school_display_zh_hans,
+            languages_en = EXCLUDED.languages_en,
+            languages_zh_hant = EXCLUDED.languages_zh_hant,
+            languages_zh_hans = EXCLUDED.languages_zh_hans,
+            strengths_en = EXCLUDED.strengths_en,
+            strengths_zh_hant = EXCLUDED.strengths_zh_hant,
+            strengths_zh_hans = EXCLUDED.strengths_zh_hans,
+            summary_en = EXCLUDED.summary_en,
+            summary_zh_hant = EXCLUDED.summary_zh_hant,
+            summary_zh_hans = EXCLUDED.summary_zh_hans,
+            bio_en = EXCLUDED.bio_en,
+            bio_zh_hant = EXCLUDED.bio_zh_hant,
+            bio_zh_hans = EXCLUDED.bio_zh_hans,
+            hobbies_en = EXCLUDED.hobbies_en,
+            hobbies_zh_hant = EXCLUDED.hobbies_zh_hant,
+            hobbies_zh_hans = EXCLUDED.hobbies_zh_hans,
+            version = EXCLUDED.version,
+            created_at = EXCLUDED.created_at,
+            updated_at = EXCLUDED.updated_at,
+            created_by = EXCLUDED.created_by,
+            updated_by = EXCLUDED.updated_by
+        `;
+      }
+
+      if (teamPeople.length) {
+        const restored = await transaction`
+          SELECT id, name, initials, publication_consent_at, publication_consent_by, version
+          FROM team_people WHERE id IN ${transaction(teamPeople.map((row) => row.id))}
+        `;
+        const byId = new Map(restored.map((row) => [row.id, row]));
+        for (const row of teamPeople) {
+          const value = byId.get(row.id);
+          if (
+            !value ||
+            value.name !== row.name ||
+            value.initials !== row.initials ||
+            Number(value.version) !== Number(row.version) ||
+            String(value.publication_consent_by || "") !== String(row.publication_consent_by || "")
+          ) {
+            throw new Error(`Team person did not round-trip: ${row.id}`);
+          }
+        }
+      }
+
+      if (teamProfiles.length) {
+        const restored = await transaction`
+          SELECT * FROM team_profiles
+          WHERE id IN ${transaction(teamProfiles.map((row) => row.id))}
+        `;
+        const byId = new Map(restored.map((row) => [row.id, row]));
+        const fields = [
+          "person_id", "section", "status", "sort_order", "school", "grade",
+          "show_school", "show_grade", "role_en", "role_zh_hant", "role_zh_hans",
+          "school_display_en", "school_display_zh_hant", "school_display_zh_hans",
+          "languages_en", "languages_zh_hant", "languages_zh_hans",
+          "strengths_en", "strengths_zh_hant", "strengths_zh_hans",
+          "summary_en", "summary_zh_hant", "summary_zh_hans",
+          "bio_en", "bio_zh_hant", "bio_zh_hans",
+          "hobbies_en", "hobbies_zh_hant", "hobbies_zh_hans", "version",
+        ];
+        for (const row of teamProfiles) {
+          const value = byId.get(row.id);
+          if (!value || fields.some((field) => String(value[field]) !== String(row[field]))) {
+            throw new Error(`Team profile did not round-trip: ${row.id}`);
+          }
+        }
+      }
+
       const restoredCounts = await currentCounts(transaction);
       for (const [tableName, expectedRows] of Object.entries({
         impact_milestones: impactMilestones.length,
         impact_milestone_settings: impactMilestoneSettings.length,
         content_overrides: contentOverrides.length,
+        ...(backup.payload.version >= 2
+          ? { team_people: teamPeople.length, team_profiles: teamProfiles.length }
+          : {}),
       })) {
         if (restoredCounts[tableName] < expectedRows) {
           throw new Error(`Restore verification produced too few rows for ${tableName}.`);
@@ -245,6 +399,8 @@ try {
       impact_milestones: impactMilestones.length,
       impact_milestone_settings: impactMilestoneSettings.length,
       content_overrides: contentOverrides.length,
+      team_people: teamPeople.length,
+      team_profiles: teamProfiles.length,
       schema_migrations: schemaMigrations.length,
     },
   }));

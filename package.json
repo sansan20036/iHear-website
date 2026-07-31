@@ -6,7 +6,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit --incremental false",
     "test": "npm run test:api && npm run test:e2e",
-    "test:api": "vitest run tests/api-routes.test.mjs",
+    "test:api": "vitest run tests/api-routes.test.mjs tests/team-api.test.mjs",
     "test:e2e": "node scripts/prepare-public.mjs && playwright test",
     "check": "npm run lint && npm run typecheck && npm test && npm run build",
     "serve:legacy": "node scripts/prepare-public.mjs && node server.js",

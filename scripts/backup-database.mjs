@@ -31,6 +31,14 @@ try {
   const impactMilestoneSettings =
     await sql`SELECT * FROM impact_milestone_settings ORDER BY key`;
   const contentOverrides = await sql`SELECT * FROM content_overrides ORDER BY page, key`;
+  const [teamTables] = await sql`
+    SELECT
+      to_regclass('public.team_people') IS NOT NULL AS people,
+      to_regclass('public.team_profiles') IS NOT NULL AS profiles
+  `;
+  const hasTeamTables = Boolean(teamTables.people && teamTables.profiles);
+  const teamPeople = hasTeamTables ? await sql`SELECT * FROM team_people ORDER BY id` : [];
+  const teamProfiles = hasTeamTables ? await sql`SELECT * FROM team_profiles ORDER BY id` : [];
   const schemaMigrations = await sql`SELECT * FROM public.schema_migrations ORDER BY version`;
   const constraints = await sql`
     SELECT
@@ -45,6 +53,8 @@ try {
         'impact_milestones',
         'impact_milestone_settings',
         'content_overrides',
+        'team_people',
+        'team_profiles',
         'schema_migrations'
       )
     ORDER BY relation.relname, con.conname
@@ -63,6 +73,8 @@ try {
         'impact_milestones',
         'impact_milestone_settings',
         'content_overrides',
+        'team_people',
+        'team_profiles',
         'schema_migrations'
       )
     ORDER BY relation.relname, index_relation.relname
@@ -70,12 +82,13 @@ try {
 
   const payload = {
     format: "ihear-postgres-backup",
-    version: 1,
+    version: hasTeamTables ? 2 : 1,
     createdAt: new Date().toISOString(),
     tables: {
       impact_milestones: impactMilestones,
       impact_milestone_settings: impactMilestoneSettings,
       content_overrides: contentOverrides,
+      ...(hasTeamTables ? { team_people: teamPeople, team_profiles: teamProfiles } : {}),
       schema_migrations: schemaMigrations,
     },
     schema: {
@@ -106,6 +119,9 @@ try {
       impact_milestones: impactMilestones.length,
       impact_milestone_settings: impactMilestoneSettings.length,
       content_overrides: contentOverrides.length,
+      ...(hasTeamTables
+        ? { team_people: teamPeople.length, team_profiles: teamProfiles.length }
+        : {}),
       schema_migrations: schemaMigrations.length,
     },
   }));

@@ -19,9 +19,8 @@ test.beforeAll(async () => {
   testServer = createServer(async (request, response) => {
     try {
       const pathname = new URL(request.url, "http://127.0.0.1:3210").pathname;
-      const relativePath = pathname === "/about" || pathname === "/about/"
-        ? "about.html"
-        : pathname.replace(/^\/+/, "") || "index.html";
+      const cleanRoutes = { "/about": "about.html", "/about/": "about.html", "/team": "team.html", "/team/": "team.html" };
+      const relativePath = cleanRoutes[pathname] || pathname.replace(/^\/+/, "") || "index.html";
       const filePath = path.resolve(publicDir, relativePath);
 
       if (!filePath.startsWith(`${publicDir}${path.sep}`)) {
@@ -137,6 +136,42 @@ async function mockApplication(page) {
     body: JSON.stringify({ metrics: siteMetrics }),
   }));
 
+  const teamProfile = {
+    id: "tutor-test",
+    personId: "person-test",
+    section: "tutor",
+    status: "published",
+    sortOrder: 10,
+    name: "Test Tutor",
+    initials: "TT",
+    school: "Test School",
+    grade: "10",
+    showSchool: true,
+    showGrade: true,
+    role: { en: "Lead Tutor", zhHant: "首席導師", zhHans: "首席导师" },
+    schoolDisplay: { en: "Test School", zhHant: "測試學校", zhHans: "测试学校" },
+    languages: { en: "English", zhHant: "英文", zhHans: "英文" },
+    strengths: { en: "Confidence", zhHant: "建立自信", zhHans: "建立自信" },
+    summary: { en: "English summary", zhHant: "繁中簡介", zhHans: "简中简介" },
+    bio: { en: "English biography", zhHant: "繁中完整介紹", zhHans: "简中完整介绍" },
+    hobbies: { en: "Reading", zhHant: "閱讀", zhHans: "阅读" },
+    publicationConsentAt: "2026-07-31T00:00:00.000Z",
+    profileVersion: 1,
+    personVersion: 1,
+    updatedAt: "2026-07-31T00:00:00.000Z",
+  };
+
+  await page.route("**/api/team-profiles**", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      leaders: [],
+      tutors: [teamProfile],
+      people: [{ id: "person-test", name: "Test Tutor", initials: "TT", consentConfirmed: true }],
+      admin: route.request().url().includes("includeDrafts=true"),
+    }),
+  }));
+
   await page.route("**/api/impact-milestones**", async (route) => {
     const request = route.request();
     requests.push(`${request.method()} ${request.url()}`);
@@ -187,6 +222,38 @@ test("favicon is linked and served from the generated public directory", async (
   expect(response.status()).toBe(200);
   expect(response.headers()["content-type"]).toContain("image/x-icon");
   expect((await response.body()).byteLength).toBeGreaterThan(0);
+});
+
+test("team directory renders API data, switches language, and excludes generic pencils", async ({ page }) => {
+  await mockApplication(page);
+  await page.goto("/team");
+
+  await expect(page.locator("[data-team-tutors] .tutor-prof")).toHaveCount(1);
+  await expect(page.getByText("Test Tutor")).toBeVisible();
+  await page.getByText("Test Tutor").click();
+  await expect(page.getByText("English biography")).toBeVisible();
+  await expect(page.locator("[data-team-tutors] .ihear-inline-edit-button")).toHaveCount(0);
+
+  await page.locator('#langSwitch button[data-lang="zhTW"]').click();
+  await page.getByText("Test Tutor").click();
+  await expect(page.getByText("繁中完整介紹")).toBeVisible();
+  await page.locator('#langSwitch button[data-lang="zhCN"]').click();
+  await page.getByText("Test Tutor").click();
+  await expect(page.getByText("简中完整介绍")).toBeVisible();
+});
+
+test("team manager is mobile-safe and exposes structured editing controls", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 800 });
+  await mockApplication(page);
+  await page.goto("/team");
+
+  await page.getByRole("button", { name: "Manage profiles" }).click();
+  await page.getByRole("button", { name: "Add profile" }).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await expect(page.getByRole("checkbox", { name: /publication consent/i })).toBeVisible();
+
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
+  expect(overflow).toBe(false);
 });
 
 test("homepage uses current metrics across counters, languages, and inline editing", async ({ page }) => {

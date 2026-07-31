@@ -1,0 +1,80 @@
+.team-directory-admin[hidden],
+.team-profile-editor:not([open]),
+.team-profile-toast[hidden] { display:none!important; }
+.team-directory-admin{
+  margin:0 auto 24px;padding:14px 16px;border:1.5px solid rgba(38,57,116,.18);
+  border-radius:18px;background:#fff8f0;display:flex;justify-content:space-between;
+  align-items:center;gap:12px;flex-wrap:wrap;
+}
+.team-directory-admin strong{display:block;color:var(--navy);font-family:var(--font-h)}
+.team-directory-admin span{color:var(--ink-soft);font-size:.84rem}
+.team-admin-actions,.team-card-actions,.team-editor-actions{display:flex;gap:8px;flex-wrap:wrap}
+.team-admin-button{
+  border:1.5px solid var(--navy);border-radius:999px;background:#fff;color:var(--navy);
+  padding:8px 13px;font:800 .86rem/1 var(--font-b);cursor:pointer
+}
+.team-admin-button.primary{background:var(--navy);color:#fff}
+.team-admin-button.accent{background:var(--orange);border-color:var(--orange);color:#fff}
+.team-admin-button.danger{border-color:#a52626;color:#a52626}
+.team-admin-button:disabled{opacity:.55;cursor:wait}
+.team-profile-admin-card{position:relative}
+.team-profile-admin-card[data-status="draft"]{outline:2px dashed var(--orange);outline-offset:4px}
+.team-profile-status{
+  display:inline-flex;margin-left:8px;padding:3px 7px;border-radius:999px;
+  background:var(--orange-soft);color:#8b4b12;font-size:.72rem;font-weight:800
+}
+.team-card-actions{padding:0 20px 14px}
+.team-card-actions .team-admin-button{padding:6px 10px;font-size:.78rem}
+.team-directory-message{
+  grid-column:1/-1;margin:0;padding:24px;text-align:center;border:1.5px dashed var(--line);
+  border-radius:16px;color:var(--ink-soft);background:#fff
+}
+.team-profile-editor{
+  width:min(920px,calc(100vw - 24px));max-height:calc(100dvh - 24px);padding:0;
+  border:0;border-radius:22px;box-shadow:0 24px 80px rgba(20,35,80,.25);overflow:hidden
+}
+.team-profile-editor::backdrop{background:rgba(18,29,66,.56)}
+.team-editor-shell{display:flex;flex-direction:column;max-height:calc(100dvh - 24px);background:#fff}
+.team-editor-head,.team-editor-footer{padding:18px 22px;border-bottom:1px solid var(--line)}
+.team-editor-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+.team-editor-head h3{margin:0;color:var(--navy)}
+.team-editor-body{padding:20px 22px;overflow:auto}
+.team-editor-footer{border-top:1px solid var(--line);border-bottom:0;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.team-basic-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.team-field{display:flex;flex-direction:column;gap:6px;min-width:0}
+.team-field.wide{grid-column:1/-1}
+.team-field label,.team-field-label{font-weight:800;color:var(--navy)}
+.team-field input,.team-field select,.team-field textarea{
+  box-sizing:border-box;width:100%;min-width:0;border:1.5px solid var(--line);border-radius:11px;
+  padding:10px 11px;background:#fff;color:var(--ink);font:inherit
+}
+.team-field textarea{resize:vertical;min-height:92px}
+.team-check{display:flex;align-items:flex-start;gap:8px;color:var(--ink)}
+.team-check input{width:auto;margin-top:4px}
+.team-locale-tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin:22px 0 14px}
+.team-locale-tab{
+  min-width:0;border:1.5px solid var(--line);border-radius:11px;background:#fff;padding:9px 8px;
+  color:var(--navy);font-weight:800;cursor:pointer
+}
+.team-locale-tab[aria-selected="true"]{background:var(--navy);color:#fff;border-color:var(--navy)}
+.team-locale-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#aaa;margin-right:5px}
+.team-locale-tab[data-complete="true"] .team-locale-dot{background:#31a35b}
+.team-locale-panel[hidden]{display:none}
+.team-locale-panel{display:grid;gap:14px}
+.team-form-error{margin:14px 0 0;color:#a52626;font-weight:800}
+.team-profile-toast{
+  position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:400;
+  max-width:min(520px,calc(100vw - 24px));padding:11px 16px;border-radius:999px;
+  background:var(--navy);color:#fff;font-weight:800;box-shadow:var(--shadow-lg)
+}
+.team-profile-toast[data-error="true"]{background:#9f2525}
+@media(max-width:640px){
+  .team-basic-grid{grid-template-columns:1fr}
+  .team-field.wide{grid-column:auto}
+  .team-editor-body,.team-editor-head,.team-editor-footer{padding-left:16px;padding-right:16px}
+  .team-editor-footer,.team-editor-actions,.team-editor-actions .team-admin-button{width:100%}
+  .team-editor-actions .team-admin-button{justify-content:center}
+}
+@media(max-width:390px){
+  .team-locale-tabs{grid-template-columns:1fr}
+}

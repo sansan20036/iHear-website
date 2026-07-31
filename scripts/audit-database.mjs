@@ -27,6 +27,8 @@ const expectedTables = [
   "impact_milestone_settings",
   "impact_milestones",
   "schema_migrations",
+  "team_people",
+  "team_profiles",
 ];
 
 const expectedConstraints = [
@@ -52,10 +54,19 @@ const expectedConstraints = [
   "impact_milestones_title_length",
   "impact_milestones_version_positive",
   "impact_milestones_volunteers_nonnegative",
+  "team_people_consent_pair",
+  "team_people_pkey",
+  "team_people_timestamp_order",
+  "team_profiles_person_section_unique",
+  "team_profiles_pkey",
+  "team_profiles_public_visibility",
+  "team_profiles_published_english",
+  "team_profiles_timestamp_order",
 ];
 
 const expectedIndexes = [
   "impact_milestones_unique_published_metrics_period",
+  "team_profiles_public_order_idx",
 ];
 
 try {
@@ -67,7 +78,9 @@ try {
         'impact_milestones',
         'impact_milestone_settings',
         'content_overrides',
-        'schema_migrations'
+        'schema_migrations',
+        'team_people',
+        'team_profiles'
       ))
       OR (table_schema = 'supabase_migrations' AND table_name = 'schema_migrations')
     ORDER BY table_schema, table_name
@@ -84,7 +97,7 @@ try {
     JOIN pg_class AS relation ON relation.oid = con.conrelid
     JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
     WHERE namespace.nspname = 'public'
-      AND relation.relname IN ('impact_milestones', 'content_overrides')
+      AND relation.relname IN ('impact_milestones', 'content_overrides', 'team_people', 'team_profiles')
     ORDER BY relation.relname, con.conname
   `;
 
@@ -98,7 +111,7 @@ try {
     JOIN pg_class AS index_relation ON index_relation.oid = idx.indexrelid
     JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
     WHERE namespace.nspname = 'public'
-      AND relation.relname = 'impact_milestones'
+      AND relation.relname IN ('impact_milestones', 'team_people', 'team_profiles')
     ORDER BY index_relation.relname
   `;
 
@@ -106,7 +119,7 @@ try {
     SELECT schemaname, tablename, policyname, roles, cmd
     FROM pg_policies
     WHERE schemaname = 'public'
-      AND tablename IN ('impact_milestones', 'content_overrides')
+      AND tablename IN ('impact_milestones', 'content_overrides', 'team_people', 'team_profiles')
     ORDER BY tablename, policyname
   `;
 
@@ -119,7 +132,9 @@ try {
         'impact_milestones',
         'impact_milestone_settings',
         'content_overrides',
-        'schema_migrations'
+        'schema_migrations',
+        'team_people',
+        'team_profiles'
       )
     ORDER BY relation.relname
   `;
@@ -222,6 +237,40 @@ try {
     FROM content_overrides
   `;
 
+  const [invalidTeam] = await sql`
+    SELECT
+      (SELECT COUNT(*) FROM team_people
+        WHERE version < 1
+          OR char_length(name) NOT BETWEEN 1 AND 160
+          OR char_length(initials) NOT BETWEEN 1 AND 8
+          OR ((publication_consent_at IS NULL) <> (publication_consent_by IS NULL))
+          OR updated_at < created_at
+      )::INTEGER AS invalid_people,
+      (SELECT COUNT(*) FROM team_profiles
+        WHERE section NOT IN ('leader', 'tutor')
+          OR status NOT IN ('draft', 'published')
+          OR version < 1
+          OR sort_order NOT BETWEEN 0 AND 1000000
+          OR (show_school AND school = '')
+          OR (show_grade AND grade = '')
+          OR updated_at < created_at
+      )::INTEGER AS invalid_profiles,
+      (SELECT COUNT(*) FROM team_profiles AS profile
+        JOIN team_people AS person ON person.id = profile.person_id
+        WHERE profile.status = 'published' AND (
+          person.publication_consent_at IS NULL
+          OR person.publication_consent_by IS NULL
+          OR profile.role_en = ''
+          OR profile.bio_en = ''
+          OR (profile.section = 'tutor' AND profile.summary_en = '')
+        )
+      )::INTEGER AS invalid_published_profiles,
+      (SELECT COUNT(*) FROM (
+        SELECT person_id, section FROM team_profiles
+        GROUP BY person_id, section HAVING COUNT(*) > 1
+      ) AS duplicate)::INTEGER AS duplicate_placements
+  `;
+
   const counts = await sql`
     SELECT 'impact_milestones' AS table_name, COUNT(*)::INTEGER AS row_count
     FROM impact_milestones
@@ -231,6 +280,12 @@ try {
     UNION ALL
     SELECT 'content_overrides', COUNT(*)::INTEGER
     FROM content_overrides
+    UNION ALL
+    SELECT 'team_people', COUNT(*)::INTEGER
+    FROM team_people
+    UNION ALL
+    SELECT 'team_profiles', COUNT(*)::INTEGER
+    FROM team_profiles
     ORDER BY table_name
   `;
 
@@ -281,7 +336,11 @@ try {
     (constraint) => !constraintNames.includes(constraint),
   );
   const missingIndexes = expectedIndexes.filter((index) => !indexNames.includes(index));
-  const invalidCounts = [...Object.values(invalid), ...Object.values(invalidContent)].map(Number);
+  const invalidCounts = [
+    ...Object.values(invalid),
+    ...Object.values(invalidContent),
+    ...Object.values(invalidTeam),
+  ].map(Number);
   const disabledRls = rowLevelSecurity
     .filter((table) => !table.enabled)
     .map((table) => table.table_name);
@@ -305,6 +364,7 @@ try {
     trackedMigrations,
     invalidData: invalid,
     invalidContent,
+    invalidTeam,
     issues: {
       missingTables,
       missingConstraints,
