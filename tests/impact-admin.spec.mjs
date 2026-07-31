@@ -108,6 +108,28 @@ const siteMetrics = {
   updatedAt: "2027-01-01T00:00:00.000Z",
 };
 
+const previousMetrics = {
+  ...siteMetrics,
+  id: "impact-2026-12",
+  period: "2026-12",
+  volunteers: 38,
+  students: 58,
+  sessions: 1100,
+  sortOrder: 202612,
+};
+
+const futureJourneyEvent = {
+  ...milestone,
+  id: "journey-2028-01",
+  period: "2028-01",
+  title: {
+    zhHant: "未來一般歷程",
+    zhHans: "未来一般历程",
+    en: "Future journey event",
+  },
+  sortOrder: 202801,
+};
+
 async function mockApplication(page) {
   const requests = [];
   let publishedPayload = null;
@@ -192,7 +214,7 @@ async function mockApplication(page) {
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
-          milestones: [milestone],
+          milestones: [milestone, previousMetrics, siteMetrics, futureJourneyEvent],
           admin: request.url().includes("includeDrafts=true"),
         }),
       });
@@ -278,12 +300,42 @@ test("homepage uses current metrics across counters, languages, and inline editi
   await expect(page.locator("[data-site-metric-country-names]")).toHaveText(
     "Taiwan · China · United States · Canada · Japan",
   );
+  await expect(page.locator("[data-latest-impact-label]")).toHaveText("Latest impact");
+  await expect(page.locator("[data-latest-impact-period]")).toHaveText("January 2027");
+  await expect(page.locator("[data-latest-impact-headline]")).toHaveText(
+    "41+ volunteers · 63+ students · 1,299+ sessions",
+  );
+  await expect(page.locator("[data-latest-impact-description]")).toHaveText(
+    "Current metrics fixture",
+  );
   await expect(page.locator("[data-no-inline-edit] .ihear-inline-edit-button")).toHaveCount(0);
 
   await page.getByRole("button", { name: "繁" }).click();
   await expect(page.locator("[data-site-metric-asof]")).toHaveText("截至 2027 年 1 月");
   await expect(page.locator("[data-site-metric-country-names]")).toHaveText(
     "臺灣 · 中國 · 美國 · 加拿大 · 日本",
+  );
+  await expect(page.locator("[data-latest-impact-label]")).toHaveText("最新成果");
+  await expect(page.locator("[data-latest-impact-period]")).toHaveText("2027 年 1 月");
+  await expect(page.locator("[data-latest-impact-headline]")).toHaveText(
+    "41+ 位志工 · 63+ 位學生 · 1,299+ 堂課",
+  );
+});
+
+test("about marks only the latest published metrics as the latest impact", async ({ page }) => {
+  await mockApplication(page);
+  await page.goto("/about");
+
+  await expect(page.locator("[data-impact-id='impact-2027-01'] .impact-latest-badge")).toHaveText(
+    "Latest impact",
+  );
+  await expect(page.locator("[data-impact-id='journey-2024-06'] .impact-latest-badge")).toHaveCount(0);
+  await expect(page.locator("[data-impact-id='impact-2026-12'] .impact-latest-badge")).toHaveCount(0);
+  await expect(page.locator("[data-impact-id='journey-2028-01'] .impact-latest-badge")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "繁" }).click();
+  await expect(page.locator("[data-impact-id='impact-2027-01'] .impact-latest-badge")).toHaveText(
+    "最新成果",
   );
 });
 
@@ -304,6 +356,9 @@ for (const fallbackCase of [
     await expect(page.locator("[data-site-metric-asof]")).toHaveText("as of June 2026");
     await expect(page.locator("[data-site-metric-country-names]")).toHaveText(
       "Taiwan · China · US · Canada",
+    );
+    await expect(page.locator("[data-latest-impact-headline]")).toHaveText(
+      "35+ volunteers · 50+ students · 1,200+ sessions",
     );
   });
 }
@@ -557,9 +612,13 @@ test("live refresh restores metrics and inline content fallbacks after deletion"
 
   await page.goto("/");
   await expect(page.locator('[data-site-metric-value="sessions"]').first()).toHaveText("1,299+");
+  await expect(page.locator("[data-latest-impact-description]")).toHaveText("Current metrics fixture");
   metrics = null;
   await page.evaluate(() => window.iHearLiveContent.announce("impact", { revision: "2" }));
   await expect(page.locator('[data-site-metric-value="sessions"]').first()).toHaveText("1,200+");
+  await expect(page.locator("[data-latest-impact-description]")).toContainText(
+    "Bringing together 35+ active volunteers",
+  );
 
   await page.goto("/about");
   await expect(page.getByRole("heading", { name: /Temporary override/ })).toBeVisible();

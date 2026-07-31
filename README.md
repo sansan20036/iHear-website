@@ -247,9 +247,11 @@ GET /api/site-metrics
 ```
 
 `/api/site-metrics` returns the latest-period published metrics record and powers the
-homepage volunteer, student, session, country, and as-of values. Future-dated records
-become current as soon as they are published. If no published metrics exist, it returns
-`{ "metrics": null }` and the homepage keeps its static fallback.
+homepage volunteer, student, session, country, as-of, and latest-impact card values.
+The same record receives the localized "Latest impact" badge in the About timeline.
+Future-dated records become current as soon as they are published. If no published
+metrics exist, the API returns `{ "metrics": null }` and the homepage keeps its static
+fallback.
 
 Published records use a 24-hour tagged server data cache plus a one-second Vercel
 edge cache. Every successful create, update, or delete immediately expires the data

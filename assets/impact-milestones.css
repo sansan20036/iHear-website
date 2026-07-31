@@ -104,7 +104,8 @@
   filter: grayscale(.35);
 }
 
-.impact-status-badge {
+.impact-status-badge,
+.impact-latest-badge {
   display: inline-flex;
   align-items: center;
   min-height: 24px;
@@ -115,6 +116,11 @@
   color: var(--navy);
   font: 800 .72rem/1 var(--font-b);
   vertical-align: middle;
+}
+
+.impact-latest-badge {
+  background: var(--orange);
+  color: #fff;
 }
 
 .impact-item-actions {

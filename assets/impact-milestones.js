@@ -7,6 +7,7 @@
   const labelsByLocale = {
     en: {
       manager: "Journey timeline manager",
+      latestResult: "Latest impact",
       managerHint: "Edit every date, title, description, and impact metric.",
       editMode: "Edit mode",
       done: "Done editing",
@@ -71,6 +72,7 @@
     },
     zhHant: {
       manager: "歷程資料管理",
+      latestResult: "最新成果",
       managerHint: "日期、標題、說明與成果數字都可以編輯。",
       editMode: "進入編輯模式",
       done: "完成編輯",
@@ -135,6 +137,7 @@
     },
     zhHans: {
       manager: "历程数据管理",
+      latestResult: "最新成果",
       managerHint: "日期、标题、说明与成果数字都可以编辑。",
       editMode: "进入编辑模式",
       done: "完成编辑",
@@ -361,14 +364,18 @@
       return;
     }
 
-    const published = visible.filter((item) => item.status === "published");
-    const latestPublished = published.length ? published[published.length - 1].id : "";
+    const publishedMetrics = visible
+      .filter((item) => item.status === "published" && item.kind === "metrics")
+      .sort((a, b) => a.period.localeCompare(b.period));
+    const latestPublishedMetric = publishedMetrics.length
+      ? publishedMetrics[publishedMetrics.length - 1].id
+      : "";
     mount.innerHTML = "";
 
     visible.forEach((item) => {
       const article = document.createElement("div");
       article.className = "tl-item";
-      article.classList.toggle("hl", item.id === latestPublished);
+      article.classList.toggle("hl", item.id === latestPublishedMetric);
       article.classList.toggle("is-draft", item.status === "draft");
       article.classList.toggle("is-archived", item.status === "archived");
       article.dataset.impactId = item.id;
@@ -381,6 +388,13 @@
       when.textContent = formatPeriod(item.period);
       title.textContent = item.kind === "event" ? titleFor(item) : metricHeadline(item);
       description.textContent = descriptionFor(item);
+
+      if (item.id === latestPublishedMetric) {
+        const latestBadge = document.createElement("span");
+        latestBadge.className = "impact-latest-badge";
+        latestBadge.textContent = l.latestResult;
+        when.appendChild(latestBadge);
+      }
 
       if (state.isAdmin && state.editMode) {
         const badge = document.createElement("span");

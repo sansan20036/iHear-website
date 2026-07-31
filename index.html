@@ -204,7 +204,7 @@
     }
 
     /* ---------- stats band ---------- */
-    .stats-band{ padding: 0 0 84px; }
+    .stats-band{ padding: 0 0 28px; }
     .stats-grid{
       display:grid; grid-template-columns: repeat(4, 1fr); gap:18px;
       background: var(--navy); border-radius: 28px; padding: 40px 34px;
@@ -219,6 +219,31 @@
     .stat .num small{ font-size:.6em; }
     .stat .lbl{ font-weight:700; font-size:.95rem; opacity:.92; margin-top:4px; }
     .stat .sub{ font-size:.78rem; opacity:.62; margin-top:2px; }
+
+    /* ---------- latest impact ---------- */
+    .latest-impact-section{ padding:0 0 84px; }
+    .latest-impact-card{
+      display:block; position:relative; overflow:hidden; padding:30px 34px;
+      color:var(--ink); text-decoration:none; background:linear-gradient(120deg,#fff8ef,#fff);
+      border:1.5px solid rgba(232,150,79,.45); border-radius:24px; box-shadow:var(--shadow);
+      transition:transform var(--speed-2),box-shadow var(--speed-2),border-color var(--speed-2);
+    }
+    .latest-impact-card::after{
+      content:""; position:absolute; width:210px; height:210px; right:-82px; bottom:-120px;
+      border-radius:50%; background:rgba(232,150,79,.13); pointer-events:none;
+    }
+    .latest-impact-card:hover{
+      transform:translateY(-3px); box-shadow:var(--shadow-lg); border-color:var(--orange);
+    }
+    .latest-impact-meta{ display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:12px; }
+    .latest-impact-badge{
+      display:inline-flex; align-items:center; min-height:28px; padding:6px 11px; border-radius:999px;
+      background:var(--orange); color:#fff; font:800 .76rem/1 var(--font-b); letter-spacing:.02em;
+    }
+    .latest-impact-period{ color:#a65b1d; font-weight:800; font-size:.88rem; }
+    .latest-impact-card h2{ max-width:760px; margin:0 0 8px; font-size:clamp(1.45rem,2.5vw,2rem); }
+    .latest-impact-card p{ max-width:850px; color:var(--ink-soft); line-height:1.7; }
+    .latest-impact-link{ display:inline-flex; margin-top:14px; color:var(--navy); font-weight:800; }
 
     /* ---------- mission ---------- */
     .mission-quote{
@@ -584,6 +609,9 @@
       :root{ --nav-h: 64px; }
       body{ font-size:16px; }
       section{ padding: 60px 0; }
+      .stats-band{ padding-bottom:20px; }
+      .latest-impact-section{ padding-bottom:60px; }
+      .latest-impact-card{ padding:24px 22px; border-radius:20px; }
       .lang-switch button{ padding:8px 10px; }
       .hero{ padding: calc(var(--nav-h) + 30px) 0 56px; }
       .hero h1, .hero p, .hero-sub{ max-width:100%; }
@@ -685,6 +713,19 @@
             <div class="sub" data-i18n="stat_countries_sub" data-site-metric-country-names>Taiwan · China · US · Canada</div>
           </div>
         </div>
+      </div>
+</section>
+<section class="latest-impact-section" aria-labelledby="latest-impact-heading">
+      <div class="container">
+        <a class="latest-impact-card" href="about.html#journey" data-latest-impact data-no-inline-edit aria-live="polite">
+          <div class="latest-impact-meta">
+            <span class="latest-impact-badge" data-latest-impact-label>Latest impact</span>
+            <time class="latest-impact-period" datetime="2026-06" data-latest-impact-period>June 2026</time>
+          </div>
+          <h2 id="latest-impact-heading" data-latest-impact-headline>35+ volunteers · 50+ students · 1,200+ sessions</h2>
+          <p data-latest-impact-description>Bringing together 35+ active volunteers from 6+ high schools to support more than 50 students through 1,200+ one-on-one English communication sessions.</p>
+          <span class="latest-impact-link" data-latest-impact-link>View our journey →</span>
+        </a>
       </div>
     </section>
 <section id="about" aria-labelledby="about-h">

@@ -7,8 +7,38 @@
   const countryNameSlots = Array.from(
     document.querySelectorAll("[data-site-metric-country-names]"),
   );
+  const latestCards = Array.from(document.querySelectorAll("[data-latest-impact]"));
+  const latestLabelSlots = Array.from(document.querySelectorAll("[data-latest-impact-label]"));
+  const latestPeriodSlots = Array.from(document.querySelectorAll("[data-latest-impact-period]"));
+  const latestHeadlineSlots = Array.from(document.querySelectorAll("[data-latest-impact-headline]"));
+  const latestDescriptionSlots = Array.from(document.querySelectorAll("[data-latest-impact-description]"));
+  const latestLinkSlots = Array.from(document.querySelectorAll("[data-latest-impact-link]"));
 
-  if (!valueSlots.length && !asOfSlots.length && !countryNameSlots.length) return;
+  if (!valueSlots.length && !asOfSlots.length && !countryNameSlots.length && !latestCards.length) return;
+
+  const latestLabels = {
+    en: {
+      label: "Latest impact",
+      link: "View our journey →",
+      volunteers: "volunteers",
+      students: "students",
+      sessions: "sessions",
+    },
+    zhHant: {
+      label: "最新成果",
+      link: "查看我們的歷程 →",
+      volunteers: "位志工",
+      students: "位學生",
+      sessions: "堂課",
+    },
+    zhHans: {
+      label: "最新成果",
+      link: "查看我们的历程 →",
+      volunteers: "位志愿者",
+      students: "位学生",
+      sessions: "节课",
+    },
+  };
 
   let currentMetrics = null;
   const fallback = {
@@ -20,6 +50,15 @@
     plus: plusSlots.map((slot) => ({ slot, text: slot.textContent, hidden: slot.hidden })),
     asOf: asOfSlots.map((slot) => ({ slot, text: slot.textContent })),
     countries: countryNameSlots.map((slot) => ({ slot, text: slot.textContent })),
+    latestLabels: latestLabelSlots.map((slot) => ({ slot, text: slot.textContent })),
+    latestPeriods: latestPeriodSlots.map((slot) => ({
+      slot,
+      text: slot.textContent,
+      dateTime: slot.getAttribute("datetime"),
+    })),
+    latestHeadlines: latestHeadlineSlots.map((slot) => ({ slot, text: slot.textContent })),
+    latestDescriptions: latestDescriptionSlots.map((slot) => ({ slot, text: slot.textContent })),
+    latestLinks: latestLinkSlots.map((slot) => ({ slot, text: slot.textContent })),
   };
 
   function restoreFallback() {
@@ -34,6 +73,15 @@
     });
     fallback.asOf.forEach(({ slot, text }) => { slot.textContent = text; });
     fallback.countries.forEach(({ slot, text }) => { slot.textContent = text; });
+    fallback.latestLabels.forEach(({ slot, text }) => { slot.textContent = text; });
+    fallback.latestPeriods.forEach(({ slot, text, dateTime }) => {
+      slot.textContent = text;
+      if (dateTime === null) slot.removeAttribute("datetime");
+      else slot.setAttribute("datetime", dateTime);
+    });
+    fallback.latestHeadlines.forEach(({ slot, text }) => { slot.textContent = text; });
+    fallback.latestDescriptions.forEach(({ slot, text }) => { slot.textContent = text; });
+    fallback.latestLinks.forEach(({ slot, text }) => { slot.textContent = text; });
   }
 
   function localeKey() {
@@ -78,6 +126,22 @@
     return localeKey() === "en" ? `as of ${formatted}` : `截至 ${formatted}`;
   }
 
+  function localizedText(values) {
+    if (!values || typeof values !== "object") return "";
+    const key = localeKey();
+    return values[key] || values.en || values.zhHant || values.zhHans || "";
+  }
+
+  function formatLatestHeadline() {
+    const key = localeKey();
+    const labels = latestLabels[key] || latestLabels.en;
+    return [
+      `${formatValue("volunteers", true)} ${labels.volunteers}`,
+      `${formatValue("students", true)} ${labels.students}`,
+      `${formatValue("sessions", true)} ${labels.sessions}`,
+    ].join(" · ");
+  }
+
   function render() {
     if (!currentMetrics) return;
 
@@ -105,9 +169,22 @@
 
     countryNameSlots.forEach((slot) => {
       const names = currentMetrics.countryNames || {};
-      const text = names[localeKey()];
+      const text = localizedText(names);
       if (typeof text === "string" && text.trim()) slot.textContent = text;
     });
+
+    const labels = latestLabels[localeKey()] || latestLabels.en;
+    latestLabelSlots.forEach((slot) => { slot.textContent = labels.label; });
+    latestPeriodSlots.forEach((slot) => {
+      slot.textContent = formatPeriod(currentMetrics.period);
+      slot.setAttribute("datetime", currentMetrics.period || "");
+    });
+    latestHeadlineSlots.forEach((slot) => { slot.textContent = formatLatestHeadline(); });
+    latestDescriptionSlots.forEach((slot) => {
+      const description = localizedText(currentMetrics.description);
+      if (description) slot.textContent = description;
+    });
+    latestLinkSlots.forEach((slot) => { slot.textContent = labels.link; });
   }
 
   async function load(context) {
