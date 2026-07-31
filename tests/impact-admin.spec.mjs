@@ -130,7 +130,7 @@ const futureJourneyEvent = {
   sortOrder: 202801,
 };
 
-async function mockApplication(page) {
+async function mockApplication(page, { admin = true } = {}) {
   const requests = [];
   let publishedPayload = null;
   const liveRevisions = {
@@ -142,13 +142,13 @@ async function mockApplication(page) {
   await page.route("**/api/auth/session", (route) => route.fulfill({
     status: 200,
     contentType: "application/json",
-    body: JSON.stringify({
+    body: JSON.stringify(admin ? {
       user: {
         name: "Environment Admin",
         email: "configured-only-in-env@example.com",
         isAdmin: true,
       },
-    }),
+    } : {}),
   }));
 
   await page.route("**/api/content/get", (route) => route.fulfill({
@@ -259,7 +259,7 @@ test("favicon is linked and served from the generated public directory", async (
 });
 
 test("team directory renders API data, switches language, and excludes generic pencils", async ({ page }) => {
-  await mockApplication(page);
+  await mockApplication(page, { admin: false });
   await page.goto("/team");
 
   await expect(page.locator("[data-team-tutors] .tutor-prof")).toHaveCount(1);
@@ -267,6 +267,8 @@ test("team directory renders API data, switches language, and excludes generic p
   await page.getByText("Test Tutor").click();
   await expect(page.getByText("English biography")).toBeVisible();
   await expect(page.locator("[data-team-tutors] .ihear-inline-edit-button")).toHaveCount(0);
+  await expect(page.locator("[data-team-toggle]")).toHaveCount(0);
+  await expect(page.locator("[data-team-add],[data-edit],[data-delete]")).toHaveCount(0);
 
   await page.locator('#langSwitch button[data-lang="zhTW"]').click();
   await expect(page.getByText("繁中完整介紹")).toBeVisible();

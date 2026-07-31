@@ -181,6 +181,7 @@ export function publicTeamProfile(profile: TeamProfile) {
     id: profile.id,
     personId: profile.personId,
     section: profile.section,
+    status: "published" as const,
     name: profile.name,
     initials: profile.initials,
     school: profile.showSchool ? profile.school : "",

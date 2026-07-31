@@ -22,7 +22,7 @@ import {
 
 export const dynamic = "force-dynamic";
 
-function grouped(profiles: ReturnType<typeof publicTeamProfile>[]) {
+function grouped<T extends { section: "leader" | "tutor" }>(profiles: T[]) {
   return {
     leaders: profiles.filter((profile) => profile.section === "leader"),
     tutors: profiles.filter((profile) => profile.section === "tutor"),

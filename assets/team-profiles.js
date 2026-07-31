@@ -26,7 +26,7 @@
   function showToast(message,error){clearTimeout(toastTimer);toast.textContent=message;toast.dataset.error=String(Boolean(error));toast.hidden=false;toastTimer=setTimeout(()=>toast.hidden=true,3500)}
   function message(mount,text){mount.innerHTML=`<p class="team-directory-message">${esc(text)}</p>`}
   function all(section){return state[section==="leader"?"leaders":"tutors"]}
-  function visible(items){return state.admin&&state.editMode?items:items.filter(item=>item.status==="published")}
+  function visible(items){return state.admin&&state.editMode?items:items.filter(item=>item.status!=="draft")}
   function dragHandle(item){
     if(!state.admin||!state.editMode)return"";
     return `<button type="button" class="team-profile-drag-handle" data-team-drag="${esc(item.section)}" data-drag-id="${esc(item.id)}" aria-label="${esc(l().drag)}: ${esc(item.name)}" aria-keyshortcuts="ArrowUp ArrowDown" ${state.reordering?"disabled":""}><span aria-hidden="true">⠇⠇</span><span class="team-profile-drag-text">${esc(l().drag)}</span></button>`;
@@ -192,13 +192,15 @@
     const handle=event.target.closest("[data-team-drag]");if(!handle||!['ArrowUp','ArrowDown'].includes(event.key))return;
     event.preventDefault();event.stopPropagation();move(handle.dataset.dragId,event.key==='ArrowUp'?-1:1)
   });
+  let loadSequence=0;
   async function load(admin,context){
+    const sequence=++loadSequence;
     try{
       const parameters=new URLSearchParams();if(admin)parameters.set("includeDrafts","true");if(context&&context.revision)parameters.set("live",context.revision);const query=parameters.toString();
       const response=await fetch(`/api/team-profiles${query?`?${query}`:""}`,{credentials:"same-origin",cache:"no-store"});
-      if(!response.ok)throw new Error("load");const data=await response.json();
+      if(!response.ok)throw new Error("load");const data=await response.json();if(sequence!==loadSequence)return;
       state.leaders=Array.isArray(data.leaders)?data.leaders:[];state.tutors=Array.isArray(data.tutors)?data.tutors:[];state.people=Array.isArray(data.people)?data.people:[];state.admin=Boolean(data.admin)||state.admin;state.busy=false;render()
-    }catch(error){if(!state.leaders.length&&!state.tutors.length){message(leaderMount,l().failed);message(tutorMount,l().failed)}if(context)throw error}
+    }catch(error){if(sequence!==loadSequence)return;if(!state.leaders.length&&!state.tutors.length){message(leaderMount,l().failed);message(tutorMount,l().failed)}if(context)throw error}
   }
   document.addEventListener("click",event=>{
     const button=event.target.closest("button");if(!button)return;
