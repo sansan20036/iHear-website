@@ -3,6 +3,8 @@ import { createHmac } from "node:crypto";
 import { NextResponse } from "next/server";
 import postgres from "postgres";
 
+import { captureServerException } from "./monitoring";
+
 type RateLimitSql = ReturnType<typeof postgres>;
 type RateLimitRow = {
   request_count: number;
@@ -217,6 +219,7 @@ export async function enforceRateLimit(request: Request, options: RateLimitOptio
       : { limited: true as const, response: rateLimitExceededResponse(result) };
   } catch (error) {
     console.error("API rate limiting failed", error);
+    captureServerException(error, { route: "api", operation: "rate-limit" });
     return { limited: true as const, response: unavailableResponse() };
   }
 }

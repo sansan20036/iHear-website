@@ -1,0 +1,83 @@
+name: Daily encrypted application backup
+
+on:
+  schedule:
+    - cron: "30 17 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daily-application-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      POSTGRES_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+      BACKUP_ENCRYPTION_PASSWORD: ${{ secrets.BACKUP_ENCRYPTION_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Validate required secrets
+        shell: bash
+        run: |
+          test -n "$POSTGRES_URL" || { echo "BACKUP_DATABASE_URL is not configured"; exit 1; }
+          test -n "$BACKUP_ENCRYPTION_PASSWORD" || { echo "BACKUP_ENCRYPTION_PASSWORD is not configured"; exit 1; }
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Create and verify read-only application backup
+        shell: bash
+        run: |
+          rm -rf backups backup-output
+          mkdir -p backup-output
+          npm run db:backup
+          npm run db:verify-backup-file
+
+      - name: Encrypt backup
+        shell: bash
+        run: |
+          timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+          tar -czf backup-output/backup.tar.gz backups
+          openssl enc -aes-256-cbc -salt -pbkdf2 -iter 200000 \
+            -in backup-output/backup.tar.gz \
+            -out "backup-output/ihear-application-${timestamp}.tar.gz.enc" \
+            -pass env:BACKUP_ENCRYPTION_PASSWORD
+          rm -rf backups backup-output/backup.tar.gz
+          cd backup-output
+          sha256sum ./*.enc > SHA256SUMS
+
+      - name: Store encrypted backup offsite
+        uses: actions/upload-artifact@v4
+        with:
+          name: ihear-application-backup-${{ github.run_id }}
+          path: |
+            backup-output/*.enc
+            backup-output/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 35
+
+      - name: Notify backup heartbeat
+        if: success()
+        env:
+          HEARTBEAT_URL: ${{ secrets.BACKUP_HEARTBEAT_URL }}
+        shell: bash
+        run: |
+          if [ -n "$HEARTBEAT_URL" ]; then
+            curl --fail --silent --show-error --max-time 10 "$HEARTBEAT_URL"
+          fi
+
+      - name: Remove plaintext and encrypted working files
+        if: always()
+        shell: bash
+        run: rm -rf backups backup-output

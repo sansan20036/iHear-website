@@ -58,6 +58,10 @@ vi.mock("../lib/live-revisions", () => ({
   revisionAfterMutation: vi.fn(),
 }));
 
+vi.mock("../lib/health", () => ({
+  checkApplicationHealth: vi.fn(),
+}));
+
 vi.mock("../lib/rate-limit", () => ({
   enforceRateLimit: vi.fn(),
   withRateLimitHeaders: vi.fn((response, decision) => {
@@ -79,6 +83,7 @@ import { revalidatePath, revalidateTag } from "next/cache";
 import { auth, handlers } from "../auth.js";
 import { POST as authPost } from "../app/api/auth/[...nextauth]/route.js";
 import { POST as clearStaleAuth } from "../app/api/auth/clear-stale/route";
+import { GET as getHealth } from "../app/api/health/route";
 import { GET as getContent } from "../app/api/content/get/route";
 import { POST as updateContent } from "../app/api/content/update/route";
 import {
@@ -94,6 +99,7 @@ import { GET as getSiteMetrics } from "../app/api/site-metrics/route";
 import { GET as getLiveRevisionApi } from "../app/api/live-revisions/route";
 import * as contentStore from "../lib/content-store";
 import * as impactStore from "../lib/impact-store";
+import * as health from "../lib/health";
 import * as liveRevisions from "../lib/live-revisions";
 import { enforceRateLimit } from "../lib/rate-limit";
 
@@ -197,6 +203,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   auth.mockResolvedValue({ user: { email: adminEmail, isAdmin: true } });
   handlers.POST.mockResolvedValue(new Response(null, { status: 200 }));
+  health.checkApplicationHealth.mockResolvedValue({ ok: true, latencyMs: 4 });
   enforceRateLimit.mockResolvedValue(allowedRateLimitDecision());
   impactStore.listPublishedImpactMilestones.mockResolvedValue([storedMilestone]);
   impactStore.getCurrentSiteMetrics.mockResolvedValue(currentMetrics);
@@ -230,6 +237,36 @@ beforeEach(() => {
 });
 
 describe("public API caching", () => {
+  test("health check is uncached and exposes no infrastructure details", async () => {
+    const response = await getHealth();
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("private, no-store, max-age=0");
+    expect(response.headers.get("vercel-cdn-cache-control")).toBe("no-store");
+    expect(response.headers.get("x-health-request-id")).toBe(body.requestId);
+    expect(body).toMatchObject({
+      status: "ok",
+      version: 1,
+      checks: { application: "ok", database: "ok" },
+    });
+    expect(JSON.stringify(body)).not.toMatch(/postgres|supabase|@|latency/i);
+  });
+
+  test("health check returns an uncached 503 without leaking database errors", async () => {
+    health.checkApplicationHealth.mockRejectedValue(
+      Object.assign(new Error("postgresql://secret@example.test/database"), { code: "08006" }),
+    );
+
+    const response = await getHealth();
+    const body = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(response.headers.get("cache-control")).toContain("no-store");
+    expect(body.checks.database).toBe("unavailable");
+    expect(JSON.stringify(body)).not.toMatch(/postgres|secret|08006|example\.test/i);
+  });
+
   test("live revisions expose only public version metadata", async () => {
     const response = await getLiveRevisionApi();
     const body = await response.json();

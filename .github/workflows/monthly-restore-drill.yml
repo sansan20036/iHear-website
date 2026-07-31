@@ -1,0 +1,137 @@
+name: Monthly isolated PostgreSQL restore drill
+
+on:
+  schedule:
+    - cron: "45 18 1 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: monthly-restore-drill
+  cancel-in-progress: false
+
+jobs:
+  restore-drill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BACKUP_DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+      BACKUP_ENCRYPTION_PASSWORD: ${{ secrets.BACKUP_ENCRYPTION_PASSWORD }}
+    services:
+      restore-postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: ihear_restore
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: restore-only-password
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d ihear_restore"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate required secrets
+        shell: bash
+        run: |
+          test -n "$BACKUP_DATABASE_URL" || { echo "BACKUP_DATABASE_URL is not configured"; exit 1; }
+          test -n "$BACKUP_ENCRYPTION_PASSWORD" || { echo "BACKUP_ENCRYPTION_PASSWORD is not configured"; exit 1; }
+
+      - name: Create read-only Production dump
+        shell: bash
+        run: |
+          rm -rf restore-output
+          mkdir -p restore-output
+          docker run --rm \
+            -e BACKUP_DATABASE_URL \
+            -v "$PWD/restore-output:/restore" \
+            postgres:17-alpine \
+            sh -eu -c 'pg_dump "$BACKUP_DATABASE_URL" --format=custom --no-owner --no-privileges --schema=public --exclude-table-data=public.api_rate_limits --file=/restore/production-public.dump'
+
+      - name: Exercise encrypted backup round trip
+        shell: bash
+        run: |
+          original_sha="$(sha256sum restore-output/production-public.dump | cut -d ' ' -f 1)"
+          openssl enc -aes-256-cbc -salt -pbkdf2 -iter 200000 \
+            -in restore-output/production-public.dump \
+            -out restore-output/production-public.dump.enc \
+            -pass env:BACKUP_ENCRYPTION_PASSWORD
+          rm -f restore-output/production-public.dump
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 \
+            -in restore-output/production-public.dump.enc \
+            -out restore-output/roundtrip.dump \
+            -pass env:BACKUP_ENCRYPTION_PASSWORD
+          restored_sha="$(sha256sum restore-output/roundtrip.dump | cut -d ' ' -f 1)"
+          test "$original_sha" = "$restored_sha"
+          printf '%s  %s\n' "$(sha256sum restore-output/production-public.dump.enc | cut -d ' ' -f 1)" "production-public.dump.enc" > restore-output/SHA256SUMS
+
+      - name: Restore into isolated PostgreSQL
+        shell: bash
+        run: |
+          docker run --rm --network host \
+            -e PGPASSWORD=restore-only-password \
+            -v "$PWD/restore-output:/restore" \
+            postgres:17-alpine \
+            pg_restore --host=127.0.0.1 --port=55432 --username=postgres --dbname=ihear_restore --clean --if-exists --exit-on-error /restore/roundtrip.dump
+
+      - name: Verify restored schema and data
+        shell: bash
+        run: |
+          docker run --rm --network host -i \
+            -e PGPASSWORD=restore-only-password \
+            postgres:17-alpine \
+            psql --host=127.0.0.1 --port=55432 --username=postgres --dbname=ihear_restore --set=ON_ERROR_STOP=1 <<'SQL'
+          DO $verify$
+          BEGIN
+            IF to_regclass('public.content_overrides') IS NULL
+              OR to_regclass('public.impact_milestones') IS NULL
+              OR to_regclass('public.team_people') IS NULL
+              OR to_regclass('public.team_profiles') IS NULL
+              OR to_regclass('public.site_content_revisions') IS NULL THEN
+              RAISE EXCEPTION 'Required application tables are missing';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM public.schema_migrations WHERE version = '009') THEN
+              RAISE EXCEPTION 'Migration 009 is missing';
+            END IF;
+            IF (SELECT COUNT(*) FROM public.site_content_revisions WHERE scope IN ('content', 'impact', 'team')) <> 3 THEN
+              RAISE EXCEPTION 'Live revision scopes are incomplete';
+            END IF;
+          END
+          $verify$;
+          SELECT json_build_object(
+            'impact_milestones', (SELECT COUNT(*) FROM public.impact_milestones),
+            'content_overrides', (SELECT COUNT(*) FROM public.content_overrides),
+            'team_people', (SELECT COUNT(*) FROM public.team_people),
+            'team_profiles', (SELECT COUNT(*) FROM public.team_profiles)
+          ) AS restored_row_counts;
+          SQL
+
+      - name: Store drill evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: ihear-restore-drill-${{ github.run_id }}
+          path: |
+            restore-output/production-public.dump.enc
+            restore-output/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 92
+
+      - name: Notify restore heartbeat
+        if: success()
+        env:
+          HEARTBEAT_URL: ${{ secrets.RESTORE_HEARTBEAT_URL }}
+        shell: bash
+        run: |
+          if [ -n "$HEARTBEAT_URL" ]; then
+            curl --fail --silent --show-error --max-time 10 "$HEARTBEAT_URL"
+          fi
+
+      - name: Remove restored plaintext and encrypted working files
+        if: always()
+        shell: bash
+        run: rm -rf restore-output

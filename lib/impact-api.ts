@@ -9,6 +9,7 @@ import {
   IMPACT_CACHE_TAG,
 } from "./impact-store";
 import { revisionAfterMutation } from "./live-revisions";
+import { captureServerException } from "./monitoring";
 import { ImpactValidationError } from "./impact-types";
 
 export async function invalidateImpactMilestones() {
@@ -44,6 +45,7 @@ export function impactApiError(error: unknown) {
     );
   }
   if (error instanceof ImpactConfigurationError) {
+    captureServerException(error, { route: "/api/impact-milestones", operation: "persistence" });
     return NextResponse.json(
       { error: "Impact data persistence is not configured" },
       { status: 503 },
@@ -51,6 +53,7 @@ export function impactApiError(error: unknown) {
   }
 
   console.error("Impact milestones API error", error);
+  captureServerException(error, { route: "/api/impact-milestones", operation: "request" });
   return NextResponse.json({ error: "Could not update impact milestones" }, { status: 500 });
 }
 

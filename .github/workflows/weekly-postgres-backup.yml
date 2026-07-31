@@ -1,0 +1,81 @@
+name: Weekly encrypted PostgreSQL backup
+
+on:
+  schedule:
+    - cron: "15 18 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: weekly-postgres-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      BACKUP_DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+      BACKUP_ENCRYPTION_PASSWORD: ${{ secrets.BACKUP_ENCRYPTION_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate required secrets
+        shell: bash
+        run: |
+          test -n "$BACKUP_DATABASE_URL" || { echo "BACKUP_DATABASE_URL is not configured"; exit 1; }
+          test -n "$BACKUP_ENCRYPTION_PASSWORD" || { echo "BACKUP_ENCRYPTION_PASSWORD is not configured"; exit 1; }
+
+      - name: Create read-only logical dump
+        shell: bash
+        run: |
+          rm -rf backup-output
+          mkdir -p backup-output
+          docker run --rm \
+            -e BACKUP_DATABASE_URL \
+            -v "$PWD/backup-output:/backup" \
+            postgres:17-alpine \
+            sh -eu -c 'pg_dump "$BACKUP_DATABASE_URL" --format=custom --no-owner --no-privileges --schema=public --exclude-table-data=public.api_rate_limits --file=/backup/production-public.dump'
+          docker run --rm \
+            -v "$PWD/backup-output:/backup" \
+            postgres:17-alpine \
+            pg_restore --list /backup/production-public.dump > backup-output/restore-list.txt
+
+      - name: Encrypt logical dump
+        shell: bash
+        run: |
+          timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+          openssl enc -aes-256-cbc -salt -pbkdf2 -iter 200000 \
+            -in backup-output/production-public.dump \
+            -out "backup-output/ihear-postgres-${timestamp}.dump.enc" \
+            -pass env:BACKUP_ENCRYPTION_PASSWORD
+          rm -f backup-output/production-public.dump backup-output/restore-list.txt
+          cd backup-output
+          sha256sum ./*.enc > SHA256SUMS
+
+      - name: Store encrypted dump offsite
+        uses: actions/upload-artifact@v4
+        with:
+          name: ihear-postgres-backup-${{ github.run_id }}
+          path: |
+            backup-output/*.enc
+            backup-output/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 92
+
+      - name: Notify backup heartbeat
+        if: success()
+        env:
+          HEARTBEAT_URL: ${{ secrets.BACKUP_HEARTBEAT_URL }}
+        shell: bash
+        run: |
+          if [ -n "$HEARTBEAT_URL" ]; then
+            curl --fail --silent --show-error --max-time 10 "$HEARTBEAT_URL"
+          fi
+
+      - name: Remove working files
+        if: always()
+        shell: bash
+        run: rm -rf backup-output
