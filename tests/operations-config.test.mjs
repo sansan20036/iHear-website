@@ -34,6 +34,15 @@ describe("production operations configuration", () => {
     }
   });
 
+  it("pins the backup installer to the Node and npm versions used by the lockfile", async () => {
+    const workflow = await read(".github/workflows/daily-application-backup.yml");
+    expect(workflow).toContain("actions/checkout@v7");
+    expect(workflow).toContain("actions/setup-node@v7");
+    expect(workflow).toContain("node-version: 24.11.1");
+    expect(workflow).toContain("npm install --global npm@11.6.2");
+    expect(workflow).toContain("actions/upload-artifact@v7");
+  });
+
   it("keeps routine backup reads separate from restore writes", async () => {
     const daily = await read(".github/workflows/daily-application-backup.yml");
     const weekly = await read(".github/workflows/weekly-postgres-backup.yml");

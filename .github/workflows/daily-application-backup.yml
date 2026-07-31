@@ -20,12 +20,15 @@ jobs:
       POSTGRES_URL: ${{ secrets.BACKUP_DATABASE_URL }}
       BACKUP_ENCRYPTION_PASSWORD: ${{ secrets.BACKUP_ENCRYPTION_PASSWORD }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24.11.1
           cache: npm
+
+      - name: Pin npm used by the lockfile
+        run: npm install --global npm@11.6.2
 
       - name: Validate required secrets
         shell: bash
@@ -58,7 +61,7 @@ jobs:
           sha256sum ./*.enc > SHA256SUMS
 
       - name: Store encrypted backup offsite
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ihear-application-backup-${{ github.run_id }}
           path: |

@@ -34,7 +34,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Validate required secrets
         shell: bash
@@ -112,7 +112,7 @@ jobs:
           SQL
 
       - name: Store drill evidence
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ihear-restore-drill-${{ github.run_id }}
           path: |
