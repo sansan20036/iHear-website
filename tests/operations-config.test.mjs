@@ -55,6 +55,8 @@ describe("production operations configuration", () => {
     expect(drill).toContain("--clean --if-exists --exit-on-error");
     expect(drill).not.toMatch(/pg_restore[^\n]*BACKUP_DATABASE_URL/);
     expect(drill).toContain("services:\n      restore-postgres:");
+    expect(weekly).toContain("retention-days: 90");
+    expect(drill).toContain("retention-days: 90");
   });
 
   it("monitors Production externally and manages a single recoverable incident", async () => {

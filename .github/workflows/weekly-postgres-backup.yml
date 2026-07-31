@@ -63,7 +63,7 @@ jobs:
             backup-output/*.enc
             backup-output/SHA256SUMS
           if-no-files-found: error
-          retention-days: 92
+          retention-days: 90
 
       - name: Notify backup heartbeat
         if: success()
