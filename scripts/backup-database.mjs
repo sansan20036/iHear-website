@@ -31,6 +31,13 @@ try {
   const impactMilestoneSettings =
     await sql`SELECT * FROM impact_milestone_settings ORDER BY key`;
   const contentOverrides = await sql`SELECT * FROM content_overrides ORDER BY page, key`;
+  const [localizedTable] = await sql`
+    SELECT to_regclass('public.localized_content_overrides') IS NOT NULL AS available
+  `;
+  const hasLocalizedContent = Boolean(localizedTable.available);
+  const localizedContentOverrides = hasLocalizedContent
+    ? await sql`SELECT * FROM localized_content_overrides ORDER BY page, key, locale`
+    : [];
   const [teamTables] = await sql`
     SELECT
       to_regclass('public.team_people') IS NOT NULL AS people,
@@ -54,6 +61,7 @@ try {
         'impact_milestones',
         'impact_milestone_settings',
         'content_overrides',
+        'localized_content_overrides',
         'team_people',
         'team_profiles',
         'schema_migrations',
@@ -76,6 +84,7 @@ try {
         'impact_milestones',
         'impact_milestone_settings',
         'content_overrides',
+        'localized_content_overrides',
         'team_people',
         'team_profiles',
         'schema_migrations',
@@ -86,12 +95,15 @@ try {
 
   const payload = {
     format: "ihear-postgres-backup",
-    version: hasTeamTables ? 2 : 1,
+    version: hasLocalizedContent ? 3 : 2,
     createdAt: new Date().toISOString(),
     tables: {
       impact_milestones: impactMilestones,
       impact_milestone_settings: impactMilestoneSettings,
       content_overrides: contentOverrides,
+      ...(hasLocalizedContent
+        ? { localized_content_overrides: localizedContentOverrides }
+        : {}),
       ...(hasTeamTables ? { team_people: teamPeople, team_profiles: teamProfiles } : {}),
       schema_migrations: schemaMigrations,
     },
@@ -123,6 +135,9 @@ try {
       impact_milestones: impactMilestones.length,
       impact_milestone_settings: impactMilestoneSettings.length,
       content_overrides: contentOverrides.length,
+      ...(hasLocalizedContent
+        ? { localized_content_overrides: localizedContentOverrides.length }
+        : {}),
       ...(hasTeamTables
         ? { team_people: teamPeople.length, team_profiles: teamProfiles.length }
         : {}),

@@ -1,10 +1,23 @@
 {
-  "version": 1,
+  "version": 3,
   "updatedAt": "2026-07-11T20:23:20.365Z",
   "updatedBy": "sansan20036@gmail.com",
-  "pages": {
-    "/about": {
-      "section:nth-of-type(1)>div:nth-of-type(1)>div:nth-of-type(1)>h2:nth-of-type(1)": "iHear 為何而存在"
+  "locales": {
+    "en": {
+      "pages": {},
+      "itemUpdatedAt": {}
+    },
+    "zhHant": {
+      "pages": {
+        "/about": {
+          "section:nth-of-type(1)>div:nth-of-type(1)>div:nth-of-type(1)>h2:nth-of-type(1)": "iHear 為何而存在"
+        }
+      },
+      "itemUpdatedAt": {}
+    },
+    "zhHans": {
+      "pages": {},
+      "itemUpdatedAt": {}
     }
   }
 }

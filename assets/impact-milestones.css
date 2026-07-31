@@ -41,7 +41,7 @@
 }
 
 .impact-button {
-  min-height: 38px;
+  min-height: 44px;
   padding: 8px 14px;
   border: 2px solid var(--navy);
   border-radius: 999px;
@@ -61,7 +61,7 @@
 .impact-tab:focus-visible,
 .impact-field input:focus-visible,
 .impact-field textarea:focus-visible {
-  outline: 3px solid rgba(232, 150, 79, .48);
+  outline: 3px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -120,7 +120,7 @@
 
 .impact-latest-badge {
   background: var(--orange);
-  color: #fff;
+  color: #3A2410;
 }
 
 .impact-item-actions {
@@ -255,7 +255,7 @@
   place-items: center;
   flex: none;
   background: rgba(220, 130, 57, .12);
-  color: var(--orange);
+  color: var(--orange-text);
   font: 900 .7rem/1 var(--font-b);
   letter-spacing: .05em;
 }
@@ -430,7 +430,7 @@
   align-items: center;
   justify-content: center;
   gap: 5px;
-  min-height: 40px;
+  min-height: 44px;
   padding: 8px 13px;
   border: 0;
   border-radius: 10px;
@@ -497,7 +497,7 @@
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  color: var(--orange);
+  color: var(--orange-text);
   font: 800 .75rem/1 var(--font-b);
   letter-spacing: .08em;
   text-transform: uppercase;
@@ -558,7 +558,7 @@
 }
 
 .impact-preview .when {
-  color: var(--orange);
+  color: var(--orange-text);
   font-weight: 800;
 }
 

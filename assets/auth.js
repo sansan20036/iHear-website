@@ -1,38 +1,40 @@
 (function () {
-  const labelsByLang = {
+  "use strict";
+
+  const labelsByLocale = {
     en: {
-      signIn: "Sign in",
-      signInFull: "Sign in with Google",
-      signOut: "Sign out",
-      signedIn: "Signed in",
-      loading: "Checking...",
-      unavailable: "Sign in unavailable",
+      signIn: "Admin sign in", signInFull: "Sign in as an administrator with Google", signOut: "Sign out",
+      signedIn: "Administrator signed in", loading: "Checking access…", unavailable: "Could not check sign-in status.",
+      retry: "Retry", account: "Administrator account", failedOut: "Sign out failed. You are still signed in.",
+      failedIn: "Sign in could not start. Please try again.",
     },
-    "zh-Hant": {
-      signIn: "登入",
-      signInFull: "使用 Google 登入",
-      signOut: "登出",
-      signedIn: "已登入",
-      loading: "確認中...",
-      unavailable: "暫時無法登入",
+    zhHant: {
+      signIn: "管理員登入", signInFull: "使用 Google 登入管理員帳號", signOut: "登出",
+      signedIn: "管理員已登入", loading: "正在確認權限…", unavailable: "暫時無法確認登入狀態。",
+      retry: "重試", account: "管理員帳號", failedOut: "登出失敗，您目前仍保持登入。",
+      failedIn: "無法開始登入，請再試一次。",
     },
-    "zh-Hans": {
-      signIn: "登录",
-      signInFull: "使用 Google 登录",
-      signOut: "登出",
-      signedIn: "已登录",
-      loading: "确认中...",
-      unavailable: "暂时无法登录",
+    zhHans: {
+      signIn: "管理员登录", signInFull: "使用 Google 登录管理员账号", signOut: "登出",
+      signedIn: "管理员已登录", loading: "正在确认权限…", unavailable: "暂时无法确认登录状态。",
+      retry: "重试", account: "管理员账号", failedOut: "登出失败，您目前仍保持登录。",
+      failedIn: "无法开始登录，请重试。",
     },
   };
 
   let currentSession = null;
+  let loadFailed = false;
+  let busy = false;
 
-  function getLabels() {
-    const lang = document.documentElement.lang || "en";
-    if (lang.toLowerCase().includes("hans")) return labelsByLang["zh-Hans"];
-    if (lang.toLowerCase().startsWith("zh")) return labelsByLang["zh-Hant"];
-    return labelsByLang.en;
+  function locale() {
+    const language = (document.documentElement.lang || "en").toLowerCase();
+    if (language.includes("hans")) return "zhHans";
+    if (language.startsWith("zh")) return "zhHant";
+    return "en";
+  }
+
+  function labels() {
+    return labelsByLocale[locale()] || labelsByLocale.en;
   }
 
   function escapeHtml(value) {
@@ -45,85 +47,34 @@
   }
 
   function initials(name, email) {
-    const source = (name || email || "?").trim();
-    return source.slice(0, 1).toUpperCase();
+    return String(name || email || "?").trim().slice(0, 1).toUpperCase();
   }
 
   function authUrl(path) {
     return `/api/auth/${path}`;
   }
 
+  async function responseJson(response) {
+    const data = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(data?.error || `HTTP ${response.status}`);
+    return data;
+  }
+
   async function getCsrfToken() {
-    const response = await fetch(authUrl("csrf"), {
-      credentials: "same-origin",
-      cache: "no-store",
-    });
-    const csrf = await response.json();
-    return csrf.csrfToken;
+    const response = await fetch(authUrl("csrf"), { credentials: "same-origin", cache: "no-store" });
+    const data = await responseJson(response);
+    if (!data?.csrfToken) throw new Error("Missing CSRF token");
+    return data.csrfToken;
   }
 
   async function clearStaleAuthCookies() {
-    await fetch(authUrl("clear-stale"), {
-      method: "POST",
-      credentials: "same-origin",
-      cache: "no-store",
-    }).catch(() => null);
-  }
-
-  function installStyles() {
-    if (document.getElementById("ihear-auth-styles")) return;
-
-    const style = document.createElement("style");
-    style.id = "ihear-auth-styles";
-    style.textContent = `
-      .auth-widget{ position:relative; flex:none; display:flex; align-items:center; z-index:130; }
-      .auth-google,.auth-profile,.auth-signout{
-        font-family:var(--font-b); font-weight:800; border-radius:999px; border:2px solid var(--navy);
-        background:#fff; color:var(--navy); cursor:pointer; text-decoration:none;
-        transition:transform var(--speed-1), box-shadow var(--speed-1), background var(--speed-1);
-      }
-      .auth-google{ min-height:44px; display:inline-flex; align-items:center; gap:8px; padding:9px 14px; font-size:.88rem; box-shadow:var(--shadow); }
-      .auth-google:hover,.auth-profile:hover,.auth-signout:hover{ transform:translateY(-1px); box-shadow:var(--shadow-lg); }
-      .auth-google:disabled,.auth-signout:disabled{ opacity:.64; cursor:wait; transform:none; box-shadow:var(--shadow); }
-      .auth-gmark{
-        width:22px; height:22px; border-radius:50%; display:grid; place-items:center; flex:none;
-        color:#fff; background:linear-gradient(135deg,#4285f4,#34a853 45%,#fbbc05 72%,#ea4335);
-        font-family:Arial,sans-serif; font-size:.78rem; font-weight:800;
-      }
-      .auth-profile{ min-height:44px; display:inline-flex; align-items:center; gap:8px; padding:5px 11px 5px 5px; max-width:180px; }
-      .auth-avatar,.auth-fallback{
-        width:32px; height:32px; border-radius:50%; flex:none; border:1px solid rgba(38,57,116,.16);
-      }
-      .auth-avatar{ object-fit:cover; background:#fff; }
-      .auth-fallback{ display:grid; place-items:center; background:var(--navy); color:#fff; font-size:.9rem; }
-      .auth-name{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:112px; }
-      .auth-menu{ position:relative; }
-      .auth-popover{
-        position:absolute; top:calc(100% + 10px); right:0; width:min(260px, calc(100vw - 32px));
-        display:none; background:#fff; border:1.5px solid var(--line); border-radius:16px;
-        padding:14px; box-shadow:var(--shadow-lg); color:var(--ink); z-index:200;
-      }
-      .auth-menu:hover .auth-popover,.auth-menu:focus-within .auth-popover,.auth-menu[data-open="true"] .auth-popover{ display:block; }
-      .auth-popover strong{ display:block; color:var(--navy); font-family:var(--font-h); font-size:1rem; line-height:1.2; }
-      .auth-email{ display:block; color:var(--ink-soft); font-size:.86rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin:3px 0 12px; }
-      .auth-signout{ min-height:38px; padding:8px 13px; width:100%; }
-      .auth-mobile-item{ display:none; }
-      .auth-mobile-panel{ display:grid; gap:10px; padding:8px 4px; }
-      .auth-mobile-panel .auth-google,.auth-mobile-panel .auth-profile,.auth-mobile-panel .auth-signout{ width:100%; justify-content:center; }
-      .auth-mobile-panel .auth-profile{ max-width:none; }
-      .auth-mobile-panel .auth-name{ max-width:190px; }
-      @media (max-width:1024px){
-        .auth-widget{ display:none; }
-        .auth-mobile-item{ display:block; }
-      }
-    `;
-    document.head.appendChild(style);
+    await fetch(authUrl("clear-stale"), { method: "POST", credentials: "same-origin", cache: "no-store" }).catch(() => null);
   }
 
   function createMounts() {
     const navInner = document.querySelector(".nav-inner");
     const navLinks = document.getElementById("navLinks");
-    const cta = navInner ? navInner.querySelector(".btn-cta") : null;
+    const cta = navInner?.querySelector(":scope > .btn-cta");
     let desktop = document.querySelector("[data-auth-desktop]");
     let mobile = document.querySelector("[data-auth-mobile]");
 
@@ -131,199 +82,172 @@
       desktop = document.createElement("div");
       desktop.className = "auth-widget";
       desktop.setAttribute("data-auth-desktop", "");
+      desktop.setAttribute("aria-live", "polite");
       if (cta) navInner.insertBefore(desktop, cta);
       else navInner.appendChild(desktop);
     }
-
     if (navLinks && !mobile) {
       mobile = document.createElement("li");
       mobile.className = "auth-mobile-item";
       mobile.setAttribute("data-auth-mobile", "");
       navLinks.appendChild(mobile);
     }
-
     return { desktop, mobile };
   }
 
-  function loggedOutHtml(mode) {
-    const labels = getLabels();
-    const text = mode === "mobile" ? labels.signInFull : labels.signIn;
-    return `
-      <button class="auth-google" type="button" data-auth-signin aria-label="${labels.signInFull}">
-        <span class="auth-gmark" aria-hidden="true">G</span>
-        <span>${text}</span>
-      </button>
-    `;
+  function avatarHtml(user) {
+    if (user.image) return `<img class="auth-avatar" src="${escapeHtml(user.image)}" alt="" referrerpolicy="no-referrer">`;
+    return `<span class="auth-fallback" aria-hidden="true">${escapeHtml(initials(user.name, user.email))}</span>`;
+  }
+
+  function loadingHtml() {
+    return `<span class="auth-loading" aria-busy="true">${escapeHtml(labels().loading)}</span>`;
+  }
+
+  function errorHtml() {
+    const copy = labels();
+    return `<div class="auth-error"><span>${escapeHtml(copy.unavailable)}</span><button class="auth-retry" type="button" data-auth-retry>${escapeHtml(copy.retry)}</button></div>`;
+  }
+
+  function loggedOutHtml() {
+    const copy = labels();
+    return `<button class="auth-google" type="button" data-auth-signin aria-label="${escapeHtml(copy.signInFull)}"><span class="auth-gmark" aria-hidden="true">G</span><span>${escapeHtml(copy.signIn)}</span></button>`;
   }
 
   function loggedInHtml(session, mode) {
-    const labels = getLabels();
+    const copy = labels();
     const user = session.user || {};
-    const name = escapeHtml(user.name || user.email || labels.signedIn);
+    const name = escapeHtml(user.name || user.email || copy.signedIn);
     const email = escapeHtml(user.email || "");
-    const image = user.image ? escapeHtml(user.image) : "";
-    const avatar = image
-      ? `<img class="auth-avatar" src="${image}" alt="" referrerpolicy="no-referrer">`
-      : `<span class="auth-fallback" aria-hidden="true">${escapeHtml(initials(user.name, user.email))}</span>`;
-
+    const avatar = avatarHtml(user);
     if (mode === "mobile") {
-      return `
-        <div class="auth-mobile-panel">
-          <button class="auth-profile" type="button" title="${email}">
-            ${avatar}
-            <span class="auth-name">${name}</span>
-          </button>
-          <button class="auth-signout" type="button" data-auth-signout>${labels.signOut}</button>
-        </div>
-      `;
+      return `<div class="auth-mobile-panel"><div class="auth-mobile-identity" title="${email}">${avatar}<span class="auth-name">${name}</span></div><button class="auth-signout" type="button" data-auth-signout>${escapeHtml(copy.signOut)}</button></div>`;
     }
-
-    return `
-      <div class="auth-menu">
-        <button class="auth-profile" type="button" title="${email}" aria-haspopup="true">
-          ${avatar}
-          <span class="auth-name">${name}</span>
-        </button>
-        <div class="auth-popover" role="menu">
-          <strong>${name}</strong>
-          <span class="auth-email">${email}</span>
-          <button class="auth-signout" type="button" data-auth-signout>${labels.signOut}</button>
-        </div>
-      </div>
-    `;
+    return `<div class="auth-menu"><button class="auth-profile" type="button" title="${email}" aria-haspopup="menu" aria-expanded="false" aria-controls="authPopover">${avatar}<span class="auth-name">${name}</span></button><div class="auth-popover" id="authPopover" role="menu" hidden><strong>${name}</strong><span class="auth-email">${email}</span><button class="auth-signout" role="menuitem" type="button" data-auth-signout>${escapeHtml(copy.signOut)}</button></div></div>`;
   }
 
-  function render(session) {
+  function bindPopover() {
+    const menu = document.querySelector(".auth-menu");
+    const trigger = menu?.querySelector(".auth-profile");
+    const popover = menu?.querySelector(".auth-popover");
+    if (!menu || !trigger || !popover) return;
+    function close(options) {
+      popover.hidden = true;
+      trigger.setAttribute("aria-expanded", "false");
+      if (options?.restoreFocus) trigger.focus();
+    }
+    function open() {
+      popover.hidden = false;
+      trigger.setAttribute("aria-expanded", "true");
+      popover.querySelector("button")?.focus();
+    }
+    trigger.addEventListener("click", () => popover.hidden ? open() : close());
+    document.addEventListener("pointerdown", (event) => { if (!menu.contains(event.target)) close(); });
+    menu.addEventListener("keydown", (event) => { if (event.key === "Escape") { event.preventDefault(); close({ restoreFocus: true }); } });
+  }
+
+  function render(options) {
     const mounts = createMounts();
-    const html = session && session.user;
-
-    if (mounts.desktop) {
-      mounts.desktop.innerHTML = html ? loggedInHtml(session, "desktop") : loggedOutHtml("desktop");
-    }
-
-    if (mounts.mobile) {
-      mounts.mobile.innerHTML = html ? loggedInHtml(session, "mobile") : loggedOutHtml("mobile");
-    }
-
-    document.querySelectorAll("[data-auth-signout]").forEach((button) => {
-      button.addEventListener("click", signOut);
-    });
-
-    document.querySelectorAll("[data-auth-signin]").forEach((button) => {
-      button.addEventListener("click", signIn);
-    });
-
-    window.dispatchEvent(new CustomEvent("ihear:auth", { detail: { session: currentSession } }));
+    const settings = options || {};
+    const htmlFor = (mode) => {
+      if (settings.loading) return loadingHtml();
+      if (loadFailed) return errorHtml();
+      return currentSession?.user ? loggedInHtml(currentSession, mode) : loggedOutHtml();
+    };
+    if (mounts.desktop) mounts.desktop.innerHTML = htmlFor("desktop");
+    if (mounts.mobile) mounts.mobile.innerHTML = htmlFor("mobile");
+    document.querySelectorAll("[data-auth-signout]").forEach((button) => button.addEventListener("click", signOut));
+    document.querySelectorAll("[data-auth-signin]").forEach((button) => button.addEventListener("click", signIn));
+    document.querySelectorAll("[data-auth-retry]").forEach((button) => button.addEventListener("click", refresh));
+    bindPopover();
+    window.dispatchEvent(new CustomEvent("ihear:auth", { detail: { session: currentSession, error: loadFailed } }));
   }
 
   async function fetchSession() {
-    const response = await fetch("/api/auth/session", {
-      credentials: "same-origin",
-      cache: "no-store",
-    });
+    const response = await fetch("/api/auth/session", { credentials: "same-origin", cache: "no-store" });
+    const session = await responseJson(response);
+    return session?.user ? session : null;
+  }
 
-    if (!response.ok) return null;
-    const session = await response.json();
-    return session && session.user ? session : null;
+  async function refresh() {
+    if (busy) return;
+    busy = true;
+    loadFailed = false;
+    render({ loading: true });
+    try {
+      currentSession = await fetchSession();
+    } catch {
+      loadFailed = true;
+    } finally {
+      busy = false;
+      render();
+    }
   }
 
   async function signOut(event) {
     event.preventDefault();
-
-    const button = event.currentTarget;
-    button.disabled = true;
-
+    if (busy) return;
+    busy = true;
+    const previousSession = currentSession;
+    event.currentTarget.disabled = true;
     try {
       await clearStaleAuthCookies();
       const csrfToken = await getCsrfToken();
-      const body = new URLSearchParams({
-        csrfToken,
-        callbackUrl: window.location.href,
-      });
-
       const response = await fetch(authUrl("signout"), {
-        method: "POST",
-        credentials: "same-origin",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          "X-Auth-Return-Redirect": "1",
-        },
-        body,
+        method: "POST", credentials: "same-origin",
+        headers: { "Content-Type": "application/x-www-form-urlencoded", "X-Auth-Return-Redirect": "1" },
+        body: new URLSearchParams({ csrfToken, callbackUrl: window.location.href }),
       });
-      const data = await response.json().catch(() => null);
+      const data = await responseJson(response);
+      currentSession = null;
+      render();
       const redirectUrl = data?.url || window.location.href;
-
-      currentSession = null;
-      render(null);
-
-      if (redirectUrl === window.location.href) {
-        window.location.reload();
-      } else {
-        window.location.href = redirectUrl;
-      }
+      if (redirectUrl === window.location.href) window.location.reload();
+      else window.location.href = redirectUrl;
     } catch {
-      button.disabled = false;
-      currentSession = null;
-      render(null);
+      currentSession = previousSession;
+      render();
+      window.iHearToast?.(labels().failedOut, { error: true });
+    } finally {
+      busy = false;
     }
   }
 
   async function signIn(event) {
     event.preventDefault();
-
-    const button = event.currentTarget;
-    button.disabled = true;
-
+    if (busy) return;
+    busy = true;
+    event.currentTarget.disabled = true;
     try {
       await clearStaleAuthCookies();
       const csrfToken = await getCsrfToken();
-      const body = new URLSearchParams({
-        csrfToken,
-        callbackUrl: window.location.href,
-      });
       const response = await fetch(authUrl("signin/google"), {
-        method: "POST",
-        credentials: "same-origin",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          "X-Auth-Return-Redirect": "1",
-        },
-        body,
+        method: "POST", credentials: "same-origin",
+        headers: { "Content-Type": "application/x-www-form-urlencoded", "X-Auth-Return-Redirect": "1" },
+        body: new URLSearchParams({ csrfToken, callbackUrl: window.location.href }),
       });
-      const data = await response.json().catch(() => null);
+      const data = await responseJson(response);
       window.location.href = data?.url || authUrl("signin");
     } catch {
-      button.disabled = false;
-      window.location.href = authUrl("signin");
+      busy = false;
+      render();
+      window.iHearToast?.(labels().failedIn, { error: true });
     }
-  }
-
-  async function boot() {
-    installStyles();
-    createMounts();
-
-    try {
-      currentSession = await fetchSession();
-    } catch {
-      currentSession = null;
-    }
-
-    render(currentSession);
   }
 
   window.iHearAuth = {
-    getSession: function () {
-      return currentSession;
-    },
-    isSignedIn: function () {
-      return Boolean(currentSession && currentSession.user);
-    },
-    refresh: boot,
+    getSession: () => currentSession,
+    isSignedIn: () => Boolean(currentSession?.user),
+    refresh,
   };
 
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", boot);
-  } else {
-    boot();
+  function boot() {
+    createMounts();
+    render({ loading: true });
+    refresh();
+    window.addEventListener("ihear:language", () => render({ loading: busy && !loadFailed }));
   }
+
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot, { once: true });
+  else boot();
 })();

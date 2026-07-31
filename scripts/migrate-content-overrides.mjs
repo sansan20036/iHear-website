@@ -21,7 +21,10 @@ const sql = postgres(databaseUrl, {
   connect_timeout: 10,
 });
 
-const migrationPath = path.join(process.cwd(), "db", "migrations", "004_content_overrides.sql");
+const migrationPaths = [
+  path.join(process.cwd(), "db", "migrations", "004_content_overrides.sql"),
+  path.join(process.cwd(), "db", "migrations", "010_localized_content_overrides.sql"),
+];
 const contentPath = path.join(process.cwd(), "content.json");
 
 function validateEntry(page, key, value, updatedBy) {
@@ -40,7 +43,7 @@ function validateEntry(page, key, value, updatedBy) {
 }
 
 try {
-  const migrationSql = await readFile(migrationPath, "utf8");
+  const migrationSql = (await Promise.all(migrationPaths.map((file) => readFile(file, "utf8")))).join("\n");
   const raw = await readFile(contentPath, "utf8");
   const store = JSON.parse(raw);
   const updatedBy = store.updatedBy || "system-content-migration";
@@ -48,10 +51,16 @@ try {
   const entries = [];
   let insertedRows = 0;
 
-  for (const [page, pageContent] of Object.entries(store.pages || {})) {
-    for (const [key, value] of Object.entries(pageContent || {})) {
-      validateEntry(page, key, value, updatedBy);
-      entries.push({ page, key, value });
+  const localeStores = store.version === 3 && store.locales
+    ? store.locales
+    : { zhHant: { pages: store.pages || {} } };
+  for (const [locale, localeStore] of Object.entries(localeStores)) {
+    if (!['en', 'zhHant', 'zhHans'].includes(locale)) throw new Error(`Invalid content locale: ${locale}`);
+    for (const [page, pageContent] of Object.entries(localeStore.pages || {})) {
+      for (const [key, value] of Object.entries(pageContent || {})) {
+        validateEntry(page, key, value, updatedBy);
+        entries.push({ page, key, locale, value });
+      }
     }
   }
 
@@ -60,23 +69,30 @@ try {
 
     for (const entry of entries) {
       const inserted = await transaction`
-        INSERT INTO content_overrides (page, key, value, updated_at, updated_by)
-        VALUES (${entry.page}, ${entry.key}, ${entry.value}, ${updatedAt}, ${updatedBy})
-        ON CONFLICT (page, key) DO NOTHING
+        INSERT INTO localized_content_overrides (page, key, locale, value, updated_at, updated_by)
+        VALUES (${entry.page}, ${entry.key}, ${entry.locale}, ${entry.value}, ${updatedAt}, ${updatedBy})
+        ON CONFLICT (page, key, locale) DO NOTHING
         RETURNING page
       `;
       insertedRows += inserted.length;
+      if (entry.locale === "zhHant") {
+        await transaction`
+          INSERT INTO content_overrides (page, key, value, updated_at, updated_by)
+          VALUES (${entry.page}, ${entry.key}, ${entry.value}, ${updatedAt}, ${updatedBy})
+          ON CONFLICT (page, key) DO NOTHING
+        `;
+      }
     }
   });
 
   const [result] = await sql`
     SELECT COUNT(*)::INTEGER AS count
-    FROM content_overrides
+    FROM localized_content_overrides
   `;
 
   console.log(JSON.stringify({
     connected: true,
-    table: "content_overrides",
+    table: "localized_content_overrides",
     sourceEntries: entries.length,
     insertedRows,
     totalRows: Number(result.count),

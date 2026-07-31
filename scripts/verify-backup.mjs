@@ -52,6 +52,12 @@ async function currentCounts(client) {
   const settings =
     await client`SELECT COUNT(*)::INTEGER AS count FROM impact_milestone_settings`;
   const content = await client`SELECT COUNT(*)::INTEGER AS count FROM content_overrides`;
+  const [localizedTable] = await client`
+    SELECT to_regclass('public.localized_content_overrides') IS NOT NULL AS available
+  `;
+  const localizedContent = localizedTable.available
+    ? await client`SELECT COUNT(*)::INTEGER AS count FROM localized_content_overrides`
+    : [{ count: 0 }];
   const [teamTables] = await client`
     SELECT
       to_regclass('public.team_people') IS NOT NULL AS people,
@@ -67,6 +73,7 @@ async function currentCounts(client) {
     impact_milestones: Number(impact[0].count),
     impact_milestone_settings: Number(settings[0].count),
     content_overrides: Number(content[0].count),
+    localized_content_overrides: Number(localizedContent[0].count),
     team_people: Number(teamPeople[0].count),
     team_profiles: Number(teamProfiles[0].count),
   };
@@ -111,7 +118,7 @@ try {
   }
   if (
     backup.payload?.format !== "ihear-postgres-backup" ||
-    ![1, 2].includes(backup.payload?.version)
+    ![1, 2, 3].includes(backup.payload?.version)
   ) {
     throw new Error("Unsupported backup format.");
   }
@@ -123,6 +130,9 @@ try {
   const impactMilestones = tables.impact_milestones;
   const impactMilestoneSettings = tables.impact_milestone_settings;
   const contentOverrides = tables.content_overrides;
+  const localizedContentOverrides = backup.payload.version >= 3
+    ? tables.localized_content_overrides
+    : [];
   const schemaMigrations = tables.schema_migrations;
   const teamPeople = backup.payload.version >= 2 ? tables.team_people : [];
   const teamProfiles = backup.payload.version >= 2 ? tables.team_profiles : [];
@@ -131,6 +141,7 @@ try {
     !Array.isArray(impactMilestones) ||
     !Array.isArray(impactMilestoneSettings) ||
     !Array.isArray(contentOverrides) ||
+    !Array.isArray(localizedContentOverrides) ||
     !Array.isArray(schemaMigrations) ||
     !Array.isArray(teamPeople) ||
     !Array.isArray(teamProfiles)
@@ -141,6 +152,11 @@ try {
   assertUnique(impactMilestones, (row) => row.id, "impact_milestones");
   assertUnique(impactMilestoneSettings, (row) => row.key, "impact_milestone_settings");
   assertUnique(contentOverrides, (row) => `${row.page}\u0000${row.key}`, "content_overrides");
+  assertUnique(
+    localizedContentOverrides,
+    (row) => `${row.page}\u0000${row.key}\u0000${row.locale}`,
+    "localized_content_overrides",
+  );
   assertUnique(schemaMigrations, (row) => row.version, "schema_migrations");
   assertUnique(teamPeople, (row) => row.id, "team_people");
   assertUnique(teamProfiles, (row) => row.id, "team_profiles");
@@ -245,6 +261,17 @@ try {
           INSERT INTO content_overrides (page, key, value, updated_at, updated_by)
           VALUES (${row.page}, ${row.key}, ${row.value}, ${row.updated_at}, ${row.updated_by})
           ON CONFLICT (page, key) DO UPDATE SET
+            value = EXCLUDED.value,
+            updated_at = EXCLUDED.updated_at,
+            updated_by = EXCLUDED.updated_by
+        `;
+      }
+
+      for (const row of localizedContentOverrides) {
+        await transaction`
+          INSERT INTO localized_content_overrides (page, key, locale, value, updated_at, updated_by)
+          VALUES (${row.page}, ${row.key}, ${row.locale}, ${row.value}, ${row.updated_at}, ${row.updated_by})
+          ON CONFLICT (page, key, locale) DO UPDATE SET
             value = EXCLUDED.value,
             updated_at = EXCLUDED.updated_at,
             updated_by = EXCLUDED.updated_by
@@ -385,6 +412,9 @@ try {
         impact_milestones: impactMilestones.length,
         impact_milestone_settings: impactMilestoneSettings.length,
         content_overrides: contentOverrides.length,
+        ...(backup.payload.version >= 3
+          ? { localized_content_overrides: localizedContentOverrides.length }
+          : {}),
         ...(backup.payload.version >= 2
           ? { team_people: teamPeople.length, team_profiles: teamProfiles.length }
           : {}),
@@ -398,7 +428,7 @@ try {
         const transactionRevisionsAfter = await currentRevisions(transaction);
         const expectedScopes = [
           ...(impactMilestones.length || impactMilestoneSettings.length ? ["impact"] : []),
-          ...(contentOverrides.length ? ["content"] : []),
+          ...(contentOverrides.length || localizedContentOverrides.length ? ["content"] : []),
           ...(teamPeople.length || teamProfiles.length ? ["team"] : []),
         ];
         for (const scope of expectedScopes) {
@@ -438,6 +468,7 @@ try {
       impact_milestones: impactMilestones.length,
       impact_milestone_settings: impactMilestoneSettings.length,
       content_overrides: contentOverrides.length,
+      localized_content_overrides: localizedContentOverrides.length,
       team_people: teamPeople.length,
       team_profiles: teamProfiles.length,
       schema_migrations: schemaMigrations.length,

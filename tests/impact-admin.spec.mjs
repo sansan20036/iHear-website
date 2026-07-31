@@ -19,7 +19,10 @@ test.beforeAll(async () => {
   testServer = createServer(async (request, response) => {
     try {
       const pathname = new URL(request.url, "http://127.0.0.1:3210").pathname;
-      const cleanRoutes = { "/about": "about.html", "/about/": "about.html", "/team": "team.html", "/team/": "team.html" };
+      const cleanRoutes = Object.fromEntries([
+        "about", "programs", "impact", "team", "submit-bio", "stories", "get-involved",
+        "academy", "donate", "resources", "faq", "contact",
+      ].flatMap((route) => [[`/${route}`, `${route}.html`], [`/${route}/`, `${route}.html`]]));
       const relativePath = cleanRoutes[pathname] || pathname.replace(/^\/+/, "") || "index.html";
       const filePath = path.resolve(publicDir, relativePath);
 
@@ -493,6 +496,16 @@ for (const fallbackCase of [
     await expect(page.locator("[data-latest-impact-headline]")).toHaveText(
       "35+ volunteers · 50+ students · 1,200+ sessions",
     );
+
+    await page.getByRole("button", { name: "繁" }).click();
+    await expect(page.locator("[data-latest-impact-label]")).toHaveText("最新成果");
+    await expect(page.locator("[data-latest-impact-period]")).toHaveText("2026 年 6 月");
+    await expect(page.locator("[data-latest-impact-headline]")).toHaveText(
+      "35+ 位志工 · 50+ 位學生 · 1,200+ 堂課",
+    );
+    await expect(page.locator("[data-latest-impact-description]")).toContainText(
+      "35+ 位活躍志工",
+    );
   });
 }
 
@@ -517,12 +530,12 @@ test("content overrides still apply when admin controls render before content fi
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({
-        version: 1,
+        version: 3,
         updatedAt: "2026-07-31T00:00:00.000Z",
-        pages: {
-          "/about": {
-            "section:nth-of-type(1)>div:nth-of-type(1)>div:nth-of-type(1)>h2:nth-of-type(1)": "Production override loaded",
-          },
+        locales: {
+          en: { pages: { "/about": { "i18n:mission_h2": "Production override loaded" } }, itemUpdatedAt: {} },
+          zhHant: { pages: {}, itemUpdatedAt: {} },
+          zhHans: { pages: {}, itemUpdatedAt: {} },
         },
       }),
     });
@@ -631,6 +644,7 @@ test("mobile editor has no horizontal overflow at supported narrow widths", asyn
   for (const width of [390, 375, 320]) {
     await page.setViewportSize({ width, height: 844 });
     await page.goto("/about");
+    await page.locator("#navToggle").click();
     await page.getByRole("button", { name: "繁" }).click();
     await page.getByRole("button", { name: "新增歷程" }).click();
 
@@ -719,17 +733,15 @@ test("live refresh restores metrics and inline content fallbacks after deletion"
   await mockApplication(page);
   let metrics = siteMetrics;
   let content = {
-    version: 2,
+    version: 3,
     updatedAt: "2026-07-31T00:00:00.000Z",
-    pages: {
-      "/about": {
-        "section:nth-of-type(1)>div:nth-of-type(1)>div:nth-of-type(1)>h2:nth-of-type(1)": "Temporary override",
+    locales: {
+      en: {
+        pages: { "/about": { "i18n:mission_h2": "Temporary override" } },
+        itemUpdatedAt: { "/about": { "i18n:mission_h2": "2026-07-31T00:00:00.000Z" } },
       },
-    },
-    itemUpdatedAt: {
-      "/about": {
-        "section:nth-of-type(1)>div:nth-of-type(1)>div:nth-of-type(1)>h2:nth-of-type(1)": "2026-07-31T00:00:00.000Z",
-      },
+      zhHant: { pages: {}, itemUpdatedAt: {} },
+      zhHans: { pages: {}, itemUpdatedAt: {} },
     },
   };
   await page.route("**/api/site-metrics**", (route) => route.fulfill({
@@ -755,7 +767,139 @@ test("live refresh restores metrics and inline content fallbacks after deletion"
 
   await page.goto("/about");
   await expect(page.getByRole("heading", { name: /Temporary override/ })).toBeVisible();
-  content = { version: 2, updatedAt: "", pages: {}, itemUpdatedAt: {} };
+  content = {
+    version: 3,
+    updatedAt: "",
+    locales: {
+      en: { pages: {}, itemUpdatedAt: {} },
+      zhHant: { pages: {}, itemUpdatedAt: {} },
+      zhHans: { pages: {}, itemUpdatedAt: {} },
+    },
+  };
   await page.evaluate(() => window.iHearLiveContent.announce("content", { revision: "2" }));
   await expect(page.getByRole("heading", { name: /Why iHear exists/ })).toBeVisible();
+});
+
+test("all source pages keep one h1 and avoid viewport overflow", async ({ page }) => {
+  test.setTimeout(120_000);
+  await mockApplication(page, { admin: false });
+  const routes = [
+    "/", "/about", "/programs", "/impact", "/team", "/submit-bio", "/stories",
+    "/get-involved", "/academy", "/donate", "/resources", "/faq", "/contact",
+  ];
+  const viewports = [
+    { width: 1440, height: 900 }, { width: 1024, height: 768 }, { width: 768, height: 900 },
+    { width: 390, height: 844 }, { width: 320, height: 800 }, { width: 568, height: 320 },
+  ];
+
+  for (const viewport of viewports) {
+    await page.setViewportSize(viewport);
+    for (const route of routes) {
+      await page.goto(route);
+      const result = await page.evaluate(() => {
+        const ids = Array.from(document.querySelectorAll("[id]"), (node) => node.id);
+        return {
+          h1: document.querySelectorAll("h1").length,
+          overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+          duplicateIds: ids.filter((id, index) => ids.indexOf(id) !== index),
+          mainVisible: Boolean(document.querySelector("main")?.getBoundingClientRect().height),
+          offenders: Array.from(document.querySelectorAll("body *")).filter((element) => {
+            const rect = element.getBoundingClientRect();
+            return rect.right > document.documentElement.clientWidth + 1;
+          }).slice(0, 8).map((element) => ({ tag: element.tagName, className: element.className, right: Math.round(element.getBoundingClientRect().right), left: Math.round(element.getBoundingClientRect().left) })),
+        };
+      });
+      expect(result, `${route} at ${viewport.width}x${viewport.height}`).toEqual({
+        h1: 1, overflow: false, duplicateIds: [], mainVisible: true, offenders: [],
+      });
+      if (["/about", "/programs", "/impact", "/team", "/submit-bio", "/get-involved", "/resources", "/donate"].includes(route)) {
+        await expect(page.locator('.nav-links [aria-current="page"]')).toHaveCount(1);
+      }
+    }
+  }
+});
+
+test("mobile drawer is safe with native inert and the tabindex fallback", async ({ context, page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockApplication(page, { admin: false });
+  await page.goto("/about");
+  const drawer = page.locator("#navLinks");
+  const toggle = page.locator("#navToggle");
+  await expect(drawer).toBeHidden();
+  await expect(drawer).toHaveAttribute("aria-hidden", "true");
+  expect(await toggle.evaluate((element) => element.getBoundingClientRect().width)).toBeGreaterThanOrEqual(48);
+
+  await toggle.click();
+  await expect(drawer).toBeVisible();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await page.keyboard.press("Escape");
+  await expect(drawer).toBeHidden();
+  await expect(toggle).toBeFocused();
+
+  const legacyPage = await context.newPage();
+  await legacyPage.addInitScript(() => { delete HTMLElement.prototype.inert; });
+  await legacyPage.setViewportSize({ width: 568, height: 320 });
+  await mockApplication(legacyPage, { admin: false });
+  await legacyPage.goto("/about");
+  const legacyDrawer = legacyPage.locator("#navLinks");
+  await legacyPage.locator("#navToggle").click();
+  await expect(legacyDrawer).toBeVisible();
+  expect(await legacyDrawer.evaluate((element) => getComputedStyle(element).overflowY)).toBe("auto");
+  await legacyPage.locator("#navToggle").click();
+  await expect(legacyDrawer).toHaveAttribute("aria-hidden", "true");
+  expect(await legacyDrawer.locator("a").first().getAttribute("tabindex")).toBe("-1");
+  await expect(legacyDrawer).toBeHidden();
+  await legacyPage.close();
+});
+
+test("no-JavaScript fallback keeps content and mobile navigation visible", async ({ browser }) => {
+  const context = await browser.newContext({ javaScriptEnabled: false, viewport: { width: 390, height: 844 } });
+  const page = await context.newPage();
+  await page.goto("/faq");
+  await expect(page.locator("#navLinks")).toBeVisible();
+  await expect(page.locator("[data-animate]").first()).toBeVisible();
+  expect(await page.locator("[data-animate]").first().evaluate((element) => getComputedStyle(element).opacity)).toBe("1");
+  await context.close();
+});
+
+test("FAQ filtering and bio-form safeguards provide recoverable feedback", async ({ page }) => {
+  await mockApplication(page, { admin: false });
+  await page.goto("/faq");
+  const search = page.getByRole("searchbox", { name: "Search frequently asked questions" });
+  await search.fill("Zoom");
+  await expect(page.locator(".faq-list details:visible")).not.toHaveCount(20);
+  await expect(page.locator(".faq-search-status")).toContainText("found");
+  await search.fill("no-match-phrase-xyz");
+  await expect(page.locator(".faq-empty")).toBeVisible();
+
+  await page.goto("/submit-bio");
+  await page.getByLabel("Full name *").fill("   ");
+  await page.getByLabel(/Short bio/).fill("   ");
+  await page.getByRole("checkbox").check();
+  await page.getByRole("button", { name: "Open mail app" }).click();
+  await expect(page.getByLabel("Full name *")).toHaveAttribute("aria-invalid", "true");
+  await expect(page.getByLabel("Full name *")).toBeFocused();
+  await page.getByLabel("Full name *").fill("Test Tutor");
+  await page.getByLabel(/Short bio/).fill("Patient and supportive tutor.");
+  await page.getByRole("button", { name: "Copy full draft" }).click();
+  await expect(page.getByText(/complete email draft was copied|Could not copy automatically/)).toBeVisible();
+  await expect(page.getByLabel("Full name *")).toHaveValue("Test Tutor");
+});
+
+test("team editor protects dirty work and provides keyboard tabs", async ({ page }) => {
+  await mockApplication(page);
+  await page.goto("/team");
+  await page.getByRole("button", { name: "Manage profiles" }).click();
+  await page.getByRole("button", { name: "Add profile" }).click();
+  await page.getByRole("textbox", { name: "Name", exact: true }).fill("Unsaved Tutor");
+  const dialog = page.getByRole("dialog");
+  page.once("dialog", async (confirmation) => confirmation.dismiss());
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await expect(dialog).toBeVisible();
+  const activeTab = page.getByRole("tab", { selected: true });
+  await activeTab.press("ArrowRight");
+  await expect(page.getByRole("tab", { selected: true })).toBeFocused();
+  page.once("dialog", async (confirmation) => confirmation.accept());
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await expect(dialog).toBeHidden();
 });
