@@ -19,6 +19,22 @@
 .team-admin-button:disabled{opacity:.55;cursor:wait}
 .team-profile-admin-card{position:relative}
 .team-profile-admin-card[data-status="draft"]{outline:2px dashed var(--orange);outline-offset:4px}
+.team-profile-drag-handle{
+  box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  min-width:44px;min-height:40px;padding:7px 10px;border:1.5px dashed rgba(38,57,116,.5);
+  border-radius:11px;background:#fff;color:var(--navy);font:800 .76rem/1 var(--font-b);
+  cursor:grab;touch-action:none;white-space:nowrap;z-index:2
+}
+.team-profile-drag-handle:hover,.team-profile-drag-handle:focus-visible{background:var(--orange-soft);border-style:solid;outline:2px solid transparent}
+.team-profile-drag-handle:active,.team-profile-drag-handle[aria-pressed="true"]{cursor:grabbing;background:var(--orange-soft)}
+.leader>.team-profile-drag-handle{position:absolute;right:14px;top:14px}
+.tutor-prof summary .team-profile-drag-handle{flex:none;margin-left:auto}
+.tutor-prof summary .team-profile-drag-handle+.chev{margin-left:0}
+.team-profile-admin-card.team-profile-dragging{
+  opacity:.72;z-index:20;box-shadow:0 16px 38px rgba(20,35,80,.24);border-color:var(--orange);
+  transform:scale(.985);transition:none
+}
+body.team-profile-reordering,body.team-profile-reordering *{cursor:grabbing!important;user-select:none!important}
 .team-profile-status{
   display:inline-flex;margin-left:8px;padding:3px 7px;border-radius:999px;
   background:var(--orange-soft);color:#8b4b12;font-size:.72rem;font-weight:800
@@ -74,6 +90,9 @@
   .team-editor-body,.team-editor-head,.team-editor-footer{padding-left:16px;padding-right:16px}
   .team-editor-footer,.team-editor-actions,.team-editor-actions .team-admin-button{width:100%}
   .team-editor-actions .team-admin-button{justify-content:center}
+  .team-profile-drag-text{display:none}
+  .team-profile-drag-handle{padding:7px;flex:0 0 44px}
+  .tutor-prof summary{gap:9px}
 }
 @media(max-width:390px){
   .team-locale-tabs{grid-template-columns:1fr}

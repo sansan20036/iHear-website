@@ -280,12 +280,102 @@ test("team manager is mobile-safe and exposes structured editing controls", asyn
   await page.goto("/team");
 
   await page.getByRole("button", { name: "Manage profiles" }).click();
+  const dragHandle = page.locator("[data-team-tutors] [data-team-drag='tutor']");
+  await expect(dragHandle).toHaveCount(1);
+  await expect(dragHandle).toBeVisible();
+  const dragBounds = await dragHandle.boundingBox();
+  expect(dragBounds).not.toBeNull();
+  expect(dragBounds.width).toBeGreaterThanOrEqual(40);
+  expect(dragBounds.x + dragBounds.width).toBeLessThanOrEqual(320);
   await page.getByRole("button", { name: "Add profile" }).click();
   await expect(page.getByRole("dialog")).toBeVisible();
   await expect(page.getByRole("checkbox", { name: /publication consent/i })).toBeVisible();
 
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
   expect(overflow).toBe(false);
+});
+
+test("team manager drag handles reorder profiles and persist once", async ({ page }) => {
+  await mockApplication(page);
+  await page.unroute("**/api/team-profiles**");
+
+  const makeProfile = (id, name, sortOrder) => ({
+    id,
+    personId: `person-${id}`,
+    section: "tutor",
+    status: "published",
+    sortOrder,
+    name,
+    initials: name.split(" ").map((part) => part[0]).join(""),
+    school: "",
+    grade: "",
+    showSchool: false,
+    showGrade: false,
+    role: { en: "Tutor", zhHant: "導師", zhHans: "导师" },
+    schoolDisplay: { en: "", zhHant: "", zhHans: "" },
+    languages: { en: "English", zhHant: "英文", zhHans: "英文" },
+    strengths: { en: "Support", zhHant: "支持", zhHans: "支持" },
+    summary: { en: "Summary", zhHant: "簡介", zhHans: "简介" },
+    bio: { en: "Biography", zhHant: "介紹", zhHans: "介绍" },
+    hobbies: { en: "Reading", zhHant: "閱讀", zhHans: "阅读" },
+    publicationConsentAt: "2026-07-31T00:00:00.000Z",
+    profileVersion: 1,
+    personVersion: 1,
+    updatedAt: "2026-07-31T00:00:00.000Z",
+  });
+  let tutors = [makeProfile("tutor-one", "First Tutor", 10), makeProfile("tutor-two", "Second Tutor", 20)];
+  const reorderRequests = [];
+
+  await page.route("**/api/team-profiles**", async (route) => {
+    const request = route.request();
+    if (request.method() === "PATCH" && request.url().includes("/reorder")) {
+      const payload = request.postDataJSON();
+      reorderRequests.push(payload);
+      const byId = new Map(tutors.map((profile) => [profile.id, profile]));
+      tutors = payload.ordered.map((entry, index) => ({
+        ...byId.get(entry.id),
+        sortOrder: (index + 1) * 10,
+        profileVersion: byId.get(entry.id).profileVersion + 1,
+      }));
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true, revision: { revision: "2" } }),
+      });
+    }
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ leaders: [], tutors, people: [], admin: request.url().includes("includeDrafts=true") }),
+    });
+  });
+
+  await page.goto("/team");
+  await page.getByRole("button", { name: "Manage profiles" }).click();
+  const handles = page.locator("[data-team-tutors] [data-team-drag='tutor']");
+  await expect(handles).toHaveCount(2);
+  await handles.nth(0).scrollIntoViewIfNeeded();
+  const firstBox = await handles.nth(0).boundingBox();
+  const secondCardBox = await page.locator("[data-team-tutors] [data-profile-id='tutor-two']").boundingBox();
+  expect(firstBox).not.toBeNull();
+  expect(secondCardBox).not.toBeNull();
+
+  await page.mouse.move(firstBox.x + firstBox.width / 2, firstBox.y + firstBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(
+    secondCardBox.x + secondCardBox.width / 2,
+    secondCardBox.y + secondCardBox.height - 4,
+    { steps: 8 },
+  );
+  await page.mouse.up();
+
+  await expect.poll(() => reorderRequests.length).toBe(1);
+  expect(reorderRequests[0].section).toBe("tutor");
+  expect(reorderRequests[0].ordered.map((entry) => entry.id)).toEqual(["tutor-two", "tutor-one"]);
+  const orderedCards = page.locator("[data-team-tutors] > [data-profile-id]");
+  await expect(orderedCards.nth(0)).toHaveAttribute("data-profile-id", "tutor-two");
+  await expect(orderedCards.nth(1)).toHaveAttribute("data-profile-id", "tutor-one");
+  await expect(page.getByText("Team order saved.")).toBeVisible();
 });
 
 test("homepage uses current metrics across counters, languages, and inline editing", async ({ page }) => {

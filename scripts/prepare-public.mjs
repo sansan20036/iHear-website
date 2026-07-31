@@ -21,7 +21,7 @@ const htmlFiles = [
 ];
 
 const passthroughFiles = ["robots.txt", "sitemap.xml", "CNAME", "favicon.ico"];
-const clientAssetVersion = "20260731-latest-impact";
+const clientAssetVersion = "20260731-team-drag-reorder";
 
 async function copyDir(source, target) {
   await mkdir(target, { recursive: true });
@@ -54,7 +54,7 @@ function withClientScripts(html) {
 
   const withFavicon = withoutExisting.replace(
     "</head>",
-    '  <link rel="icon" href="/favicon.ico" sizes="any">\n  <link rel="stylesheet" href="/assets/team-profiles.css">\n</head>'
+    `  <link rel="icon" href="/favicon.ico" sizes="any">\n  <link rel="stylesheet" href="/assets/team-profiles.css?v=${clientAssetVersion}">\n</head>`
   );
 
   return withFavicon.replace(
