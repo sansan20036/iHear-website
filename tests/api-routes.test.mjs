@@ -76,6 +76,7 @@ import * as impactStore from "../lib/impact-store";
 import * as liveRevisions from "../lib/live-revisions";
 
 const adminEmail = "sansan20036@gmail.com";
+const nonAdminEmail = "signed-in-visitor@example.com";
 const validPayload = {
   kind: "event",
   period: "2026-07",
@@ -274,6 +275,58 @@ describe("authorization", () => {
     expect(impactStore.updateImpactMilestone).not.toHaveBeenCalled();
     expect(impactStore.deleteImpactMilestone).not.toHaveBeenCalled();
     expect(contentStore.updateContentItem).not.toHaveBeenCalled();
+  });
+
+  test("all protected milestone and content routes reject signed-in non-admin users", async () => {
+    auth.mockResolvedValue({
+      user: { email: nonAdminEmail, isAdmin: true },
+    });
+
+    const responses = await Promise.all([
+      getMilestones(new Request("http://localhost/api/impact-milestones?includeDrafts=true")),
+      createMilestone(jsonRequest("http://localhost/api/impact-milestones", "POST", validPayload)),
+      updateMilestone(
+        jsonRequest(
+          `http://localhost/api/impact-milestones/${storedMilestone.id}`,
+          "PATCH",
+          { ...validPayload, version: 1 },
+        ),
+        routeContext(),
+      ),
+      deleteMilestone(
+        jsonRequest(
+          `http://localhost/api/impact-milestones/${storedMilestone.id}`,
+          "DELETE",
+          { version: 1 },
+        ),
+        routeContext(),
+      ),
+      updateContent(
+        jsonRequest("http://localhost/api/content/update", "POST", {
+          page: "/about",
+          key: "main>h2:nth-of-type(1)",
+          value: "不應寫入",
+          expectedUpdatedAt: null,
+        }),
+      ),
+      translateMilestone(
+        jsonRequest("http://localhost/api/impact-milestones/translate", "POST", {
+          sourceLocale: "zhHant",
+          title: "不應翻譯",
+          description: "不應翻譯",
+        }),
+      ),
+    ]);
+
+    expect(responses.map((response) => response.status)).toEqual([403, 403, 403, 403, 403, 403]);
+    expect(impactStore.listAllImpactMilestones).not.toHaveBeenCalled();
+    expect(impactStore.createImpactMilestone).not.toHaveBeenCalled();
+    expect(impactStore.updateImpactMilestone).not.toHaveBeenCalled();
+    expect(impactStore.deleteImpactMilestone).not.toHaveBeenCalled();
+    expect(contentStore.updateContentItem).not.toHaveBeenCalled();
+    expect(liveRevisions.revisionAfterMutation).not.toHaveBeenCalled();
+    expect(revalidatePath).not.toHaveBeenCalled();
+    expect(revalidateTag).not.toHaveBeenCalled();
   });
 });
 

@@ -32,6 +32,7 @@ import * as store from "../lib/team-store";
 import { revisionAfterMutation } from "../lib/live-revisions";
 
 const email = "sansan20036@gmail.com";
+const nonAdminEmail = "signed-in-visitor@example.com";
 const localized = (en) => ({ en, zhHant: "", zhHans: "" });
 const payload = {
   name: "Test Tutor",
@@ -124,6 +125,40 @@ describe("team profile API", () => {
       })),
     ]);
     expect(responses.map((response) => response.status)).toEqual([403, 403, 403, 403, 403]);
+  });
+
+  test("all write operations and draft reads reject signed-in non-admin users", async () => {
+    auth.mockResolvedValue({
+      user: { email: nonAdminEmail, isAdmin: true },
+    });
+
+    const responses = await Promise.all([
+      GET(new Request("http://localhost/api/team-profiles?includeDrafts=true")),
+      POST(json("http://localhost/api/team-profiles", "POST", payload)),
+      PATCH(json("http://localhost/api/team-profiles/tutor-test", "PATCH", {
+        ...payload,
+        profileVersion: 1,
+        personVersion: 1,
+      }), context),
+      DELETE(json("http://localhost/api/team-profiles/tutor-test", "DELETE", {
+        profileVersion: 1,
+        personVersion: 1,
+      }), context),
+      REORDER(json("http://localhost/api/team-profiles/reorder", "PATCH", {
+        section: "tutor",
+        ordered: [{ id: "tutor-test", version: 1 }],
+      })),
+    ]);
+
+    expect(responses.map((response) => response.status)).toEqual([403, 403, 403, 403, 403]);
+    expect(store.listAllTeamProfiles).not.toHaveBeenCalled();
+    expect(store.createTeamProfile).not.toHaveBeenCalled();
+    expect(store.updateTeamProfile).not.toHaveBeenCalled();
+    expect(store.deleteTeamProfile).not.toHaveBeenCalled();
+    expect(store.reorderTeamProfiles).not.toHaveBeenCalled();
+    expect(revisionAfterMutation).not.toHaveBeenCalled();
+    expect(revalidatePath).not.toHaveBeenCalled();
+    expect(revalidateTag).not.toHaveBeenCalled();
   });
 
   test("creates, updates, deletes, and invalidates caches", async () => {

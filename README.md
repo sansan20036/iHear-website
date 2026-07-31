@@ -45,8 +45,9 @@ Run the automated browser regression tests:
 npm test
 ```
 
-This runs Vitest coverage for the API authorization, cache headers, validation,
-create/update/delete, and conflict responses, followed by Playwright browser tests.
+This runs Vitest coverage for anonymous and signed-in non-admin authorization,
+cache headers, validation, create/update/delete, and conflict responses, followed
+by Playwright browser tests.
 
 The first test run on a new computer may require the Playwright browser:
 
@@ -307,7 +308,6 @@ Clean URLs such as `/team` are mapped by `next.config.mjs`.
 The production launch is not blocked by these items. Schedule them after the site
 has accumulated enough real usage to justify the additional operational complexity:
 
-- Add an authenticated non-admin regression test for every admin write endpoint.
 - Add application-level rate limiting for authentication and admin mutation APIs.
 - Connect uptime and server-error monitoring with an agreed alert recipient.
 - On the Supabase Free plan, create an off-site database export at least weekly and
