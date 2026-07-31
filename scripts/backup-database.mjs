@@ -50,6 +50,7 @@ try {
     JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
     WHERE namespace.nspname = 'public'
       AND relation.relname IN (
+        'api_rate_limits',
         'impact_milestones',
         'impact_milestone_settings',
         'content_overrides',
@@ -71,6 +72,7 @@ try {
     JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
     WHERE namespace.nspname = 'public'
       AND relation.relname IN (
+        'api_rate_limits',
         'impact_milestones',
         'impact_milestone_settings',
         'content_overrides',

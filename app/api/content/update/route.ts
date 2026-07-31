@@ -11,6 +11,11 @@ import {
   updateContentItem,
 } from "../../../../lib/content-store";
 import { revisionAfterMutation } from "../../../../lib/live-revisions";
+import {
+  enforceRateLimit,
+  RATE_LIMIT_POLICIES,
+  withRateLimitHeaders,
+} from "../../../../lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 
@@ -43,12 +48,19 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
+  const decision = await enforceRateLimit(request, {
+    ...RATE_LIMIT_POLICIES.adminMutation,
+    identifier: email,
+  });
+  if (decision.limited) return decision.response;
+  const respond = <T extends Response>(response: T) => withRateLimitHeaders(response, decision);
+
   let body: unknown;
 
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    return respond(NextResponse.json({ error: "Invalid JSON body" }, { status: 400 }));
   }
 
   const payload = body as Partial<{
@@ -59,10 +71,10 @@ export async function POST(request: Request) {
   }>;
 
   if (!Object.prototype.hasOwnProperty.call(payload, "expectedUpdatedAt")) {
-    return NextResponse.json(
+    return respond(NextResponse.json(
       { error: "Reload the page before editing this content" },
       { status: 428 },
-    );
+    ));
   }
 
   if (
@@ -71,10 +83,10 @@ export async function POST(request: Request) {
     !isValidValue(payload.value) ||
     !isValidExpectedUpdatedAt(payload.expectedUpdatedAt)
   ) {
-    return NextResponse.json(
+    return respond(NextResponse.json(
       { error: "Expected JSON body with page, key, and value strings" },
       { status: 400 },
-    );
+    ));
   }
 
   try {
@@ -90,14 +102,14 @@ export async function POST(request: Request) {
     revalidatePath("/api/live-revisions");
     const revision = await revisionAfterMutation("content");
 
-    return NextResponse.json({
+    return respond(NextResponse.json({
       ok: true,
       content: publicContentStore(content),
       revision,
-    });
+    }));
   } catch (error) {
     if (error instanceof ContentConflictError) {
-      return NextResponse.json({ error: error.message }, { status: 409 });
+      return respond(NextResponse.json({ error: error.message }, { status: 409 }));
     }
     throw error;
   }

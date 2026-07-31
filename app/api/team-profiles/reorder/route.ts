@@ -6,6 +6,11 @@ import { isAllowedAdmin, normalizeEmail } from "../../../../lib/admins";
 import { invalidateTeamProfiles, teamApiError } from "../../../../lib/team-api";
 import { reorderTeamProfiles } from "../../../../lib/team-store";
 import { TEAM_SECTIONS, type TeamSection } from "../../../../lib/team-types";
+import {
+  enforceRateLimit,
+  RATE_LIMIT_POLICIES,
+  withRateLimitHeaders,
+} from "../../../../lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 
@@ -13,6 +18,12 @@ export async function PATCH(request: Request) {
   const session = await auth();
   const email = normalizeEmail(session?.user?.email);
   if (!isAllowedAdmin(email)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const decision = await enforceRateLimit(request, {
+    ...RATE_LIMIT_POLICIES.adminMutation,
+    identifier: email,
+  });
+  if (decision.limited) return decision.response;
+  const respond = <T extends Response>(response: T) => withRateLimitHeaders(response, decision);
   try {
     const body = await request.json();
     const section = body.section as TeamSection;
@@ -28,12 +39,12 @@ export async function PATCH(request: Request) {
         !/^[a-zA-Z0-9-]{1,100}$/.test(item.id) || !Number.isInteger(item.version) || item.version < 1
       )
     ) {
-      return NextResponse.json({ error: "Invalid reorder payload" }, { status: 400 });
+      return respond(NextResponse.json({ error: "Invalid reorder payload" }, { status: 400 }));
     }
     await reorderTeamProfiles(section, ordered, email);
     const revision = await invalidateTeamProfiles();
-    return NextResponse.json({ ok: true, revision });
+    return respond(NextResponse.json({ ok: true, revision }));
   } catch (error) {
-    return teamApiError(error);
+    return respond(teamApiError(error));
   }
 }

@@ -23,6 +23,7 @@ const sql = postgres(databaseUrl, {
 });
 
 const expectedTables = [
+  "api_rate_limits",
   "content_overrides",
   "impact_milestone_settings",
   "impact_milestones",
@@ -33,6 +34,10 @@ const expectedTables = [
 ];
 
 const expectedConstraints = [
+  "api_rate_limits_bucket_key_format",
+  "api_rate_limits_pkey",
+  "api_rate_limits_request_count_positive",
+  "api_rate_limits_timestamp_order",
   "content_overrides_page_path",
   "content_overrides_pkey",
   "impact_milestones_actor_length",
@@ -69,6 +74,7 @@ const expectedConstraints = [
 ];
 
 const expectedIndexes = [
+  "api_rate_limits_updated_at_idx",
   "impact_milestones_unique_published_metrics_period",
   "team_profiles_public_order_idx",
 ];
@@ -87,6 +93,7 @@ try {
     FROM information_schema.tables
     WHERE
       (table_schema = 'public' AND table_name IN (
+        'api_rate_limits',
         'impact_milestones',
         'impact_milestone_settings',
         'content_overrides',
@@ -110,7 +117,7 @@ try {
     JOIN pg_class AS relation ON relation.oid = con.conrelid
     JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
     WHERE namespace.nspname = 'public'
-      AND relation.relname IN ('impact_milestones', 'content_overrides', 'site_content_revisions', 'team_people', 'team_profiles')
+      AND relation.relname IN ('api_rate_limits', 'impact_milestones', 'content_overrides', 'site_content_revisions', 'team_people', 'team_profiles')
     ORDER BY relation.relname, con.conname
   `;
 
@@ -124,7 +131,7 @@ try {
     JOIN pg_class AS index_relation ON index_relation.oid = idx.indexrelid
     JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
     WHERE namespace.nspname = 'public'
-      AND relation.relname IN ('impact_milestones', 'team_people', 'team_profiles')
+      AND relation.relname IN ('api_rate_limits', 'impact_milestones', 'team_people', 'team_profiles')
     ORDER BY index_relation.relname
   `;
 
@@ -132,7 +139,7 @@ try {
     SELECT schemaname, tablename, policyname, roles, cmd
     FROM pg_policies
     WHERE schemaname = 'public'
-      AND tablename IN ('impact_milestones', 'content_overrides', 'site_content_revisions', 'team_people', 'team_profiles')
+      AND tablename IN ('api_rate_limits', 'impact_milestones', 'content_overrides', 'site_content_revisions', 'team_people', 'team_profiles')
     ORDER BY tablename, policyname
   `;
 
@@ -142,6 +149,7 @@ try {
     JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
     WHERE namespace.nspname = 'public'
       AND relation.relname IN (
+        'api_rate_limits',
         'impact_milestones',
         'impact_milestone_settings',
         'content_overrides',
@@ -323,8 +331,25 @@ try {
     FROM site_content_revisions
   `;
 
+  const [invalidRateLimits] = await sql`
+    SELECT
+      COUNT(*) FILTER (
+        WHERE bucket_key !~ '^[0-9a-f]{64}$'
+      )::INTEGER AS invalid_bucket_key,
+      COUNT(*) FILTER (
+        WHERE request_count < 1
+      )::INTEGER AS invalid_request_count,
+      COUNT(*) FILTER (
+        WHERE updated_at < window_started_at
+      )::INTEGER AS invalid_timestamp_order
+    FROM api_rate_limits
+  `;
+
   const counts = await sql`
-    SELECT 'impact_milestones' AS table_name, COUNT(*)::INTEGER AS row_count
+    SELECT 'api_rate_limits' AS table_name, COUNT(*)::INTEGER AS row_count
+    FROM api_rate_limits
+    UNION ALL
+    SELECT 'impact_milestones', COUNT(*)::INTEGER
     FROM impact_milestones
     UNION ALL
     SELECT 'impact_milestone_settings', COUNT(*)::INTEGER
@@ -419,6 +444,7 @@ try {
     ...Object.values(invalidContent),
     ...Object.values(invalidTeam),
     ...Object.values(invalidRevisions),
+    ...Object.values(invalidRateLimits),
   ].map(Number);
   const disabledRls = rowLevelSecurity
     .filter((table) => !table.enabled)
@@ -450,6 +476,7 @@ try {
     invalidContent,
     invalidTeam,
     invalidRevisions,
+    invalidRateLimits,
     issues: {
       missingTables,
       missingConstraints,

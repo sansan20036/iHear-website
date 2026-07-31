@@ -127,6 +127,13 @@ Auth.js calculates `session.user.isAdmin` from this server-side list. Browser ed
 controls consume that boolean instead of duplicating admin email addresses in client code;
 all write APIs still repeat the authorization check on the server.
 
+Auth.js POST requests are limited to 10 requests per IP per minute. Authenticated admin
+mutations share a 30-request-per-admin minute window, while the optional translation API
+uses a separate 5-request window. Counters are stored atomically in Postgres using only
+HMAC-SHA256 identifiers; raw IP addresses and email addresses are never persisted. Set
+`RATE_LIMIT_SECRET` to a separate random secret if desired, otherwise `AUTH_SECRET` is used.
+Rate-limited responses return HTTP `429` with `Retry-After` and `RateLimit-*` headers.
+
 With `POSTGRES_URL` or `DATABASE_URL` configured, text overrides are read from and
 written to the `content_overrides` Postgres table. Its schema is in:
 
@@ -310,7 +317,6 @@ Clean URLs such as `/team` are mapped by `next.config.mjs`.
 The production launch is not blocked by these items. Schedule them after the site
 has accumulated enough real usage to justify the additional operational complexity:
 
-- Add application-level rate limiting for authentication and admin mutation APIs.
 - Connect uptime and server-error monitoring with an agreed alert recipient.
 - On the Supabase Free plan, create an off-site database export at least weekly and
   run `npm run db:verify-backup` as a documented restore drill. Revisit managed daily

@@ -2,6 +2,10 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 
 vi.mock("../auth.js", () => ({
   auth: vi.fn(),
+  handlers: {
+    GET: vi.fn(),
+    POST: vi.fn(),
+  },
 }));
 
 vi.mock("next/cache", () => ({
@@ -54,9 +58,26 @@ vi.mock("../lib/live-revisions", () => ({
   revisionAfterMutation: vi.fn(),
 }));
 
+vi.mock("../lib/rate-limit", () => ({
+  enforceRateLimit: vi.fn(),
+  withRateLimitHeaders: vi.fn((response, decision) => {
+    if (decision.limited) return decision.response;
+    response.headers.set("RateLimit-Limit", String(decision.result.limit));
+    response.headers.set("RateLimit-Remaining", String(decision.result.remaining));
+    response.headers.set("RateLimit-Reset", "1785499200");
+    return response;
+  }),
+  RATE_LIMIT_POLICIES: {
+    auth: { scope: "auth", limit: 10, windowSeconds: 60 },
+    adminMutation: { scope: "admin-mutation", limit: 30, windowSeconds: 60 },
+    translation: { scope: "translation", limit: 5, windowSeconds: 60 },
+  },
+}));
+
 import { revalidatePath, revalidateTag } from "next/cache";
 
-import { auth } from "../auth.js";
+import { auth, handlers } from "../auth.js";
+import { POST as authPost } from "../app/api/auth/[...nextauth]/route.js";
 import { POST as clearStaleAuth } from "../app/api/auth/clear-stale/route";
 import { GET as getContent } from "../app/api/content/get/route";
 import { POST as updateContent } from "../app/api/content/update/route";
@@ -74,6 +95,7 @@ import { GET as getLiveRevisionApi } from "../app/api/live-revisions/route";
 import * as contentStore from "../lib/content-store";
 import * as impactStore from "../lib/impact-store";
 import * as liveRevisions from "../lib/live-revisions";
+import { enforceRateLimit } from "../lib/rate-limit";
 
 const adminEmail = "sansan20036@gmail.com";
 const nonAdminEmail = "signed-in-visitor@example.com";
@@ -146,9 +168,36 @@ function routeContext(id = storedMilestone.id) {
   return { params: Promise.resolve({ id }) };
 }
 
+function rateLimitedResponse() {
+  return new Response(JSON.stringify({ error: "Too many requests", code: "RATE_LIMITED" }), {
+    status: 429,
+    headers: {
+      "Content-Type": "application/json",
+      "Retry-After": "60",
+      "RateLimit-Limit": "10",
+      "RateLimit-Remaining": "0",
+    },
+  });
+}
+
+function allowedRateLimitDecision(limit = 10, remaining = 9) {
+  return {
+    limited: false,
+    result: {
+      allowed: true,
+      limit,
+      remaining,
+      retryAfter: 60,
+      resetAt: "2026-07-31T12:00:00.000Z",
+    },
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   auth.mockResolvedValue({ user: { email: adminEmail, isAdmin: true } });
+  handlers.POST.mockResolvedValue(new Response(null, { status: 200 }));
+  enforceRateLimit.mockResolvedValue(allowedRateLimitDecision());
   impactStore.listPublishedImpactMilestones.mockResolvedValue([storedMilestone]);
   impactStore.getCurrentSiteMetrics.mockResolvedValue(currentMetrics);
   impactStore.listAllImpactMilestones.mockResolvedValue([storedMilestone]);
@@ -332,7 +381,9 @@ describe("authorization", () => {
 
 describe("OAuth cookie cleanup", () => {
   test("expires stale Auth.js cookies at both supported paths", async () => {
-    const response = await clearStaleAuth();
+    const response = await clearStaleAuth(
+      new Request("http://localhost/api/auth/clear-stale", { method: "POST" }),
+    );
     const cookies = response.headers.getSetCookie();
 
     expect(response.status).toBe(200);
@@ -347,6 +398,30 @@ describe("OAuth cookie cleanup", () => {
     expect(cookies.filter((cookie) => cookie.startsWith("__Host-authjs.csrf-token="))).toHaveLength(1);
     expect(cookies.find((cookie) => cookie.startsWith("__Host-authjs.csrf-token="))).toContain("Path=/;");
     expect(cookies.every((cookie) => cookie.includes("Max-Age=0"))).toBe(true);
+  });
+
+  test("rate limits Auth.js POST and stale-cookie cleanup before side effects", async () => {
+    enforceRateLimit.mockImplementation(async () => ({
+      limited: true,
+      response: rateLimitedResponse(),
+    }));
+
+    const authResponse = await authPost(
+      new Request("http://localhost/api/auth/signin/google", { method: "POST" }),
+    );
+    const cleanupResponse = await clearStaleAuth(
+      new Request("http://localhost/api/auth/clear-stale", { method: "POST" }),
+    );
+
+    expect(authResponse.status).toBe(429);
+    expect(cleanupResponse.status).toBe(429);
+    expect(cleanupResponse.headers.get("set-cookie")).toBeNull();
+    expect(handlers.POST).not.toHaveBeenCalled();
+    expect(enforceRateLimit).toHaveBeenCalledTimes(2);
+    expect(enforceRateLimit).toHaveBeenCalledWith(
+      expect.any(Request),
+      { scope: "auth", limit: 10, windowSeconds: 60 },
+    );
   });
 
   test("current site metrics use shared one-second edge caching", async () => {
@@ -372,6 +447,60 @@ describe("OAuth cookie cleanup", () => {
 });
 
 describe("authorized mutations", () => {
+  test("rate limits every authorized milestone and content mutation before persistence", async () => {
+    enforceRateLimit.mockImplementation(async () => ({
+      limited: true,
+      response: rateLimitedResponse(),
+    }));
+
+    const responses = await Promise.all([
+      createMilestone(jsonRequest("http://localhost/api/impact-milestones", "POST", validPayload)),
+      updateMilestone(
+        jsonRequest(
+          `http://localhost/api/impact-milestones/${storedMilestone.id}`,
+          "PATCH",
+          { ...validPayload, version: 1 },
+        ),
+        routeContext(),
+      ),
+      deleteMilestone(
+        jsonRequest(
+          `http://localhost/api/impact-milestones/${storedMilestone.id}`,
+          "DELETE",
+          { version: 1 },
+        ),
+        routeContext(),
+      ),
+      updateContent(
+        jsonRequest("http://localhost/api/content/update", "POST", {
+          page: "/about",
+          key: "main>h2:nth-of-type(1)",
+          value: "Blocked by rate limit",
+          expectedUpdatedAt: null,
+        }),
+      ),
+      translateMilestone(
+        jsonRequest("http://localhost/api/impact-milestones/translate", "POST", {
+          sourceLocale: "zhHant",
+          title: "測試",
+          description: "測試",
+        }),
+      ),
+    ]);
+
+    expect(responses.map((response) => response.status)).toEqual([429, 429, 429, 429, 429]);
+    expect(impactStore.createImpactMilestone).not.toHaveBeenCalled();
+    expect(impactStore.updateImpactMilestone).not.toHaveBeenCalled();
+    expect(impactStore.deleteImpactMilestone).not.toHaveBeenCalled();
+    expect(contentStore.updateContentItem).not.toHaveBeenCalled();
+    expect(revalidatePath).not.toHaveBeenCalled();
+    expect(revalidateTag).not.toHaveBeenCalled();
+    expect(enforceRateLimit).toHaveBeenCalledWith(
+      expect.any(Request),
+      { scope: "translation", limit: 5, windowSeconds: 60, identifier: adminEmail },
+    );
+  });
+
   test("creates a published milestone and invalidates its caches", async () => {
     const response = await createMilestone(
       jsonRequest("http://localhost/api/impact-milestones", "POST", validPayload),

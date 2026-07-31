@@ -16,6 +16,11 @@ import {
   parseImpactMilestoneInput,
   type ImpactMilestoneUpdateInput,
 } from "../../../../lib/impact-types";
+import {
+  enforceRateLimit,
+  RATE_LIMIT_POLICIES,
+  withRateLimitHeaders,
+} from "../../../../lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 
@@ -30,11 +35,17 @@ async function authorizedEmail() {
 export async function PATCH(request: Request, context: RouteContext) {
   const email = await authorizedEmail();
   if (!email) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const decision = await enforceRateLimit(request, {
+    ...RATE_LIMIT_POLICIES.adminMutation,
+    identifier: email,
+  });
+  if (decision.limited) return decision.response;
+  const respond = <T extends Response>(response: T) => withRateLimitHeaders(response, decision);
 
   try {
     const { id } = await context.params;
     if (!isValidImpactId(id)) {
-      return NextResponse.json({ error: "Invalid milestone id" }, { status: 400 });
+      return respond(NextResponse.json({ error: "Invalid milestone id" }, { status: 400 }));
     }
     const body = await request.json();
     const input = parseImpactMilestoneInput(body, {
@@ -42,30 +53,36 @@ export async function PATCH(request: Request, context: RouteContext) {
     }) as ImpactMilestoneUpdateInput;
     const milestone = await updateImpactMilestone(id, input, email);
     const revision = await invalidateImpactMilestones();
-    return NextResponse.json({ ok: true, milestone, revision });
+    return respond(NextResponse.json({ ok: true, milestone, revision }));
   } catch (error) {
-    return impactApiError(error);
+    return respond(impactApiError(error));
   }
 }
 
 export async function DELETE(request: Request, context: RouteContext) {
   const email = await authorizedEmail();
   if (!email) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const decision = await enforceRateLimit(request, {
+    ...RATE_LIMIT_POLICIES.adminMutation,
+    identifier: email,
+  });
+  if (decision.limited) return decision.response;
+  const respond = <T extends Response>(response: T) => withRateLimitHeaders(response, decision);
 
   try {
     const { id } = await context.params;
     if (!isValidImpactId(id)) {
-      return NextResponse.json({ error: "Invalid milestone id" }, { status: 400 });
+      return respond(NextResponse.json({ error: "Invalid milestone id" }, { status: 400 }));
     }
     const body = await request.json().catch(() => ({}));
     const version = Number(body.version);
     if (!Number.isInteger(version) || version < 1) {
-      return NextResponse.json({ error: "A valid version is required" }, { status: 400 });
+      return respond(NextResponse.json({ error: "A valid version is required" }, { status: 400 }));
     }
     const deletedId = await deleteImpactMilestone(id, version);
     const revision = await invalidateImpactMilestones();
-    return NextResponse.json({ ok: true, deletedId, revision });
+    return respond(NextResponse.json({ ok: true, deletedId, revision }));
   } catch (error) {
-    return impactApiError(error);
+    return respond(impactApiError(error));
   }
 }

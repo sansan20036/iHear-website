@@ -3,6 +3,11 @@ import { NextResponse } from "next/server";
 // @ts-ignore - auth.js is the existing Auth.js configuration.
 import { auth } from "../../../../auth.js";
 import { isAllowedAdmin, normalizeEmail } from "../../../../lib/admins";
+import {
+  enforceRateLimit,
+  RATE_LIMIT_POLICIES,
+  withRateLimitHeaders,
+} from "../../../../lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -55,25 +60,32 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
+  const decision = await enforceRateLimit(request, {
+    ...RATE_LIMIT_POLICIES.translation,
+    identifier: email,
+  });
+  if (decision.limited) return decision.response;
+  const respond = <T extends Response>(response: T) => withRateLimitHeaders(response, decision);
+
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
-    return NextResponse.json(
+    return respond(NextResponse.json(
       { error: "Automatic translation is not configured", code: "TRANSLATION_NOT_CONFIGURED" },
       { status: 503 },
-    );
+    ));
   }
 
   try {
     const body = (await request.json()) as Record<string, unknown>;
     if (!isLocale(body.sourceLocale)) {
-      return NextResponse.json({ error: "Invalid source locale" }, { status: 400 });
+      return respond(NextResponse.json({ error: "Invalid source locale" }, { status: 400 }));
     }
 
     const sourceLocale = body.sourceLocale;
     const title = cleanText(body.title, 200);
     const description = cleanText(body.description, 2_000);
     if (!title && !description) {
-      return NextResponse.json({ error: "Nothing to translate" }, { status: 400 });
+      return respond(NextResponse.json({ error: "Nothing to translate" }, { status: 400 }));
     }
 
     const requestedTargets = Array.isArray(body.targetLocales)
@@ -81,7 +93,7 @@ export async function POST(request: Request) {
       : LOCALES.filter((locale) => locale !== sourceLocale);
     const targetLocales = [...new Set(requestedTargets)].filter((locale) => locale !== sourceLocale);
     if (!targetLocales.length) {
-      return NextResponse.json({ translations: {} });
+      return respond(NextResponse.json({ translations: {} }));
     }
 
     const localeGuide: Record<Locale, string> = {
@@ -142,19 +154,19 @@ export async function POST(request: Request) {
     const responseBody = await response.json().catch(() => null);
     if (!response.ok) {
       console.error("OpenAI translation request failed", response.status, responseBody);
-      return NextResponse.json(
+      return respond(NextResponse.json(
         { error: response.status === 429 ? "Translation limit reached; try again shortly" : "Translation service unavailable" },
         { status: response.status === 429 ? 429 : 502 },
-      );
+      ));
     }
 
     const translations = parseTranslations(outputText(responseBody), targetLocales);
-    return NextResponse.json(
+    return respond(NextResponse.json(
       { translations },
       { headers: { "Cache-Control": "private, no-store" } },
-    );
+    ));
   } catch (error) {
     console.error("Timeline translation failed", error);
-    return NextResponse.json({ error: "Could not translate this content" }, { status: 502 });
+    return respond(NextResponse.json({ error: "Could not translate this content" }, { status: 502 }));
   }
 }

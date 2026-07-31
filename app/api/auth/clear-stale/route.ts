@@ -1,5 +1,11 @@
 import { NextResponse } from "next/server";
 
+import {
+  enforceRateLimit,
+  RATE_LIMIT_POLICIES,
+  withRateLimitHeaders,
+} from "../../../../lib/rate-limit";
+
 const AUTH_COOKIE_NAMES = [
   "authjs.csrf-token",
   "authjs.callback-url",
@@ -39,7 +45,10 @@ function expiredCookie(name: string, path: string) {
   return attributes.join("; ");
 }
 
-export async function POST() {
+export async function POST(request: Request) {
+  const decision = await enforceRateLimit(request, RATE_LIMIT_POLICIES.auth);
+  if (decision.limited) return decision.response;
+
   const response = NextResponse.json({ ok: true });
 
   for (const name of AUTH_COOKIE_NAMES) {
@@ -51,5 +60,5 @@ export async function POST() {
     }
   }
 
-  return response;
+  return withRateLimitHeaders(response, decision);
 }

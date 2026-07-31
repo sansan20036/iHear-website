@@ -14,6 +14,11 @@ import {
   publicTeamProfile,
   type TeamProfileInput,
 } from "../../../lib/team-types";
+import {
+  enforceRateLimit,
+  RATE_LIMIT_POLICIES,
+  withRateLimitHeaders,
+} from "../../../lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 
@@ -70,12 +75,20 @@ export async function POST(request: Request) {
   const session = await auth();
   const email = normalizeEmail(session?.user?.email);
   if (!isAllowedAdmin(email)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const decision = await enforceRateLimit(request, {
+    ...RATE_LIMIT_POLICIES.adminMutation,
+    identifier: email,
+  });
+  if (decision.limited) return decision.response;
   try {
     const input = parseTeamProfileInput(await request.json()) as TeamProfileInput;
     const profile = await createTeamProfile(input, email);
     const revision = await invalidateTeamProfiles();
-    return NextResponse.json({ ok: true, profile, revision }, { status: 201 });
+    return withRateLimitHeaders(
+      NextResponse.json({ ok: true, profile, revision }, { status: 201 }),
+      decision,
+    );
   } catch (error) {
-    return teamApiError(error);
+    return withRateLimitHeaders(teamApiError(error), decision);
   }
 }

@@ -14,6 +14,11 @@ import {
   publicImpactMilestone,
   type ImpactMilestoneInput,
 } from "../../../lib/impact-types";
+import {
+  enforceRateLimit,
+  RATE_LIMIT_POLICIES,
+  withRateLimitHeaders,
+} from "../../../lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 
@@ -61,13 +66,22 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
+  const decision = await enforceRateLimit(request, {
+    ...RATE_LIMIT_POLICIES.adminMutation,
+    identifier: email,
+  });
+  if (decision.limited) return decision.response;
+
   try {
     const body = await request.json();
     const input = parseImpactMilestoneInput(body) as ImpactMilestoneInput;
     const milestone = await createImpactMilestone(input, email);
     const revision = await invalidateImpactMilestones();
-    return NextResponse.json({ ok: true, milestone, revision }, { status: 201 });
+    return withRateLimitHeaders(
+      NextResponse.json({ ok: true, milestone, revision }, { status: 201 }),
+      decision,
+    );
   } catch (error) {
-    return impactApiError(error);
+    return withRateLimitHeaders(impactApiError(error), decision);
   }
 }

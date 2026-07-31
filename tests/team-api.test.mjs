@@ -3,6 +3,19 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 vi.mock("../auth.js", () => ({ auth: vi.fn() }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn(), revalidateTag: vi.fn() }));
 vi.mock("../lib/live-revisions", () => ({ revisionAfterMutation: vi.fn() }));
+vi.mock("../lib/rate-limit", () => ({
+  enforceRateLimit: vi.fn(),
+  withRateLimitHeaders: vi.fn((response, decision) => {
+    if (decision.limited) return decision.response;
+    response.headers.set("RateLimit-Limit", String(decision.result.limit));
+    response.headers.set("RateLimit-Remaining", String(decision.result.remaining));
+    response.headers.set("RateLimit-Reset", "1785499200");
+    return response;
+  }),
+  RATE_LIMIT_POLICIES: {
+    adminMutation: { scope: "admin-mutation", limit: 30, windowSeconds: 60 },
+  },
+}));
 vi.mock("../lib/team-store", () => {
   class TeamNotFoundError extends Error {}
   class TeamConflictError extends Error {}
@@ -30,6 +43,7 @@ import { DELETE, PATCH } from "../app/api/team-profiles/[id]/route";
 import { PATCH as REORDER } from "../app/api/team-profiles/reorder/route";
 import * as store from "../lib/team-store";
 import { revisionAfterMutation } from "../lib/live-revisions";
+import { enforceRateLimit } from "../lib/rate-limit";
 
 const email = "sansan20036@gmail.com";
 const nonAdminEmail = "signed-in-visitor@example.com";
@@ -72,9 +86,30 @@ const json = (url, method, body) =>
   });
 const context = { params: Promise.resolve({ id: stored.id }) };
 
+function rateLimitedResponse() {
+  return new Response(JSON.stringify({ error: "Too many requests", code: "RATE_LIMITED" }), {
+    status: 429,
+    headers: { "Content-Type": "application/json", "Retry-After": "60" },
+  });
+}
+
+function allowedRateLimitDecision(limit = 30, remaining = 29) {
+  return {
+    limited: false,
+    result: {
+      allowed: true,
+      limit,
+      remaining,
+      retryAfter: 60,
+      resetAt: "2026-07-31T12:00:00.000Z",
+    },
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   auth.mockResolvedValue({ user: { email, isAdmin: true } });
+  enforceRateLimit.mockResolvedValue(allowedRateLimitDecision());
   store.listPublishedTeamProfiles.mockResolvedValue([stored]);
   store.listAllTeamProfiles.mockResolvedValue([stored]);
   store.createTeamProfile.mockResolvedValue(stored);
@@ -152,6 +187,39 @@ describe("team profile API", () => {
 
     expect(responses.map((response) => response.status)).toEqual([403, 403, 403, 403, 403]);
     expect(store.listAllTeamProfiles).not.toHaveBeenCalled();
+    expect(store.createTeamProfile).not.toHaveBeenCalled();
+    expect(store.updateTeamProfile).not.toHaveBeenCalled();
+    expect(store.deleteTeamProfile).not.toHaveBeenCalled();
+    expect(store.reorderTeamProfiles).not.toHaveBeenCalled();
+    expect(revisionAfterMutation).not.toHaveBeenCalled();
+    expect(revalidatePath).not.toHaveBeenCalled();
+    expect(revalidateTag).not.toHaveBeenCalled();
+  });
+
+  test("rate limits every authorized team mutation before persistence", async () => {
+    enforceRateLimit.mockImplementation(async () => ({
+      limited: true,
+      response: rateLimitedResponse(),
+    }));
+
+    const responses = await Promise.all([
+      POST(json("http://localhost/api/team-profiles", "POST", payload)),
+      PATCH(json("http://localhost/api/team-profiles/tutor-test", "PATCH", {
+        ...payload,
+        profileVersion: 1,
+        personVersion: 1,
+      }), context),
+      DELETE(json("http://localhost/api/team-profiles/tutor-test", "DELETE", {
+        profileVersion: 1,
+        personVersion: 1,
+      }), context),
+      REORDER(json("http://localhost/api/team-profiles/reorder", "PATCH", {
+        section: "tutor",
+        ordered: [{ id: "tutor-test", version: 1 }],
+      })),
+    ]);
+
+    expect(responses.map((response) => response.status)).toEqual([429, 429, 429, 429]);
     expect(store.createTeamProfile).not.toHaveBeenCalled();
     expect(store.updateTeamProfile).not.toHaveBeenCalled();
     expect(store.deleteTeamProfile).not.toHaveBeenCalled();
