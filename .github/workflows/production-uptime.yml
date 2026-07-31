@@ -1,0 +1,70 @@
+name: Production uptime monitor
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: production-uptime-monitor
+  cancel-in-progress: true
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check homepage and application health
+        id: smoke
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -u
+          for attempt in 1 2 3; do
+            if curl --fail --silent --show-error --max-time 20 https://www.ihearus.org/ > /dev/null \
+              && health="$(curl --fail --silent --show-error --max-time 20 https://www.ihearus.org/api/health)" \
+              && printf '%s' "$health" | grep --fixed-strings '"status":"ok"' > /dev/null; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then sleep 10; fi
+          done
+          exit 1
+
+      - name: Open or update uptime incident
+        if: steps.smoke.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          issue_number="$(gh issue list --state open --search 'Production uptime alert in:title' --json number --jq '.[0].number // empty')"
+          message="Homepage or /api/health failed three checks. Workflow: ${RUN_URL}"
+          if [ -n "$issue_number" ]; then
+            gh issue comment "$issue_number" --body "$message"
+          else
+            gh issue create --title "Production uptime alert" --body "$message"
+          fi
+
+      - name: Close recovered uptime incident
+        if: steps.smoke.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          issue_number="$(gh issue list --state open --search 'Production uptime alert in:title' --json number --jq '.[0].number // empty')"
+          if [ -n "$issue_number" ]; then
+            gh issue comment "$issue_number" --body "Production checks recovered. Workflow: ${RUN_URL}"
+            gh issue close "$issue_number" --reason completed
+          fi
+
+      - name: Fail workflow when Production is unavailable
+        if: steps.smoke.outcome == 'failure'
+        shell: bash
+        run: exit 1

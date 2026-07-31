@@ -10,7 +10,6 @@ import {
 } from "./team-store";
 import { TeamValidationError } from "./team-types";
 import { revisionAfterMutation } from "./live-revisions";
-import { captureServerException } from "./monitoring";
 
 export async function invalidateTeamProfiles() {
   revalidateTag(TEAM_CACHE_TAG, { expire: 0 });
@@ -31,7 +30,6 @@ export function teamApiError(error: unknown) {
     return NextResponse.json({ error: error.message }, { status: 409 });
   }
   if (error instanceof TeamConfigurationError) {
-    captureServerException(error, { route: "/api/team-profiles", operation: "persistence" });
     return NextResponse.json({ error: "Team persistence is not configured" }, { status: 503 });
   }
   if ((error as { code?: string; constraint_name?: string }).code === "23514") {
@@ -41,7 +39,6 @@ export function teamApiError(error: unknown) {
     );
   }
   console.error("Team profiles API error", error);
-  captureServerException(error, { route: "/api/team-profiles", operation: "request" });
   return NextResponse.json({ error: "Could not update team profiles" }, { status: 500 });
 }
 

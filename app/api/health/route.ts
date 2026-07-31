@@ -3,7 +3,6 @@ import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 
 import { checkApplicationHealth } from "../../../lib/health";
-import { captureServerException } from "../../../lib/monitoring";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -56,11 +55,6 @@ export async function GET() {
         error && typeof error === "object" && "code" in error
           ? String(error.code)
           : "",
-    });
-    captureServerException(error, {
-      route: "/api/health",
-      operation: "database-probe",
-      requestId,
     });
     return NextResponse.json(
       {

@@ -13,19 +13,12 @@ describe("production operations configuration", () => {
     expect(route).not.toContain("POSTGRES_URL");
   });
 
-  it("scrubs sensitive request and user fields before Sentry sends events", async () => {
-    const config = await read("sentry.server.config.ts");
-    for (const field of [
-      "event.user.email",
-      "event.user.ip_address",
-      "event.request.cookies",
-      "event.request.query_string",
-      "event.request.headers.authorization",
-      "event.request.headers.cookie",
-    ]) {
-      expect(config).toContain(`delete ${field}`);
-    }
-    expect(config).toContain("sendDefaultPii: false");
+  it("uses Vercel logs without requiring a paid error-monitoring SDK", async () => {
+    const packageJson = await read("package.json");
+    const runbook = await read("docs/operations.md");
+    expect(packageJson).not.toContain("@sentry/nextjs");
+    expect(runbook).toContain("Vercel Runtime Logs");
+    expect(runbook).not.toContain("SENTRY_DSN");
   });
 
   it("uploads only encrypted daily and weekly backup payloads", async () => {
@@ -53,5 +46,16 @@ describe("production operations configuration", () => {
     expect(drill).toContain("--clean --if-exists --exit-on-error");
     expect(drill).not.toMatch(/pg_restore[^\n]*BACKUP_DATABASE_URL/);
     expect(drill).toContain("services:\n      restore-postgres:");
+  });
+
+  it("monitors Production externally and manages a single recoverable incident", async () => {
+    const workflow = await read(".github/workflows/production-uptime.yml");
+    expect(workflow).toContain('cron: "*/30 * * * *"');
+    expect(workflow).toContain("https://www.ihearus.org/api/health");
+    expect(workflow).toContain("https://www.ihearus.org/");
+    expect(workflow).toContain("issues: write");
+    expect(workflow).toContain("for attempt in 1 2 3");
+    expect(workflow).toContain('gh issue create --title "Production uptime alert"');
+    expect(workflow).toContain('gh issue close "$issue_number" --reason completed');
   });
 });

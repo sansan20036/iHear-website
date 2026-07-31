@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 
 import { getLiveRevisions } from "../../../lib/live-revisions";
-import { captureServerException } from "../../../lib/monitoring";
 
 export const dynamic = "force-dynamic";
 
@@ -18,7 +17,6 @@ export async function GET() {
     );
   } catch (error) {
     console.error("Live revisions API error", error);
-    captureServerException(error, { route: "/api/live-revisions", operation: "read" });
     return NextResponse.json(
       { error: "Could not load live revisions" },
       { status: 503, headers: { "Cache-Control": "no-store" } },

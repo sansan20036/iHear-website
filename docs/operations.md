@@ -1,22 +1,24 @@
 # iHear production operations
 
-This runbook covers uptime checks, server-error reporting, encrypted offsite backups,
-and restore drills. Never paste database URLs, OAuth secrets, Sentry tokens, or
-encryption passwords into Git, issues, logs, or screenshots.
+This runbook covers uptime checks, Vercel server logs, encrypted offsite backups,
+and restore drills. Never paste database URLs, OAuth secrets, or encryption passwords
+into Git, issues, logs, or screenshots.
 
 ## 1. Uptime monitoring
 
-Create two HTTPS monitors in Better Stack, UptimeRobot, or an equivalent service:
+The `Production uptime monitor` GitHub Actions workflow checks two HTTPS targets every
+30 minutes from infrastructure outside Vercel and Supabase:
 
 | Monitor | URL | Interval | Success condition |
 | --- | --- | --- | --- |
-| Application and database | `https://www.ihearus.org/api/health` | 1 minute | HTTP 200 and body contains `"status":"ok"` |
-| Public homepage | `https://www.ihearus.org/` | 5 minutes | HTTP 200 |
+| Application and database | `https://www.ihearus.org/api/health` | 30 minutes | HTTP 200 and body contains `"status":"ok"` |
+| Public homepage | `https://www.ihearus.org/` | 30 minutes | HTTP 200 |
 
 Recommended alert policy:
 
-- Confirm the failure from at least two locations or two consecutive checks before paging.
-- Notify at least two maintainers by email; add SMS/phone only for repeated failures.
+- Each workflow run retries three times before reporting a failure.
+- A failure opens or updates a private GitHub issue named `Production uptime alert`.
+- A successful later check comments on and closes the incident automatically.
 - Do not attach response bodies from authenticated endpoints to alerts.
 - The health endpoint is intentionally uncached and never returns database names,
   connection strings, SQL errors, or credentials.
@@ -24,27 +26,15 @@ Recommended alert policy:
 Vercel Runtime Logs remain the first place to inspect a failed request. Use the
 `X-Health-Request-Id` response header to correlate a health failure with logs.
 
-## 2. Server-error monitoring with Sentry
+## 2. Server-error investigation
 
-Create a Sentry project for Next.js, then add these variables to the Vercel project:
+Use Vercel Runtime Logs for server exceptions and function failures. Filter by the
+Production environment and affected API path. The public health endpoint returns an
+`X-Health-Request-Id` header that can be matched with the server log entry.
 
-| Variable | Environments | Purpose |
-| --- | --- | --- |
-| `SENTRY_DSN` | Production, Preview as desired | Sends server exceptions |
-| `SENTRY_ORG` | Build environments | Source-map project owner |
-| `SENTRY_PROJECT` | Build environments | Source-map target project |
-| `SENTRY_AUTH_TOKEN` | Build environments only | Uploads source maps |
-| `SENTRY_TRACES_SAMPLE_RATE` | Optional | Defaults to `0.05` |
-
-The site still builds and runs when all Sentry variables are absent. Error events are
-scrubbed before sending: email, username, IP address, cookies, authorization headers,
-and query strings are removed. Do not enable Sentry's default PII collection.
-
-Suggested alerts:
-
-- New server issue in Production.
-- More than five server errors in five minutes.
-- `/api/health` reports HTTP 503 twice in succession.
+Do not log request cookies, authorization headers, OAuth state, database URLs, or
+administrator email addresses. Availability alerts are handled by the external health
+monitor rather than a paid application-error service.
 
 ## 3. GitHub backup secrets
 
@@ -104,7 +94,7 @@ maintenance plan if a real Production recovery is required.
 ## 6. Monthly review
 
 - Confirm the two uptime monitors are green and alert recipients are current.
-- Confirm Sentry has no unresolved recurring server errors.
+- Review Vercel Runtime Logs for unresolved recurring server errors.
 - Confirm at least one daily artifact, one weekly artifact, and the latest restore
   drill succeeded.
 - Inspect artifact retention and GitHub Actions failures.
