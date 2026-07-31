@@ -27,6 +27,7 @@ const expectedTables = [
   "impact_milestone_settings",
   "impact_milestones",
   "schema_migrations",
+  "site_content_revisions",
   "team_people",
   "team_profiles",
 ];
@@ -54,6 +55,9 @@ const expectedConstraints = [
   "impact_milestones_title_length",
   "impact_milestones_version_positive",
   "impact_milestones_volunteers_nonnegative",
+  "site_content_revisions_pkey",
+  "site_content_revisions_revision",
+  "site_content_revisions_scope",
   "team_people_consent_pair",
   "team_people_pkey",
   "team_people_timestamp_order",
@@ -69,6 +73,14 @@ const expectedIndexes = [
   "team_profiles_public_order_idx",
 ];
 
+const expectedTriggers = [
+  "content_overrides_live_revision",
+  "impact_milestone_settings_live_revision",
+  "impact_milestones_live_revision",
+  "team_people_live_revision",
+  "team_profiles_live_revision",
+];
+
 try {
   const tables = await sql`
     SELECT table_schema, table_name
@@ -79,6 +91,7 @@ try {
         'impact_milestone_settings',
         'content_overrides',
         'schema_migrations',
+        'site_content_revisions',
         'team_people',
         'team_profiles'
       ))
@@ -97,7 +110,7 @@ try {
     JOIN pg_class AS relation ON relation.oid = con.conrelid
     JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
     WHERE namespace.nspname = 'public'
-      AND relation.relname IN ('impact_milestones', 'content_overrides', 'team_people', 'team_profiles')
+      AND relation.relname IN ('impact_milestones', 'content_overrides', 'site_content_revisions', 'team_people', 'team_profiles')
     ORDER BY relation.relname, con.conname
   `;
 
@@ -119,7 +132,7 @@ try {
     SELECT schemaname, tablename, policyname, roles, cmd
     FROM pg_policies
     WHERE schemaname = 'public'
-      AND tablename IN ('impact_milestones', 'content_overrides', 'team_people', 'team_profiles')
+      AND tablename IN ('impact_milestones', 'content_overrides', 'site_content_revisions', 'team_people', 'team_profiles')
     ORDER BY tablename, policyname
   `;
 
@@ -133,6 +146,7 @@ try {
         'impact_milestone_settings',
         'content_overrides',
         'schema_migrations',
+        'site_content_revisions',
         'team_people',
         'team_profiles'
       )
@@ -237,6 +251,36 @@ try {
     FROM content_overrides
   `;
 
+  const triggers = await sql`
+    SELECT event_object_table AS table_name, trigger_name, action_timing, event_manipulation
+    FROM information_schema.triggers
+    WHERE trigger_schema = 'public'
+      AND trigger_name IN (
+        'content_overrides_live_revision',
+        'impact_milestone_settings_live_revision',
+        'impact_milestones_live_revision',
+        'team_people_live_revision',
+        'team_profiles_live_revision'
+      )
+    ORDER BY trigger_name, event_manipulation
+  `;
+
+  const [liveRevisionFunction] = await sql`
+    SELECT
+      routine.prosecdef AS security_definer,
+      COALESCE(array_to_string(routine.proconfig, ','), '') AS configuration,
+      EXISTS (
+        SELECT 1
+        FROM aclexplode(COALESCE(routine.proacl, acldefault('f', routine.proowner))) AS privilege
+        WHERE privilege.grantee = 0 AND privilege.privilege_type = 'EXECUTE'
+      ) AS public_can_execute
+    FROM pg_proc AS routine
+    JOIN pg_namespace AS namespace ON namespace.oid = routine.pronamespace
+    WHERE namespace.nspname = 'public'
+      AND routine.proname = 'bump_site_content_revision'
+    LIMIT 1
+  `;
+
   const [invalidTeam] = await sql`
     SELECT
       (SELECT COUNT(*) FROM team_people
@@ -271,6 +315,14 @@ try {
       ) AS duplicate)::INTEGER AS duplicate_placements
   `;
 
+  const [invalidRevisions] = await sql`
+    SELECT
+      COUNT(*) FILTER (WHERE scope NOT IN ('content', 'impact', 'team'))::INTEGER AS invalid_scope,
+      COUNT(*) FILTER (WHERE revision < 1)::INTEGER AS invalid_revision,
+      (3 - COUNT(DISTINCT scope))::INTEGER AS missing_scope
+    FROM site_content_revisions
+  `;
+
   const counts = await sql`
     SELECT 'impact_milestones' AS table_name, COUNT(*)::INTEGER AS row_count
     FROM impact_milestones
@@ -286,6 +338,9 @@ try {
     UNION ALL
     SELECT 'team_profiles', COUNT(*)::INTEGER
     FROM team_profiles
+    UNION ALL
+    SELECT 'site_content_revisions', COUNT(*)::INTEGER
+    FROM site_content_revisions
     ORDER BY table_name
   `;
 
@@ -336,10 +391,34 @@ try {
     (constraint) => !constraintNames.includes(constraint),
   );
   const missingIndexes = expectedIndexes.filter((index) => !indexNames.includes(index));
+  const triggerNames = [...new Set(triggers.map((trigger) => trigger.trigger_name))];
+  const missingTriggers = expectedTriggers.filter((trigger) => !triggerNames.includes(trigger));
+  const incompleteTriggers = expectedTriggers.filter((triggerName) => {
+    const events = new Set(
+      triggers
+        .filter((trigger) => trigger.trigger_name === triggerName)
+        .map((trigger) => trigger.event_manipulation),
+    );
+    return !["INSERT", "UPDATE", "DELETE"].every((event) => events.has(event));
+  });
+  const functionIssues = [];
+  if (!liveRevisionFunction) functionIssues.push("bump_site_content_revision: missing");
+  else {
+    if (!liveRevisionFunction.security_definer) {
+      functionIssues.push("bump_site_content_revision: SECURITY DEFINER is required");
+    }
+    if (!String(liveRevisionFunction.configuration).includes("search_path=public, pg_temp")) {
+      functionIssues.push("bump_site_content_revision: hardened search_path is missing");
+    }
+    if (liveRevisionFunction.public_can_execute) {
+      functionIssues.push("bump_site_content_revision: PUBLIC must not have EXECUTE");
+    }
+  }
   const invalidCounts = [
     ...Object.values(invalid),
     ...Object.values(invalidContent),
     ...Object.values(invalidTeam),
+    ...Object.values(invalidRevisions),
   ].map(Number);
   const disabledRls = rowLevelSecurity
     .filter((table) => !table.enabled)
@@ -348,6 +427,9 @@ try {
     missingTables.length === 0 &&
     missingConstraints.length === 0 &&
     missingIndexes.length === 0 &&
+    missingTriggers.length === 0 &&
+    incompleteTriggers.length === 0 &&
+    functionIssues.length === 0 &&
     invalidCounts.every((count) => count === 0) &&
     migrationIssues.length === 0 &&
     disabledRls.length === 0;
@@ -361,14 +443,20 @@ try {
     constraints,
     indexes,
     policies,
+    triggers,
+    liveRevisionFunction,
     trackedMigrations,
     invalidData: invalid,
     invalidContent,
     invalidTeam,
+    invalidRevisions,
     issues: {
       missingTables,
       missingConstraints,
       missingIndexes,
+      missingTriggers,
+      incompleteTriggers,
+      functionIssues,
       disabledRls,
       migrationIssues,
     },

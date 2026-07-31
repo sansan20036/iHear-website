@@ -73,8 +73,8 @@ export async function POST(request: Request) {
   try {
     const input = parseTeamProfileInput(await request.json()) as TeamProfileInput;
     const profile = await createTeamProfile(input, email);
-    invalidateTeamProfiles();
-    return NextResponse.json({ ok: true, profile }, { status: 201 });
+    const revision = await invalidateTeamProfiles();
+    return NextResponse.json({ ok: true, profile, revision }, { status: 201 });
   } catch (error) {
     return teamApiError(error);
   }

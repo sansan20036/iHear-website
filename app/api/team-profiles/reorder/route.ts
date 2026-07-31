@@ -31,8 +31,8 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ error: "Invalid reorder payload" }, { status: 400 });
     }
     await reorderTeamProfiles(section, ordered, email);
-    invalidateTeamProfiles();
-    return NextResponse.json({ ok: true });
+    const revision = await invalidateTeamProfiles();
+    return NextResponse.json({ ok: true, revision });
   } catch (error) {
     return teamApiError(error);
   }

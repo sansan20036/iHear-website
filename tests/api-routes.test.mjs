@@ -35,9 +35,23 @@ vi.mock("../lib/impact-store", () => {
   };
 });
 
-vi.mock("../lib/content-store", () => ({
-  readContentStore: vi.fn(),
-  updateContentItem: vi.fn(),
+vi.mock("../lib/content-store", () => {
+  class ContentConflictError extends Error {}
+  return {
+    ContentConflictError,
+    publicContentStore: vi.fn((store) => {
+      const content = { ...store };
+      delete content.updatedBy;
+      return content;
+    }),
+    readContentStore: vi.fn(),
+    updateContentItem: vi.fn(),
+  };
+});
+
+vi.mock("../lib/live-revisions", () => ({
+  getLiveRevisions: vi.fn(),
+  revisionAfterMutation: vi.fn(),
 }));
 
 import { revalidatePath, revalidateTag } from "next/cache";
@@ -56,8 +70,10 @@ import {
 } from "../app/api/impact-milestones/[id]/route";
 import { POST as translateMilestone } from "../app/api/impact-milestones/translate/route";
 import { GET as getSiteMetrics } from "../app/api/site-metrics/route";
+import { GET as getLiveRevisionApi } from "../app/api/live-revisions/route";
 import * as contentStore from "../lib/content-store";
 import * as impactStore from "../lib/impact-store";
+import * as liveRevisions from "../lib/live-revisions";
 
 const adminEmail = "sansan20036@gmail.com";
 const validPayload = {
@@ -139,19 +155,48 @@ beforeEach(() => {
   impactStore.updateImpactMilestone.mockResolvedValue({ ...storedMilestone, version: 2 });
   impactStore.deleteImpactMilestone.mockResolvedValue(storedMilestone.id);
   contentStore.readContentStore.mockResolvedValue({
-    version: 1,
+    version: 2,
     updatedAt: "",
+    updatedBy: adminEmail,
     pages: {},
+    itemUpdatedAt: {},
   });
   contentStore.updateContentItem.mockResolvedValue({
-    version: 1,
+    version: 2,
     updatedAt: "2026-07-28T00:00:00.000Z",
     updatedBy: adminEmail,
     pages: { "/about": { "main>h2:nth-of-type(1)": "更新內容" } },
+    itemUpdatedAt: { "/about": { "main>h2:nth-of-type(1)": "2026-07-28T00:00:00.000Z" } },
+  });
+  liveRevisions.revisionAfterMutation.mockResolvedValue({
+    revision: "2",
+    updatedAt: "2026-07-28T00:00:00.000Z",
+  });
+  liveRevisions.getLiveRevisions.mockResolvedValue({
+    content: { revision: "2", updatedAt: "2026-07-28T00:00:00.000Z" },
+    impact: { revision: "3", updatedAt: "2026-07-28T00:00:00.000Z" },
+    team: { revision: "4", updatedAt: "2026-07-28T00:00:00.000Z" },
   });
 });
 
 describe("public API caching", () => {
+  test("live revisions expose only public version metadata", async () => {
+    const response = await getLiveRevisionApi();
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("vercel-cdn-cache-control")).toBe("public, max-age=3");
+    expect(body).toEqual({
+      version: 1,
+      revisions: {
+        content: { revision: "2", updatedAt: "2026-07-28T00:00:00.000Z" },
+        impact: { revision: "3", updatedAt: "2026-07-28T00:00:00.000Z" },
+        team: { revision: "4", updatedAt: "2026-07-28T00:00:00.000Z" },
+      },
+    });
+    expect(JSON.stringify(body)).not.toContain("@");
+  });
+
   test("published milestones use shared one-second edge caching", async () => {
     const response = await getMilestones(
       new Request("http://localhost/api/impact-milestones"),
@@ -169,6 +214,9 @@ describe("public API caching", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("public, max-age=0, must-revalidate");
     expect(response.headers.get("vercel-cdn-cache-control")).toBe("public, s-maxage=1");
+    const body = await response.json();
+    expect(body.updatedBy).toBeUndefined();
+    expect(body.version).toBe(2);
   });
 
   test("draft listing is private and never cached", async () => {
@@ -323,6 +371,7 @@ describe("authorized mutations", () => {
         page: "/about",
         key: "main>h2:nth-of-type(1)",
         value: "更新內容",
+        expectedUpdatedAt: null,
       }),
     );
 
@@ -331,11 +380,41 @@ describe("authorized mutations", () => {
       page: "/about",
       key: "main>h2:nth-of-type(1)",
       value: "更新內容",
+      expectedUpdatedAt: null,
       updatedBy: adminEmail,
     });
     expect(revalidateTag).not.toHaveBeenCalled();
     expect(revalidatePath).toHaveBeenCalledWith("/about");
     expect(revalidatePath).toHaveBeenCalledWith("/api/content/get");
+    expect(revalidatePath).toHaveBeenCalledWith("/api/live-revisions");
+    expect((await response.json()).content.updatedBy).toBeUndefined();
+  });
+
+  test("requires an inline content precondition", async () => {
+    const response = await updateContent(
+      jsonRequest("http://localhost/api/content/update", "POST", {
+        page: "/about",
+        key: "main>h2:nth-of-type(1)",
+        value: "更新內容",
+      }),
+    );
+
+    expect(response.status).toBe(428);
+    expect(contentStore.updateContentItem).not.toHaveBeenCalled();
+  });
+
+  test("returns 409 when inline content loses optimistic concurrency", async () => {
+    contentStore.updateContentItem.mockRejectedValue(new contentStore.ContentConflictError());
+    const response = await updateContent(
+      jsonRequest("http://localhost/api/content/update", "POST", {
+        page: "/about",
+        key: "main>h2:nth-of-type(1)",
+        value: "更新內容",
+        expectedUpdatedAt: "2026-07-28T00:00:00.000Z",
+      }),
+    );
+
+    expect(response.status).toBe(409);
   });
 
   test("returns a period field issue for duplicate published metrics", async () => {

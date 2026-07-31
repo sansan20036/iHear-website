@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 
-import { readContentStore } from "../../../../lib/content-store";
+import { publicContentStore, readContentStore } from "../../../../lib/content-store";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const content = await readContentStore();
+  const content = publicContentStore(await readContentStore());
 
   return NextResponse.json(content, {
     headers: {

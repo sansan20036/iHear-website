@@ -55,7 +55,8 @@ try {
         'content_overrides',
         'team_people',
         'team_profiles',
-        'schema_migrations'
+        'schema_migrations',
+        'site_content_revisions'
       )
     ORDER BY relation.relname, con.conname
   `;
@@ -75,7 +76,8 @@ try {
         'content_overrides',
         'team_people',
         'team_profiles',
-        'schema_migrations'
+        'schema_migrations',
+        'site_content_revisions'
       )
     ORDER BY relation.relname, index_relation.relname
   `;

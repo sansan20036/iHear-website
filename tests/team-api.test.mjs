@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 
 vi.mock("../auth.js", () => ({ auth: vi.fn() }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn(), revalidateTag: vi.fn() }));
+vi.mock("../lib/live-revisions", () => ({ revisionAfterMutation: vi.fn() }));
 vi.mock("../lib/team-store", () => {
   class TeamNotFoundError extends Error {}
   class TeamConflictError extends Error {}
@@ -28,6 +29,7 @@ import { GET, POST } from "../app/api/team-profiles/route";
 import { DELETE, PATCH } from "../app/api/team-profiles/[id]/route";
 import { PATCH as REORDER } from "../app/api/team-profiles/reorder/route";
 import * as store from "../lib/team-store";
+import { revisionAfterMutation } from "../lib/live-revisions";
 
 const email = "sansan20036@gmail.com";
 const localized = (en) => ({ en, zhHant: "", zhHans: "" });
@@ -78,6 +80,7 @@ beforeEach(() => {
   store.updateTeamProfile.mockResolvedValue({ ...stored, profileVersion: 2, personVersion: 2 });
   store.deleteTeamProfile.mockResolvedValue(stored.id);
   store.reorderTeamProfiles.mockResolvedValue(true);
+  revisionAfterMutation.mockResolvedValue({ revision: "2", updatedAt: "2026-07-31T00:00:00.000Z" });
 });
 
 describe("team profile API", () => {
@@ -136,6 +139,7 @@ describe("team profile API", () => {
     }), context)).status).toBe(200);
     expect(revalidateTag).toHaveBeenCalledWith("team-profiles-v1", { expire: 0 });
     expect(revalidatePath).toHaveBeenCalledWith("/team");
+    expect(revalidatePath).toHaveBeenCalledWith("/api/live-revisions");
   });
 
   test("rejects publishing without consent or required English content", async () => {

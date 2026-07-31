@@ -456,6 +456,7 @@
     state.originalDraft = "";
     if (typeof dialog.close === "function" && dialog.open) dialog.close();
     else dialog.removeAttribute("open");
+    if (window.iHearLiveContent) window.iHearLiveContent.checkNow({ force: true });
   }
 
   function editorMarkup() {
@@ -942,6 +943,7 @@
       closeEditor(true);
       render();
       showToast(labels().saved, false);
+      if (window.iHearLiveContent) window.iHearLiveContent.announce("impact", data.revision);
     } catch (error) {
       setBusy(false);
       if (error.issues) {
@@ -977,6 +979,7 @@
       closeEditor(true);
       render();
       showToast(labels().deletedNotice, false);
+      if (window.iHearLiveContent) window.iHearLiveContent.announce("impact", data.revision);
     } catch (error) {
       setBusy(false);
       showToast(error.status === 409 ? labels().conflict : error.message || labels().saveFailed, true);
@@ -989,8 +992,12 @@
     else state.milestones.push(milestone);
   }
 
-  async function loadMilestones(includeDrafts) {
-    const url = includeDrafts ? "/api/impact-milestones?includeDrafts=true" : "/api/impact-milestones";
+  async function loadMilestones(includeDrafts, context) {
+    const parameters = new URLSearchParams();
+    if (includeDrafts) parameters.set("includeDrafts", "true");
+    if (context && context.revision) parameters.set("live", context.revision);
+    const query = parameters.toString();
+    const url = `/api/impact-milestones${query ? `?${query}` : ""}`;
     const response = await fetch(url, { credentials: "same-origin", cache: "no-store" });
     if (!response.ok) {
       const error = new Error(labels().loadFailed);
@@ -1064,9 +1071,17 @@
   }).observe(document.documentElement, { attributes: true, attributeFilter: ["lang"] });
 
   window.iHearImpactMilestones = {
-    refresh: () => loadMilestones(state.isAdmin),
+    refresh: (context) => loadMilestones(state.isAdmin, context),
     getState: () => ({ ...state, draft: state.draft ? copyDraft(state.draft) : null }),
   };
+
+  if (window.iHearLiveContent) {
+    window.iHearLiveContent.register("impact", {
+      refresh: (context) => loadMilestones(state.isAdmin, context),
+      isDirty,
+      onBlocked: () => showToast(labels().conflict, true),
+    });
+  }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
   else boot();

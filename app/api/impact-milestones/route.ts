@@ -65,8 +65,8 @@ export async function POST(request: Request) {
     const body = await request.json();
     const input = parseImpactMilestoneInput(body) as ImpactMilestoneInput;
     const milestone = await createImpactMilestone(input, email);
-    invalidateImpactMilestones();
-    return NextResponse.json({ ok: true, milestone }, { status: 201 });
+    const revision = await invalidateImpactMilestones();
+    return NextResponse.json({ ok: true, milestone, revision }, { status: 201 });
   } catch (error) {
     return impactApiError(error);
   }

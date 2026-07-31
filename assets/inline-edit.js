@@ -19,6 +19,7 @@
       cancel: "Cancel",
       forbidden: "You do not have permission to edit this content.",
       failed: "Could not save this change.",
+      conflict: "This content changed elsewhere. Reload the latest version before saving.",
     },
     "zh-Hant": {
       edit: "編輯",
@@ -26,6 +27,7 @@
       cancel: "取消",
       forbidden: "你沒有權限修改這段內容。",
       failed: "無法儲存這次修改。",
+      conflict: "這段內容已由其他管理員更新，請先重新載入最新內容。",
     },
     "zh-Hans": {
       edit: "编辑",
@@ -33,11 +35,14 @@
       cancel: "取消",
       forbidden: "你没有权限修改这段内容。",
       failed: "无法保存这次修改。",
+      conflict: "这段内容已由其他管理员更新，请先重新加载最新内容。",
     },
   };
 
-  let contentStore = { version: 1, updatedAt: "", pages: {} };
+  let contentStore = { version: 2, updatedAt: "", pages: {}, itemUpdatedAt: {} };
   const pageKey = normalizePage(window.location.pathname);
+  const originalValues = new Map();
+  let liveNotice = null;
 
   function getLabels() {
     const lang = document.documentElement.lang || "en";
@@ -89,6 +94,12 @@
       .ihear-inline-action[data-action="save"]{ background:var(--navy); color:#fff; }
       .ihear-inline-action:disabled{ opacity:.62; cursor:wait; }
       .ihear-inline-editing{ outline:2px dashed rgba(232,150,79,.42); outline-offset:6px; border-radius:10px; }
+      .ihear-inline-live-notice{
+        position:fixed; right:18px; bottom:18px; z-index:10000; max-width:min(26rem,calc(100vw - 36px));
+        padding:12px 16px; border:2px solid var(--orange); border-radius:12px;
+        background:#fff; color:var(--navy); box-shadow:0 10px 30px rgba(38,57,116,.18);
+        font:700 .9rem/1.45 var(--font-b);
+      }
     `;
     document.head.appendChild(style);
   }
@@ -148,6 +159,22 @@
     return text.length >= 2 && text.length <= 5000;
   }
 
+  function pageMetadata() {
+    return (contentStore.itemUpdatedAt && contentStore.itemUpdatedAt[pageKey]) || {};
+  }
+
+  function showLiveNotice() {
+    if (!liveNotice) {
+      liveNotice = document.createElement("div");
+      liveNotice.className = "ihear-inline-live-notice";
+      liveNotice.setAttribute("role", "status");
+      liveNotice.setAttribute("aria-live", "polite");
+      document.body.appendChild(liveNotice);
+    }
+    liveNotice.textContent = getLabels().conflict;
+    liveNotice.hidden = false;
+  }
+
   function editableElements() {
     return Array.from(document.querySelectorAll(EDITABLE_SELECTOR)).filter(isEditableElement);
   }
@@ -157,8 +184,11 @@
 
     editableElements().forEach((element) => {
       const key = elementKey(element);
+      if (!originalValues.has(key)) originalValues.set(key, getText(element));
       if (Object.prototype.hasOwnProperty.call(overrides, key)) {
         setText(element, overrides[key]);
+      } else if (originalValues.has(key)) {
+        setText(element, originalValues.get(key));
       }
     });
   }
@@ -232,6 +262,7 @@
     function restore() {
       setText(element, original);
       addEditButton(element);
+      if (window.iHearLiveContent) window.iHearLiveContent.checkNow({ force: true });
     }
 
     async function saveChange() {
@@ -274,31 +305,42 @@
         page: pageKey,
         key,
         value,
+        expectedUpdatedAt: pageMetadata()[key] || null,
       }),
     });
 
     const data = await response.json().catch(() => null);
 
     if (response.status === 403) throw new Error(labels.forbidden);
+    if (response.status === 409 || response.status === 428) {
+      showLiveNotice();
+      throw new Error(labels.conflict);
+    }
     if (!response.ok) throw new Error((data && data.error) || labels.failed);
 
     contentStore = data.content || contentStore;
     setText(element, value);
     addEditButton(element);
+    if (window.iHearLiveContent) window.iHearLiveContent.announce("content", data.revision);
   }
 
-  async function loadContent() {
+  async function loadContent(context) {
     try {
-      const response = await fetch("/api/content/get", {
+      const revision = context && context.revision ? `?live=${encodeURIComponent(context.revision)}` : "";
+      const response = await fetch(`/api/content/get${revision}`, {
         credentials: "same-origin",
         cache: "no-store",
       });
-      if (response.ok) contentStore = await response.json();
-    } catch {
-      contentStore = { version: 1, updatedAt: "", pages: {} };
+      if (!response.ok) throw new Error("content load failed");
+      contentStore = await response.json();
+    } catch (error) {
+      if (context) throw error;
+      contentStore = { version: 2, updatedAt: "", pages: {}, itemUpdatedAt: {} };
     }
 
     applyContent();
+    renderAdminControls(window.iHearAuth && window.iHearAuth.getSession());
+    if (liveNotice) liveNotice.hidden = true;
   }
 
   async function boot() {
@@ -312,11 +354,19 @@
   });
 
   window.iHearInlineEdit = {
-    refresh: boot,
+    refresh: loadContent,
     getContent: function () {
       return contentStore;
     },
   };
+
+  if (window.iHearLiveContent) {
+    window.iHearLiveContent.register("content", {
+      refresh: loadContent,
+      isDirty: () => Boolean(document.querySelector("[data-inline-editing='true']")),
+      onBlocked: showLiveNotice,
+    });
+  }
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", boot);

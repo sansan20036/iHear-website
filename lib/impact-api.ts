@@ -8,14 +8,17 @@ import {
   ImpactNotFoundError,
   IMPACT_CACHE_TAG,
 } from "./impact-store";
+import { revisionAfterMutation } from "./live-revisions";
 import { ImpactValidationError } from "./impact-types";
 
-export function invalidateImpactMilestones() {
+export async function invalidateImpactMilestones() {
   revalidateTag(IMPACT_CACHE_TAG, { expire: 0 });
   revalidatePath("/");
   revalidatePath("/about");
   revalidatePath("/api/impact-milestones");
   revalidatePath("/api/site-metrics");
+  revalidatePath("/api/live-revisions");
+  return revisionAfterMutation("impact");
 }
 
 export function impactApiError(error: unknown) {

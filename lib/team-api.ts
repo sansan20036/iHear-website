@@ -9,11 +9,14 @@ import {
   TeamNotFoundError,
 } from "./team-store";
 import { TeamValidationError } from "./team-types";
+import { revisionAfterMutation } from "./live-revisions";
 
-export function invalidateTeamProfiles() {
+export async function invalidateTeamProfiles() {
   revalidateTag(TEAM_CACHE_TAG, { expire: 0 });
   revalidatePath("/team");
   revalidatePath("/api/team-profiles");
+  revalidatePath("/api/live-revisions");
+  return revisionAfterMutation("team");
 }
 
 export function teamApiError(error: unknown) {

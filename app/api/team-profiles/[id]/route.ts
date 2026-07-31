@@ -36,8 +36,8 @@ export async function PATCH(request: Request, context: Context) {
       requireVersion: true,
     }) as TeamProfileUpdateInput;
     const profile = await updateTeamProfile(id, input, email);
-    invalidateTeamProfiles();
-    return NextResponse.json({ ok: true, profile });
+    const revision = await invalidateTeamProfiles();
+    return NextResponse.json({ ok: true, profile, revision });
   } catch (error) {
     return teamApiError(error);
   }
@@ -56,8 +56,8 @@ export async function DELETE(request: Request, context: Context) {
       return NextResponse.json({ error: "Valid profile and person versions are required" }, { status: 400 });
     }
     const deletedId = await deleteTeamProfile(id, profileVersion, personVersion);
-    invalidateTeamProfiles();
-    return NextResponse.json({ ok: true, deletedId });
+    const revision = await invalidateTeamProfiles();
+    return NextResponse.json({ ok: true, deletedId, revision });
   } catch (error) {
     return teamApiError(error);
   }

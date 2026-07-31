@@ -145,9 +145,9 @@ The browser loads saved text from:
 /api/content/get
 ```
 
-Public content reads use a 24-hour tagged server data cache plus a one-second Vercel
-edge cache. Successful admin updates immediately expire the data tag and revalidate
-both the edited page and the public content API.
+Public content reads use a one-second Vercel edge cache. The public response contains
+the text values and per-item update timestamps required for optimistic locking, but
+never exposes `updated_by` or administrator email addresses.
 
 Saving posts JSON to:
 
@@ -155,9 +155,11 @@ Saving posts JSON to:
 /api/content/update
 ```
 
-The update API checks the Auth.js session again on the server before writing. Hosted
-production refuses to use the filesystem fallback, preventing a serverless deployment
-from reporting a successful but non-durable save.
+The update API checks the Auth.js session again on the server before writing and
+requires the current item timestamp. Concurrent updates return `409`, while stale
+clients that omit the precondition receive `428`. Hosted production refuses to use
+the filesystem fallback, preventing a serverless deployment from reporting a
+successful but non-durable save.
 
 Create the table and safely insert any missing `content.json` overrides. Existing
 database rows win on conflicts, so rerunning this command will not overwrite newer
@@ -201,7 +203,7 @@ npm run db:backup
 ```
 
 Backups are written beneath the gitignored `backups/` directory. They contain the
-three application-data tables, migration history, constraints, indexes, and a
+application-data tables, migration history, constraints, indexes, and a
 SHA-256 checksum, but never contain the database connection URL or API keys.
 
 Verify the newest backup and simulate restoring it inside a transaction:
@@ -211,7 +213,26 @@ npm run db:verify-backup
 ```
 
 The restore simulation is always rolled back and confirms the live database is
-unchanged. Pass a backup path after `--` to verify a specific snapshot.
+unchanged. On databases with Migration 008, it also verifies that restore writes
+advance the appropriate live-content revisions and that the rollback restores those
+revisions. Pass a backup path after `--` to verify a specific snapshot.
+
+## Live content refresh
+
+Migration 008 adds server-only `site_content_revisions` rows for `content`, `impact`,
+and `team`. Database triggers advance them for inserts, updates, and deletes, including
+changes made through the Supabase console. The public metadata endpoint is:
+
+```text
+GET /api/live-revisions
+```
+
+Visible pages check the small revision response every ten seconds. A three-second
+Vercel edge cache keeps database load low, while `BroadcastChannel` (with a
+`localStorage` fallback) refreshes other tabs in the same browser immediately after a
+successful admin save. Hidden tabs pause polling and check immediately when focused,
+made visible, or brought back online. Browsers continue to read all actual content
+through the existing server APIs and never connect directly to Supabase.
 
 ## Impact milestone management
 

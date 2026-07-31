@@ -11,6 +11,30 @@
   if (!valueSlots.length && !asOfSlots.length && !countryNameSlots.length) return;
 
   let currentMetrics = null;
+  const fallback = {
+    values: valueSlots.map((slot) => ({
+      slot,
+      text: slot.textContent,
+      count: slot.getAttribute("data-count"),
+    })),
+    plus: plusSlots.map((slot) => ({ slot, text: slot.textContent, hidden: slot.hidden })),
+    asOf: asOfSlots.map((slot) => ({ slot, text: slot.textContent })),
+    countries: countryNameSlots.map((slot) => ({ slot, text: slot.textContent })),
+  };
+
+  function restoreFallback() {
+    fallback.values.forEach(({ slot, text, count }) => {
+      slot.textContent = text;
+      if (count === null) slot.removeAttribute("data-count");
+      else slot.setAttribute("data-count", count);
+    });
+    fallback.plus.forEach(({ slot, text, hidden }) => {
+      slot.textContent = text;
+      slot.hidden = hidden;
+    });
+    fallback.asOf.forEach(({ slot, text }) => { slot.textContent = text; });
+    fallback.countries.forEach(({ slot, text }) => { slot.textContent = text; });
+  }
 
   function localeKey() {
     const language = (document.documentElement.lang || "en").toLowerCase();
@@ -86,27 +110,40 @@
     });
   }
 
-  async function load() {
+  async function load(context) {
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 5000);
     try {
-      const response = await fetch("/api/site-metrics", {
+      const revision = context && context.revision ? `?live=${encodeURIComponent(context.revision)}` : "";
+      const response = await fetch(`/api/site-metrics${revision}`, {
         credentials: "same-origin",
         cache: "no-store",
         signal: controller.signal,
       });
-      if (!response.ok) return;
+      if (!response.ok) {
+        if (context) throw new Error("site metrics load failed");
+        return;
+      }
       const data = await response.json();
-      if (!data || !data.metrics) return;
+      if (!data || !data.metrics) {
+        currentMetrics = null;
+        restoreFallback();
+        return;
+      }
       currentMetrics = data.metrics;
       render();
-    } catch {
+    } catch (error) {
       // Keep the server-rendered fallback when the public metrics API is unavailable.
+      if (context) throw error;
     } finally {
       window.clearTimeout(timeout);
     }
   }
 
   window.addEventListener("ihear:language", render);
+  window.iHearSiteMetrics = { refresh: load };
+  if (window.iHearLiveContent) {
+    window.iHearLiveContent.register("impact", { refresh: load });
+  }
   load();
 })();

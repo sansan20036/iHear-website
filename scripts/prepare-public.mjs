@@ -21,7 +21,7 @@ const htmlFiles = [
 ];
 
 const passthroughFiles = ["robots.txt", "sitemap.xml", "CNAME", "favicon.ico"];
-const clientAssetVersion = "20260731-team-profiles";
+const clientAssetVersion = "20260731-live-content";
 
 async function copyDir(source, target) {
   await mkdir(target, { recursive: true });
@@ -48,7 +48,7 @@ function withClientScripts(html) {
     "\n"
   );
   const withoutExisting = withoutCloudflareBeacon.replace(
-    /\s*<script\s+src=["']\/?assets\/(?:auth|inline-edit|impact-milestones|site-metrics|team-profiles)\.js(?:\?[^"']*)?["']\s+defer><\/script>\s*/g,
+    /\s*<script\s+src=["']\/?assets\/(?:auth|live-content|inline-edit|impact-milestones|site-metrics|team-profiles)\.js(?:\?[^"']*)?["']\s+defer><\/script>\s*/g,
     "\n"
   );
 
@@ -61,6 +61,7 @@ function withClientScripts(html) {
     "</body>",
     [
       `  <script src="/assets/auth.js?v=${clientAssetVersion}" defer></script>`,
+      `  <script src="/assets/live-content.js?v=${clientAssetVersion}" defer></script>`,
       `  <script src="/assets/impact-milestones.js?v=${clientAssetVersion}" defer></script>`,
       `  <script src="/assets/site-metrics.js?v=${clientAssetVersion}" defer></script>`,
       `  <script src="/assets/team-profiles.js?v=${clientAssetVersion}" defer></script>`,

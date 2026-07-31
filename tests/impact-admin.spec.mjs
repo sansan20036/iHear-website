@@ -111,6 +111,11 @@ const siteMetrics = {
 async function mockApplication(page) {
   const requests = [];
   let publishedPayload = null;
+  const liveRevisions = {
+    content: { revision: "1", updatedAt: "2026-07-31T00:00:00.000Z" },
+    impact: { revision: "1", updatedAt: "2026-07-31T00:00:00.000Z" },
+    team: { revision: "1", updatedAt: "2026-07-31T00:00:00.000Z" },
+  };
 
   await page.route("**/api/auth/session", (route) => route.fulfill({
     status: 200,
@@ -127,7 +132,13 @@ async function mockApplication(page) {
   await page.route("**/api/content/get", (route) => route.fulfill({
     status: 200,
     contentType: "application/json",
-    body: JSON.stringify({ version: 1, updatedAt: "", pages: {} }),
+    body: JSON.stringify({ version: 2, updatedAt: "", pages: {}, itemUpdatedAt: {} }),
+  }));
+
+  await page.route("**/api/live-revisions", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ version: 1, revisions: liveRevisions }),
   }));
 
   await page.route("**/api/site-metrics", (route) => route.fulfill({
@@ -198,6 +209,7 @@ async function mockApplication(page) {
   return {
     requests,
     getPublishedPayload: () => publishedPayload,
+    liveRevisions,
   };
 }
 
@@ -235,10 +247,8 @@ test("team directory renders API data, switches language, and excludes generic p
   await expect(page.locator("[data-team-tutors] .ihear-inline-edit-button")).toHaveCount(0);
 
   await page.locator('#langSwitch button[data-lang="zhTW"]').click();
-  await page.getByText("Test Tutor").click();
   await expect(page.getByText("繁中完整介紹")).toBeVisible();
   await page.locator('#langSwitch button[data-lang="zhCN"]').click();
-  await page.getByText("Test Tutor").click();
   await expect(page.getByText("简中完整介绍")).toBeVisible();
 });
 
@@ -446,4 +456,114 @@ test("mobile editor has no horizontal overflow at supported narrow widths", asyn
     expect(sizes.dialogLeft).toBeGreaterThanOrEqual(-1);
     expect(sizes.dialogRight).toBeLessThanOrEqual(sizes.viewport + 1);
   }
+});
+
+test("team updates synchronize immediately across open tabs", async ({ context, page }) => {
+  let teamName = "First Tutor";
+  let teamRevision = "1";
+  const profile = () => ({
+    id: "tutor-live",
+    personId: "person-live",
+    section: "tutor",
+    status: "published",
+    sortOrder: 10,
+    name: teamName,
+    initials: "FT",
+    school: "",
+    grade: "",
+    showSchool: false,
+    showGrade: false,
+    role: { en: "Tutor", zhHant: "導師", zhHans: "导师" },
+    schoolDisplay: { en: "", zhHant: "", zhHans: "" },
+    languages: { en: "English", zhHant: "英文", zhHans: "英文" },
+    strengths: { en: "Support", zhHant: "支持", zhHans: "支持" },
+    summary: { en: "Summary", zhHant: "簡介", zhHans: "简介" },
+    bio: { en: "Biography", zhHant: "介紹", zhHans: "介绍" },
+    hobbies: { en: "Reading", zhHant: "閱讀", zhHans: "阅读" },
+    profileVersion: 1,
+    personVersion: 1,
+    updatedAt: "2026-07-31T00:00:00.000Z",
+  });
+
+  await context.route("**/api/auth/session", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: "{}",
+  }));
+  await context.route("**/api/content/get**", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ version: 2, updatedAt: "", pages: {}, itemUpdatedAt: {} }),
+  }));
+  await context.route("**/api/live-revisions", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      version: 1,
+      revisions: {
+        content: { revision: "1", updatedAt: "2026-07-31T00:00:00.000Z" },
+        impact: { revision: "1", updatedAt: "2026-07-31T00:00:00.000Z" },
+        team: { revision: teamRevision, updatedAt: "2026-07-31T00:00:00.000Z" },
+      },
+    }),
+  }));
+  await context.route("**/api/team-profiles**", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ leaders: [], tutors: [profile()] }),
+  }));
+
+  const secondPage = await context.newPage();
+  await Promise.all([page.goto("/team"), secondPage.goto("/team")]);
+  await expect(page.getByText("First Tutor")).toBeVisible();
+  await expect(secondPage.getByText("First Tutor")).toBeVisible();
+
+  teamName = "Updated Tutor";
+  teamRevision = "2";
+  await page.evaluate(() => window.iHearLiveContent.announce("team", { revision: "2" }));
+
+  await expect(page.getByText("Updated Tutor")).toBeVisible();
+  await expect(secondPage.getByText("Updated Tutor")).toBeVisible();
+  await secondPage.close();
+});
+
+test("live refresh restores metrics and inline content fallbacks after deletion", async ({ page }) => {
+  await mockApplication(page);
+  let metrics = siteMetrics;
+  let content = {
+    version: 2,
+    updatedAt: "2026-07-31T00:00:00.000Z",
+    pages: {
+      "/about": {
+        "section:nth-of-type(1)>div:nth-of-type(1)>div:nth-of-type(1)>h2:nth-of-type(1)": "Temporary override",
+      },
+    },
+    itemUpdatedAt: {
+      "/about": {
+        "section:nth-of-type(1)>div:nth-of-type(1)>div:nth-of-type(1)>h2:nth-of-type(1)": "2026-07-31T00:00:00.000Z",
+      },
+    },
+  };
+  await page.route("**/api/site-metrics**", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ metrics }),
+  }));
+  await page.route("**/api/content/get**", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify(content),
+  }));
+
+  await page.goto("/");
+  await expect(page.locator('[data-site-metric-value="sessions"]').first()).toHaveText("1,299+");
+  metrics = null;
+  await page.evaluate(() => window.iHearLiveContent.announce("impact", { revision: "2" }));
+  await expect(page.locator('[data-site-metric-value="sessions"]').first()).toHaveText("1,200+");
+
+  await page.goto("/about");
+  await expect(page.getByRole("heading", { name: /Temporary override/ })).toBeVisible();
+  content = { version: 2, updatedAt: "", pages: {}, itemUpdatedAt: {} };
+  await page.evaluate(() => window.iHearLiveContent.announce("content", { revision: "2" }));
+  await expect(page.getByRole("heading", { name: /Why iHear exists/ })).toBeVisible();
 });

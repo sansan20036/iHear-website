@@ -41,8 +41,8 @@ export async function PATCH(request: Request, context: RouteContext) {
       requireVersion: true,
     }) as ImpactMilestoneUpdateInput;
     const milestone = await updateImpactMilestone(id, input, email);
-    invalidateImpactMilestones();
-    return NextResponse.json({ ok: true, milestone });
+    const revision = await invalidateImpactMilestones();
+    return NextResponse.json({ ok: true, milestone, revision });
   } catch (error) {
     return impactApiError(error);
   }
@@ -63,8 +63,8 @@ export async function DELETE(request: Request, context: RouteContext) {
       return NextResponse.json({ error: "A valid version is required" }, { status: 400 });
     }
     const deletedId = await deleteImpactMilestone(id, version);
-    invalidateImpactMilestones();
-    return NextResponse.json({ ok: true, deletedId });
+    const revision = await invalidateImpactMilestones();
+    return NextResponse.json({ ok: true, deletedId, revision });
   } catch (error) {
     return impactApiError(error);
   }

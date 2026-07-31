@@ -72,6 +72,19 @@ async function currentCounts(client) {
   };
 }
 
+async function currentRevisions(client) {
+  const [table] = await client`
+    SELECT to_regclass('public.site_content_revisions') IS NOT NULL AS available
+  `;
+  if (!table.available) return null;
+  const rows = await client`
+    SELECT scope, revision::TEXT AS revision
+    FROM site_content_revisions
+    ORDER BY scope
+  `;
+  return Object.fromEntries(rows.map((row) => [row.scope, row.revision]));
+}
+
 function countryFields(row) {
   const legacyPublishedMetrics =
     row.kind === "metrics" && row.status === "published" && row.countries == null;
@@ -133,10 +146,13 @@ try {
   assertUnique(teamProfiles, (row) => row.id, "team_profiles");
 
   const countsBefore = await currentCounts(sql);
+  const revisionsBefore = await currentRevisions(sql);
   const rollbackMarker = "IHEAR_BACKUP_VERIFICATION_ROLLBACK";
+  let triggerRevisionCheck = revisionsBefore ? "pending" : "not-applicable";
 
   try {
     await sql.begin(async (transaction) => {
+      const transactionRevisionsBefore = await currentRevisions(transaction);
       for (const row of impactMilestoneSettings) {
         await transaction`
           INSERT INTO impact_milestone_settings (key, value, updated_at)
@@ -378,6 +394,24 @@ try {
         }
       }
 
+      if (transactionRevisionsBefore) {
+        const transactionRevisionsAfter = await currentRevisions(transaction);
+        const expectedScopes = [
+          ...(impactMilestones.length || impactMilestoneSettings.length ? ["impact"] : []),
+          ...(contentOverrides.length ? ["content"] : []),
+          ...(teamPeople.length || teamProfiles.length ? ["team"] : []),
+        ];
+        for (const scope of expectedScopes) {
+          if (
+            !transactionRevisionsAfter?.[scope] ||
+            BigInt(transactionRevisionsAfter[scope]) <= BigInt(transactionRevisionsBefore[scope])
+          ) {
+            throw new Error(`Restore did not advance the ${scope} live revision.`);
+          }
+        }
+        triggerRevisionCheck = "passed-and-rolled-back";
+      }
+
       throw new Error(rollbackMarker);
     });
   } catch (error) {
@@ -388,6 +422,10 @@ try {
   if (JSON.stringify(countsBefore) !== JSON.stringify(countsAfter)) {
     throw new Error("Database row counts changed after rollback verification.");
   }
+  const revisionsAfter = await currentRevisions(sql);
+  if (JSON.stringify(revisionsBefore) !== JSON.stringify(revisionsAfter)) {
+    throw new Error("Live revisions changed after rollback verification.");
+  }
 
   console.log(JSON.stringify({
     verified: true,
@@ -395,6 +433,7 @@ try {
     checksum: backup.checksum,
     restoreSimulation: "passed-and-rolled-back",
     databaseUnchanged: true,
+    triggerRevisionCheck,
     rowCounts: {
       impact_milestones: impactMilestones.length,
       impact_milestone_settings: impactMilestoneSettings.length,

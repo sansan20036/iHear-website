@@ -11,7 +11,7 @@
     zhHant:{manager:"團隊資料管理",hint:"新增、編輯、發布、刪除及排序公開團隊檔案。",editMode:"管理團隊檔案",done:"完成",add:"新增檔案",edit:"編輯",up:"上移",down:"下移",draft:"草稿",loading:"正在載入團隊資料…",empty:"目前沒有已發布的團隊檔案。",failed:"目前無法載入團隊資料。",newTitle:"新增團隊檔案",editTitle:"編輯團隊檔案",name:"姓名",initials:"姓名縮寫",section:"顯示區塊",leader:"領導團隊",tutor:"導師",existing:"既有人物",newPerson:"建立新人物",school:"學校",grade:"年級",showSchool:"公開顯示學校",showGrade:"公開顯示年級",consent:"我確認已取得適用的公開同意。",shared:"修改姓名或縮寫會同步套用到此人物的所有版位。",role:"角色／職稱",schoolDisplay:"本語言的學校名稱",languages:"使用語言",strengths:"教學專長",summary:"簡短介紹",bio:"完整介紹",hobbies:"興趣",saveDraft:"儲存草稿",publish:"發布",cancel:"取消",delete:"永久刪除",deleteConfirm:"確定要永久刪除此公開版位嗎？刪除後無法復原。",conflict:"另一位管理員已修改資料，請重新載入後再試。",saved:"團隊檔案已儲存。",deleted:"團隊檔案已刪除。",validation:"請檢查表單內容。",copy:"複製英文"},
     zhHans:{manager:"团队数据管理",hint:"新增、编辑、发布、删除及排序公开团队档案。",editMode:"管理团队档案",done:"完成",add:"新增档案",edit:"编辑",up:"上移",down:"下移",draft:"草稿",loading:"正在加载团队数据…",empty:"目前没有已发布的团队档案。",failed:"目前无法加载团队数据。",newTitle:"新增团队档案",editTitle:"编辑团队档案",name:"姓名",initials:"姓名缩写",section:"显示区块",leader:"领导团队",tutor:"导师",existing:"现有人物",newPerson:"建立新人物",school:"学校",grade:"年级",showSchool:"公开显示学校",showGrade:"公开显示年级",consent:"我确认已取得适用的公开同意。",shared:"修改姓名或缩写会同步套用到此人物的所有版位。",role:"角色／职称",schoolDisplay:"本语言的学校名称",languages:"使用语言",strengths:"教学专长",summary:"简短介绍",bio:"完整介绍",hobbies:"兴趣",saveDraft:"保存草稿",publish:"发布",cancel:"取消",delete:"永久删除",deleteConfirm:"确定要永久删除此公开版位吗？删除后无法恢复。",conflict:"另一位管理员已修改数据，请重新加载后再试。",saved:"团队档案已保存。",deleted:"团队档案已删除。",validation:"请检查表单内容。",copy:"复制英文"}
   };
-  const state={leaders:[],tutors:[],people:[],admin:false,editMode:false,busy:false,draft:null,activeLocale:"zhHant"};
+  const state={leaders:[],tutors:[],people:[],admin:false,editMode:false,busy:false,draft:null,originalDraft:"",activeLocale:"zhHant"};
   const adminBar=document.createElement("div"),dialog=document.createElement("dialog"),toast=document.createElement("div");
   adminBar.className="team-directory-admin";adminBar.hidden=true;adminBar.setAttribute("data-no-inline-edit","");
   leaderMount.parentElement.insertBefore(adminBar,leaderMount);
@@ -38,7 +38,7 @@
   function tutorCard(item,index,items){
     const meta=[item.showSchool?(pick(item.schoolDisplay)||item.school):"",item.showGrade?(locale()==="en"?`Grade ${item.grade}`:`${item.grade} 年級`):""].filter(Boolean).join(" · ");
     const draft=item.status==="draft"?`<span class="team-profile-status">${l().draft}</span>`:"";
-    return `<details class="tutor-prof team-profile-admin-card" data-status="${esc(item.status)}">
+    return `<details class="tutor-prof team-profile-admin-card" data-profile-id="${esc(item.id)}" data-status="${esc(item.status)}">
       <summary><span class="avatar av-sm" aria-hidden="true">${esc(item.initials)}</span>
       <span class="tp-id"><b>${esc(item.name)}${draft}</b><i>${esc(pick(item.role))}</i></span>
       <svg class="chev" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7.4 8.6L12 13.2l4.6-4.6L18 10l-6 6-6-6z"/></svg></summary>
@@ -58,6 +58,8 @@
     </div>`;
   }
   function render(){
+    const openTutorIds=new Set(Array.from(tutorMount.querySelectorAll("details[open][data-profile-id]")).map(item=>item.dataset.profileId));
+    const scrollY=window.scrollY;
     [["leader",leaderMount,leaderCard],["tutor",tutorMount,tutorCard]].forEach(([section,mount,card])=>{
       const items=visible(all(section));
       if(!items.length){message(mount,l().empty);return}
@@ -67,6 +69,8 @@
     if(state.admin)adminBar.innerHTML=`<div><strong>${l().manager}</strong><span>${l().hint}</span></div><div class="team-admin-actions">
       ${state.editMode?`<button class="team-admin-button accent" data-team-add>${l().add}</button>`:""}
       <button class="team-admin-button primary" data-team-toggle>${state.editMode?l().done:l().editMode}</button></div>`;
+    openTutorIds.forEach(id=>{const item=tutorMount.querySelector(`[data-profile-id="${CSS.escape(id)}"]`);if(item)item.open=true});
+    if(openTutorIds.size)window.requestAnimationFrame(()=>window.scrollTo(window.scrollX,scrollY));
   }
   function emptyLocalized(){return{en:"",zhHant:"",zhHans:""}}
   function newDraft(){
@@ -75,8 +79,10 @@
   }
   function openEditor(item){
     state.draft=item?JSON.parse(JSON.stringify({...item,consentConfirmed:Boolean(item.publicationConsentAt)})):newDraft();
-    state.activeLocale=locale();buildEditor();dialog.showModal()
+    state.originalDraft=JSON.stringify(state.draft);state.activeLocale=locale();buildEditor();dialog.showModal()
   }
+  function isDirty(){if(!state.draft)return false;syncDraft();return JSON.stringify(state.draft)!==state.originalDraft}
+  function closeEditor(){dialog.close();state.draft=null;state.originalDraft="";state.busy=false;if(window.iHearLiveContent)window.iHearLiveContent.checkNow({force:true})}
   function field(name,label,textarea){
     const value=state.draft[name]||"";
     return `<div class="team-field"><label for="team-${name}">${label}</label>${textarea?`<textarea id="team-${name}" name="${name}">${esc(value)}</textarea>`:`<input id="team-${name}" name="${name}" value="${esc(value)}">`}<span data-error="${name}"></span></div>`
@@ -118,27 +124,28 @@
     try{
       const response=await fetch(state.draft.id?`/api/team-profiles/${encodeURIComponent(state.draft.id)}`:"/api/team-profiles",{method:state.draft.id?"PATCH":"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
       const data=await response.json().catch(()=>null);if(!response.ok)throw errorFrom(response,data);
-      dialog.close();await load(true);showToast(l().saved,false)
+      closeEditor();await load(true,{revision:data.revision&&data.revision.revision});showToast(l().saved,false);if(window.iHearLiveContent)window.iHearLiveContent.announce("team",data.revision)
     }catch(error){const box=dialog.querySelector("[data-form-error]");box.hidden=false;box.textContent=error.status===409?l().conflict:(error.issues?Object.values(error.issues).join(" · "):error.message);state.busy=false}
   }
   async function remove(){
     if(!state.draft.id||!confirm(l().deleteConfirm))return;
     const response=await fetch(`/api/team-profiles/${encodeURIComponent(state.draft.id)}`,{method:"DELETE",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify({profileVersion:state.draft.profileVersion,personVersion:state.draft.personVersion})});
     const data=await response.json().catch(()=>null);if(!response.ok){showToast(response.status===409?l().conflict:data&&data.error||l().validation,true);return}
-    dialog.close();await load(true);showToast(l().deleted,false)
+    closeEditor();await load(true,{revision:data.revision&&data.revision.revision});showToast(l().deleted,false);if(window.iHearLiveContent)window.iHearLiveContent.announce("team",data.revision)
   }
   async function move(id,direction){
     const item=[...state.leaders,...state.tutors].find(profile=>profile.id===id);const items=all(item.section);const index=items.findIndex(profile=>profile.id===id),target=index+direction;if(target<0||target>=items.length)return;
     [items[index],items[target]]=[items[target],items[index]];
     const response=await fetch("/api/team-profiles/reorder",{method:"PATCH",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify({section:item.section,ordered:items.map(profile=>({id:profile.id,version:profile.profileVersion}))})});
-    if(!response.ok){showToast(l().conflict,true)}await load(true)
+    const data=await response.json().catch(()=>null);if(!response.ok){showToast(l().conflict,true)}await load(true,{revision:data&&data.revision&&data.revision.revision});if(response.ok&&window.iHearLiveContent)window.iHearLiveContent.announce("team",data.revision)
   }
-  async function load(admin){
+  async function load(admin,context){
     try{
-      const response=await fetch(`/api/team-profiles${admin?"?includeDrafts=true":""}`,{credentials:"same-origin",cache:"no-store"});
+      const parameters=new URLSearchParams();if(admin)parameters.set("includeDrafts","true");if(context&&context.revision)parameters.set("live",context.revision);const query=parameters.toString();
+      const response=await fetch(`/api/team-profiles${query?`?${query}`:""}`,{credentials:"same-origin",cache:"no-store"});
       if(!response.ok)throw new Error("load");const data=await response.json();
       state.leaders=Array.isArray(data.leaders)?data.leaders:[];state.tutors=Array.isArray(data.tutors)?data.tutors:[];state.people=Array.isArray(data.people)?data.people:[];state.admin=Boolean(data.admin)||state.admin;state.busy=false;render()
-    }catch(error){if(!state.leaders.length&&!state.tutors.length){message(leaderMount,l().failed);message(tutorMount,l().failed)}}
+    }catch(error){if(!state.leaders.length&&!state.tutors.length){message(leaderMount,l().failed);message(tutorMount,l().failed)}if(context)throw error}
   }
   document.addEventListener("click",event=>{
     const button=event.target.closest("button");if(!button)return;
@@ -146,7 +153,7 @@
     else if(button.matches("[data-team-add]"))openEditor(null);
     else if(button.dataset.edit)openEditor([...state.leaders,...state.tutors].find(item=>item.id===button.dataset.edit));
     else if(button.dataset.move)move(button.dataset.move,Number(button.dataset.direction));
-    else if(button.matches("[data-close],[data-cancel]"))dialog.close();
+    else if(button.matches("[data-close],[data-cancel]"))closeEditor();
     else if(button.dataset.save)save(button.dataset.save);
     else if(button.matches("[data-delete]"))remove();
     else if(button.dataset.locale){syncDraft();state.activeLocale=button.dataset.locale;buildEditor()}
@@ -164,7 +171,10 @@
       buildEditor();
     }
   });
+  dialog.addEventListener("close",()=>{state.draft=null;state.originalDraft="";state.busy=false;if(window.iHearLiveContent)window.iHearLiveContent.checkNow({force:true})});
   window.addEventListener("ihear:language",()=>{render();if(dialog.open){syncDraft();buildEditor()}});
   window.addEventListener("ihear:auth",event=>{const session=event.detail&&event.detail.session;if(session&&session.user&&session.user.isAdmin){state.admin=true;load(true)}else{state.admin=false;state.editMode=false;load(false)}});
+  window.iHearTeamProfiles={refresh:context=>load(state.admin,context),isDirty};
+  if(window.iHearLiveContent)window.iHearLiveContent.register("team",{refresh:context=>load(state.admin,context),isDirty,onBlocked:()=>showToast(l().conflict,true)});
   message(leaderMount,l().loading);message(tutorMount,l().loading);load(false);
 })();

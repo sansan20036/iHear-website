@@ -6,11 +6,14 @@ import postgres from "postgres";
 export type ContentPages = Record<string, Record<string, string>>;
 
 export type ContentStore = {
-  version: number;
+  version: 2;
   updatedAt: string;
   updatedBy?: string;
   pages: ContentPages;
+  itemUpdatedAt: ContentPages;
 };
+
+export type PublicContentStore = Omit<ContentStore, "updatedBy">;
 
 type ContentOverrideRow = {
   page: string;
@@ -24,6 +27,13 @@ export class ContentConfigurationError extends Error {
   constructor() {
     super("POSTGRES_URL or DATABASE_URL is required for production content persistence");
     this.name = "ContentConfigurationError";
+  }
+}
+
+export class ContentConflictError extends Error {
+  constructor() {
+    super("This content was changed by another administrator");
+    this.name = "ContentConflictError";
   }
 }
 
@@ -42,9 +52,10 @@ let fileMutationQueue: Promise<unknown> = Promise.resolve();
 
 function emptyStore(): ContentStore {
   return {
-    version: 1,
+    version: 2,
     updatedAt: "",
     pages: {},
+    itemUpdatedAt: {},
   };
 }
 
@@ -53,10 +64,14 @@ function normalizeStore(value: unknown): ContentStore {
   const pages = store.pages && typeof store.pages === "object" ? store.pages : {};
 
   return {
-    version: Number(store.version || 1),
+    version: 2,
     updatedAt: typeof store.updatedAt === "string" ? store.updatedAt : "",
     updatedBy: typeof store.updatedBy === "string" ? store.updatedBy : undefined,
     pages,
+    itemUpdatedAt:
+      store.itemUpdatedAt && typeof store.itemUpdatedAt === "object"
+        ? store.itemUpdatedAt
+        : {},
   };
 }
 
@@ -110,6 +125,8 @@ function fromRows(rows: ContentOverrideRow[]): ContentStore {
   for (const row of rows) {
     store.pages[row.page] ??= {};
     store.pages[row.page][row.key] = row.value;
+    store.itemUpdatedAt[row.page] ??= {};
+    store.itemUpdatedAt[row.page][row.key] = new Date(row.updated_at).toISOString();
 
     if (!latest || new Date(row.updated_at).getTime() > new Date(latest.updated_at).getTime()) {
       latest = row;
@@ -172,35 +189,56 @@ export async function readContentStore() {
   return readContentStoreUncached();
 }
 
+export function publicContentStore(store: ContentStore): PublicContentStore {
+  const { updatedBy: _updatedBy, ...publicStore } = store;
+  return publicStore;
+}
+
 export async function updateContentItem(params: {
   page: string;
   key: string;
   value: string;
   updatedBy: string;
+  expectedUpdatedAt: string | null;
 }) {
   assertPersistenceAvailable();
   const sql = sqlClient();
 
   if (sql) {
     await ensurePostgresSchema();
-    await sql`
-      INSERT INTO content_overrides (page, key, value, updated_at, updated_by)
-      VALUES (${params.page}, ${params.key}, ${params.value}, NOW(), ${params.updatedBy})
-      ON CONFLICT (page, key) DO UPDATE SET
-        value = EXCLUDED.value,
-        updated_at = EXCLUDED.updated_at,
-        updated_by = EXCLUDED.updated_by
-    `;
+    const changed = params.expectedUpdatedAt === null
+      ? await sql<ContentOverrideRow[]>`
+          INSERT INTO content_overrides (page, key, value, updated_at, updated_by)
+          VALUES (${params.page}, ${params.key}, ${params.value}, NOW(), ${params.updatedBy})
+          ON CONFLICT (page, key) DO NOTHING
+          RETURNING page, key, value, updated_at, updated_by
+        `
+      : await sql<ContentOverrideRow[]>`
+          UPDATE content_overrides
+          SET value = ${params.value}, updated_at = NOW(), updated_by = ${params.updatedBy}
+          WHERE page = ${params.page}
+            AND key = ${params.key}
+            AND updated_at = ${params.expectedUpdatedAt}::timestamptz
+          RETURNING page, key, value, updated_at, updated_by
+        `;
+    if (!changed.length) throw new ContentConflictError();
     return readContentStoreUncached();
   }
 
   return withFileMutation(async () => {
     const store = await readFileStore();
     const pageContent = store.pages[params.page] ?? {};
+    const pageMetadata = store.itemUpdatedAt[params.page] ?? {};
+    const currentUpdatedAt = pageMetadata[params.key] ?? null;
+
+    if (currentUpdatedAt !== params.expectedUpdatedAt) throw new ContentConflictError();
 
     pageContent[params.key] = params.value;
     store.pages[params.page] = pageContent;
-    store.updatedAt = new Date().toISOString();
+    const updatedAt = new Date().toISOString();
+    pageMetadata[params.key] = updatedAt;
+    store.itemUpdatedAt[params.page] = pageMetadata;
+    store.updatedAt = updatedAt;
     store.updatedBy = params.updatedBy;
 
     await writeFileStore(store);
