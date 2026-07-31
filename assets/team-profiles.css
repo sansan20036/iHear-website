@@ -46,16 +46,33 @@ body.team-profile-reordering,body.team-profile-reordering *{cursor:grabbing!impo
   border-radius:16px;color:var(--ink-soft);background:#fff
 }
 .team-profile-editor{
-  width:min(920px,calc(100vw - 24px));max-height:calc(100dvh - 24px);padding:0;
+  width:min(920px,calc(100vw - 24px));height:min(90dvh,900px);max-height:calc(100dvh - 24px);padding:0;
   border:0;border-radius:22px;box-shadow:0 24px 80px rgba(20,35,80,.25);overflow:hidden
 }
 .team-profile-editor::backdrop{background:rgba(18,29,66,.56)}
-.team-editor-shell{display:flex;flex-direction:column;max-height:calc(100dvh - 24px);background:#fff}
+.team-editor-shell{display:flex;flex-direction:column;height:100%;min-height:0;background:#fff;overflow:hidden}
+.team-editor-shell>[data-team-form]{display:flex;flex:1 1 auto;flex-direction:column;min-height:0;overflow:hidden}
 .team-editor-head,.team-editor-footer{padding:18px 22px;border-bottom:1px solid var(--line)}
-.team-editor-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+.team-editor-head{
+  position:sticky;top:0;z-index:10;display:flex;flex:none;justify-content:space-between;
+  gap:12px;align-items:flex-start;background:#fff;box-shadow:0 5px 14px rgba(20,35,80,.04)
+}
 .team-editor-head h3{margin:0;color:var(--navy)}
-.team-editor-body{padding:20px 22px;overflow:auto}
-.team-editor-footer{border-top:1px solid var(--line);border-bottom:0;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.team-editor-body{
+  flex:1 1 auto;min-height:0;padding:20px 22px;overflow-x:hidden;overflow-y:auto;
+  overscroll-behavior:contain;scrollbar-gutter:stable;scrollbar-width:thin;
+  scrollbar-color:rgba(38,57,116,.42) rgba(38,57,116,.06)
+}
+.team-editor-body::-webkit-scrollbar{width:8px}
+.team-editor-body::-webkit-scrollbar-track{background:rgba(38,57,116,.06);border-radius:999px}
+.team-editor-body::-webkit-scrollbar-thumb{background:rgba(38,57,116,.38);border-radius:999px}
+.team-editor-body::-webkit-scrollbar-thumb:hover{background:rgba(38,57,116,.58)}
+.team-editor-footer{
+  position:sticky;bottom:0;z-index:10;display:flex;flex:none;justify-content:space-between;
+  gap:12px;flex-wrap:wrap;border-top:1px solid var(--line);border-bottom:0;background:#fff;
+  box-shadow:0 -5px 14px rgba(20,35,80,.04)
+}
+body.team-profile-modal-open{overflow:hidden}
 .team-basic-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
 .team-field{display:flex;flex-direction:column;gap:6px;min-width:0}
 .team-field.wide{grid-column:1/-1}

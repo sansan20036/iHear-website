@@ -21,7 +21,7 @@ const htmlFiles = [
 ];
 
 const passthroughFiles = ["robots.txt", "sitemap.xml", "CNAME", "favicon.ico"];
-const clientAssetVersion = "20260731-public-team-profiles";
+const clientAssetVersion = "20260731-team-modal-scroll";
 
 async function copyDir(source, target) {
   await mkdir(target, { recursive: true });

@@ -83,7 +83,7 @@
   }
   function openEditor(item){
     state.draft=item?JSON.parse(JSON.stringify({...item,consentConfirmed:Boolean(item.publicationConsentAt)})):newDraft();
-    state.originalDraft=JSON.stringify(state.draft);state.activeLocale=locale();buildEditor();dialog.showModal()
+    state.originalDraft=JSON.stringify(state.draft);state.activeLocale=locale();buildEditor();dialog.showModal();document.body.classList.add("team-profile-modal-open")
   }
   function isDirty(){if(!state.draft)return false;syncDraft();return JSON.stringify(state.draft)!==state.originalDraft}
   function closeEditor(){dialog.close();state.draft=null;state.originalDraft="";state.busy=false;if(window.iHearLiveContent)window.iHearLiveContent.checkNow({force:true})}
@@ -227,7 +227,7 @@
       buildEditor();
     }
   });
-  dialog.addEventListener("close",()=>{state.draft=null;state.originalDraft="";state.busy=false;if(window.iHearLiveContent)window.iHearLiveContent.checkNow({force:true})});
+  dialog.addEventListener("close",()=>{document.body.classList.remove("team-profile-modal-open");state.draft=null;state.originalDraft="";state.busy=false;if(window.iHearLiveContent)window.iHearLiveContent.checkNow({force:true})});
   window.addEventListener("ihear:language",()=>{render();if(dialog.open){syncDraft();buildEditor()}});
   window.addEventListener("ihear:auth",event=>{const session=event.detail&&event.detail.session;if(session&&session.user&&session.user.isAdmin){state.admin=true;load(true)}else{state.admin=false;state.editMode=false;load(false)}});
   window.iHearTeamProfiles={refresh:context=>load(state.admin,context),isDirty};

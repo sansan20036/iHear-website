@@ -293,8 +293,49 @@ test("team manager is mobile-safe and exposes structured editing controls", asyn
   await expect(page.getByRole("dialog")).toBeVisible();
   await expect(page.getByRole("checkbox", { name: /publication consent/i })).toBeVisible();
 
+  const modalBeforeScroll = await page.evaluate(() => {
+    const dialog = document.querySelector(".team-profile-editor");
+    const header = dialog.querySelector(".team-editor-head");
+    const body = dialog.querySelector(".team-editor-body");
+    const footer = dialog.querySelector(".team-editor-footer");
+    const dialogRect = dialog.getBoundingClientRect();
+    return {
+      scrollable: body.scrollHeight > body.clientHeight,
+      scrollTop: body.scrollTop,
+      headerTop: header.getBoundingClientRect().top,
+      footerBottom: footer.getBoundingClientRect().bottom,
+      dialogTop: dialogRect.top,
+      dialogBottom: dialogRect.bottom,
+      viewportHeight: window.innerHeight,
+      bodyOverflow: getComputedStyle(document.body).overflow,
+    };
+  });
+  expect(modalBeforeScroll.scrollable).toBe(true);
+  expect(modalBeforeScroll.bodyOverflow).toBe("hidden");
+  expect(modalBeforeScroll.dialogTop).toBeGreaterThanOrEqual(0);
+  expect(modalBeforeScroll.dialogBottom).toBeLessThanOrEqual(modalBeforeScroll.viewportHeight);
+
+  const modalAfterScroll = await page.evaluate(() => {
+    const dialog = document.querySelector(".team-profile-editor");
+    const header = dialog.querySelector(".team-editor-head");
+    const body = dialog.querySelector(".team-editor-body");
+    const footer = dialog.querySelector(".team-editor-footer");
+    body.scrollTop = body.scrollHeight;
+    return {
+      scrollTop: body.scrollTop,
+      headerTop: header.getBoundingClientRect().top,
+      footerBottom: footer.getBoundingClientRect().bottom,
+    };
+  });
+  expect(modalAfterScroll.scrollTop).toBeGreaterThan(0);
+  expect(modalAfterScroll.headerTop).toBeCloseTo(modalBeforeScroll.headerTop, 0);
+  expect(modalAfterScroll.footerBottom).toBeCloseTo(modalBeforeScroll.footerBottom, 0);
+
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
   expect(overflow).toBe(false);
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await expect(page.getByRole("dialog")).toBeHidden();
+  expect(await page.evaluate(() => document.body.classList.contains("team-profile-modal-open"))).toBe(false);
 });
 
 test("team manager drag handles reorder profiles and persist once", async ({ page }) => {
