@@ -227,7 +227,7 @@
         body: new URLSearchParams({ csrfToken, callbackUrl: window.location.href }),
       });
       const data = await responseJson(response);
-      window.location.href = data?.url || authUrl("signin");
+      window.location.replace(data?.url || authUrl("signin"));
     } catch {
       busy = false;
       render();
