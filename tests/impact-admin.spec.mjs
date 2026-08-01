@@ -819,6 +819,21 @@ test("all source pages keep one h1 and avoid viewport overflow", async ({ page }
   }
 });
 
+test("skip link moves keyboard focus into the main content", async ({ page }) => {
+  await mockApplication(page, { admin: false });
+  await page.goto("/");
+
+  const skipLink = page.getByRole("link", { name: "Skip to content" });
+  const main = page.locator("#main");
+  await page.keyboard.press("Tab");
+  await expect(skipLink).toBeFocused();
+  await page.keyboard.press("Enter");
+
+  await expect(page).toHaveURL(/#main$/);
+  await expect(main).toHaveAttribute("tabindex", "-1");
+  await expect(main).toBeFocused();
+});
+
 test("mobile drawer is safe with native inert and the tabindex fallback", async ({ context, page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockApplication(page, { admin: false });
@@ -835,6 +850,14 @@ test("mobile drawer is safe with native inert and the tabindex fallback", async 
   await page.keyboard.press("Escape");
   await expect(drawer).toBeHidden();
   await expect(toggle).toBeFocused();
+
+  await page.goto("/");
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  await page.locator("#navToggle").click();
+  await page.getByRole("link", { name: "iHear Initiative — home" }).click();
+  await expect(page.locator("#navLinks")).toBeHidden();
+  await expect(page.locator("#navToggle")).toHaveAttribute("aria-expanded", "false");
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
 
   const legacyPage = await context.newPage();
   await legacyPage.addInitScript(() => { delete HTMLElement.prototype.inert; });
