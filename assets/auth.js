@@ -3,19 +3,19 @@
 
   const labelsByLocale = {
     en: {
-      signIn: "Admin sign in", signInFull: "Sign in as an administrator with Google", signOut: "Sign out",
+      signIn: "Sign in", signInFull: "Sign in as an administrator with Google", signOut: "Sign out",
       signedIn: "Administrator signed in", loading: "Checking access…", unavailable: "Could not check sign-in status.",
       retry: "Retry", account: "Administrator account", failedOut: "Sign out failed. You are still signed in.",
       failedIn: "Sign in could not start. Please try again.",
     },
     zhHant: {
-      signIn: "管理員登入", signInFull: "使用 Google 登入管理員帳號", signOut: "登出",
+      signIn: "登入", signInFull: "使用 Google 登入管理員帳號", signOut: "登出",
       signedIn: "管理員已登入", loading: "正在確認權限…", unavailable: "暫時無法確認登入狀態。",
       retry: "重試", account: "管理員帳號", failedOut: "登出失敗，您目前仍保持登入。",
       failedIn: "無法開始登入，請再試一次。",
     },
     zhHans: {
-      signIn: "管理员登录", signInFull: "使用 Google 登录管理员账号", signOut: "登出",
+      signIn: "登录", signInFull: "使用 Google 登录管理员账号", signOut: "登出",
       signedIn: "管理员已登录", loading: "正在确认权限…", unavailable: "暂时无法确认登录状态。",
       retry: "重试", account: "管理员账号", failedOut: "登出失败，您目前仍保持登录。",
       failedIn: "无法开始登录，请重试。",
@@ -227,7 +227,7 @@
         body: new URLSearchParams({ csrfToken, callbackUrl: window.location.href }),
       });
       const data = await responseJson(response);
-      window.location.href = data?.url || authUrl("signin");
+      window.location.replace(data?.url || authUrl("signin"));
     } catch {
       busy = false;
       render();

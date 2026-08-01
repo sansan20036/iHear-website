@@ -5,6 +5,9 @@ import { isAllowedAdmin } from "./lib/admins";
 export const { handlers, auth, signIn, signOut } = NextAuth({
   providers: [Google],
   trustHost: true,
+  pages: {
+    error: "/auth-error",
+  },
   session: {
     strategy: "jwt",
     maxAge: 30 * 24 * 60 * 60,
