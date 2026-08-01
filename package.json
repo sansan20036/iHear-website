@@ -1,7 +1,7 @@
 {
   "scripts": {
     "dev": "node scripts/dev.mjs",
-    "build": "node scripts/prepare-public.mjs && next build",
+    "build": "npm run optimize:assets && node scripts/prepare-public.mjs && next build",
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit --incremental false",
@@ -18,7 +18,8 @@
     "db:verify-rate-limit": "node scripts/verify-rate-limit.mjs",
     "db:migrate-content": "node scripts/migrate-content-overrides.mjs",
     "db:check-content": "node scripts/check-content-db.mjs",
-    "db:verify-backup": "node scripts/verify-backup.mjs"
+    "db:verify-backup": "node scripts/verify-backup.mjs",
+    "optimize:assets": "node scripts/optimize-static-images.mjs"
   },
   "dependencies": {
     "next": "^16.2.11",

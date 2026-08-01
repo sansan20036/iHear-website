@@ -690,6 +690,11 @@
     });
   }
 
+  function persistLanguageCookie(language) {
+    const secure = location.protocol === "https:" ? "; Secure" : "";
+    document.cookie = `ihear-lang=${encodeURIComponent(language)}; Path=/; Max-Age=31536000; SameSite=Lax${secure}`;
+  }
+
   function setLanguage(language, options) {
     if (!languageAttributes[language]) language = "en";
     if (language === activeLanguage && !(options && options.force)) return true;
@@ -701,6 +706,7 @@
     activeLanguage = language;
     updateTranslatedText();
     try { localStorage.setItem("ihear-lang", language); } catch {}
+    persistLanguageCookie(language);
     window.dispatchEvent(new CustomEvent("ihear:language", {
       detail: { language, locale: localeKeys[language] },
     }));
@@ -1178,6 +1184,7 @@
     installToast();
     activeLanguage = initialLanguage();
     updateTranslatedText();
+    persistLanguageCookie(activeLanguage);
     document.getElementById("langSwitch")?.addEventListener("click", (event) => {
       const button = event.target.closest("button[data-lang]");
       if (button) setLanguage(button.getAttribute("data-lang"));

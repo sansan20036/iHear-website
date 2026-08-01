@@ -1,0 +1,172 @@
+.main {
+  --navy: #263974;
+  --navy-deep: #1b2a57;
+  --orange: #e8964f;
+  --orange-text: #a65313;
+  --cream: #fdf9f2;
+  --ink: #232a46;
+  --ink-soft: #55597a;
+  min-height: 100vh;
+  min-height: 100svh;
+  display: grid;
+  place-items: center;
+  padding: 32px 20px;
+  box-sizing: border-box;
+  color: var(--ink);
+  background: radial-gradient(560px 360px at 80% 0%, rgb(232 150 79 / 18%), transparent 65%), var(--cream);
+  font-family: "Nunito Sans", "Noto Sans TC", "Noto Sans SC", "Microsoft JhengHei", "Microsoft YaHei", system-ui, sans-serif;
+}
+
+.card {
+  width: min(700px, 100%);
+  text-align: center;
+}
+
+.logo {
+  display: block;
+  width: 154px;
+  height: auto;
+  margin: 0 auto 22px;
+}
+
+.languageSwitch {
+  width: fit-content;
+  display: flex;
+  gap: 2px;
+  margin: 0 auto 24px;
+  padding: 3px;
+  border: 2px solid var(--navy);
+  border-radius: 999px;
+  background: #fff;
+}
+
+.languageSwitch button {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  color: var(--navy);
+  background: transparent;
+  font: 800 0.9rem/1 inherit;
+  cursor: pointer;
+}
+
+.languageSwitch button[aria-pressed="true"] {
+  color: #fff;
+  background: var(--navy);
+}
+
+.eyebrow {
+  margin: 0;
+  color: var(--orange-text);
+  font-weight: 900;
+  font-size: 1rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.card h1 {
+  margin: 14px 0 12px;
+  color: var(--navy);
+  font-size: clamp(2rem, 6vw, 3.2rem);
+  line-height: 1.15;
+}
+
+.description {
+  max-width: 640px;
+  margin: 0 auto;
+  color: var(--ink-soft);
+  font-size: 1.05rem;
+  line-height: 1.7;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 28px;
+}
+
+.primaryAction,
+.secondaryAction {
+  min-height: 48px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 24px;
+  border: 2px solid var(--orange);
+  border-radius: 999px;
+  color: #3a2410;
+  background: var(--orange);
+  font-weight: 900;
+  text-decoration: none;
+}
+
+.secondaryAction {
+  border-color: var(--navy-deep);
+  color: var(--navy-deep);
+  background: transparent;
+}
+
+.reference {
+  margin: 20px 0 0;
+  color: var(--ink-soft);
+  font-size: 0.82rem;
+}
+
+.reference code {
+  color: var(--navy-deep);
+  font: 700 0.82rem/1.4 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+:where(.languageSwitch button, .primaryAction, .secondaryAction):focus-visible {
+  outline: 3px solid #1264a3;
+  outline-offset: 3px;
+}
+
+@media (max-width: 390px) {
+  .main {
+    padding: 24px 20px;
+  }
+
+  .logo {
+    width: 132px;
+    margin-bottom: 18px;
+  }
+
+  .languageSwitch {
+    margin-bottom: 20px;
+  }
+
+  .card h1 {
+    font-size: clamp(1.8rem, 9vw, 2.3rem);
+  }
+
+  .description {
+    font-size: 1rem;
+  }
+
+  .actions {
+    display: grid;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .main *,
+  .main *::before,
+  .main *::after {
+    scroll-behavior: auto !important;
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+@media (forced-colors: active) {
+  .languageSwitch,
+  .primaryAction,
+  .secondaryAction {
+    border: 2px solid ButtonText;
+  }
+}
