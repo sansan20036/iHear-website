@@ -11,7 +11,7 @@
     zhHant:{manager:"團隊資料管理",hint:"拖曳卡片上的排序把手，或使用上移／下移按鈕；放開後會自動儲存。",editMode:"管理團隊檔案",done:"完成",add:"新增檔案",edit:"編輯",drag:"拖曳排序",up:"上移",down:"下移",draft:"草稿",loading:"正在載入團隊資料…",empty:"目前沒有已發布的團隊檔案。",failed:"目前無法載入團隊資料。",newTitle:"新增團隊檔案",editTitle:"編輯團隊檔案",name:"姓名",initials:"姓名縮寫",section:"顯示區塊",leader:"領導團隊",tutor:"導師",existing:"既有人物",newPerson:"建立新人物",school:"學校",grade:"年級",showSchool:"公開顯示學校",showGrade:"公開顯示年級",consent:"我確認已取得適用的公開同意。",shared:"修改姓名或縮寫會同步套用到此人物的所有版位。",role:"角色／職稱",schoolDisplay:"本語言的學校名稱",languages:"使用語言",strengths:"教學專長",summary:"簡短介紹",bio:"完整介紹",hobbies:"興趣",saveDraft:"儲存草稿",publish:"發布",cancel:"取消",delete:"永久刪除",deleteConfirm:"確定要永久刪除此公開版位嗎？刪除後無法復原。",conflict:"另一位管理員已修改資料，請重新載入後再試。",saved:"團隊檔案已儲存。",orderSaved:"團隊順序已儲存。",reorderFailed:"無法儲存新順序，請稍後再試。",deleted:"團隊檔案已刪除。",validation:"請檢查表單內容。",copy:"複製英文",close:"關閉編輯器",unsaved:"要放棄尚未儲存的團隊檔案修改嗎？",retry:"重試",moved:(name,position,total)=>`${name} 已移到第 ${position} 位，共 ${total} 位。`},
     zhHans:{manager:"团队数据管理",hint:"拖动卡片上的排序把手，或使用上移／下移按钮；放开后会自动保存。",editMode:"管理团队档案",done:"完成",add:"新增档案",edit:"编辑",drag:"拖动排序",up:"上移",down:"下移",draft:"草稿",loading:"正在加载团队数据…",empty:"目前没有已发布的团队档案。",failed:"目前无法加载团队数据。",newTitle:"新增团队档案",editTitle:"编辑团队档案",name:"姓名",initials:"姓名缩写",section:"显示区块",leader:"领导团队",tutor:"导师",existing:"现有人物",newPerson:"建立新人物",school:"学校",grade:"年级",showSchool:"公开显示学校",showGrade:"公开显示年级",consent:"我确认已取得适用的公开同意。",shared:"修改姓名或缩写会同步套用到此人物的所有版位。",role:"角色／职称",schoolDisplay:"本语言的学校名称",languages:"使用语言",strengths:"教学专长",summary:"简短介绍",bio:"完整介绍",hobbies:"兴趣",saveDraft:"保存草稿",publish:"发布",cancel:"取消",delete:"永久删除",deleteConfirm:"确定要永久删除此公开版位吗？删除后无法恢复。",conflict:"另一位管理员已修改数据，请重新加载后再试。",saved:"团队档案已保存。",orderSaved:"团队顺序已保存。",reorderFailed:"无法保存新顺序，请稍后再试。",deleted:"团队档案已删除。",validation:"请检查表单内容。",copy:"复制英文",close:"关闭编辑器",unsaved:"要放弃尚未保存的团队档案修改吗？",retry:"重试",moved:(name,position,total)=>`${name} 已移到第 ${position} 位，共 ${total} 位。`}
   };
-  const state={leaders:[],tutors:[],people:[],admin:false,editMode:false,busy:false,reordering:false,draft:null,originalDraft:"",activeLocale:"zhHant"};
+  const state={leaders:[],tutors:[],people:[],admin:false,editMode:false,busy:false,reordering:false,deleteConfirming:false,draft:null,originalDraft:"",activeLocale:"zhHant"};
   const adminBar=document.createElement("div"),dialog=document.createElement("dialog"),toast=document.createElement("div");
   adminBar.className="team-directory-admin";adminBar.hidden=true;adminBar.setAttribute("data-no-inline-edit","");
   leaderMount.parentElement.insertBefore(adminBar,leaderMount);
@@ -83,7 +83,7 @@
   }
   function openEditor(item){
     state.draft=item?JSON.parse(JSON.stringify({...item,consentConfirmed:Boolean(item.publicationConsentAt)})):newDraft();
-    state.originalDraft=JSON.stringify(state.draft);state.activeLocale=locale();buildEditor();dialog.showModal();document.body.classList.add("team-profile-modal-open");dialog.querySelector("input,select,textarea,button")?.focus()
+    state.originalDraft=JSON.stringify(state.draft);state.activeLocale=locale();state.deleteConfirming=false;buildEditor();dialog.showModal();document.body.classList.add("team-profile-modal-open");dialog.querySelector("input,select,textarea,button")?.focus()
   }
   function isDirty(){if(!state.draft)return false;syncDraft();return JSON.stringify(state.draft)!==state.originalDraft}
   function closeEditor(force){if(!dialog.open)return true;if(!force&&isDirty()&&!confirm(l().unsaved))return false;dialog.close();return true}
@@ -112,7 +112,7 @@
     <div class="team-locale-tabs" role="tablist" aria-label="${esc(l().shared)}">${locales.map(key=>`<button type="button" id="team-tab-${key}" class="team-locale-tab" role="tab" data-locale="${key}" data-complete="${complete(key)}" aria-selected="${state.activeLocale===key}" aria-controls="team-panel-${key}" tabindex="${state.activeLocale===key?0:-1}"><span class="team-locale-dot"></span>${labelsForLocale[key]}</button>`).join("")}</div>
     <div class="team-locale-panel" id="team-panel-${state.activeLocale}" role="tabpanel" aria-labelledby="team-tab-${state.activeLocale}">${localField("role",l().role)}${localField("schoolDisplay",l().schoolDisplay)}${localField("languages",l().languages)}${localField("strengths",l().strengths,true)}${localField("summary",l().summary,true)}${localField("bio",l().bio,true)}${localField("hobbies",l().hobbies,true)}${state.activeLocale!=="en"?`<button type="button" class="team-admin-button" data-copy-en>${l().copy}</button>`:""}</div>
     <p class="team-form-error" data-form-error role="alert" tabindex="-1" hidden></p></div>
-    <footer class="team-editor-footer"><div>${state.draft.id?`<button type="button" class="team-admin-button danger" data-delete>${l().delete}</button>`:""}</div><div class="team-editor-actions"><button type="button" class="team-admin-button" data-cancel>${l().cancel}</button><button type="button" class="team-admin-button primary" data-save="draft">${l().saveDraft}</button><button type="button" class="team-admin-button accent" data-save="published">${l().publish}</button></div></footer></form></div>`;
+    <footer class="team-editor-footer">${state.deleteConfirming?`<div class="team-delete-confirm" role="group" aria-labelledby="team-delete-confirm-message"><p id="team-delete-confirm-message">${esc(l().deleteConfirm)}</p><div class="team-editor-actions"><button type="button" class="team-admin-button" data-delete-cancel>${l().cancel}</button><button type="button" class="team-admin-button danger" data-delete-confirm>${l().delete}</button></div></div>`:`<div>${state.draft.id?`<button type="button" class="team-admin-button danger" data-delete>${l().delete}</button>`:""}</div><div class="team-editor-actions"><button type="button" class="team-admin-button" data-cancel>${l().cancel}</button><button type="button" class="team-admin-button primary" data-save="draft">${l().saveDraft}</button><button type="button" class="team-admin-button accent" data-save="published">${l().publish}</button></div>`}</footer></form></div>`;
   }
   function syncDraft(){
     const form=dialog.querySelector("[data-team-form]");if(!form)return;
@@ -148,10 +148,16 @@
       state.originalDraft=JSON.stringify(state.draft);closeEditor(true);await load(true,{revision:data.revision&&data.revision.revision});showToast(l().saved,false);if(window.iHearLiveContent)window.iHearLiveContent.announce("team",data.revision)
     }catch(error){setBusy(false);showIssues(error)}
   }
+  function requestRemove(){
+    if(state.busy||!state.draft.id)return;syncDraft();state.deleteConfirming=true;buildEditor();requestAnimationFrame(()=>dialog.querySelector("[data-delete-confirm]")?.focus())
+  }
+  function cancelRemove(){
+    if(state.busy)return;state.deleteConfirming=false;buildEditor();requestAnimationFrame(()=>dialog.querySelector("[data-delete]")?.focus())
+  }
   async function remove(){
-    if(state.busy||!state.draft.id||!confirm(l().deleteConfirm))return;setBusy(true);
+    if(state.busy||!state.draft.id||!state.deleteConfirming)return;setBusy(true);
     try{
-      const response=await fetch(`/api/team-profiles/${encodeURIComponent(state.draft.id)}`,{method:"DELETE",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify({profileVersion:state.draft.profileVersion,personVersion:state.draft.personVersion})});
+      const response=await fetch(`/api/team-profiles/${encodeURIComponent(state.draft.id)}`,{method:"DELETE",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify({profileVersion:state.draft.profileVersion})});
       const data=await response.json().catch(()=>null);if(!response.ok)throw errorFrom(response,data);
       state.originalDraft=JSON.stringify(state.draft);closeEditor(true);await load(true,{revision:data.revision&&data.revision.revision});showToast(l().deleted,false);if(window.iHearLiveContent)window.iHearLiveContent.announce("team",data.revision)
     }catch(error){setBusy(false);showIssues(error);showToast(error.status===409?l().conflict:error.message||l().validation,true)}
@@ -233,7 +239,9 @@
     else if(button.matches("[data-team-retry]")){message(leaderMount,l().loading);message(tutorMount,l().loading);load(state.admin)}
     else if(button.matches("[data-close],[data-cancel]"))closeEditor();
     else if(button.dataset.save)save(button.dataset.save);
-    else if(button.matches("[data-delete]"))remove();
+    else if(button.matches("[data-delete]"))requestRemove();
+    else if(button.matches("[data-delete-cancel]"))cancelRemove();
+    else if(button.matches("[data-delete-confirm]"))remove();
     else if(button.dataset.locale){syncDraft();state.activeLocale=button.dataset.locale;buildEditor()}
     else if(button.matches("[data-copy-en]")){syncDraft();textFields.forEach(field=>state.draft[field][state.activeLocale]=state.draft[field].en);buildEditor()}
   });
@@ -258,7 +266,7 @@
       buildEditor();
     }
   });
-  dialog.addEventListener("close",()=>{document.body.classList.remove("team-profile-modal-open");state.draft=null;state.originalDraft="";state.busy=false;if(window.iHearLiveContent)window.iHearLiveContent.checkNow({force:true})});
+  dialog.addEventListener("close",()=>{document.body.classList.remove("team-profile-modal-open");state.draft=null;state.originalDraft="";state.busy=false;state.deleteConfirming=false;if(window.iHearLiveContent)window.iHearLiveContent.checkNow({force:true})});
   window.addEventListener("ihear:before-language",event=>{if(dialog.open&&isDirty()){if(!confirm(l().unsaved))event.preventDefault();else closeEditor(true)}});
   window.addEventListener("ihear:language",()=>{render();if(dialog.open){syncDraft();buildEditor()}});
   window.addEventListener("beforeunload",event=>{if(!isDirty())return;event.preventDefault();event.returnValue=""});
