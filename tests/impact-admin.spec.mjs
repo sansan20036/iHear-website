@@ -680,6 +680,8 @@ test("Google sign-in clears stale OAuth cookies before creating a new PKCE flow"
   await page.goto("/about");
   const signInButton = page.locator("[data-auth-desktop] [data-auth-signin]");
   await expect(signInButton).toBeVisible();
+  await expect(signInButton).toContainText("Sign in");
+  await expect(signInButton).not.toContainText("Admin sign in");
   await signInButton.click();
   await expect(page).toHaveURL("http://127.0.0.1:3210/about?oauth=started");
 
