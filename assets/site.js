@@ -742,6 +742,17 @@
     };
   }
 
+  function installSkipLink() {
+    const skipLink = document.querySelector('.skip-link[href="#main"]');
+    const main = document.getElementById("main");
+    if (!skipLink || !main) return;
+
+    main.setAttribute("tabindex", "-1");
+    skipLink.addEventListener("click", () => {
+      main.focus({ preventScroll: true });
+    });
+  }
+
   function installNavigation() {
     const nav = document.getElementById("nav");
     const toggle = document.getElementById("navToggle");
@@ -855,7 +866,12 @@
     });
     drawer.addEventListener("click", (event) => { if (event.target.closest("a")) closeMenu(); });
     document.addEventListener("pointerdown", (event) => {
-      if (media.matches && toggle.getAttribute("aria-expanded") === "true" && !nav.contains(event.target)) closeMenu();
+      if (
+        media.matches
+        && toggle.getAttribute("aria-expanded") === "true"
+        && !drawer.contains(event.target)
+        && !toggle.contains(event.target)
+      ) closeMenu();
     });
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape" && toggle.getAttribute("aria-expanded") === "true") closeMenu({ restoreFocus: true });
@@ -1169,6 +1185,7 @@
     window.iHearSetLanguage = setLanguage;
     window.iHearLanguage = { get: () => activeLanguage, locale: () => localeKeys[activeLanguage] };
     markCurrentNavigation();
+    installSkipLink();
     installNavigation();
     installRevealAnimations();
     installExternalHints();
