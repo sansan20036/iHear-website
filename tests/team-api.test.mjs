@@ -242,11 +242,32 @@ describe("team profile API", () => {
     }), context)).status).toBe(200);
     expect((await DELETE(json("http://localhost/api/team-profiles/tutor-test", "DELETE", {
       profileVersion: 1,
-      personVersion: 1,
     }), context)).status).toBe(200);
+    expect(store.deleteTeamProfile).toHaveBeenCalledWith("tutor-test", 1);
     expect(revalidateTag).toHaveBeenCalledWith("team-profiles-v1", { expire: 0 });
     expect(revalidatePath).toHaveBeenCalledWith("/team");
     expect(revalidatePath).toHaveBeenCalledWith("/api/live-revisions");
+  });
+
+  test("keeps a successful deletion successful when cache invalidation fails", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    revisionAfterMutation.mockRejectedValue(new Error("revision unavailable"));
+    const response = await DELETE(json("http://localhost/api/team-profiles/tutor-test", "DELETE", {
+      profileVersion: 1,
+    }), context);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, deletedId: "tutor-test" });
+    expect(consoleError).toHaveBeenCalledWith(
+      "Team profile was deleted, but cache invalidation failed",
+      expect.any(Error),
+    );
+    consoleError.mockRestore();
+  });
+
+  test("rejects deletion without a valid profile version", async () => {
+    const response = await DELETE(json("http://localhost/api/team-profiles/tutor-test", "DELETE", {}), context);
+    expect(response.status).toBe(400);
+    expect(store.deleteTeamProfile).not.toHaveBeenCalled();
   });
 
   test("rejects publishing without consent or required English content", async () => {

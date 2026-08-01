@@ -68,12 +68,16 @@ export async function DELETE(request: Request, context: Context) {
     if (!isValidTeamId(id)) return respond(NextResponse.json({ error: "Invalid profile id" }, { status: 400 }));
     const body = await request.json().catch(() => ({}));
     const profileVersion = Number(body.profileVersion);
-    const personVersion = Number(body.personVersion);
-    if (!Number.isInteger(profileVersion) || profileVersion < 1 || !Number.isInteger(personVersion) || personVersion < 1) {
-      return respond(NextResponse.json({ error: "Valid profile and person versions are required" }, { status: 400 }));
+    if (!Number.isInteger(profileVersion) || profileVersion < 1) {
+      return respond(NextResponse.json({ error: "A valid profile version is required" }, { status: 400 }));
     }
-    const deletedId = await deleteTeamProfile(id, profileVersion, personVersion);
-    const revision = await invalidateTeamProfiles();
+    const deletedId = await deleteTeamProfile(id, profileVersion);
+    let revision;
+    try {
+      revision = await invalidateTeamProfiles();
+    } catch (error) {
+      console.error("Team profile was deleted, but cache invalidation failed", error);
+    }
     return respond(NextResponse.json({ ok: true, deletedId, revision }));
   } catch (error) {
     return respond(teamApiError(error));

@@ -72,6 +72,8 @@ body.team-profile-reordering,body.team-profile-reordering *{cursor:grabbing!impo
   gap:12px;flex-wrap:wrap;border-top:1px solid var(--line);border-bottom:0;background:#fff;
   box-shadow:0 -5px 14px rgba(20,35,80,.04)
 }
+.team-delete-confirm{display:flex;width:100%;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.team-delete-confirm p{margin:0;max-width:58ch;color:#7f1d1d;font-weight:800}
 body.team-profile-modal-open{overflow:hidden}
 .team-basic-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
 .team-field{display:flex;flex-direction:column;gap:6px;min-width:0}
@@ -105,7 +107,7 @@ body.team-profile-modal-open{overflow:hidden}
   .team-basic-grid{grid-template-columns:1fr}
   .team-field.wide{grid-column:auto}
   .team-editor-body,.team-editor-head,.team-editor-footer{padding-left:16px;padding-right:16px}
-  .team-editor-footer,.team-editor-actions,.team-editor-actions .team-admin-button{width:100%}
+  .team-editor-footer,.team-editor-actions,.team-editor-actions .team-admin-button,.team-delete-confirm{width:100%}
   .team-editor-actions .team-admin-button{justify-content:center}
   .team-profile-drag-text{display:none}
   .team-profile-drag-handle{padding:7px;flex:0 0 44px}

@@ -448,7 +448,7 @@ export async function updateTeamProfile(id: string, input: TeamProfileUpdateInpu
   });
 }
 
-export async function deleteTeamProfile(id: string, profileVersion: number, personVersion: number) {
+export async function deleteTeamProfile(id: string, profileVersion: number) {
   assertPersistence();
   const sql = sqlClient();
   if (sql) {
@@ -467,12 +467,10 @@ export async function deleteTeamProfile(id: string, profileVersion: number, pers
         SELECT id FROM team_profiles WHERE person_id = ${deleted[0].person_id} LIMIT 1
       `;
       if (!remaining[0]) {
-        const removed = await tx`
+        await tx`
           DELETE FROM team_people
-          WHERE id = ${deleted[0].person_id} AND version = ${personVersion}
-          RETURNING id
+          WHERE id = ${deleted[0].person_id}
         `;
-        if (!removed[0]) throw new TeamConflictError("Person changed");
       }
       return id;
     });
@@ -482,7 +480,7 @@ export async function deleteTeamProfile(id: string, profileVersion: number, pers
     if (profileIndex < 0) throw new TeamNotFoundError("Team profile not found");
     const profile = store.profiles[profileIndex];
     const person = store.people.find((item) => item.id === profile.personId)!;
-    if (profile.version !== profileVersion || person.version !== personVersion) {
+    if (profile.version !== profileVersion) {
       throw new TeamConflictError("Team profile changed");
     }
     store.profiles.splice(profileIndex, 1);

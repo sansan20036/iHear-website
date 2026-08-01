@@ -341,6 +341,82 @@ test("team manager is mobile-safe and exposes structured editing controls", asyn
   expect(await page.evaluate(() => document.body.classList.contains("team-profile-modal-open"))).toBe(false);
 });
 
+test("team manager confirms deletion in-page and removes the profile", async ({ page }) => {
+  await mockApplication(page);
+  await page.unroute("**/api/team-profiles**");
+
+  const profile = {
+    id: "tutor-delete-test",
+    personId: "person-delete-test",
+    section: "tutor",
+    status: "published",
+    sortOrder: 10,
+    name: "Delete Test Tutor",
+    initials: "DT",
+    school: "",
+    grade: "",
+    showSchool: false,
+    showGrade: false,
+    role: { en: "Tutor", zhHant: "導師", zhHans: "导师" },
+    schoolDisplay: { en: "", zhHant: "", zhHans: "" },
+    languages: { en: "English", zhHant: "英文", zhHans: "英文" },
+    strengths: { en: "Support", zhHant: "支持", zhHans: "支持" },
+    summary: { en: "Delete flow test", zhHant: "刪除流程測試", zhHans: "删除流程测试" },
+    bio: { en: "Temporary deletion fixture", zhHant: "暫時刪除測試資料", zhHans: "临时删除测试资料" },
+    hobbies: { en: "", zhHant: "", zhHans: "" },
+    publicationConsentAt: "2026-07-31T00:00:00.000Z",
+    profileVersion: 3,
+    personVersion: 7,
+    updatedAt: "2026-07-31T00:00:00.000Z",
+  };
+  let tutors = [profile];
+  let deletePayload = null;
+  let nativeDialogCount = 0;
+  page.on("dialog", async (dialog) => {
+    nativeDialogCount += 1;
+    await dialog.dismiss();
+  });
+
+  await page.route("**/api/team-profiles**", async (route) => {
+    const request = route.request();
+    if (request.method() === "DELETE") {
+      deletePayload = request.postDataJSON();
+      tutors = [];
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true, deletedId: profile.id, revision: { revision: "2" } }),
+      });
+    }
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        leaders: [],
+        tutors,
+        people: tutors.length ? [{ id: profile.personId, name: profile.name, initials: profile.initials, consentConfirmed: true }] : [],
+        admin: request.url().includes("includeDrafts=true"),
+      }),
+    });
+  });
+
+  await page.goto("/team");
+  await page.getByRole("button", { name: "Manage profiles" }).click();
+  await page.locator(`[data-profile-id="${profile.id}"] summary`).click();
+  await page.locator(`[data-edit="${profile.id}"]`).click();
+
+  await page.getByRole("button", { name: "Permanently delete" }).click();
+  await expect(page.getByText("Permanently delete this profile placement? This cannot be undone.")).toBeVisible();
+  expect(nativeDialogCount).toBe(0);
+
+  await page.locator("[data-delete-confirm]").click();
+  await expect(page.locator(`[data-profile-id="${profile.id}"]`)).toHaveCount(0);
+  await expect(page.getByRole("dialog")).toBeHidden();
+  await expect(page.getByText("Team profile deleted.")).toBeVisible();
+  expect(deletePayload).toEqual({ profileVersion: 3 });
+  expect(nativeDialogCount).toBe(0);
+});
+
 test("team manager drag handles reorder profiles and persist once", async ({ page }) => {
   await mockApplication(page);
   await page.unroute("**/api/team-profiles**");
