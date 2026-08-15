@@ -19,6 +19,8 @@
       altRequired: "Complete all three image descriptions using 2–300 characters.", failed: "The image could not be updated.",
       forbidden: "Your administrator session has expired.", conflict: "Another administrator changed this image. Reload and try again.",
       confirmRestore: "Restore the original image? The current custom image will be removed.", liveBlocked: "A newer image is available. Finish or cancel this edit to refresh.",
+      editAvatar: "Change avatar", titleAvatar: "Change avatar", introAvatar: "Upload a portrait, preview the circular crop, and describe it for each language.",
+      restoreAvatar: "Restore initials", restoredAvatar: "Initials restored", confirmRestoreAvatar: "Restore the initials? The current avatar photo will be removed.",
       positions: ["Top left", "Top center", "Top right", "Center left", "Center", "Center right", "Bottom left", "Bottom center", "Bottom right"],
     },
     zhHant: {
@@ -33,6 +35,8 @@
       altRequired: "三種語言的圖片描述都必須填寫 2–300 個字元。", failed: "無法更新圖片。",
       forbidden: "管理員登入已失效。", conflict: "另一位管理員已更改圖片，請重新整理後再試。",
       confirmRestore: "確定恢復原始圖片？目前的自訂圖片將被移除。", liveBlocked: "已有較新的圖片，請先完成或取消目前編輯。",
+      editAvatar: "更換頭像", titleAvatar: "更換頭像", introAvatar: "上傳人物照片、預覽圓形裁切位置，並填寫三種語言的圖片描述。",
+      restoreAvatar: "恢復文字縮寫", restoredAvatar: "已恢復文字縮寫", confirmRestoreAvatar: "確定恢復文字縮寫？目前的頭像照片將被移除。",
       positions: ["左上", "中上", "右上", "左中", "正中", "右中", "左下", "中下", "右下"],
     },
     zhHans: {
@@ -47,13 +51,20 @@
       altRequired: "三种语言的图片描述都必须填写 2–300 个字符。", failed: "无法更新图片。",
       forbidden: "管理员登录已失效。", conflict: "另一位管理员已更改图片，请刷新后重试。",
       confirmRestore: "确定恢复原始图片？当前的自定义图片将被删除。", liveBlocked: "已有较新的图片，请先完成或取消当前编辑。",
+      editAvatar: "更换头像", titleAvatar: "更换头像", introAvatar: "上传人物照片、预览圆形裁切位置，并填写三种语言的图片描述。",
+      restoreAvatar: "恢复文字缩写", restoredAvatar: "已恢复文字缩写", confirmRestoreAvatar: "确定恢复文字缩写？当前的头像照片将被删除。",
       positions: ["左上", "中上", "右上", "左中", "正中", "右中", "左下", "中下", "右下"],
     },
   };
 
-  const hosts = Array.from(document.querySelectorAll("[data-site-media-slot]"));
-  if (!hosts.length) return;
   let currentSession = window.iHearAuth?.getSession?.() || null;
+
+  function initialsPreviewDataUrl(value) {
+    const initials = String(value || "•").trim().slice(0, 4);
+    const escaped = initials.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400"><circle cx="200" cy="200" r="200" fill="#263974"/><text x="200" y="216" fill="white" font-family="Arial,sans-serif" font-size="116" font-weight="700" text-anchor="middle">${escaped}</text></svg>`;
+    return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+  }
 
   function createController(host) {
   const slot = host.getAttribute("data-site-media-slot") || "";
@@ -62,6 +73,9 @@
   const picture = host?.querySelector("picture");
   const image = picture?.querySelector("img");
   if (!picture || !image) return null;
+  const fallbackInitials = host.querySelector(".avatar-initials");
+  const isAvatar = host.dataset.siteMediaKind === "avatar" && Boolean(fallbackInitials);
+  const controlHost = (host.closest("summary") ? host.closest(".team-profile-tutor-shell") : host) || host;
 
   const defaults = {
     sources: Array.from(picture.querySelectorAll("source")).map((source) => ({
@@ -71,6 +85,7 @@
       type: source.getAttribute("type") || "",
     })),
     src: image.getAttribute("src") || "",
+    previewSrc: isAvatar ? initialsPreviewDataUrl(fallbackInitials.textContent) : (image.getAttribute("src") || ""),
     alt: {
       en: host.dataset.siteMediaAltEn || image.alt || "Site image",
       zhHant: host.dataset.siteMediaAltZhHant || host.dataset.siteMediaAltEn || image.alt || "網站圖片",
@@ -96,7 +111,19 @@
     return "en";
   }
 
-  function labels() { return copy[locale()] || copy.en; }
+  function labels() {
+    const text = copy[locale()] || copy.en;
+    if (!isAvatar) return text;
+    return {
+      ...text,
+      edit: text.editAvatar,
+      title: text.titleAvatar,
+      intro: text.introAvatar,
+      restore: text.restoreAvatar,
+      restored: text.restoredAvatar,
+      confirmRestore: text.confirmRestoreAvatar,
+    };
+  }
   function isAdmin() { return Boolean(currentSession?.user?.isAdmin); }
 
   function restoreDefault() {
@@ -106,8 +133,15 @@
       node.setAttribute("sizes", sizes);
       node.setAttribute("type", type);
     });
-    image.src = defaults.src;
-    image.alt = defaults.alt[locale()] || defaults.alt.en;
+    if (isAvatar) {
+      picture.hidden = true;
+      image.removeAttribute("src");
+      image.alt = "";
+      fallbackInitials.hidden = false;
+    } else {
+      image.src = defaults.src;
+      image.alt = defaults.alt[locale()] || defaults.alt.en;
+    }
     image.style.objectPosition = defaults.objectPosition;
     host.removeAttribute("data-site-media-custom");
   }
@@ -125,6 +159,10 @@
     image.src = item.src;
     image.alt = item.alt?.[locale()] || item.alt?.en || defaults.alt.en;
     image.style.objectPosition = `${item.focalX}% ${item.focalY}%`;
+    if (isAvatar) {
+      picture.hidden = false;
+      fallbackInitials.hidden = true;
+    }
     host.setAttribute("data-site-media-custom", "true");
   }
 
@@ -166,9 +204,15 @@
       editButton = document.createElement("button");
       editButton.type = "button";
       editButton.className = "site-media-edit";
+      if (isAvatar) editButton.classList.add("site-media-avatar-edit");
+      if (controlHost !== host) editButton.classList.add("site-media-external-edit");
       editButton.innerHTML = '<span aria-hidden="true">📷</span><span data-site-media-edit-label></span>';
       editButton.addEventListener("click", openDialog);
-      host.appendChild(editButton);
+      controlHost.appendChild(editButton);
+    }
+    if (controlHost !== host) {
+      editButton.style.left = `${host.offsetLeft + host.offsetWidth - 14}px`;
+      editButton.style.top = `${host.offsetTop + host.offsetHeight - 14}px`;
     }
     const text = labels().edit;
     editButton.title = text;
@@ -210,6 +254,7 @@
   function createDialog() {
     const node = document.createElement("dialog");
     node.className = "site-media-dialog";
+    if (isAvatar) node.dataset.mediaKind = "avatar";
     node.style.setProperty("--site-media-preview-aspect", host.dataset.siteMediaAspect || "4 / 3.4");
     node.innerHTML = `
       <form method="dialog" class="site-media-form" data-media-form>
@@ -322,7 +367,7 @@
     dialog.querySelector("[data-media-alt-en]").value = alt.en;
     dialog.querySelector("[data-media-alt-zht]").value = alt.zhHant;
     dialog.querySelector("[data-media-alt-zhs]").value = alt.zhHans;
-    dialog.querySelector("[data-media-preview]").src = currentItem?.src || defaults.src;
+    dialog.querySelector("[data-media-preview]").src = currentItem?.src || defaults.previewSrc;
     selectFocal(currentItem?.focalX ?? 50, currentItem?.focalY ?? 50);
     dialog.querySelector("[data-media-restore]").hidden = !currentItem;
     dialog.querySelector("[data-media-file-name]").textContent = "";
@@ -505,10 +550,19 @@
     renderAdminControl();
     localizeDialog();
     if (currentItem) image.alt = currentItem.alt?.[locale()] || currentItem.alt?.en || defaults.alt.en;
-    else image.alt = defaults.alt[locale()] || defaults.alt.en;
+    else image.alt = isAvatar ? "" : (defaults.alt[locale()] || defaults.alt.en);
+  }
+
+  function destroy() {
+    compressionController?.abort();
+    if (activeRequest) activeRequest.abort();
+    releasePreview();
+    dialog?.remove();
+    editButton?.remove();
   }
 
   return {
+    host,
     slot,
     refresh,
     restoreDefault,
@@ -516,6 +570,7 @@
     languageChanged,
     isDirty: () => Boolean(dialog?.open && dirty),
     onBlocked: () => window.iHearToast?.(labels().liveBlocked, { error: true }),
+    destroy,
     applyRemoteItem(item) {
       currentItem = item || null;
       applyItem(currentItem);
@@ -524,10 +579,32 @@
   };
   }
 
-  const controllers = hosts.map(createController).filter(Boolean);
-  if (!controllers.length) return;
+  let controllers = [];
+  let lastMediaData = null;
+
+  function reconcileControllers() {
+    const activeHosts = new Set(document.querySelectorAll("[data-site-media-slot]"));
+    controllers = controllers.filter((controller) => {
+      if (activeHosts.has(controller.host) && controller.host.isConnected) return true;
+      controller.destroy();
+      return false;
+    });
+    const knownHosts = new Set(controllers.map((controller) => controller.host));
+    activeHosts.forEach((host) => {
+      if (knownHosts.has(host)) return;
+      const controller = createController(host);
+      if (!controller) return;
+      controllers.push(controller);
+      controller.renderAdminControl();
+      if (lastMediaData) controller.refresh(lastMediaData);
+    });
+  }
 
   function syncSlot(slot, item) {
+    if (lastMediaData) {
+      if (item) lastMediaData.items[slot] = item;
+      else delete lastMediaData.items[slot];
+    }
     controllers.filter((controller) => controller.slot === slot).forEach((controller) => controller.applyRemoteItem(item));
   }
 
@@ -535,6 +612,8 @@
     const response = await fetch("/api/site-media", { credentials: "same-origin", cache: "no-store" });
     if (!response.ok) throw new Error("site media unavailable");
     const data = await response.json();
+    lastMediaData = data;
+    reconcileControllers();
     controllers.forEach((controller) => controller.refresh(data));
   }
 
@@ -545,6 +624,7 @@
   window.addEventListener("ihear:language", () => {
     controllers.forEach((controller) => controller.languageChanged());
   });
+  window.addEventListener("ihear:media-slots-changed", reconcileControllers);
 
   window.iHearLiveContent?.register("content", {
     refresh: refreshAll,
@@ -552,6 +632,7 @@
     onBlocked: () => controllers.find((controller) => controller.isDirty())?.onBlocked(),
   });
 
+  reconcileControllers();
   refreshAll().catch(() => controllers.forEach((controller) => controller.restoreDefault()));
   controllers.forEach((controller) => controller.renderAdminControl());
 })();

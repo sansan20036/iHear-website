@@ -32,10 +32,27 @@
     return `<button type="button" class="team-profile-drag-handle" data-team-drag="${esc(item.section)}" data-drag-id="${esc(item.id)}" aria-label="${esc(l().drag)}: ${esc(item.name)}" aria-keyshortcuts="ArrowUp ArrowDown" ${state.reordering?"disabled":""}><span aria-hidden="true">⠇⠇</span><span class="team-profile-drag-text">${esc(l().drag)}</span></button>`;
   }
 
+  function avatarSlot(personId){
+    if(personId==="person-howard-m-ren")return "team.howard-ren.avatar";
+    const identifier=String(personId||"").toLowerCase().replace(/^person-/,"").replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"");
+    return identifier?`team.${identifier}.avatar`:"";
+  }
+
+  function avatar(item,sizeClass=""){
+    const slot=avatarSlot(item.personId);
+    const classes=`avatar${sizeClass?` ${sizeClass}`:""} team-avatar-slot`;
+    const altEn=`Portrait of ${item.name}`;
+    const altZhHant=`${item.name} 的個人頭像`;
+    const altZhHans=`${item.name} 的个人头像`;
+    return `<span class="${classes}" data-site-media-slot="${esc(slot)}" data-site-media-kind="avatar" data-site-media-aspect="1 / 1" data-site-media-alt-en="${esc(altEn)}" data-site-media-alt-zh-hant="${esc(altZhHant)}" data-site-media-alt-zh-hans="${esc(altZhHans)}" data-no-inline-edit>
+      <span class="team-avatar-visual"><span class="avatar-initials" aria-hidden="true">${esc(item.initials)}</span><picture hidden><source type="image/webp"><img alt="" loading="lazy" decoding="async"></picture></span>
+    </span>`;
+  }
+
   function leaderCard(item,index,items){
     const draft=item.status==="draft"?`<span class="team-profile-status">${l().draft}</span>`:"";
     return `<article class="leader team-profile-admin-card" data-profile-id="${esc(item.id)}" data-status="${esc(item.status)}">
-      ${dragHandle(item)}<div class="avatar" aria-hidden="true">${esc(item.initials)}</div><h2>${esc(item.name)}${draft}</h2>
+      ${dragHandle(item)}${avatar(item)}<h2>${esc(item.name)}${draft}</h2>
       <p class="roles">${esc(pick(item.role))}</p><p>${esc(pick(item.bio))}</p>
       ${actions(item,index,items)}</article>`;
   }
@@ -43,7 +60,7 @@
     const meta=[item.showSchool?(pick(item.schoolDisplay)||item.school):"",item.showGrade?(locale()==="en"?`Grade ${item.grade}`:`${item.grade} 年級`):""].filter(Boolean).join(" · ");
     const draft=item.status==="draft"?`<span class="team-profile-status">${l().draft}</span>`:"";
     return `<article class="team-profile-tutor-shell team-profile-admin-card" data-profile-id="${esc(item.id)}" data-status="${esc(item.status)}">
-      ${dragHandle(item)}<details class="tutor-prof"><summary><span class="avatar av-sm" aria-hidden="true">${esc(item.initials)}</span>
+      ${dragHandle(item)}<details class="tutor-prof"><summary>${avatar(item,"av-sm")}
       <span class="tp-id"><b>${esc(item.name)}${draft}</b><i>${esc(pick(item.role))}</i></span>
       <svg class="chev" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7.4 8.6L12 13.2l4.6-4.6L18 10l-6 6-6-6z"/></svg></summary>
       <div class="tp-body">${meta?`<p class="tp-meta">${esc(meta)}</p>`:""}
@@ -75,6 +92,7 @@
       <button class="team-admin-button primary" data-team-toggle>${state.editMode?l().done:l().editMode}</button></div>`;
     openTutorIds.forEach(id=>{const item=tutorMount.querySelector(`[data-profile-id="${CSS.escape(id)}"] > details`);if(item)item.open=true});
     if(openTutorIds.size)window.requestAnimationFrame(()=>window.scrollTo(window.scrollX,scrollY));
+    window.dispatchEvent(new CustomEvent("ihear:media-slots-changed"));
   }
   function emptyLocalized(){return{en:"",zhHant:"",zhHans:""}}
   function newDraft(){

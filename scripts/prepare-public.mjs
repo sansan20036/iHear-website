@@ -21,7 +21,7 @@ const htmlFiles = [
 ];
 
 const passthroughFiles = ["robots.txt", "sitemap.xml", "CNAME", "favicon.ico"];
-const clientAssetVersion = "20260816-site-media-v1";
+const clientAssetVersion = "20260816-team-avatar-v1";
 
 async function copyDir(source, target) {
   await mkdir(target, { recursive: true });
@@ -76,7 +76,7 @@ function withClientScripts(html, file) {
     `  <script src="/assets/auth.js?v=${clientAssetVersion}" defer></script>`,
     `  <script src="/assets/live-content.js?v=${clientAssetVersion}" defer></script>`,
   ];
-  if (html.includes("data-site-media-slot")) {
+  if (html.includes("data-site-media-slot") || html.includes("data-site-media-dynamic")) {
     scripts.push(`  <script src="/assets/vendor/browser-image-compression.js?v=${clientAssetVersion}" defer></script>`);
     scripts.push(`  <script src="/assets/site-media.js?v=${clientAssetVersion}" defer></script>`);
   }

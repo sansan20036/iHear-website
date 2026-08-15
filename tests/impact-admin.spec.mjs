@@ -135,7 +135,7 @@ const futureJourneyEvent = {
   sortOrder: 202801,
 };
 
-async function mockApplication(page, { admin = true } = {}) {
+async function mockApplication(page, { admin = true, duplicateAvatar = false } = {}) {
   const requests = [];
   let publishedPayload = null;
   const mediaItems = {};
@@ -194,6 +194,7 @@ async function mockApplication(page, { admin = true } = {}) {
     const isTutoring = slot === "services.tutoring";
     const isOutreach = slot === "services.outreach";
     const isVolunteers = slot === "global.volunteers";
+    const isAvatar = slot.startsWith("team.");
     const item = {
       slot,
       alt: isTutoring ? {
@@ -208,13 +209,17 @@ async function mockApplication(page, { admin = true } = {}) {
         en: "Young volunteers celebrating outdoors",
         zhHant: "年輕志工在戶外一同慶祝",
         zhHans: "年轻志愿者在户外一同庆祝",
+      } : isAvatar ? {
+        en: "Portrait of Zoe Lu",
+        zhHant: "Zoe Lu 的個人頭像",
+        zhHans: "Zoe Lu 的个人头像",
       } : {
         en: "Students learning communication skills",
         zhHant: "學生學習溝通技巧",
         zhHans: "学生学习沟通技巧",
       },
-      focalX: isTutoring ? 0 : isOutreach ? 100 : 50,
-      focalY: isTutoring ? 100 : isOutreach ? 0 : 50,
+      focalX: isTutoring ? 0 : isOutreach || isAvatar ? 100 : 50,
+      focalY: isTutoring ? 100 : isOutreach || isAvatar ? 0 : 50,
       recordVersion: mediaUploadCount,
       updatedAt: "2026-08-16T00:00:00.000Z",
       src: "/assets/images/volunteers-1200.webp",
@@ -267,13 +272,52 @@ async function mockApplication(page, { admin = true } = {}) {
     updatedAt: "2026-07-31T00:00:00.000Z",
   };
 
+  const zoeProfile = {
+    ...teamProfile,
+    id: "leader-zoe-lu",
+    personId: "person-zoe-lu",
+    section: "leader",
+    sortOrder: 10,
+    name: "Zoe Lu",
+    initials: "ZL",
+    role: { en: "Founder & Co-President", zhHant: "創辦人暨共同會長", zhHans: "创办人暨共同会长" },
+    bio: { en: "Leadership biography", zhHant: "領導團隊介紹", zhHans: "领导团队介绍" },
+  };
+  const danielProfile = {
+    ...zoeProfile,
+    id: "leader-daniel-hollis",
+    personId: "person-daniel-hollis",
+    sortOrder: 20,
+    name: "Daniel Hollis",
+    initials: "DH",
+  };
+  const howardProfile = {
+    ...zoeProfile,
+    id: "leader-howard-ren",
+    personId: "person-howard-m-ren",
+    sortOrder: 30,
+    name: "Howard M. Ren",
+    initials: "HR",
+  };
+  const zoeTutorProfile = {
+    ...zoeProfile,
+    id: "tutor-zoe-lu",
+    section: "tutor",
+    sortOrder: 20,
+  };
+
   await page.route("**/api/team-profiles**", (route) => route.fulfill({
     status: 200,
     contentType: "application/json",
     body: JSON.stringify({
-      leaders: [],
-      tutors: [teamProfile],
-      people: [{ id: "person-test", name: "Test Tutor", initials: "TT", consentConfirmed: true }],
+      leaders: [zoeProfile, danielProfile, howardProfile],
+      tutors: duplicateAvatar ? [teamProfile, zoeTutorProfile] : [teamProfile],
+      people: [
+        { id: "person-zoe-lu", name: "Zoe Lu", initials: "ZL", consentConfirmed: true },
+        { id: "person-daniel-hollis", name: "Daniel Hollis", initials: "DH", consentConfirmed: true },
+        { id: "person-howard-m-ren", name: "Howard M. Ren", initials: "HR", consentConfirmed: true },
+        { id: "person-test", name: "Test Tutor", initials: "TT", consentConfirmed: true },
+      ],
       admin: route.request().url().includes("includeDrafts=true"),
     }),
   }));
@@ -480,6 +524,61 @@ test("all repository content photos expose stable sitewide media slots", async (
   await openDialog.locator("[data-media-restore]").click();
   await expect(volunteers).not.toHaveAttribute("data-site-media-custom", "true");
   await expect(volunteers.locator("img")).toHaveAttribute("src", /volunteers\.jpg$/);
+});
+
+test("team avatars upload with focal and localized alt text, then restore initials", async ({ page }) => {
+  const mocked = await mockApplication(page, { duplicateAvatar: true });
+  await page.goto("/team");
+
+  const zoeAvatars = page.locator('[data-site-media-slot="team.zoe-lu.avatar"]');
+  await expect(zoeAvatars).toHaveCount(2);
+  await expect(page.locator('[data-site-media-slot="team.daniel-hollis.avatar"]')).toHaveCount(1);
+  await expect(page.locator('[data-site-media-slot="team.howard-ren.avatar"]')).toHaveCount(1);
+  const tutorAvatar = page.locator('[data-site-media-slot="team.test.avatar"]');
+  await expect(tutorAvatar).toHaveCount(1);
+  await tutorAvatar.hover();
+  await expect(page.locator('[data-profile-id="tutor-test"] > .site-media-avatar-edit')).toBeVisible();
+
+  const avatar = zoeAvatars.first();
+  const initials = avatar.locator(".avatar-initials");
+  await expect(initials).toBeVisible();
+  await expect(avatar.locator("picture")).toBeHidden();
+
+  await avatar.hover();
+  const edit = avatar.getByRole("button", { name: "Change avatar" });
+  await expect(edit).toBeVisible();
+  await edit.focus();
+  await edit.press("Enter");
+
+  let dialog = page.locator('.site-media-dialog[open][data-media-kind="avatar"]');
+  await expect(dialog.getByRole("heading", { name: "Change avatar" })).toBeVisible();
+  await dialog.locator("[data-media-file]").setInputFiles("assets/images/hero-classroom.jpg");
+  await expect(dialog.locator("[data-media-save]")).toBeEnabled({ timeout: 20_000 });
+  await dialog.locator('[data-media-focal-grid] button[data-x="100"][data-y="0"]').click();
+  await dialog.locator("[data-media-save]").click();
+  await expect(dialog).not.toBeVisible({ timeout: 20_000 });
+
+  await expect(avatar).toHaveAttribute("data-site-media-custom", "true");
+  await expect(page.locator('[data-site-media-slot="team.zoe-lu.avatar"][data-site-media-custom="true"]')).toHaveCount(2);
+  await expect(initials).toBeHidden();
+  await expect(avatar.locator("picture")).toBeVisible();
+  await expect(avatar.locator("img")).toHaveCSS("object-position", "100% 0%");
+  await expect(avatar.locator("img")).toHaveAttribute("alt", "Portrait of Zoe Lu");
+  await page.locator('#langSwitch button[data-lang="zhTW"]').click();
+  await expect(avatar.locator("img")).toHaveAttribute("alt", "Zoe Lu 的個人頭像");
+
+  await avatar.hover();
+  await avatar.getByRole("button", { name: "更換頭像" }).click();
+  dialog = page.locator('.site-media-dialog[open][data-media-kind="avatar"]');
+  await expect(dialog.locator("[data-media-restore]")).toHaveText("恢復文字縮寫");
+  page.once("dialog", (nativeDialog) => nativeDialog.accept());
+  await dialog.locator("[data-media-restore]").click();
+
+  await expect(avatar).not.toHaveAttribute("data-site-media-custom", "true");
+  await expect(page.locator('[data-site-media-slot="team.zoe-lu.avatar"][data-site-media-custom="true"]')).toHaveCount(0);
+  await expect(avatar.locator("picture")).toBeHidden();
+  await expect(initials).toBeVisible();
+  expect(mocked.requests.some((request) => request.includes("/api/site-media/team.zoe-lu.avatar"))).toBe(true);
 });
 
 test("team directory renders API data, switches language, and excludes generic pencils", async ({ page }) => {

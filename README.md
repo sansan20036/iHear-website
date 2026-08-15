@@ -212,10 +212,13 @@ The idempotent command creates or updates the configured bucket as public-read,
 WebP-only, with a 1MB object limit. Keep `SUPABASE_SERVICE_ROLE_KEY` on the server;
 the browser never receives it and all writes pass through the authenticated API.
 The current stable media slots are `home.hero`, `services.tutoring`,
-`services.outreach`, and `global.volunteers`. The same global slot can be mounted
-on multiple pages while retaining each page's repository image as its local
-fallback. Branding, icons, and API-owned profile avatars are intentionally managed
-by their existing sources rather than duplicated in `site_media_assets`.
+`services.outreach`, `global.volunteers`, `team.zoe-lu.avatar`,
+`team.daniel-hollis.avatar`, and `team.howard-ren.avatar`. Every team person also
+receives a stable `team.<person-id-without-prefix>.avatar` slot automatically, so
+newly created profiles require no code change. The same avatar slot can be mounted
+in multiple profile placements; repository images remain the fallback for content
+photos, while team avatars fall back to the member's initials. Branding and icons
+remain managed by their existing sources rather than duplicated in `site_media_assets`.
 The application stores immutable `480.webp`, `800.webp`, and `1200.webp` objects
 under a new UUID for every save. Database backups include their metadata and paths;
 the monthly PostgreSQL restore drill does not copy the binary Storage objects, so

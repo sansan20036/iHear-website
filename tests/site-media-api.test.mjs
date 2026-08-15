@@ -164,7 +164,16 @@ describe("site media API", () => {
     expect(revalidatePath).toHaveBeenCalledWith("/api/live-revisions");
   });
 
-  test.each(["services.tutoring", "services.outreach", "global.volunteers"])(
+  test.each([
+    "services.tutoring",
+    "services.outreach",
+    "global.volunteers",
+    "team.zoe-lu.avatar",
+    "team.daniel-hollis.avatar",
+    "team.howard-ren.avatar",
+    "team.amber-lin.avatar",
+    "team.4f41e052-e313-4c1e-9b46-b213484e0bcd.avatar",
+  ])(
     "POST accepts the declared sitewide slot %s",
     async (slot) => {
       const response = await postSiteMedia(uploadRequest(), context(slot));
