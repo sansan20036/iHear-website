@@ -225,5 +225,6 @@ export async function enforceRateLimit(request: Request, options: RateLimitOptio
 export const RATE_LIMIT_POLICIES = {
   auth: { scope: "auth", limit: 10, windowSeconds: 60 },
   adminMutation: { scope: "admin-mutation", limit: 30, windowSeconds: 60 },
+  mediaUpload: { scope: "media-upload", limit: 10, windowSeconds: 600 },
   translation: { scope: "translation", limit: 5, windowSeconds: 60 },
 } as const;

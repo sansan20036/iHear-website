@@ -93,11 +93,16 @@ jobs:
               OR to_regclass('public.impact_milestones') IS NULL
               OR to_regclass('public.team_people') IS NULL
               OR to_regclass('public.team_profiles') IS NULL
+              OR to_regclass('public.site_media_assets') IS NULL
+              OR to_regclass('public.site_media_variants') IS NULL
               OR to_regclass('public.site_content_revisions') IS NULL THEN
               RAISE EXCEPTION 'Required application tables are missing';
             END IF;
             IF NOT EXISTS (SELECT 1 FROM public.schema_migrations WHERE version = '010') THEN
               RAISE EXCEPTION 'Migration 010 is missing';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM public.schema_migrations WHERE version = '011') THEN
+              RAISE EXCEPTION 'Migration 011 is missing';
             END IF;
             IF (SELECT COUNT(*) FROM public.site_content_revisions WHERE scope IN ('content', 'impact', 'team')) <> 3 THEN
               RAISE EXCEPTION 'Live revision scopes are incomplete';
@@ -109,7 +114,9 @@ jobs:
             'content_overrides', (SELECT COUNT(*) FROM public.content_overrides),
             'localized_content_overrides', (SELECT COUNT(*) FROM public.localized_content_overrides),
             'team_people', (SELECT COUNT(*) FROM public.team_people),
-            'team_profiles', (SELECT COUNT(*) FROM public.team_profiles)
+            'team_profiles', (SELECT COUNT(*) FROM public.team_profiles),
+            'site_media_assets', (SELECT COUNT(*) FROM public.site_media_assets),
+            'site_media_variants', (SELECT COUNT(*) FROM public.site_media_variants)
           ) AS restored_row_counts;
           SQL
 

@@ -198,6 +198,28 @@ npm run db:migrate
 The command is safe to rerun. Applied migrations are skipped, and changing an
 already-recorded migration file is rejected. Add a new numbered migration instead.
 
+### Hero image storage
+
+Migration 011 adds the versioned `site_media_assets` and `site_media_variants`
+tables. After applying migrations, configure the Supabase Storage bucket from the
+server-only environment variables in `.env.local`:
+
+```powershell
+npm run storage:configure-site-media
+```
+
+The idempotent command creates or updates the configured bucket as public-read,
+WebP-only, with a 1MB object limit. Keep `SUPABASE_SERVICE_ROLE_KEY` on the server;
+the browser never receives it and all writes pass through the authenticated API.
+The application stores immutable `480.webp`, `800.webp`, and `1200.webp` objects
+under a new UUID for every save. Database backups include their metadata and paths;
+the monthly PostgreSQL restore drill does not copy the binary Storage objects, so
+retain Supabase Storage backups according to the provider recovery policy as well.
+
+The build copies the pinned `browser-image-compression` UMD file from
+`node_modules` into `public/assets/vendor/` after regenerating `public/`. Do not edit
+the generated vendor file directly.
+
 Run the repeatable database health audit:
 
 ```powershell

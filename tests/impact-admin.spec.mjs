@@ -8,6 +8,8 @@ const contentTypes = {
   ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",
   ".ico": "image/x-icon",
+  ".jpeg": "image/jpeg",
+  ".jpg": "image/jpeg",
   ".js": "text/javascript; charset=utf-8",
   ".png": "image/png",
   ".svg": "image/svg+xml",
@@ -136,6 +138,8 @@ const futureJourneyEvent = {
 async function mockApplication(page, { admin = true } = {}) {
   const requests = [];
   let publishedPayload = null;
+  let mediaItem = null;
+  let mediaUploadCount = 0;
   const liveRevisions = {
     content: { revision: "1", updatedAt: "2026-07-31T00:00:00.000Z" },
     impact: { revision: "1", updatedAt: "2026-07-31T00:00:00.000Z" },
@@ -165,6 +169,55 @@ async function mockApplication(page, { admin = true } = {}) {
     contentType: "application/json",
     body: JSON.stringify({ version: 1, revisions: liveRevisions }),
   }));
+
+  await page.route("**/api/site-media**", async (route) => {
+    const request = route.request();
+    const method = request.method();
+    if (method === "GET") {
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ version: 1, items: mediaItem ? { "home.hero": mediaItem } : {} }),
+      });
+    }
+    requests.push(`${method} ${request.url()}`);
+    if (method === "DELETE") {
+      mediaItem = null;
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true, slot: "home.hero", revision: "2" }),
+      });
+    }
+    mediaUploadCount += 1;
+    mediaItem = {
+      slot: "home.hero",
+      alt: {
+        en: "Students learning communication skills",
+        zhHant: "學生學習溝通技巧",
+        zhHans: "学生学习沟通技巧",
+      },
+      focalX: 50,
+      focalY: 50,
+      recordVersion: mediaUploadCount,
+      updatedAt: "2026-08-16T00:00:00.000Z",
+      src: "/assets/images/volunteers-1200.webp",
+      srcSet: "/assets/images/volunteers-480.webp 480w, /assets/images/volunteers-800.webp 800w, /assets/images/volunteers-1200.webp 1200w",
+      variants: [480, 800, 1200].map((width) => ({
+        width,
+        pixelWidth: width,
+        pixelHeight: Math.round(width * 0.75),
+        byteSize: 1000,
+        mimeType: "image/webp",
+        url: `/assets/images/volunteers-${width}.webp`,
+      })),
+    };
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, item: mediaItem, revision: "2" }),
+    });
+  });
 
   await page.route("**/api/site-metrics", (route) => route.fulfill({
     status: 200,
@@ -234,6 +287,8 @@ async function mockApplication(page, { admin = true } = {}) {
   return {
     requests,
     getPublishedPayload: () => publishedPayload,
+    getMediaItem: () => mediaItem,
+    getMediaUploadCount: () => mediaUploadCount,
     liveRevisions,
   };
 }
@@ -259,6 +314,55 @@ test("favicon is linked and served from the generated public directory", async (
   expect(response.status()).toBe(200);
   expect(response.headers()["content-type"]).toContain("image/x-icon");
   expect((await response.body()).byteLength).toBeGreaterThan(0);
+});
+
+test("Hero image editor compresses before upload and restores the repository fallback", async ({ page }) => {
+  const mocked = await mockApplication(page);
+  await page.goto("/");
+
+  const vendor = await page.request.get("/assets/vendor/browser-image-compression.js");
+  expect(vendor.status()).toBe(200);
+  expect(vendor.headers()["content-type"]).toContain("javascript");
+  expect((await vendor.body()).byteLength).toBeGreaterThan(1000);
+
+  const hero = page.locator('[data-site-media-slot="home.hero"]');
+  await hero.hover();
+  await page.locator(".site-media-edit").click();
+  const dialog = page.locator(".site-media-dialog");
+  await expect(dialog).toBeVisible();
+  await dialog.locator("[data-media-file]").setInputFiles("assets/images/hero-classroom.jpg");
+  await expect(dialog.locator("[data-media-save]")).toBeEnabled({ timeout: 20_000 });
+  await dialog.locator('[data-media-focal-grid] button[data-x="100"][data-y="0"]').click();
+  await dialog.locator("[data-media-save]").click();
+  await expect(dialog).not.toBeVisible({ timeout: 20_000 });
+  expect(mocked.getMediaUploadCount()).toBe(1);
+  await expect(hero).toHaveAttribute("data-site-media-custom", "true");
+  await expect(hero.locator("img")).toHaveAttribute("src", "/assets/images/volunteers-1200.webp");
+
+  await hero.hover();
+  await page.locator(".site-media-edit").click();
+  page.once("dialog", (nativeDialog) => nativeDialog.accept());
+  await page.locator("[data-media-restore]").click();
+  await expect(dialog).not.toBeVisible();
+  await expect(hero).not.toHaveAttribute("data-site-media-custom", "true");
+  await expect(hero.locator("img")).toHaveAttribute("src", /hero-classroom\.jpg$/);
+  expect(mocked.requests.some((request) => request.startsWith("POST "))).toBe(true);
+  expect(mocked.requests.some((request) => request.startsWith("DELETE "))).toBe(true);
+});
+
+test("Hero compression failure never sends an upload request", async ({ page }) => {
+  const mocked = await mockApplication(page);
+  await page.goto("/");
+  await page.locator('[data-site-media-slot="home.hero"]').hover();
+  await page.locator(".site-media-edit").click();
+  await page.locator("[data-media-file]").setInputFiles({
+    name: "broken.png",
+    mimeType: "image/png",
+    buffer: Buffer.from("not an image"),
+  });
+  await expect(page.locator("[data-media-save]")).toBeDisabled();
+  expect(mocked.getMediaUploadCount()).toBe(0);
+  expect(mocked.requests.some((request) => request.startsWith("POST "))).toBe(false);
 });
 
 test("team directory renders API data, switches language, and excludes generic pencils", async ({ page }) => {

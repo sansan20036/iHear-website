@@ -46,6 +46,18 @@ try {
   const hasTeamTables = Boolean(teamTables.people && teamTables.profiles);
   const teamPeople = hasTeamTables ? await sql`SELECT * FROM team_people ORDER BY id` : [];
   const teamProfiles = hasTeamTables ? await sql`SELECT * FROM team_profiles ORDER BY id` : [];
+  const [mediaTables] = await sql`
+    SELECT
+      to_regclass('public.site_media_assets') IS NOT NULL AS assets,
+      to_regclass('public.site_media_variants') IS NOT NULL AS variants
+  `;
+  const hasSiteMediaTables = Boolean(mediaTables.assets && mediaTables.variants);
+  const siteMediaAssets = hasSiteMediaTables
+    ? await sql`SELECT * FROM site_media_assets ORDER BY slot`
+    : [];
+  const siteMediaVariants = hasSiteMediaTables
+    ? await sql`SELECT * FROM site_media_variants ORDER BY slot, width`
+    : [];
   const schemaMigrations = await sql`SELECT * FROM public.schema_migrations ORDER BY version`;
   const constraints = await sql`
     SELECT
@@ -64,6 +76,8 @@ try {
         'localized_content_overrides',
         'team_people',
         'team_profiles',
+        'site_media_assets',
+        'site_media_variants',
         'schema_migrations',
         'site_content_revisions'
       )
@@ -87,6 +101,8 @@ try {
         'localized_content_overrides',
         'team_people',
         'team_profiles',
+        'site_media_assets',
+        'site_media_variants',
         'schema_migrations',
         'site_content_revisions'
       )
@@ -95,7 +111,7 @@ try {
 
   const payload = {
     format: "ihear-postgres-backup",
-    version: hasLocalizedContent ? 3 : 2,
+    version: hasSiteMediaTables ? 4 : hasLocalizedContent ? 3 : 2,
     createdAt: new Date().toISOString(),
     tables: {
       impact_milestones: impactMilestones,
@@ -105,6 +121,9 @@ try {
         ? { localized_content_overrides: localizedContentOverrides }
         : {}),
       ...(hasTeamTables ? { team_people: teamPeople, team_profiles: teamProfiles } : {}),
+      ...(hasSiteMediaTables
+        ? { site_media_assets: siteMediaAssets, site_media_variants: siteMediaVariants }
+        : {}),
       schema_migrations: schemaMigrations,
     },
     schema: {
@@ -140,6 +159,12 @@ try {
         : {}),
       ...(hasTeamTables
         ? { team_people: teamPeople.length, team_profiles: teamProfiles.length }
+        : {}),
+      ...(hasSiteMediaTables
+        ? {
+            site_media_assets: siteMediaAssets.length,
+            site_media_variants: siteMediaVariants.length,
+          }
         : {}),
       schema_migrations: schemaMigrations.length,
     },

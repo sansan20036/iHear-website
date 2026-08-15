@@ -21,7 +21,7 @@ const htmlFiles = [
 ];
 
 const passthroughFiles = ["robots.txt", "sitemap.xml", "CNAME", "favicon.ico"];
-const clientAssetVersion = "20260802-performance-v4";
+const clientAssetVersion = "20260816-site-media-v1";
 
 async function copyDir(source, target) {
   await mkdir(target, { recursive: true });
@@ -48,7 +48,7 @@ function withClientScripts(html, file) {
     "\n"
   );
   const withoutExisting = withoutCloudflareBeacon.replace(
-    /\s*<script\s+src=["']\/?assets\/(?:site|auth|live-content|inline-edit|impact-milestones|site-metrics|team-profiles)\.js(?:\?[^"']*)?["']\s+defer><\/script>\s*/g,
+    /\s*<script\s+src=["']\/?assets\/(?:site|auth|live-content|inline-edit|impact-milestones|site-metrics|site-media|team-profiles|vendor\/browser-image-compression)\.js(?:\?[^"']*)?["']\s+defer><\/script>\s*/g,
     "\n"
   );
 
@@ -76,6 +76,10 @@ function withClientScripts(html, file) {
     `  <script src="/assets/auth.js?v=${clientAssetVersion}" defer></script>`,
     `  <script src="/assets/live-content.js?v=${clientAssetVersion}" defer></script>`,
   ];
+  if (html.includes("data-site-media-slot")) {
+    scripts.push(`  <script src="/assets/vendor/browser-image-compression.js?v=${clientAssetVersion}" defer></script>`);
+    scripts.push(`  <script src="/assets/site-media.js?v=${clientAssetVersion}" defer></script>`);
+  }
   if (html.includes("data-impact-milestones")) {
     scripts.push(`  <script src="/assets/impact-milestones.js?v=${clientAssetVersion}" defer></script>`);
   }
@@ -99,6 +103,11 @@ function withClientScripts(html, file) {
 await rm(publicDir, { recursive: true, force: true });
 await mkdir(publicDir, { recursive: true });
 await copyDir(path.join(root, "assets"), path.join(publicDir, "assets"));
+await mkdir(path.join(publicDir, "assets", "vendor"), { recursive: true });
+await copyFile(
+  path.join(root, "node_modules", "browser-image-compression", "dist", "browser-image-compression.js"),
+  path.join(publicDir, "assets", "vendor", "browser-image-compression.js"),
+);
 
 for (const file of htmlFiles) {
   const sourcePath = path.join(root, file);

@@ -99,3 +99,21 @@ maintenance plan if a real Production recovery is required.
   drill succeeded.
 - Inspect artifact retention and GitHub Actions failures.
 - Rotate database and monitoring credentials immediately after suspected exposure.
+
+## 7. Hero image deployment check
+
+Before enabling administrator image replacement in Production:
+
+1. Run `npm run db:migrate` and confirm Migration 011 is tracked.
+2. Run `npm run storage:configure-site-media` using the Production Supabase URL and
+   service-role key. Never expose that key as a `NEXT_PUBLIC_` variable.
+3. Confirm the `site-media` bucket is public-read, WebP-only, and limited to 1MB per
+   object.
+4. Confirm `/assets/vendor/browser-image-compression.js` returns HTTP 200 with a
+   JavaScript content type in the Vercel Preview.
+5. Upload a JPEG larger than 4.5MB through the admin dialog and confirm the browser
+   sends a multipart request below 1.25MiB, then restore the repository default.
+
+Application JSON and PostgreSQL backups preserve image metadata and immutable object
+paths, not the Supabase Storage binary objects. Include the bucket in the separate
+Supabase backup/recovery policy and test access to retained objects during reviews.

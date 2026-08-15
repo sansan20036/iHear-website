@@ -5,6 +5,7 @@ backups/
 scheduling/
 node_modules/
 .next/
+.vercel/
 out/
 output/
 public/

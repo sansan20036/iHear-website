@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.11.1
+          cache: npm
+
+      - name: Pin npm used by the lockfile
+        run: npm install --global npm@11.6.2
+
+      - name: Install dependencies including native optional packages
+        run: npm ci --include=optional
+
+      - name: Verify sharp on Linux
+        run: node -e "require('sharp')({ create:{ width:8,height:8,channels:3,background:'#263974' } }).webp().toBuffer().then(b=>{ if(!b.length) process.exit(1) })"
+
+      - name: Run complete project checks
+        run: npm run check
+
+      - name: Verify self-hosted compression library
+        run: test -s public/assets/vendor/browser-image-compression.js

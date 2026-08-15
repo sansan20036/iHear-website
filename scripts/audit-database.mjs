@@ -30,6 +30,8 @@ const expectedTables = [
   "impact_milestones",
   "schema_migrations",
   "site_content_revisions",
+  "site_media_assets",
+  "site_media_variants",
   "team_people",
   "team_profiles",
 ];
@@ -65,6 +67,22 @@ const expectedConstraints = [
   "site_content_revisions_pkey",
   "site_content_revisions_revision",
   "site_content_revisions_scope",
+  "site_media_assets_actor_length",
+  "site_media_assets_alt_length",
+  "site_media_assets_focal_grid",
+  "site_media_assets_pkey",
+  "site_media_assets_slot_length",
+  "site_media_assets_timestamp_order",
+  "site_media_assets_version_positive",
+  "site_media_variants_byte_size_range",
+  "site_media_variants_dimensions_positive",
+  "site_media_variants_mime_webp",
+  "site_media_variants_pkey",
+  "site_media_variants_public_url_https",
+  "site_media_variants_slot_fkey",
+  "site_media_variants_storage_path_length",
+  "site_media_variants_storage_path_unique",
+  "site_media_variants_width_allowed",
   "team_people_consent_pair",
   "team_people_pkey",
   "team_people_timestamp_order",
@@ -79,6 +97,7 @@ const expectedIndexes = [
   "api_rate_limits_updated_at_idx",
   "impact_milestones_unique_published_metrics_period",
   "localized_content_overrides_updated_at_idx",
+  "site_media_assets_updated_at_idx",
   "team_profiles_public_order_idx",
 ];
 
@@ -87,6 +106,7 @@ const expectedTriggers = [
   "localized_content_overrides_live_revision",
   "impact_milestone_settings_live_revision",
   "impact_milestones_live_revision",
+  "site_media_assets_live_revision",
   "team_people_live_revision",
   "team_profiles_live_revision",
 ];
@@ -104,6 +124,8 @@ try {
         'localized_content_overrides',
         'schema_migrations',
         'site_content_revisions',
+        'site_media_assets',
+        'site_media_variants',
         'team_people',
         'team_profiles'
       ))
@@ -122,7 +144,7 @@ try {
     JOIN pg_class AS relation ON relation.oid = con.conrelid
     JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
     WHERE namespace.nspname = 'public'
-      AND relation.relname IN ('api_rate_limits', 'impact_milestones', 'content_overrides', 'localized_content_overrides', 'site_content_revisions', 'team_people', 'team_profiles')
+      AND relation.relname IN ('api_rate_limits', 'impact_milestones', 'content_overrides', 'localized_content_overrides', 'site_content_revisions', 'site_media_assets', 'site_media_variants', 'team_people', 'team_profiles')
     ORDER BY relation.relname, con.conname
   `;
 
@@ -136,7 +158,7 @@ try {
     JOIN pg_class AS index_relation ON index_relation.oid = idx.indexrelid
     JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
     WHERE namespace.nspname = 'public'
-      AND relation.relname IN ('api_rate_limits', 'impact_milestones', 'localized_content_overrides', 'team_people', 'team_profiles')
+      AND relation.relname IN ('api_rate_limits', 'impact_milestones', 'localized_content_overrides', 'site_media_assets', 'site_media_variants', 'team_people', 'team_profiles')
     ORDER BY index_relation.relname
   `;
 
@@ -144,7 +166,7 @@ try {
     SELECT schemaname, tablename, policyname, roles, cmd
     FROM pg_policies
     WHERE schemaname = 'public'
-      AND tablename IN ('api_rate_limits', 'impact_milestones', 'content_overrides', 'localized_content_overrides', 'site_content_revisions', 'team_people', 'team_profiles')
+      AND tablename IN ('api_rate_limits', 'impact_milestones', 'content_overrides', 'localized_content_overrides', 'site_content_revisions', 'site_media_assets', 'site_media_variants', 'team_people', 'team_profiles')
     ORDER BY tablename, policyname
   `;
 
@@ -161,6 +183,8 @@ try {
         'localized_content_overrides',
         'schema_migrations',
         'site_content_revisions',
+        'site_media_assets',
+        'site_media_variants',
         'team_people',
         'team_profiles'
       )
@@ -287,6 +311,7 @@ try {
         'localized_content_overrides_live_revision',
         'impact_milestone_settings_live_revision',
         'impact_milestones_live_revision',
+        'site_media_assets_live_revision',
         'team_people_live_revision',
         'team_profiles_live_revision'
       )
@@ -365,6 +390,34 @@ try {
     FROM api_rate_limits
   `;
 
+  const [invalidSiteMedia] = await sql`
+    SELECT
+      (SELECT COUNT(*) FROM site_media_assets
+        WHERE char_length(slot) NOT BETWEEN 1 AND 100
+          OR char_length(alt_en) NOT BETWEEN 2 AND 300
+          OR char_length(alt_zh_hant) NOT BETWEEN 2 AND 300
+          OR char_length(alt_zh_hans) NOT BETWEEN 2 AND 300
+          OR focal_x NOT IN (0, 50, 100)
+          OR focal_y NOT IN (0, 50, 100)
+          OR record_version < 1
+          OR char_length(created_by) NOT BETWEEN 1 AND 320
+          OR char_length(updated_by) NOT BETWEEN 1 AND 320
+          OR updated_at < created_at
+      )::INTEGER AS invalid_assets,
+      (SELECT COUNT(*) FROM site_media_variants
+        WHERE width NOT IN (480, 800, 1200)
+          OR pixel_width < 1
+          OR pixel_height < 1
+          OR byte_size NOT BETWEEN 1 AND 1048576
+          OR mime_type <> 'image/webp'
+          OR public_url NOT LIKE 'https://%'
+          OR char_length(storage_path) NOT BETWEEN 1 AND 500
+      )::INTEGER AS invalid_variants,
+      (SELECT COUNT(*) FROM site_media_assets AS asset
+        WHERE (SELECT COUNT(*) FROM site_media_variants AS variant WHERE variant.slot = asset.slot) <> 3
+      )::INTEGER AS incomplete_variant_sets
+  `;
+
   const counts = await sql`
     SELECT 'api_rate_limits' AS table_name, COUNT(*)::INTEGER AS row_count
     FROM api_rate_limits
@@ -389,6 +442,12 @@ try {
     UNION ALL
     SELECT 'site_content_revisions', COUNT(*)::INTEGER
     FROM site_content_revisions
+    UNION ALL
+    SELECT 'site_media_assets', COUNT(*)::INTEGER
+    FROM site_media_assets
+    UNION ALL
+    SELECT 'site_media_variants', COUNT(*)::INTEGER
+    FROM site_media_variants
     ORDER BY table_name
   `;
 
@@ -469,6 +528,7 @@ try {
     ...Object.values(invalidTeam),
     ...Object.values(invalidRevisions),
     ...Object.values(invalidRateLimits),
+    ...Object.values(invalidSiteMedia),
   ].map(Number);
   const disabledRls = rowLevelSecurity
     .filter((table) => !table.enabled)
@@ -502,6 +562,7 @@ try {
     invalidTeam,
     invalidRevisions,
     invalidRateLimits,
+    invalidSiteMedia,
     issues: {
       missingTables,
       missingConstraints,

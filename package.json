@@ -1,4 +1,8 @@
 {
+  "packageManager": "npm@11.6.2",
+  "engines": {
+    "node": "24.x"
+  },
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "build": "npm run optimize:assets && node scripts/prepare-public.mjs && next build",
@@ -6,7 +10,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit --incremental false",
     "test": "npm run test:api && npm run test:operations && npm run test:e2e",
-    "test:api": "vitest run tests/api-routes.test.mjs tests/team-api.test.mjs tests/rate-limit.test.mjs",
+    "test:api": "vitest run tests/api-routes.test.mjs tests/team-api.test.mjs tests/rate-limit.test.mjs tests/site-media-api.test.mjs tests/site-media-image.test.mjs",
     "test:operations": "vitest run tests/operations-config.test.mjs",
     "test:e2e": "node scripts/prepare-public.mjs && playwright test",
     "check": "npm run lint && npm run typecheck && npm test && npm run build",
@@ -19,9 +23,12 @@
     "db:migrate-content": "node scripts/migrate-content-overrides.mjs",
     "db:check-content": "node scripts/check-content-db.mjs",
     "db:verify-backup": "node scripts/verify-backup.mjs",
+    "storage:configure-site-media": "node scripts/configure-site-media-storage.mjs",
     "optimize:assets": "node scripts/optimize-static-images.mjs"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.112.3",
+    "browser-image-compression": "2.0.2",
     "next": "^16.2.11",
     "next-auth": "^5.0.0-beta.32",
     "postgres": "^3.4.9",

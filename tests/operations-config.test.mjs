@@ -69,4 +69,29 @@ describe("production operations configuration", () => {
     expect(workflow).toContain('gh issue create --title "Production uptime alert"');
     expect(workflow).toContain('gh issue close "$issue_number" --reason completed');
   });
+
+  it("keeps Hero media recoverable and deploys its self-hosted compressor", async () => {
+    const backup = await read("scripts/backup-database.mjs");
+    const verifier = await read("scripts/verify-backup-file.mjs");
+    const restoreVerifier = await read("scripts/verify-backup.mjs");
+    const drill = await read(".github/workflows/monthly-restore-drill.yml");
+    const migration = await read("db/migrations/011_site_media_assets.sql");
+    const publicBuild = await read("scripts/prepare-public.mjs");
+    const ci = await read(".github/workflows/ci.yml");
+
+    expect(backup).toContain("site_media_assets: siteMediaAssets");
+    expect(backup).toContain("site_media_variants: siteMediaVariants");
+    expect(verifier).toContain("[1, 2, 3, 4]");
+    expect(verifier).toContain('requiredMigration = backup.payload.version >= 4 ? "011"');
+    expect(restoreVerifier).toContain("site_media_assets: siteMediaAssets.length");
+    expect(restoreVerifier).toContain("INSERT INTO site_media_variants");
+    expect(drill).toContain("to_regclass('public.site_media_assets')");
+    expect(drill).toContain("version = '011'");
+    expect(migration).toContain("ENABLE ROW LEVEL SECURITY");
+    expect(migration).toContain("site_media_assets_live_revision");
+    expect(publicBuild).toContain('"browser-image-compression.js"');
+    expect(ci).toContain("Verify sharp on Linux");
+    expect(ci).toContain(".webp().toBuffer()");
+    expect(ci).toContain("test -s public/assets/vendor/browser-image-compression.js");
+  });
 });

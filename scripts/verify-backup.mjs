@@ -69,6 +69,17 @@ async function currentCounts(client) {
   const teamProfiles = teamTables.profiles
     ? await client`SELECT COUNT(*)::INTEGER AS count FROM team_profiles`
     : [{ count: 0 }];
+  const [mediaTables] = await client`
+    SELECT
+      to_regclass('public.site_media_assets') IS NOT NULL AS assets,
+      to_regclass('public.site_media_variants') IS NOT NULL AS variants
+  `;
+  const siteMediaAssets = mediaTables.assets
+    ? await client`SELECT COUNT(*)::INTEGER AS count FROM site_media_assets`
+    : [{ count: 0 }];
+  const siteMediaVariants = mediaTables.variants
+    ? await client`SELECT COUNT(*)::INTEGER AS count FROM site_media_variants`
+    : [{ count: 0 }];
   return {
     impact_milestones: Number(impact[0].count),
     impact_milestone_settings: Number(settings[0].count),
@@ -76,6 +87,8 @@ async function currentCounts(client) {
     localized_content_overrides: Number(localizedContent[0].count),
     team_people: Number(teamPeople[0].count),
     team_profiles: Number(teamProfiles[0].count),
+    site_media_assets: Number(siteMediaAssets[0].count),
+    site_media_variants: Number(siteMediaVariants[0].count),
   };
 }
 
@@ -118,7 +131,7 @@ try {
   }
   if (
     backup.payload?.format !== "ihear-postgres-backup" ||
-    ![1, 2, 3].includes(backup.payload?.version)
+    ![1, 2, 3, 4].includes(backup.payload?.version)
   ) {
     throw new Error("Unsupported backup format.");
   }
@@ -136,6 +149,8 @@ try {
   const schemaMigrations = tables.schema_migrations;
   const teamPeople = backup.payload.version >= 2 ? tables.team_people : [];
   const teamProfiles = backup.payload.version >= 2 ? tables.team_profiles : [];
+  const siteMediaAssets = backup.payload.version >= 4 ? tables.site_media_assets : [];
+  const siteMediaVariants = backup.payload.version >= 4 ? tables.site_media_variants : [];
 
   if (
     !Array.isArray(impactMilestones) ||
@@ -144,7 +159,9 @@ try {
     !Array.isArray(localizedContentOverrides) ||
     !Array.isArray(schemaMigrations) ||
     !Array.isArray(teamPeople) ||
-    !Array.isArray(teamProfiles)
+    !Array.isArray(teamProfiles) ||
+    !Array.isArray(siteMediaAssets) ||
+    !Array.isArray(siteMediaVariants)
   ) {
     throw new Error("Backup is missing one or more required tables.");
   }
@@ -160,6 +177,9 @@ try {
   assertUnique(schemaMigrations, (row) => row.version, "schema_migrations");
   assertUnique(teamPeople, (row) => row.id, "team_people");
   assertUnique(teamProfiles, (row) => row.id, "team_profiles");
+  assertUnique(siteMediaAssets, (row) => row.slot, "site_media_assets");
+  assertUnique(siteMediaVariants, (row) => `${row.slot}\u0000${row.width}`, "site_media_variants");
+  assertUnique(siteMediaVariants, (row) => row.storage_path, "site_media_variants.storage_path");
 
   const countsBefore = await currentCounts(sql);
   const revisionsBefore = await currentRevisions(sql);
@@ -407,6 +427,70 @@ try {
         }
       }
 
+      for (const row of siteMediaAssets) {
+        await transaction`
+          INSERT INTO site_media_assets (
+            slot, alt_en, alt_zh_hant, alt_zh_hans, focal_x, focal_y,
+            record_version, created_at, created_by, updated_at, updated_by
+          ) VALUES (
+            ${row.slot}, ${row.alt_en}, ${row.alt_zh_hant}, ${row.alt_zh_hans},
+            ${row.focal_x}, ${row.focal_y}, ${row.record_version}, ${row.created_at},
+            ${row.created_by}, ${row.updated_at}, ${row.updated_by}
+          )
+          ON CONFLICT (slot) DO UPDATE SET
+            alt_en = EXCLUDED.alt_en,
+            alt_zh_hant = EXCLUDED.alt_zh_hant,
+            alt_zh_hans = EXCLUDED.alt_zh_hans,
+            focal_x = EXCLUDED.focal_x,
+            focal_y = EXCLUDED.focal_y,
+            record_version = EXCLUDED.record_version,
+            created_at = EXCLUDED.created_at,
+            created_by = EXCLUDED.created_by,
+            updated_at = EXCLUDED.updated_at,
+            updated_by = EXCLUDED.updated_by
+        `;
+      }
+
+      for (const row of siteMediaVariants) {
+        await transaction`
+          INSERT INTO site_media_variants (
+            slot, width, pixel_width, pixel_height, byte_size, mime_type,
+            public_url, storage_path
+          ) VALUES (
+            ${row.slot}, ${row.width}, ${row.pixel_width}, ${row.pixel_height},
+            ${row.byte_size}, ${row.mime_type}, ${row.public_url}, ${row.storage_path}
+          )
+          ON CONFLICT (slot, width) DO UPDATE SET
+            pixel_width = EXCLUDED.pixel_width,
+            pixel_height = EXCLUDED.pixel_height,
+            byte_size = EXCLUDED.byte_size,
+            mime_type = EXCLUDED.mime_type,
+            public_url = EXCLUDED.public_url,
+            storage_path = EXCLUDED.storage_path
+        `;
+      }
+
+      if (siteMediaAssets.length) {
+        const restored = await transaction`
+          SELECT slot, alt_en, alt_zh_hant, alt_zh_hans, focal_x, focal_y, record_version
+          FROM site_media_assets
+          WHERE slot IN ${transaction(siteMediaAssets.map((row) => row.slot))}
+        `;
+        const bySlot = new Map(restored.map((row) => [row.slot, row]));
+        for (const row of siteMediaAssets) {
+          const value = bySlot.get(row.slot);
+          if (
+            !value || value.alt_en !== row.alt_en || value.alt_zh_hant !== row.alt_zh_hant
+            || value.alt_zh_hans !== row.alt_zh_hans
+            || Number(value.focal_x) !== Number(row.focal_x)
+            || Number(value.focal_y) !== Number(row.focal_y)
+            || Number(value.record_version) !== Number(row.record_version)
+          ) {
+            throw new Error(`Site media asset did not round-trip: ${row.slot}`);
+          }
+        }
+      }
+
       const restoredCounts = await currentCounts(transaction);
       for (const [tableName, expectedRows] of Object.entries({
         impact_milestones: impactMilestones.length,
@@ -418,6 +502,12 @@ try {
         ...(backup.payload.version >= 2
           ? { team_people: teamPeople.length, team_profiles: teamProfiles.length }
           : {}),
+        ...(backup.payload.version >= 4
+          ? {
+              site_media_assets: siteMediaAssets.length,
+              site_media_variants: siteMediaVariants.length,
+            }
+          : {}),
       })) {
         if (restoredCounts[tableName] < expectedRows) {
           throw new Error(`Restore verification produced too few rows for ${tableName}.`);
@@ -428,7 +518,9 @@ try {
         const transactionRevisionsAfter = await currentRevisions(transaction);
         const expectedScopes = [
           ...(impactMilestones.length || impactMilestoneSettings.length ? ["impact"] : []),
-          ...(contentOverrides.length || localizedContentOverrides.length ? ["content"] : []),
+          ...(contentOverrides.length || localizedContentOverrides.length || siteMediaAssets.length
+            ? ["content"]
+            : []),
           ...(teamPeople.length || teamProfiles.length ? ["team"] : []),
         ];
         for (const scope of expectedScopes) {
@@ -471,6 +563,8 @@ try {
       localized_content_overrides: localizedContentOverrides.length,
       team_people: teamPeople.length,
       team_profiles: teamProfiles.length,
+      site_media_assets: siteMediaAssets.length,
+      site_media_variants: siteMediaVariants.length,
       schema_migrations: schemaMigrations.length,
     },
   }));
