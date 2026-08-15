@@ -1,67 +1,67 @@
 (function () {
   "use strict";
 
-  const SLOT = "home.hero";
-  const API_URL = `/api/site-media/${encodeURIComponent(SLOT)}`;
   const VENDOR_URL = "/assets/vendor/browser-image-compression.js";
   const MAX_ORIGINAL_BYTES = 20 * 1024 * 1024;
   const MAX_COMPRESSED_BYTES = Math.floor(0.95 * 1024 * 1024);
   const ALLOWED_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
   const FOCAL_VALUES = [0, 50, 100];
-  const DEFAULT_ALT = {
-    en: "Students raising their hands in an inclusive classroom",
-    zhHant: "學生在共融教室中舉手",
-    zhHans: "学生在融合课堂中举手",
-  };
   const copy = {
     en: {
-      edit: "Change image", title: "Change the Hero image", intro: "Upload a photo, preview the crop, and describe it for each language.",
+      edit: "Change image", title: "Change image", intro: "Upload a photo, preview the crop, and describe it for each language.",
       drop: "Drop an image here or choose a file", formats: "PNG, JPEG, or WebP · up to 20MB", choose: "Choose image",
       altEn: "English image description", altZhHant: "Traditional Chinese image description", altZhHans: "Simplified Chinese image description",
       focal: "Choose the crop focus", cancel: "Cancel", save: "Save image", restore: "Restore default image",
       restoring: "Restoring…", optimizing: "Optimizing image…", uploading: "Uploading…", processing: "Server is preparing responsive images…",
-      ready: "Image ready to upload", saved: "Hero image updated", restored: "Default Hero image restored",
+      ready: "Image ready to upload", saved: "Image updated", restored: "Default image restored",
       invalidType: "Choose a PNG, JPEG, or WebP image.", tooLarge: "The original image must be 20MB or smaller.",
       compressionFailed: "The image could not be optimized. No file was uploaded.", invalidOutput: "The optimized image is invalid or larger than 0.95MB.",
       altRequired: "Complete all three image descriptions using 2–300 characters.", failed: "The image could not be updated.",
       forbidden: "Your administrator session has expired.", conflict: "Another administrator changed this image. Reload and try again.",
-      confirmRestore: "Restore the original Hero image? The current custom image will be removed.", liveBlocked: "A newer Hero image is available. Finish or cancel this edit to refresh.",
+      confirmRestore: "Restore the original image? The current custom image will be removed.", liveBlocked: "A newer image is available. Finish or cancel this edit to refresh.",
       positions: ["Top left", "Top center", "Top right", "Center left", "Center", "Center right", "Bottom left", "Bottom center", "Bottom right"],
     },
     zhHant: {
-      edit: "更換圖片", title: "更換 Hero 主圖", intro: "上傳照片、預覽裁切位置，並填寫三種語言的圖片描述。",
+      edit: "更換圖片", title: "更換圖片", intro: "上傳照片、預覽裁切位置，並填寫三種語言的圖片描述。",
       drop: "拖曳圖片到這裡，或點擊選擇檔案", formats: "PNG、JPEG 或 WebP · 最大 20MB", choose: "選擇圖片",
       altEn: "英文圖片描述", altZhHant: "繁體中文圖片描述", altZhHans: "簡體中文圖片描述",
       focal: "選擇裁切焦點", cancel: "取消", save: "確認儲存", restore: "恢復預設圖片",
       restoring: "正在恢復…", optimizing: "正在最佳化圖片…", uploading: "正在上傳…", processing: "伺服器正在產生響應式圖片…",
-      ready: "圖片已準備好上傳", saved: "Hero 圖片已更新", restored: "已恢復預設 Hero 圖片",
+      ready: "圖片已準備好上傳", saved: "圖片已更新", restored: "已恢復預設圖片",
       invalidType: "請選擇 PNG、JPEG 或 WebP 圖片。", tooLarge: "原始圖片不可超過 20MB。",
       compressionFailed: "無法最佳化圖片，未送出任何檔案。", invalidOutput: "最佳化結果無效或超過 0.95MB。",
       altRequired: "三種語言的圖片描述都必須填寫 2–300 個字元。", failed: "無法更新圖片。",
       forbidden: "管理員登入已失效。", conflict: "另一位管理員已更改圖片，請重新整理後再試。",
-      confirmRestore: "確定恢復原始 Hero 圖片？目前的自訂圖片將被移除。", liveBlocked: "已有較新的 Hero 圖片，請先完成或取消目前編輯。",
+      confirmRestore: "確定恢復原始圖片？目前的自訂圖片將被移除。", liveBlocked: "已有較新的圖片，請先完成或取消目前編輯。",
       positions: ["左上", "中上", "右上", "左中", "正中", "右中", "左下", "中下", "右下"],
     },
     zhHans: {
-      edit: "更换图片", title: "更换 Hero 主图", intro: "上传照片、预览裁切位置，并填写三种语言的图片描述。",
+      edit: "更换图片", title: "更换图片", intro: "上传照片、预览裁切位置，并填写三种语言的图片描述。",
       drop: "拖曳图片到这里，或点击选择文件", formats: "PNG、JPEG 或 WebP · 最大 20MB", choose: "选择图片",
       altEn: "英文图片描述", altZhHant: "繁体中文图片描述", altZhHans: "简体中文图片描述",
       focal: "选择裁切焦点", cancel: "取消", save: "确认保存", restore: "恢复默认图片",
       restoring: "正在恢复…", optimizing: "正在优化图片…", uploading: "正在上传…", processing: "服务器正在生成响应式图片…",
-      ready: "图片已准备好上传", saved: "Hero 图片已更新", restored: "已恢复默认 Hero 图片",
+      ready: "图片已准备好上传", saved: "图片已更新", restored: "已恢复默认图片",
       invalidType: "请选择 PNG、JPEG 或 WebP 图片。", tooLarge: "原始图片不可超过 20MB。",
       compressionFailed: "无法优化图片，未发送任何文件。", invalidOutput: "优化结果无效或超过 0.95MB。",
       altRequired: "三种语言的图片描述都必须填写 2–300 个字符。", failed: "无法更新图片。",
       forbidden: "管理员登录已失效。", conflict: "另一位管理员已更改图片，请刷新后重试。",
-      confirmRestore: "确定恢复原始 Hero 图片？当前的自定义图片将被删除。", liveBlocked: "已有较新的 Hero 图片，请先完成或取消当前编辑。",
+      confirmRestore: "确定恢复原始图片？当前的自定义图片将被删除。", liveBlocked: "已有较新的图片，请先完成或取消当前编辑。",
       positions: ["左上", "中上", "右上", "左中", "正中", "右中", "左下", "中下", "右下"],
     },
   };
 
-  const host = document.querySelector(`[data-site-media-slot="${SLOT}"]`);
+  const hosts = Array.from(document.querySelectorAll("[data-site-media-slot]"));
+  if (!hosts.length) return;
+  let currentSession = window.iHearAuth?.getSession?.() || null;
+
+  function createController(host) {
+  const slot = host.getAttribute("data-site-media-slot") || "";
+  if (!slot) return null;
+  const API_URL = `/api/site-media/${encodeURIComponent(slot)}`;
   const picture = host?.querySelector("picture");
   const image = picture?.querySelector("img");
-  if (!host || !picture || !image) return;
+  if (!picture || !image) return null;
 
   const defaults = {
     sources: Array.from(picture.querySelectorAll("source")).map((source) => ({
@@ -71,11 +71,14 @@
       type: source.getAttribute("type") || "",
     })),
     src: image.getAttribute("src") || "",
-    alt: { ...DEFAULT_ALT },
+    alt: {
+      en: host.dataset.siteMediaAltEn || image.alt || "Site image",
+      zhHant: host.dataset.siteMediaAltZhHant || host.dataset.siteMediaAltEn || image.alt || "網站圖片",
+      zhHans: host.dataset.siteMediaAltZhHans || host.dataset.siteMediaAltEn || image.alt || "网站图片",
+    },
     objectPosition: image.style.objectPosition || "50% 50%",
   };
 
-  let currentSession = window.iHearAuth?.getSession?.() || null;
   let currentItem = null;
   let dialog = null;
   let editButton = null;
@@ -146,11 +149,8 @@
     );
   }
 
-  async function refresh() {
-    const response = await fetch("/api/site-media", { credentials: "same-origin", cache: "no-store" });
-    if (!response.ok) throw new Error("site media unavailable");
-    const data = await response.json();
-    currentItem = data?.items?.[SLOT] || null;
+  function refresh(data) {
+    currentItem = data?.items?.[slot] || null;
     applyItem(currentItem);
     renderAdminControl();
     if (dialog?.open && !dirty) populateDialog();
@@ -210,6 +210,7 @@
   function createDialog() {
     const node = document.createElement("dialog");
     node.className = "site-media-dialog";
+    node.style.setProperty("--site-media-preview-aspect", host.dataset.siteMediaAspect || "4 / 3.4");
     node.innerHTML = `
       <form method="dialog" class="site-media-form" data-media-form>
         <div class="site-media-dialog-head">
@@ -386,7 +387,7 @@
         signal: compressionController.signal,
         onProgress(value) { setStatus(labels().optimizing, { progress: true, value }); },
       });
-      const safeFile = new File([result], "hero.webp", { type: "image/webp", lastModified: Date.now() });
+      const safeFile = new File([result], "site-media.webp", { type: "image/webp", lastModified: Date.now() });
       if (safeFile === file || safeFile.type !== "image/webp" || safeFile.size < 1 || safeFile.size > MAX_COMPRESSED_BYTES) {
         throw new Error("invalid compressed output");
       }
@@ -430,7 +431,7 @@
       return;
     }
     const form = new FormData();
-    form.append("file", compressedFile, "hero.webp");
+    form.append("file", compressedFile, "site-media.webp");
     form.append("altEn", alt.en);
     form.append("altZhHant", alt.zhHant);
     form.append("altZhHans", alt.zhHans);
@@ -460,8 +461,7 @@
         setBusy(false);
         return;
       }
-      currentItem = data.item;
-      applyItem(currentItem);
+      syncSlot(slot, data.item);
       window.iHearLiveContent?.announce("content", data.revision);
       window.iHearToast?.(labels().saved);
       closeDialog();
@@ -489,8 +489,7 @@
       });
       const data = await response.json().catch(() => null);
       if (!response.ok) throw new Error(requestError(response.status, data));
-      currentItem = null;
-      restoreDefault();
+      syncSlot(slot, null);
       window.iHearLiveContent?.announce("content", data.revision);
       window.iHearToast?.(labels().restored);
       closeDialog();
@@ -502,23 +501,57 @@
     }
   }
 
-  window.addEventListener("ihear:auth", (event) => {
-    currentSession = event.detail?.session || null;
-    renderAdminControl();
-  });
-  window.addEventListener("ihear:language", () => {
+  function languageChanged() {
     renderAdminControl();
     localizeDialog();
     if (currentItem) image.alt = currentItem.alt?.[locale()] || currentItem.alt?.en || defaults.alt.en;
     else image.alt = defaults.alt[locale()] || defaults.alt.en;
+  }
+
+  return {
+    slot,
+    refresh,
+    restoreDefault,
+    renderAdminControl,
+    languageChanged,
+    isDirty: () => Boolean(dialog?.open && dirty),
+    onBlocked: () => window.iHearToast?.(labels().liveBlocked, { error: true }),
+    applyRemoteItem(item) {
+      currentItem = item || null;
+      applyItem(currentItem);
+      if (dialog?.open && !dirty) populateDialog();
+    },
+  };
+  }
+
+  const controllers = hosts.map(createController).filter(Boolean);
+  if (!controllers.length) return;
+
+  function syncSlot(slot, item) {
+    controllers.filter((controller) => controller.slot === slot).forEach((controller) => controller.applyRemoteItem(item));
+  }
+
+  async function refreshAll() {
+    const response = await fetch("/api/site-media", { credentials: "same-origin", cache: "no-store" });
+    if (!response.ok) throw new Error("site media unavailable");
+    const data = await response.json();
+    controllers.forEach((controller) => controller.refresh(data));
+  }
+
+  window.addEventListener("ihear:auth", (event) => {
+    currentSession = event.detail?.session || null;
+    controllers.forEach((controller) => controller.renderAdminControl());
+  });
+  window.addEventListener("ihear:language", () => {
+    controllers.forEach((controller) => controller.languageChanged());
   });
 
   window.iHearLiveContent?.register("content", {
-    refresh,
-    isDirty: () => Boolean(dialog?.open && dirty),
-    onBlocked: () => window.iHearToast?.(labels().liveBlocked, { error: true }),
+    refresh: refreshAll,
+    isDirty: () => controllers.some((controller) => controller.isDirty()),
+    onBlocked: () => controllers.find((controller) => controller.isDirty())?.onBlocked(),
   });
 
-  refresh().catch(() => restoreDefault());
-  renderAdminControl();
+  refreshAll().catch(() => controllers.forEach((controller) => controller.restoreDefault()));
+  controllers.forEach((controller) => controller.renderAdminControl());
 })();

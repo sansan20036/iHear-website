@@ -164,6 +164,16 @@ describe("site media API", () => {
     expect(revalidatePath).toHaveBeenCalledWith("/api/live-revisions");
   });
 
+  test.each(["services.tutoring", "services.outreach", "global.volunteers"])(
+    "POST accepts the declared sitewide slot %s",
+    async (slot) => {
+      const response = await postSiteMedia(uploadRequest(), context(slot));
+      expect(response.status).toBe(200);
+      expect(storage.uploadSiteMediaVariants).toHaveBeenCalledWith(slot, []);
+      expect(store.replaceSiteMediaAsset).toHaveBeenCalledWith(expect.objectContaining({ slot }));
+    },
+  );
+
   test("POST cleans newly uploaded objects when optimistic locking rejects the transaction", async () => {
     store.replaceSiteMediaAsset.mockRejectedValue(new store.SiteMediaConflictError());
     const response = await postSiteMedia(uploadRequest(), context());

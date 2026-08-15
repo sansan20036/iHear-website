@@ -198,7 +198,7 @@ npm run db:migrate
 The command is safe to rerun. Applied migrations are skipped, and changing an
 already-recorded migration file is rejected. Add a new numbered migration instead.
 
-### Hero image storage
+### Sitewide content image storage
 
 Migration 011 adds the versioned `site_media_assets` and `site_media_variants`
 tables. After applying migrations, configure the Supabase Storage bucket from the
@@ -211,6 +211,11 @@ npm run storage:configure-site-media
 The idempotent command creates or updates the configured bucket as public-read,
 WebP-only, with a 1MB object limit. Keep `SUPABASE_SERVICE_ROLE_KEY` on the server;
 the browser never receives it and all writes pass through the authenticated API.
+The current stable media slots are `home.hero`, `services.tutoring`,
+`services.outreach`, and `global.volunteers`. The same global slot can be mounted
+on multiple pages while retaining each page's repository image as its local
+fallback. Branding, icons, and API-owned profile avatars are intentionally managed
+by their existing sources rather than duplicated in `site_media_assets`.
 The application stores immutable `480.webp`, `800.webp`, and `1200.webp` objects
 under a new UUID for every save. Database backups include their metadata and paths;
 the monthly PostgreSQL restore drill does not copy the binary Storage objects, so

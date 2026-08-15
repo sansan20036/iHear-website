@@ -1,4 +1,9 @@
-export const SITE_MEDIA_SLOTS = ["home.hero"] as const;
+export const SITE_MEDIA_SLOTS = [
+  "home.hero",
+  "services.tutoring",
+  "services.outreach",
+  "global.volunteers",
+] as const;
 export type SiteMediaSlot = (typeof SITE_MEDIA_SLOTS)[number];
 
 export type SiteMediaAlt = {

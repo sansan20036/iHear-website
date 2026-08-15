@@ -100,7 +100,7 @@ maintenance plan if a real Production recovery is required.
 - Inspect artifact retention and GitHub Actions failures.
 - Rotate database and monitoring credentials immediately after suspected exposure.
 
-## 7. Hero image deployment check
+## 7. Sitewide content image deployment check
 
 Before enabling administrator image replacement in Production:
 

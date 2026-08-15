@@ -138,7 +138,7 @@ const futureJourneyEvent = {
 async function mockApplication(page, { admin = true } = {}) {
   const requests = [];
   let publishedPayload = null;
-  let mediaItem = null;
+  const mediaItems = {};
   let mediaUploadCount = 0;
   const liveRevisions = {
     content: { revision: "1", updatedAt: "2026-07-31T00:00:00.000Z" },
@@ -177,28 +177,44 @@ async function mockApplication(page, { admin = true } = {}) {
       return route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ version: 1, items: mediaItem ? { "home.hero": mediaItem } : {} }),
+        body: JSON.stringify({ version: 1, items: mediaItems }),
       });
     }
+    const slot = decodeURIComponent(new URL(request.url()).pathname.split("/").pop());
     requests.push(`${method} ${request.url()}`);
     if (method === "DELETE") {
-      mediaItem = null;
+      delete mediaItems[slot];
       return route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ ok: true, slot: "home.hero", revision: "2" }),
+        body: JSON.stringify({ ok: true, slot, revision: "2" }),
       });
     }
     mediaUploadCount += 1;
-    mediaItem = {
-      slot: "home.hero",
-      alt: {
+    const isTutoring = slot === "services.tutoring";
+    const isOutreach = slot === "services.outreach";
+    const isVolunteers = slot === "global.volunteers";
+    const item = {
+      slot,
+      alt: isTutoring ? {
+        en: "Student receiving individual tutoring",
+        zhHant: "學生接受一對一英語輔導",
+        zhHans: "学生接受一对一英语辅导",
+      } : isOutreach ? {
+        en: "Community members attending a hearing seminar",
+        zhHant: "社區成員參與聽力健康講座",
+        zhHans: "社区成员参与听力健康讲座",
+      } : isVolunteers ? {
+        en: "Young volunteers celebrating outdoors",
+        zhHant: "年輕志工在戶外一同慶祝",
+        zhHans: "年轻志愿者在户外一同庆祝",
+      } : {
         en: "Students learning communication skills",
         zhHant: "學生學習溝通技巧",
         zhHans: "学生学习沟通技巧",
       },
-      focalX: 50,
-      focalY: 50,
+      focalX: isTutoring ? 0 : isOutreach ? 100 : 50,
+      focalY: isTutoring ? 100 : isOutreach ? 0 : 50,
       recordVersion: mediaUploadCount,
       updatedAt: "2026-08-16T00:00:00.000Z",
       src: "/assets/images/volunteers-1200.webp",
@@ -212,10 +228,11 @@ async function mockApplication(page, { admin = true } = {}) {
         url: `/assets/images/volunteers-${width}.webp`,
       })),
     };
+    mediaItems[slot] = item;
     return route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ ok: true, item: mediaItem, revision: "2" }),
+      body: JSON.stringify({ ok: true, item, revision: "2" }),
     });
   });
 
@@ -287,7 +304,7 @@ async function mockApplication(page, { admin = true } = {}) {
   return {
     requests,
     getPublishedPayload: () => publishedPayload,
-    getMediaItem: () => mediaItem,
+    getMediaItem: (slot = "home.hero") => mediaItems[slot] || null,
     getMediaUploadCount: () => mediaUploadCount,
     liveRevisions,
   };
@@ -327,7 +344,7 @@ test("Hero image editor compresses before upload and restores the repository fal
 
   const hero = page.locator('[data-site-media-slot="home.hero"]');
   await hero.hover();
-  await page.locator(".site-media-edit").click();
+  await hero.locator(".site-media-edit").click();
   const dialog = page.locator(".site-media-dialog");
   await expect(dialog).toBeVisible();
   await dialog.locator("[data-media-file]").setInputFiles("assets/images/hero-classroom.jpg");
@@ -340,7 +357,7 @@ test("Hero image editor compresses before upload and restores the repository fal
   await expect(hero.locator("img")).toHaveAttribute("src", "/assets/images/volunteers-1200.webp");
 
   await hero.hover();
-  await page.locator(".site-media-edit").click();
+  await hero.locator(".site-media-edit").click();
   page.once("dialog", (nativeDialog) => nativeDialog.accept());
   await page.locator("[data-media-restore]").click();
   await expect(dialog).not.toBeVisible();
@@ -353,8 +370,9 @@ test("Hero image editor compresses before upload and restores the repository fal
 test("Hero compression failure never sends an upload request", async ({ page }) => {
   const mocked = await mockApplication(page);
   await page.goto("/");
-  await page.locator('[data-site-media-slot="home.hero"]').hover();
-  await page.locator(".site-media-edit").click();
+  const hero = page.locator('[data-site-media-slot="home.hero"]');
+  await hero.hover();
+  await hero.locator(".site-media-edit").click();
   await page.locator("[data-media-file]").setInputFiles({
     name: "broken.png",
     mimeType: "image/png",
@@ -363,6 +381,105 @@ test("Hero compression failure never sends an upload request", async ({ page }) 
   await expect(page.locator("[data-media-save]")).toBeDisabled();
   expect(mocked.getMediaUploadCount()).toBe(0);
   expect(mocked.requests.some((request) => request.startsWith("POST "))).toBe(false);
+});
+
+test("sitewide media slots independently update service cards, localized alt text, focus, and fallback", async ({ page }) => {
+  const mocked = await mockApplication(page);
+  await page.goto("/programs");
+
+  const tutoring = page.locator('[data-site-media-slot="services.tutoring"]');
+  const outreach = page.locator('[data-site-media-slot="services.outreach"]');
+  await expect(tutoring).toHaveCount(1);
+  await expect(outreach).toHaveCount(1);
+
+  await tutoring.scrollIntoViewIfNeeded();
+  await tutoring.hover();
+  const tutoringEdit = tutoring.locator(".site-media-edit");
+  await expect(tutoringEdit).toBeVisible();
+  await tutoringEdit.focus();
+  await tutoringEdit.click();
+  let openDialog = page.locator(".site-media-dialog[open]");
+  await openDialog.locator("[data-media-file]").setInputFiles("assets/images/hero-classroom.jpg");
+  await expect(openDialog.locator("[data-media-save]")).toBeEnabled({ timeout: 20_000 });
+  await openDialog.locator('[data-media-focal-grid] button[data-x="0"][data-y="100"]').click();
+  await openDialog.locator("[data-media-save]").click();
+  await expect(openDialog).not.toBeVisible({ timeout: 20_000 });
+
+  await expect(tutoring).toHaveAttribute("data-site-media-custom", "true");
+  await expect(tutoring.locator("img")).toHaveCSS("object-position", "0% 100%");
+  await expect(outreach).not.toHaveAttribute("data-site-media-custom", "true");
+  await page.locator('#langSwitch button[data-lang="zhTW"]').click();
+  await expect(tutoring.locator("img")).toHaveAttribute("alt", "學生接受一對一英語輔導");
+
+  await outreach.scrollIntoViewIfNeeded();
+  await outreach.hover();
+  const outreachEdit = outreach.locator(".site-media-edit");
+  await expect(outreachEdit).toBeVisible();
+  await outreachEdit.focus();
+  await outreachEdit.click();
+  openDialog = page.locator(".site-media-dialog[open]");
+  await openDialog.locator("[data-media-file]").setInputFiles("assets/images/hero-classroom.jpg");
+  await expect(openDialog.locator("[data-media-save]")).toBeEnabled({ timeout: 20_000 });
+  await openDialog.locator('[data-media-focal-grid] button[data-x="100"][data-y="0"]').click();
+  await openDialog.locator("[data-media-save]").click();
+  await expect(openDialog).not.toBeVisible({ timeout: 20_000 });
+
+  await expect(tutoring).toHaveAttribute("data-site-media-custom", "true");
+  await expect(outreach).toHaveAttribute("data-site-media-custom", "true");
+  await expect(outreach.locator("img")).toHaveCSS("object-position", "100% 0%");
+  await expect(outreach.locator("img")).toHaveAttribute("alt", "社區成員參與聽力健康講座");
+
+  await tutoring.scrollIntoViewIfNeeded();
+  await tutoring.hover();
+  await tutoringEdit.focus();
+  await tutoringEdit.click();
+  page.once("dialog", (nativeDialog) => nativeDialog.accept());
+  await page.locator(".site-media-dialog[open] [data-media-restore]").click();
+  await expect(tutoring).not.toHaveAttribute("data-site-media-custom", "true");
+  await expect(tutoring.locator("img")).toHaveAttribute("src", /tutoring-student\.jpg$/);
+  await expect(outreach).toHaveAttribute("data-site-media-custom", "true");
+
+  expect(mocked.getMediaUploadCount()).toBe(2);
+  expect(mocked.requests.some((request) => request.includes("/api/site-media/services.tutoring"))).toBe(true);
+  expect(mocked.requests.some((request) => request.includes("/api/site-media/services.outreach"))).toBe(true);
+});
+
+test("all repository content photos expose stable sitewide media slots", async ({ page }) => {
+  await mockApplication(page);
+  await page.goto("/");
+  await expect(page.locator("[data-site-media-slot]")).toHaveCount(4);
+  await expect(page.locator('[data-site-media-slot="global.volunteers"] .site-media-edit')).toHaveCount(1);
+
+  await page.goto("/programs");
+  await expect(page.locator("[data-site-media-slot]")).toHaveCount(2);
+
+  await page.goto("/get-involved");
+  const volunteers = page.locator('[data-site-media-slot="global.volunteers"]');
+  await expect(volunteers).toHaveCount(1);
+  const volunteersEdit = volunteers.locator(".site-media-edit");
+  await expect(volunteersEdit).toHaveCount(1);
+  await volunteers.scrollIntoViewIfNeeded();
+  await volunteers.hover();
+  await volunteersEdit.focus();
+  await volunteersEdit.press("Enter");
+  let openDialog = page.locator(".site-media-dialog[open]");
+  await openDialog.locator("[data-media-file]").setInputFiles("assets/images/hero-classroom.jpg");
+  await expect(openDialog.locator("[data-media-save]")).toBeEnabled({ timeout: 20_000 });
+  await openDialog.locator("[data-media-save]").click();
+  await expect(openDialog).not.toBeVisible({ timeout: 20_000 });
+  await expect(volunteers).toHaveAttribute("data-site-media-custom", "true");
+  await page.locator('#langSwitch button[data-lang="zhTW"]').click();
+  await expect(volunteers.locator("img")).toHaveAttribute("alt", "年輕志工在戶外一同慶祝");
+
+  await volunteers.scrollIntoViewIfNeeded();
+  await volunteers.hover();
+  await volunteersEdit.focus();
+  await volunteersEdit.press("Enter");
+  openDialog = page.locator(".site-media-dialog[open]");
+  page.once("dialog", (nativeDialog) => nativeDialog.accept());
+  await openDialog.locator("[data-media-restore]").click();
+  await expect(volunteers).not.toHaveAttribute("data-site-media-custom", "true");
+  await expect(volunteers.locator("img")).toHaveAttribute("src", /volunteers\.jpg$/);
 });
 
 test("team directory renders API data, switches language, and excludes generic pencils", async ({ page }) => {
