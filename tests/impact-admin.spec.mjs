@@ -141,6 +141,8 @@ async function mockApplication(page, { admin = true, duplicateAvatar = false } =
   const mediaItems = {};
   let mediaUploadCount = 0;
   let themeSetting = { theme: "warm", recordVersion: 1, updatedAt: "2026-08-17T00:00:00.000Z" };
+  let themeReadOverride = null;
+  let themeGetCount = 0;
   const liveRevisions = {
     content: { revision: "1", updatedAt: "2026-07-31T00:00:00.000Z" },
     impact: { revision: "1", updatedAt: "2026-07-31T00:00:00.000Z" },
@@ -183,7 +185,8 @@ async function mockApplication(page, { admin = true, duplicateAvatar = false } =
       });
     }
     if (request.method() === "GET") {
-      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ version: 1, ...themeSetting }) });
+      themeGetCount += 1;
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ version: 1, ...(themeReadOverride || themeSetting) }) });
     }
     const payload = request.postDataJSON();
     if (payload.expectedVersion !== themeSetting.recordVersion) {
@@ -379,6 +382,8 @@ async function mockApplication(page, { admin = true, duplicateAvatar = false } =
     getMediaItem: (slot = "home.hero") => mediaItems[slot] || null,
     getMediaUploadCount: () => mediaUploadCount,
     getTheme: () => themeSetting,
+    getThemeGetCount: () => themeGetCount,
+    setThemeReadOverride: (value) => { themeReadOverride = value; },
     liveRevisions,
   };
 }
@@ -435,6 +440,27 @@ test("administrator previews, cancels, publishes, and restores the global theme"
   await page.getByRole("button", { name: "Apply theme" }).click();
   await expect(dialog).toBeHidden();
   expect(mocked.getTheme().theme).toBe("warm");
+});
+
+test("published theme cannot be downgraded by a stale live-refresh response", async ({ page }) => {
+  const mocked = await mockApplication(page);
+  await page.goto("/about");
+  await page.getByRole("button", { name: "Change theme" }).click();
+  await page.getByLabel("Lavender Mist").check();
+  const readsBeforeSave = mocked.getThemeGetCount();
+  await page.getByRole("button", { name: "Apply theme" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "lavender");
+  await page.waitForTimeout(100);
+  expect(mocked.getThemeGetCount()).toBe(readsBeforeSave);
+
+  mocked.setThemeReadOverride({ theme: "warm", recordVersion: 1, updatedAt: "2026-08-17T00:00:00.000Z" });
+  await page.evaluate(() => {
+    const channel = new BroadcastChannel("ihear-content-updates");
+    channel.postMessage({ id: `stale-theme-${Date.now()}`, clientId: "regression-test", scope: "theme", revision: "999", timestamp: Date.now() });
+    setTimeout(() => channel.close(), 100);
+  });
+  await expect.poll(() => mocked.getThemeGetCount()).toBeGreaterThan(readsBeforeSave);
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "lavender");
 });
 
 test("theme control is admin-only, localized, keyboard-safe, and mobile-safe", async ({ page }) => {

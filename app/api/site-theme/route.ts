@@ -27,14 +27,15 @@ export async function GET() {
       { version: 1, ...publicSiteThemeSetting(await readSiteTheme()) },
       {
         headers: {
-          "Cache-Control": "public, max-age=0, must-revalidate",
-          "Vercel-CDN-Cache-Control": "public, s-maxage=1, stale-while-revalidate=30",
+          "Cache-Control": "no-store",
+          "Vercel-CDN-Cache-Control": "no-store",
         },
       },
     );
   } catch (error) {
     const response = siteThemeApiError(error);
     response.headers.set("Cache-Control", "no-store");
+    response.headers.set("Vercel-CDN-Cache-Control", "no-store");
     return response;
   }
 }

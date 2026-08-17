@@ -79,6 +79,7 @@
     const response = await fetch(API_URL, { credentials: "same-origin", cache: "no-store" });
     const data = validSetting(await json(response));
     if (!data) throw new Error(labels().failed);
+    if (data.recordVersion < published.recordVersion) return;
     published = data;
     window.__IHEAR_SITE_THEME__ = data;
     if (!dialog?.open || !dirty) {
@@ -226,7 +227,8 @@
     }
     renderTrigger();
   }
-  function refreshFromLive() {
+  function refreshFromLive(context) {
+    if (context?.external === false) return Promise.resolve();
     return load();
   }
   function boot() {

@@ -56,21 +56,22 @@ beforeEach(() => {
 });
 
 describe("site theme API", () => {
-  test("GET is public, briefly cached, and hides the administrator", async () => {
+  test("GET is public, uncached, and hides the administrator", async () => {
     auth.mockResolvedValue(null);
     const response = await GET();
     expect(response.status).toBe(200);
-    expect(response.headers.get("Vercel-CDN-Cache-Control")).toContain("s-maxage=1");
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect(response.headers.get("Vercel-CDN-Cache-Control")).toBe("no-store");
     expect(await response.json()).toEqual({ version: 1, theme: "ocean", recordVersion: 3, updatedAt: setting.updatedAt });
   });
 
-  test("bootstrap is safe JavaScript with edge caching and no administrator data", async () => {
+  test("bootstrap is safe uncached JavaScript with no administrator data", async () => {
     const response = await bootstrap();
     const source = await response.text();
     expect(response.status).toBe(200);
     expect(response.headers.get("Content-Type")).toContain("application/javascript");
-    expect(response.headers.get("Cache-Control")).toBe("public, max-age=0, must-revalidate");
-    expect(response.headers.get("Vercel-CDN-Cache-Control")).toBe("public, s-maxage=60, stale-while-revalidate=300");
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect(response.headers.get("Vercel-CDN-Cache-Control")).toBe("no-store");
     expect(source).toContain('"theme":"ocean"');
     expect(source).toContain("__IHEAR_SITE_THEME__");
     expect(source).not.toContain("admin@example.com");

@@ -14,15 +14,15 @@ export default function RootLayout({ children }: Readonly<{ children: ReactNode 
         <script data-site-theme-init dangerouslySetInnerHTML={{ __html: themeInit }} />
         {/* This must remain parser-blocking so the published theme wins before first paint. */}
         <script src="/api/site-theme/bootstrap" data-site-theme-bootstrap="" />
-        <link rel="stylesheet" href="/assets/theme.css?v=20260817-site-theme-v1" />
-        <link rel="stylesheet" href="/assets/site.css?v=20260817-site-theme-v1" />
+        <link rel="stylesheet" href="/assets/theme.css?v=20260817-site-theme-cache-v2" />
+        <link rel="stylesheet" href="/assets/site.css?v=20260817-site-theme-cache-v2" />
       </head>
       <body style={{ margin: 0 }}>
         {children}
-        <script src="/assets/site.js?v=20260817-site-theme-v1" defer />
-        <script src="/assets/auth.js?v=20260817-site-theme-v1" defer />
-        <script src="/assets/live-content.js?v=20260817-site-theme-v1" defer />
-        <script src="/assets/site-theme.js?v=20260817-site-theme-v1" defer />
+        <script src="/assets/site.js?v=20260817-site-theme-cache-v2" defer />
+        <script src="/assets/auth.js?v=20260817-site-theme-cache-v2" defer />
+        <script src="/assets/live-content.js?v=20260817-site-theme-cache-v2" defer />
+        <script src="/assets/site-theme.js?v=20260817-site-theme-cache-v2" defer />
       </body>
     </html>
   );

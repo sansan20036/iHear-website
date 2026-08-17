@@ -120,9 +120,9 @@ Supabase backup/recovery policy and test access to retained objects during revie
 
 ## Site theme release checks
 
-After Migration 012 and the Production deploy, verify
-`/api/site-theme/bootstrap` returns JavaScript with `Vercel-CDN-Cache-Control:
-public, s-maxage=60, stale-while-revalidate=300`. Publish each allowlisted palette
+After Migration 012 and the Production deploy, verify both `/api/site-theme` and
+`/api/site-theme/bootstrap` return `Cache-Control: no-store`; a theme response must
+never be served as `STALE`. Publish each allowlisted palette
 as an administrator, then confirm an unsigned incognito window uses the same theme
 across static pages, 404, and `/auth-error` without a warm-theme flash. The restore
 drill must report four live revision scopes and a valid `site_theme` row.
