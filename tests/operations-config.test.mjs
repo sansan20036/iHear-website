@@ -81,8 +81,8 @@ describe("production operations configuration", () => {
 
     expect(backup).toContain("site_media_assets: siteMediaAssets");
     expect(backup).toContain("site_media_variants: siteMediaVariants");
-    expect(verifier).toContain("[1, 2, 3, 4]");
-    expect(verifier).toContain('requiredMigration = backup.payload.version >= 4 ? "011"');
+    expect(verifier).toContain("[1, 2, 3, 4, 5]");
+    expect(verifier).toContain('backup.payload.version >= 4 ? "011"');
     expect(restoreVerifier).toContain("site_media_assets: siteMediaAssets.length");
     expect(restoreVerifier).toContain("INSERT INTO site_media_variants");
     expect(drill).toContain("to_regclass('public.site_media_assets')");
@@ -93,5 +93,33 @@ describe("production operations configuration", () => {
     expect(ci).toContain("Verify sharp on Linux");
     expect(ci).toContain(".webp().toBuffer()");
     expect(ci).toContain("test -s public/assets/vendor/browser-image-compression.js");
+  });
+
+  it("keeps the site theme accessible, recoverable, and flash-free on every page", async () => {
+    const migration = await read("db/migrations/012_site_theme.sql");
+    const backup = await read("scripts/backup-database.mjs");
+    const verifier = await read("scripts/verify-backup-file.mjs");
+    const restore = await read("scripts/verify-backup.mjs");
+    const audit = await read("scripts/audit-database.mjs");
+    const build = await read("scripts/prepare-public.mjs");
+    const layout = await read("app/layout.tsx");
+    const headers = await read("vercel.json");
+    const workflow = await read(".github/workflows/monthly-restore-drill.yml");
+
+    expect(migration).toContain("CREATE TABLE IF NOT EXISTS public.site_settings");
+    expect(migration).toContain("site_settings_theme_allowed");
+    expect(migration).toContain("site_settings_live_revision");
+    expect(backup).toContain("site_settings: siteSettings");
+    expect(verifier).toContain('backup.payload.version >= 5 ? "012"');
+    expect(restore).toContain("INSERT INTO site_settings");
+    expect(audit).toContain('"site_settings_live_revision"');
+    expect(audit).toContain("('content', 'impact', 'team', 'theme')");
+    expect(workflow).toContain("version = '012'");
+    expect(workflow).toContain("site_settings");
+    expect(build).toContain("verifyThemeBuild");
+    expect(build).toContain("Prepared ${htmlFiles.length} HTML pages");
+    expect(layout).toContain('data-theme="warm"');
+    expect(layout).toContain('src="/api/site-theme/bootstrap"');
+    expect(headers).toContain("script-src 'self' 'unsafe-inline' blob:");
   });
 });

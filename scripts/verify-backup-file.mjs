@@ -37,7 +37,7 @@ try {
   }
   if (
     backup.payload?.format !== "ihear-postgres-backup" ||
-    ![1, 2, 3, 4].includes(backup.payload?.version)
+    ![1, 2, 3, 4, 5].includes(backup.payload?.version)
   ) {
     throw new Error("Unsupported backup format.");
   }
@@ -55,6 +55,7 @@ try {
   if (backup.payload.version >= 2) required.push("team_people", "team_profiles");
   if (backup.payload.version >= 3) required.push("localized_content_overrides");
   if (backup.payload.version >= 4) required.push("site_media_assets", "site_media_variants");
+  if (backup.payload.version >= 5) required.push("site_settings");
   for (const tableName of required) {
     if (!Array.isArray(tables[tableName])) {
       throw new Error(`Backup is missing ${tableName}.`);
@@ -89,8 +90,15 @@ try {
       "site_media_variants.storage_path",
     );
   }
+  if (backup.payload.version >= 5) {
+    assertUnique(tables.site_settings, (row) => row.key, "site_settings");
+    const theme = tables.site_settings.find((row) => row.key === "site_theme");
+    if (!theme || !["warm", "ocean", "sage", "lavender", "slate"].includes(theme.value)) {
+      throw new Error("Backup has no valid site_theme setting.");
+    }
+  }
 
-  const requiredMigration = backup.payload.version >= 4 ? "011" : backup.payload.version >= 3 ? "010" : "009";
+  const requiredMigration = backup.payload.version >= 5 ? "012" : backup.payload.version >= 4 ? "011" : backup.payload.version >= 3 ? "010" : "009";
   if (!tables.schema_migrations.some((row) => String(row.version) === requiredMigration)) {
     throw new Error(`Backup does not include migration ${requiredMigration}.`);
   }

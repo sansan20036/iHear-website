@@ -104,7 +104,7 @@ maintenance plan if a real Production recovery is required.
 
 Before enabling administrator image replacement in Production:
 
-1. Run `npm run db:migrate` and confirm Migration 011 is tracked.
+1. Run `npm run db:migrate` and confirm Migrations 011 and 012 are tracked.
 2. Run `npm run storage:configure-site-media` using the Production Supabase URL and
    service-role key. Never expose that key as a `NEXT_PUBLIC_` variable.
 3. Confirm the `site-media` bucket is public-read, WebP-only, and limited to 1MB per
@@ -117,3 +117,12 @@ Before enabling administrator image replacement in Production:
 Application JSON and PostgreSQL backups preserve image metadata and immutable object
 paths, not the Supabase Storage binary objects. Include the bucket in the separate
 Supabase backup/recovery policy and test access to retained objects during reviews.
+
+## Site theme release checks
+
+After Migration 012 and the Production deploy, verify
+`/api/site-theme/bootstrap` returns JavaScript with `Vercel-CDN-Cache-Control:
+public, s-maxage=60, stale-while-revalidate=300`. Publish each allowlisted palette
+as an administrator, then confirm an unsigned incognito window uses the same theme
+across static pages, 404, and `/auth-error` without a warm-theme flash. The restore
+drill must report four live revision scopes and a valid `site_theme` row.

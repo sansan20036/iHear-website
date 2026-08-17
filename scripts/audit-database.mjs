@@ -32,6 +32,7 @@ const expectedTables = [
   "site_content_revisions",
   "site_media_assets",
   "site_media_variants",
+  "site_settings",
   "team_people",
   "team_profiles",
 ];
@@ -83,6 +84,12 @@ const expectedConstraints = [
   "site_media_variants_storage_path_length",
   "site_media_variants_storage_path_unique",
   "site_media_variants_width_allowed",
+  "site_settings_actor_length",
+  "site_settings_key_length",
+  "site_settings_pkey",
+  "site_settings_theme_allowed",
+  "site_settings_value_length",
+  "site_settings_version_positive",
   "team_people_consent_pair",
   "team_people_pkey",
   "team_people_timestamp_order",
@@ -98,6 +105,7 @@ const expectedIndexes = [
   "impact_milestones_unique_published_metrics_period",
   "localized_content_overrides_updated_at_idx",
   "site_media_assets_updated_at_idx",
+  "site_settings_updated_at_idx",
   "team_profiles_public_order_idx",
 ];
 
@@ -107,6 +115,7 @@ const expectedTriggers = [
   "impact_milestone_settings_live_revision",
   "impact_milestones_live_revision",
   "site_media_assets_live_revision",
+  "site_settings_live_revision",
   "team_people_live_revision",
   "team_profiles_live_revision",
 ];
@@ -126,6 +135,7 @@ try {
         'site_content_revisions',
         'site_media_assets',
         'site_media_variants',
+        'site_settings',
         'team_people',
         'team_profiles'
       ))
@@ -144,7 +154,7 @@ try {
     JOIN pg_class AS relation ON relation.oid = con.conrelid
     JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
     WHERE namespace.nspname = 'public'
-      AND relation.relname IN ('api_rate_limits', 'impact_milestones', 'content_overrides', 'localized_content_overrides', 'site_content_revisions', 'site_media_assets', 'site_media_variants', 'team_people', 'team_profiles')
+      AND relation.relname IN ('api_rate_limits', 'impact_milestones', 'content_overrides', 'localized_content_overrides', 'site_content_revisions', 'site_media_assets', 'site_media_variants', 'site_settings', 'team_people', 'team_profiles')
     ORDER BY relation.relname, con.conname
   `;
 
@@ -158,7 +168,7 @@ try {
     JOIN pg_class AS index_relation ON index_relation.oid = idx.indexrelid
     JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
     WHERE namespace.nspname = 'public'
-      AND relation.relname IN ('api_rate_limits', 'impact_milestones', 'localized_content_overrides', 'site_media_assets', 'site_media_variants', 'team_people', 'team_profiles')
+      AND relation.relname IN ('api_rate_limits', 'impact_milestones', 'localized_content_overrides', 'site_media_assets', 'site_media_variants', 'site_settings', 'team_people', 'team_profiles')
     ORDER BY index_relation.relname
   `;
 
@@ -166,7 +176,7 @@ try {
     SELECT schemaname, tablename, policyname, roles, cmd
     FROM pg_policies
     WHERE schemaname = 'public'
-      AND tablename IN ('api_rate_limits', 'impact_milestones', 'content_overrides', 'localized_content_overrides', 'site_content_revisions', 'site_media_assets', 'site_media_variants', 'team_people', 'team_profiles')
+      AND tablename IN ('api_rate_limits', 'impact_milestones', 'content_overrides', 'localized_content_overrides', 'site_content_revisions', 'site_media_assets', 'site_media_variants', 'site_settings', 'team_people', 'team_profiles')
     ORDER BY tablename, policyname
   `;
 
@@ -185,6 +195,7 @@ try {
         'site_content_revisions',
         'site_media_assets',
         'site_media_variants',
+        'site_settings',
         'team_people',
         'team_profiles'
       )
@@ -312,6 +323,7 @@ try {
         'impact_milestone_settings_live_revision',
         'impact_milestones_live_revision',
         'site_media_assets_live_revision',
+        'site_settings_live_revision',
         'team_people_live_revision',
         'team_profiles_live_revision'
       )
@@ -370,9 +382,9 @@ try {
 
   const [invalidRevisions] = await sql`
     SELECT
-      COUNT(*) FILTER (WHERE scope NOT IN ('content', 'impact', 'team'))::INTEGER AS invalid_scope,
+      COUNT(*) FILTER (WHERE scope NOT IN ('content', 'impact', 'team', 'theme'))::INTEGER AS invalid_scope,
       COUNT(*) FILTER (WHERE revision < 1)::INTEGER AS invalid_revision,
-      (3 - COUNT(DISTINCT scope))::INTEGER AS missing_scope
+      (4 - COUNT(DISTINCT scope))::INTEGER AS missing_scope
     FROM site_content_revisions
   `;
 
@@ -418,6 +430,21 @@ try {
       )::INTEGER AS incomplete_variant_sets
   `;
 
+  const [invalidSiteSettings] = await sql`
+    SELECT
+      COUNT(*) FILTER (
+        WHERE char_length(key) NOT BETWEEN 1 AND 100
+          OR char_length(value) NOT BETWEEN 1 AND 500
+          OR record_version < 1
+          OR char_length(updated_by) NOT BETWEEN 1 AND 320
+      )::INTEGER AS invalid_fields,
+      COUNT(*) FILTER (
+        WHERE key = 'site_theme' AND value NOT IN ('warm', 'ocean', 'sage', 'lavender', 'slate')
+      )::INTEGER AS invalid_theme,
+      (1 - COUNT(*) FILTER (WHERE key = 'site_theme'))::INTEGER AS missing_theme
+    FROM site_settings
+  `;
+
   const counts = await sql`
     SELECT 'api_rate_limits' AS table_name, COUNT(*)::INTEGER AS row_count
     FROM api_rate_limits
@@ -448,6 +475,9 @@ try {
     UNION ALL
     SELECT 'site_media_variants', COUNT(*)::INTEGER
     FROM site_media_variants
+    UNION ALL
+    SELECT 'site_settings', COUNT(*)::INTEGER
+    FROM site_settings
     ORDER BY table_name
   `;
 
@@ -529,6 +559,7 @@ try {
     ...Object.values(invalidRevisions),
     ...Object.values(invalidRateLimits),
     ...Object.values(invalidSiteMedia),
+    ...Object.values(invalidSiteSettings),
   ].map(Number);
   const disabledRls = rowLevelSecurity
     .filter((table) => !table.enabled)
@@ -563,6 +594,7 @@ try {
     invalidRevisions,
     invalidRateLimits,
     invalidSiteMedia,
+    invalidSiteSettings,
     issues: {
       missingTables,
       missingConstraints,

@@ -208,6 +208,12 @@ server-only environment variables in `.env.local`:
 npm run storage:configure-site-media
 ```
 
+Migration 012 adds the server-owned `site_settings` table, seeds the global
+`site_theme` setting, and adds the fourth live-revision scope (`theme`). The public
+theme and parser-blocking bootstrap endpoints expose only the allowlisted theme ID;
+administrators publish from the sitewide palette picker with optimistic locking.
+Application backups from format version 5 include `site_settings`.
+
 The idempotent command creates or updates the configured bucket as public-read,
 WebP-only, with a 1MB object limit. Keep `SUPABASE_SERVICE_ROLE_KEY` on the server;
 the browser never receives it and all writes pass through the authenticated API.

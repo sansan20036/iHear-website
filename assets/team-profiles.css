@@ -3,14 +3,14 @@
 .team-profile-toast[hidden] { display:none!important; }
 .team-directory-admin{
   margin:0 auto 24px;padding:14px 16px;border:1.5px solid rgba(38,57,116,.18);
-  border-radius:18px;background:#fff8f0;display:flex;justify-content:space-between;
+  border-radius:18px;background:var(--bg-subtle);display:flex;justify-content:space-between;
   align-items:center;gap:12px;flex-wrap:wrap;
 }
 .team-directory-admin strong{display:block;color:var(--navy);font-family:var(--font-h)}
 .team-directory-admin span{color:var(--ink-soft);font-size:.84rem}
 .team-admin-actions,.team-card-actions,.team-editor-actions{display:flex;gap:8px;flex-wrap:wrap}
 .team-admin-button{
-  border:1.5px solid var(--navy);border-radius:999px;background:#fff;color:var(--navy);
+  border:1.5px solid var(--navy);border-radius:999px;background:var(--bg-surface);color:var(--navy);
   min-height:44px;padding:8px 13px;font:800 .86rem/1 var(--font-b);cursor:pointer
 }
 .team-admin-button.primary{background:var(--navy);color:#fff}
@@ -22,7 +22,7 @@
 .team-profile-drag-handle{
   box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;gap:6px;
   min-width:44px;min-height:44px;padding:7px 10px;border:1.5px dashed rgba(38,57,116,.5);
-  border-radius:11px;background:#fff;color:var(--navy);font:800 .76rem/1 var(--font-b);
+  border-radius:11px;background:var(--bg-surface);color:var(--navy);font:800 .76rem/1 var(--font-b);
   cursor:grab;touch-action:none;white-space:nowrap;z-index:2
 }
 .team-profile-drag-handle:hover,.team-profile-drag-handle:focus-visible{background:var(--orange-soft);border-style:solid;outline:2px solid transparent}
@@ -43,19 +43,19 @@ body.team-profile-reordering,body.team-profile-reordering *{cursor:grabbing!impo
 .team-card-actions .team-admin-button{padding:6px 10px;font-size:.78rem;min-height:44px}
 .team-directory-message{
   grid-column:1/-1;margin:0;padding:24px;text-align:center;border:1.5px dashed var(--line);
-  border-radius:16px;color:var(--ink-soft);background:#fff
+  border-radius:16px;color:var(--ink-soft);background:var(--bg-surface)
 }
 .team-profile-editor{
   width:min(920px,calc(100vw - 24px));height:min(90dvh,900px);max-height:calc(100dvh - 24px);padding:0;
   border:0;border-radius:22px;box-shadow:0 24px 80px rgba(20,35,80,.25);overflow:hidden
 }
 .team-profile-editor::backdrop{background:rgba(18,29,66,.56)}
-.team-editor-shell{display:flex;flex-direction:column;height:100%;min-height:0;background:#fff;overflow:hidden}
+.team-editor-shell{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--bg-surface);overflow:hidden}
 .team-editor-shell>[data-team-form]{display:flex;flex:1 1 auto;flex-direction:column;min-height:0;overflow:hidden}
 .team-editor-head,.team-editor-footer{padding:18px 22px;border-bottom:1px solid var(--line)}
 .team-editor-head{
   position:sticky;top:0;z-index:10;display:flex;flex:none;justify-content:space-between;
-  gap:12px;align-items:flex-start;background:#fff;box-shadow:0 5px 14px rgba(20,35,80,.04)
+  gap:12px;align-items:flex-start;background:var(--bg-surface);box-shadow:0 5px 14px rgba(20,35,80,.04)
 }
 .team-editor-head h3{margin:0;color:var(--navy)}
 .team-editor-body{
@@ -69,7 +69,7 @@ body.team-profile-reordering,body.team-profile-reordering *{cursor:grabbing!impo
 .team-editor-body::-webkit-scrollbar-thumb:hover{background:rgba(38,57,116,.58)}
 .team-editor-footer{
   position:sticky;bottom:0;z-index:10;display:flex;flex:none;justify-content:space-between;
-  gap:12px;flex-wrap:wrap;border-top:1px solid var(--line);border-bottom:0;background:#fff;
+  gap:12px;flex-wrap:wrap;border-top:1px solid var(--line);border-bottom:0;background:var(--bg-surface);
   box-shadow:0 -5px 14px rgba(20,35,80,.04)
 }
 .team-delete-confirm{display:flex;width:100%;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
@@ -81,14 +81,14 @@ body.team-profile-modal-open{overflow:hidden}
 .team-field label,.team-field-label{font-weight:800;color:var(--navy)}
 .team-field input,.team-field select,.team-field textarea{
   box-sizing:border-box;width:100%;min-width:0;border:1.5px solid var(--line);border-radius:11px;
-  padding:10px 11px;background:#fff;color:var(--ink);font:inherit
+  padding:10px 11px;background:var(--bg-surface);color:var(--ink);font:inherit
 }
 .team-field textarea{resize:vertical;min-height:92px}
 .team-check{display:flex;align-items:flex-start;gap:8px;color:var(--ink)}
 .team-check input{width:auto;margin-top:4px}
 .team-locale-tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin:22px 0 14px}
 .team-locale-tab{
-  min-width:0;min-height:44px;border:1.5px solid var(--line);border-radius:11px;background:#fff;padding:9px 8px;
+  min-width:0;min-height:44px;border:1.5px solid var(--line);border-radius:11px;background:var(--bg-surface);padding:9px 8px;
   color:var(--navy);font-weight:800;cursor:pointer
 }
 .team-locale-tab[aria-selected="true"]{background:var(--navy);color:#fff;border-color:var(--navy)}

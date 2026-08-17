@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const VALID_SCOPES = new Set(["content", "impact", "team"]);
+  const VALID_SCOPES = new Set(["content", "impact", "team", "theme"]);
   const CHANNEL_NAME = "ihear-content-updates";
   const STORAGE_KEY = "ihear-content-update";
   const NORMAL_INTERVAL = 10000;

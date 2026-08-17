@@ -2,9 +2,9 @@ const colors = {
   navy: "#263974",
   navyDeep: "#1B2A57",
   orange: "#E8964F",
-  orangeText: "#A65313",
-  cream: "#FDF9F2",
-  ink: "#232A46",
+  orangeText: "#A04E10",
+  cream: "var(--bg-page, #FAF7F2)",
+  ink: "var(--text-main, #1A2B4C)",
   inkSoft: "#55597A",
 };
 

@@ -21,7 +21,9 @@ const htmlFiles = [
 ];
 
 const passthroughFiles = ["robots.txt", "sitemap.xml", "CNAME", "favicon.ico"];
-const clientAssetVersion = "20260816-team-avatar-v1";
+const clientAssetVersion = "20260817-site-theme-v1";
+const themeInitScript = `<script data-site-theme-init>(function(){var a={warm:1,ocean:1,sage:1,lavender:1,slate:1},t="warm";try{var s=localStorage.getItem("ihear:site-theme");if(a[s])t=s}catch(e){}document.documentElement.setAttribute("data-theme",t)})()</script>`;
+const themeBootstrapScript = `<script src="/api/site-theme/bootstrap" data-site-theme-bootstrap></script>`;
 
 async function copyDir(source, target) {
   await mkdir(target, { recursive: true });
@@ -48,15 +50,19 @@ function withClientScripts(html, file) {
     "\n"
   );
   const withoutExisting = withoutCloudflareBeacon.replace(
-    /\s*<script\s+src=["']\/?assets\/(?:site|auth|live-content|inline-edit|impact-milestones|site-metrics|site-media|team-profiles|vendor\/browser-image-compression)\.js(?:\?[^"']*)?["']\s+defer><\/script>\s*/g,
+    /\s*<script\s+src=["']\/?assets\/(?:site|auth|live-content|site-theme|inline-edit|impact-milestones|site-metrics|site-media|team-profiles|vendor\/browser-image-compression)\.js(?:\?[^"']*)?["']\s+defer><\/script>\s*/g,
     "\n"
   );
+  const withoutThemeHead = withoutExisting
+    .replace(/\s*<script\s+data-site-theme-init>[\s\S]*?<\/script>\s*/g, "\n")
+    .replace(/\s*<script\s+src=["']\/api\/site-theme\/bootstrap["']\s+data-site-theme-bootstrap><\/script>\s*/g, "\n");
 
-  const withoutManagedStyles = withoutExisting.replace(
-    /\s*<link\s+rel=["']stylesheet["']\s+href=["']\/?assets\/(?:site|impact-milestones|team-profiles)\.css(?:\?[^"']*)?["']\s*\/?>\s*/g,
+  const withoutManagedStyles = withoutThemeHead.replace(
+    /\s*<link\s+rel=["']stylesheet["']\s+href=["']\/?assets\/(?:theme|site|impact-milestones|team-profiles)\.css(?:\?[^"']*)?["']\s*\/?>\s*/g,
     "\n",
   );
   const managedStyles = [
+    `  <link rel="stylesheet" href="/assets/theme.css?v=${clientAssetVersion}">`,
     `  <link rel="stylesheet" href="/assets/site.css?v=${clientAssetVersion}">`,
   ];
   if (html.includes("data-impact-milestones")) {
@@ -66,7 +72,12 @@ function withClientScripts(html, file) {
     managedStyles.push(`  <link rel="stylesheet" href="/assets/team-profiles.css?v=${clientAssetVersion}">`);
   }
 
-  const withFavicon = withoutManagedStyles.replace(
+  const withThemeDefault = withoutManagedStyles.replace(/<html(?![^>]*\bdata-theme=)/i, '<html data-theme="warm"');
+  const withThemeHead = withThemeDefault.replace(
+    /<head([^>]*)>/i,
+    (opening) => `${opening}\n  ${themeInitScript}\n  ${themeBootstrapScript}`,
+  );
+  const withFavicon = withThemeHead.replace(
     "</head>",
     `  <link rel="icon" href="/favicon.ico" sizes="any">\n${managedStyles.join("\n")}\n</head>`
   );
@@ -75,6 +86,7 @@ function withClientScripts(html, file) {
     `  <script src="/assets/site.js?v=${clientAssetVersion}" defer></script>`,
     `  <script src="/assets/auth.js?v=${clientAssetVersion}" defer></script>`,
     `  <script src="/assets/live-content.js?v=${clientAssetVersion}" defer></script>`,
+    `  <script src="/assets/site-theme.js?v=${clientAssetVersion}" defer></script>`,
   ];
   if (html.includes("data-site-media-slot") || html.includes("data-site-media-dynamic")) {
     scripts.push(`  <script src="/assets/vendor/browser-image-compression.js?v=${clientAssetVersion}" defer></script>`);
@@ -100,6 +112,28 @@ function withClientScripts(html, file) {
   );
 }
 
+function occurrences(value, fragment) {
+  return value.split(fragment).length - 1;
+}
+
+function verifyThemeBuild(html, file) {
+  const init = '<script data-site-theme-init>';
+  const bootstrap = '<script src="/api/site-theme/bootstrap" data-site-theme-bootstrap></script>';
+  const themeCss = '<link rel="stylesheet" href="/assets/theme.css';
+  const siteCss = '<link rel="stylesheet" href="/assets/site.css';
+  const client = '<script src="/assets/site-theme.js';
+  for (const marker of [init, bootstrap, themeCss, siteCss, client]) {
+    if (occurrences(html, marker) !== 1) throw new Error(`${file} must contain exactly one ${marker}`);
+  }
+  if (!/<html\b[^>]*\bdata-theme=["']warm["']/i.test(html)) {
+    throw new Error(`${file} is missing the warm no-JavaScript fallback`);
+  }
+  const positions = [html.indexOf(init), html.indexOf(bootstrap), html.indexOf(themeCss), html.indexOf(siteCss)];
+  if (positions.some((position, index) => index > 0 && position <= positions[index - 1])) {
+    throw new Error(`${file} has an invalid theme head order`);
+  }
+}
+
 await rm(publicDir, { recursive: true, force: true });
 await mkdir(publicDir, { recursive: true });
 await copyDir(path.join(root, "assets"), path.join(publicDir, "assets"));
@@ -114,6 +148,10 @@ for (const file of htmlFiles) {
   const targetPath = path.join(publicDir, file);
   const html = await readFile(sourcePath, "utf8");
   await writeFile(targetPath, withClientScripts(html, file), "utf8");
+}
+
+for (const file of htmlFiles) {
+  verifyThemeBuild(await readFile(path.join(publicDir, file), "utf8"), file);
 }
 
 for (const file of passthroughFiles) {

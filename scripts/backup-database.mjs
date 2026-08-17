@@ -58,6 +58,13 @@ try {
   const siteMediaVariants = hasSiteMediaTables
     ? await sql`SELECT * FROM site_media_variants ORDER BY slot, width`
     : [];
+  const [settingsTable] = await sql`
+    SELECT to_regclass('public.site_settings') IS NOT NULL AS available
+  `;
+  const hasSiteSettings = Boolean(settingsTable.available);
+  const siteSettings = hasSiteSettings
+    ? await sql`SELECT * FROM site_settings ORDER BY key`
+    : [];
   const schemaMigrations = await sql`SELECT * FROM public.schema_migrations ORDER BY version`;
   const constraints = await sql`
     SELECT
@@ -78,6 +85,7 @@ try {
         'team_profiles',
         'site_media_assets',
         'site_media_variants',
+        'site_settings',
         'schema_migrations',
         'site_content_revisions'
       )
@@ -103,6 +111,7 @@ try {
         'team_profiles',
         'site_media_assets',
         'site_media_variants',
+        'site_settings',
         'schema_migrations',
         'site_content_revisions'
       )
@@ -111,7 +120,7 @@ try {
 
   const payload = {
     format: "ihear-postgres-backup",
-    version: hasSiteMediaTables ? 4 : hasLocalizedContent ? 3 : 2,
+    version: hasSiteSettings ? 5 : hasSiteMediaTables ? 4 : hasLocalizedContent ? 3 : 2,
     createdAt: new Date().toISOString(),
     tables: {
       impact_milestones: impactMilestones,
@@ -124,6 +133,7 @@ try {
       ...(hasSiteMediaTables
         ? { site_media_assets: siteMediaAssets, site_media_variants: siteMediaVariants }
         : {}),
+      ...(hasSiteSettings ? { site_settings: siteSettings } : {}),
       schema_migrations: schemaMigrations,
     },
     schema: {
@@ -166,6 +176,7 @@ try {
             site_media_variants: siteMediaVariants.length,
           }
         : {}),
+      ...(hasSiteSettings ? { site_settings: siteSettings.length } : {}),
       schema_migrations: schemaMigrations.length,
     },
   }));

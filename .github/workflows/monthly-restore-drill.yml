@@ -95,6 +95,7 @@ jobs:
               OR to_regclass('public.team_profiles') IS NULL
               OR to_regclass('public.site_media_assets') IS NULL
               OR to_regclass('public.site_media_variants') IS NULL
+              OR to_regclass('public.site_settings') IS NULL
               OR to_regclass('public.site_content_revisions') IS NULL THEN
               RAISE EXCEPTION 'Required application tables are missing';
             END IF;
@@ -104,8 +105,14 @@ jobs:
             IF NOT EXISTS (SELECT 1 FROM public.schema_migrations WHERE version = '011') THEN
               RAISE EXCEPTION 'Migration 011 is missing';
             END IF;
-            IF (SELECT COUNT(*) FROM public.site_content_revisions WHERE scope IN ('content', 'impact', 'team')) <> 3 THEN
+            IF NOT EXISTS (SELECT 1 FROM public.schema_migrations WHERE version = '012') THEN
+              RAISE EXCEPTION 'Migration 012 is missing';
+            END IF;
+            IF (SELECT COUNT(*) FROM public.site_content_revisions WHERE scope IN ('content', 'impact', 'team', 'theme')) <> 4 THEN
               RAISE EXCEPTION 'Live revision scopes are incomplete';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM public.site_settings WHERE key = 'site_theme' AND value IN ('warm', 'ocean', 'sage', 'lavender', 'slate')) THEN
+              RAISE EXCEPTION 'Site theme setting is missing or invalid';
             END IF;
           END
           $verify$;
@@ -116,7 +123,8 @@ jobs:
             'team_people', (SELECT COUNT(*) FROM public.team_people),
             'team_profiles', (SELECT COUNT(*) FROM public.team_profiles),
             'site_media_assets', (SELECT COUNT(*) FROM public.site_media_assets),
-            'site_media_variants', (SELECT COUNT(*) FROM public.site_media_variants)
+            'site_media_variants', (SELECT COUNT(*) FROM public.site_media_variants),
+            'site_settings', (SELECT COUNT(*) FROM public.site_settings)
           ) AS restored_row_counts;
           SQL
 

@@ -80,6 +80,12 @@ async function currentCounts(client) {
   const siteMediaVariants = mediaTables.variants
     ? await client`SELECT COUNT(*)::INTEGER AS count FROM site_media_variants`
     : [{ count: 0 }];
+  const [settingsTable] = await client`
+    SELECT to_regclass('public.site_settings') IS NOT NULL AS available
+  `;
+  const siteSettings = settingsTable.available
+    ? await client`SELECT COUNT(*)::INTEGER AS count FROM site_settings`
+    : [{ count: 0 }];
   return {
     impact_milestones: Number(impact[0].count),
     impact_milestone_settings: Number(settings[0].count),
@@ -89,6 +95,7 @@ async function currentCounts(client) {
     team_profiles: Number(teamProfiles[0].count),
     site_media_assets: Number(siteMediaAssets[0].count),
     site_media_variants: Number(siteMediaVariants[0].count),
+    site_settings: Number(siteSettings[0].count),
   };
 }
 
@@ -131,7 +138,7 @@ try {
   }
   if (
     backup.payload?.format !== "ihear-postgres-backup" ||
-    ![1, 2, 3, 4].includes(backup.payload?.version)
+    ![1, 2, 3, 4, 5].includes(backup.payload?.version)
   ) {
     throw new Error("Unsupported backup format.");
   }
@@ -151,6 +158,7 @@ try {
   const teamProfiles = backup.payload.version >= 2 ? tables.team_profiles : [];
   const siteMediaAssets = backup.payload.version >= 4 ? tables.site_media_assets : [];
   const siteMediaVariants = backup.payload.version >= 4 ? tables.site_media_variants : [];
+  const siteSettings = backup.payload.version >= 5 ? tables.site_settings : [];
 
   if (
     !Array.isArray(impactMilestones) ||
@@ -161,7 +169,8 @@ try {
     !Array.isArray(teamPeople) ||
     !Array.isArray(teamProfiles) ||
     !Array.isArray(siteMediaAssets) ||
-    !Array.isArray(siteMediaVariants)
+    !Array.isArray(siteMediaVariants) ||
+    !Array.isArray(siteSettings)
   ) {
     throw new Error("Backup is missing one or more required tables.");
   }
@@ -180,6 +189,7 @@ try {
   assertUnique(siteMediaAssets, (row) => row.slot, "site_media_assets");
   assertUnique(siteMediaVariants, (row) => `${row.slot}\u0000${row.width}`, "site_media_variants");
   assertUnique(siteMediaVariants, (row) => row.storage_path, "site_media_variants.storage_path");
+  assertUnique(siteSettings, (row) => row.key, "site_settings");
 
   const countsBefore = await currentCounts(sql);
   const revisionsBefore = await currentRevisions(sql);
@@ -470,6 +480,33 @@ try {
         `;
       }
 
+      for (const row of siteSettings) {
+        await transaction`
+          INSERT INTO site_settings (key, value, record_version, updated_at, updated_by)
+          VALUES (${row.key}, ${row.value}, ${row.record_version}, ${row.updated_at}, ${row.updated_by})
+          ON CONFLICT (key) DO UPDATE SET
+            value = EXCLUDED.value,
+            record_version = EXCLUDED.record_version,
+            updated_at = EXCLUDED.updated_at,
+            updated_by = EXCLUDED.updated_by
+        `;
+      }
+
+      if (siteSettings.length) {
+        const restored = await transaction`
+          SELECT key, value, record_version, updated_at, updated_by
+          FROM site_settings
+          WHERE key IN ${transaction(siteSettings.map((row) => row.key))}
+        `;
+        const byKey = new Map(restored.map((row) => [row.key, row]));
+        for (const row of siteSettings) {
+          const value = byKey.get(row.key);
+          if (!value || value.value !== row.value || Number(value.record_version) !== Number(row.record_version)) {
+            throw new Error(`Site setting did not round-trip: ${row.key}`);
+          }
+        }
+      }
+
       if (siteMediaAssets.length) {
         const restored = await transaction`
           SELECT slot, alt_en, alt_zh_hant, alt_zh_hans, focal_x, focal_y, record_version
@@ -508,6 +545,7 @@ try {
               site_media_variants: siteMediaVariants.length,
             }
           : {}),
+        ...(backup.payload.version >= 5 ? { site_settings: siteSettings.length } : {}),
       })) {
         if (restoredCounts[tableName] < expectedRows) {
           throw new Error(`Restore verification produced too few rows for ${tableName}.`);
@@ -522,6 +560,7 @@ try {
             ? ["content"]
             : []),
           ...(teamPeople.length || teamProfiles.length ? ["team"] : []),
+          ...(siteSettings.length ? ["theme"] : []),
         ];
         for (const scope of expectedScopes) {
           if (
@@ -565,6 +604,7 @@ try {
       team_profiles: teamProfiles.length,
       site_media_assets: siteMediaAssets.length,
       site_media_variants: siteMediaVariants.length,
+      site_settings: siteSettings.length,
       schema_migrations: schemaMigrations.length,
     },
   }));

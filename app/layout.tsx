@@ -7,9 +7,23 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
+  const themeInit = `(function(){var a={warm:1,ocean:1,sage:1,lavender:1,slate:1},t="warm";try{var s=localStorage.getItem("ihear:site-theme");if(a[s])t=s}catch(e){}document.documentElement.setAttribute("data-theme",t)})()`;
   return (
-    <html lang="en">
-      <body style={{ margin: 0 }}>{children}</body>
+    <html lang="en" data-theme="warm" suppressHydrationWarning>
+      <head>
+        <script data-site-theme-init dangerouslySetInnerHTML={{ __html: themeInit }} />
+        {/* This must remain parser-blocking so the published theme wins before first paint. */}
+        <script src="/api/site-theme/bootstrap" data-site-theme-bootstrap="" />
+        <link rel="stylesheet" href="/assets/theme.css?v=20260817-site-theme-v1" />
+        <link rel="stylesheet" href="/assets/site.css?v=20260817-site-theme-v1" />
+      </head>
+      <body style={{ margin: 0 }}>
+        {children}
+        <script src="/assets/site.js?v=20260817-site-theme-v1" defer />
+        <script src="/assets/auth.js?v=20260817-site-theme-v1" defer />
+        <script src="/assets/live-content.js?v=20260817-site-theme-v1" defer />
+        <script src="/assets/site-theme.js?v=20260817-site-theme-v1" defer />
+      </body>
     </html>
   );
 }

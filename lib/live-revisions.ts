@@ -1,6 +1,6 @@
 import postgres from "postgres";
 
-export type LiveContentScope = "content" | "impact" | "team";
+export type LiveContentScope = "content" | "impact" | "team" | "theme";
 
 export type LiveRevision = {
   revision: string;
@@ -44,6 +44,7 @@ function fallbackRevisions() {
       content: { revision: "1", updatedAt: now },
       impact: { revision: "1", updatedAt: now },
       team: { revision: "1", updatedAt: now },
+      theme: { revision: "1", updatedAt: now },
     };
   }
   return globalForLiveRevisions.ihearFallbackLiveRevisions;
@@ -57,7 +58,7 @@ function fromRows(rows: RevisionRow[]): LiveRevisions {
       updatedAt: new Date(row.updated_at).toISOString(),
     };
   }
-  for (const scope of ["content", "impact", "team"] as const) {
+  for (const scope of ["content", "impact", "team", "theme"] as const) {
     if (!revisions[scope]) throw new Error(`Missing live revision scope: ${scope}`);
   }
   return revisions;

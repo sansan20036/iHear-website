@@ -140,10 +140,12 @@ async function mockApplication(page, { admin = true, duplicateAvatar = false } =
   let publishedPayload = null;
   const mediaItems = {};
   let mediaUploadCount = 0;
+  let themeSetting = { theme: "warm", recordVersion: 1, updatedAt: "2026-08-17T00:00:00.000Z" };
   const liveRevisions = {
     content: { revision: "1", updatedAt: "2026-07-31T00:00:00.000Z" },
     impact: { revision: "1", updatedAt: "2026-07-31T00:00:00.000Z" },
     team: { revision: "1", updatedAt: "2026-07-31T00:00:00.000Z" },
+    theme: { revision: "1", updatedAt: "2026-08-17T00:00:00.000Z" },
   };
 
   await page.route("**/api/auth/session", (route) => route.fulfill({
@@ -169,6 +171,32 @@ async function mockApplication(page, { admin = true, duplicateAvatar = false } =
     contentType: "application/json",
     body: JSON.stringify({ version: 1, revisions: liveRevisions }),
   }));
+
+  await page.route("**/api/site-theme**", async (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (pathname.endsWith("/bootstrap")) {
+      return route.fulfill({
+        status: 200,
+        contentType: "application/javascript",
+        body: `(()=>{const s=${JSON.stringify(themeSetting)};document.documentElement.dataset.theme=s.theme;window.__IHEAR_SITE_THEME__=s;try{localStorage.setItem("ihear:site-theme",s.theme)}catch{}})();`,
+      });
+    }
+    if (request.method() === "GET") {
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ version: 1, ...themeSetting }) });
+    }
+    const payload = request.postDataJSON();
+    if (payload.expectedVersion !== themeSetting.recordVersion) {
+      return route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error: "conflict" }) });
+    }
+    themeSetting = { theme: payload.theme, recordVersion: themeSetting.recordVersion + 1, updatedAt: "2026-08-17T00:01:00.000Z" };
+    liveRevisions.theme = { revision: String(Number(liveRevisions.theme.revision) + 1), updatedAt: themeSetting.updatedAt };
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, ...themeSetting, revision: liveRevisions.theme }),
+    });
+  });
 
   await page.route("**/api/site-media**", async (route) => {
     const request = route.request();
@@ -350,6 +378,7 @@ async function mockApplication(page, { admin = true, duplicateAvatar = false } =
     getPublishedPayload: () => publishedPayload,
     getMediaItem: (slot = "home.hero") => mediaItems[slot] || null,
     getMediaUploadCount: () => mediaUploadCount,
+    getTheme: () => themeSetting,
     liveRevisions,
   };
 }
@@ -375,6 +404,60 @@ test("favicon is linked and served from the generated public directory", async (
   expect(response.status()).toBe(200);
   expect(response.headers()["content-type"]).toContain("image/x-icon");
   expect((await response.body()).byteLength).toBeGreaterThan(0);
+});
+
+test("administrator previews, cancels, publishes, and restores the global theme", async ({ page }) => {
+  const mocked = await mockApplication(page);
+  await page.goto("/about");
+  const trigger = page.getByRole("button", { name: "Change theme" });
+  await expect(trigger).toBeVisible();
+
+  await trigger.click();
+  const dialog = page.getByRole("dialog", { name: "Site background theme" });
+  await expect(dialog).toBeVisible();
+  await page.getByLabel("Sage Green").check();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "sage");
+  await dialog.locator("[data-site-theme-cancel]").click();
+  await expect(dialog).toBeHidden();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "warm");
+
+  await trigger.click();
+  await page.getByLabel("Ocean Blue").check();
+  await page.getByRole("button", { name: "Apply theme" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "ocean");
+  expect(mocked.getTheme()).toMatchObject({ theme: "ocean", recordVersion: 2 });
+
+  await trigger.click();
+  await page.getByRole("button", { name: "Preview default" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "warm");
+  expect(mocked.getTheme().theme).toBe("ocean");
+  await page.getByRole("button", { name: "Apply theme" }).click();
+  await expect(dialog).toBeHidden();
+  expect(mocked.getTheme().theme).toBe("warm");
+});
+
+test("theme control is admin-only, localized, keyboard-safe, and mobile-safe", async ({ page }) => {
+  await mockApplication(page, { admin: false });
+  await page.goto("/about");
+  await expect(page.getByRole("button", { name: "Change theme" })).toHaveCount(0);
+
+  await page.unrouteAll({ behavior: "wait" });
+  await mockApplication(page);
+  await page.reload();
+  await page.locator('[data-lang="zhTW"]').first().click();
+  const trigger = page.getByRole("button", { name: "更換主題色" });
+  await trigger.click();
+  const dialog = page.getByRole("dialog", { name: "全站背景主題" });
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(trigger).toBeFocused();
+
+  await page.setViewportSize({ width: 320, height: 720 });
+  await trigger.click();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  await page.keyboard.press("Escape");
 });
 
 test("Hero image editor compresses before upload and restores the repository fallback", async ({ page }) => {

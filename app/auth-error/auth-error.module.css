@@ -2,9 +2,9 @@
   --navy: #263974;
   --navy-deep: #1b2a57;
   --orange: #e8964f;
-  --orange-text: #a65313;
-  --cream: #fdf9f2;
-  --ink: #232a46;
+  --orange-text: #a04e10;
+  --cream: var(--bg-page, #faf7f2);
+  --ink: var(--text-main, #1a2b4c);
   --ink-soft: #55597a;
   min-height: 100vh;
   min-height: 100svh;
@@ -37,7 +37,7 @@
   padding: 3px;
   border: 2px solid var(--navy);
   border-radius: 999px;
-  background: #fff;
+  background: var(--bg-surface, #fff);
 }
 
 .languageSwitch button {
