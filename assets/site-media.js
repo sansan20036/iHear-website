@@ -4,12 +4,16 @@
   const VENDOR_URL = "/assets/vendor/browser-image-compression.js";
   const MAX_ORIGINAL_BYTES = 20 * 1024 * 1024;
   const MAX_COMPRESSED_BYTES = Math.floor(0.95 * 1024 * 1024);
+  const MAX_AVATAR_BYTES = 500 * 1024;
   const ALLOWED_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
   const FOCAL_VALUES = [0, 50, 100];
+  const languageGuardPromise = import("/assets/text-language-guard.js").catch(() => null);
+  const imageIntakePromise = import("/assets/image-intake.js").catch(() => null);
   const copy = {
     en: {
       edit: "Change image", title: "Change image", intro: "Upload a photo, preview the crop, and describe it for each language.",
-      drop: "Drop an image here or choose a file", formats: "PNG, JPEG, or WebP · up to 20MB", choose: "Choose image",
+      drop: "Drop an image here, paste with Ctrl+V / Cmd+V, or choose a file", formats: "PNG, JPEG, or WebP · up to 20MB", choose: "Choose image",
+      clipboardEmpty: "The clipboard does not contain an image. Copy one image and try again.", multipleImages: "Please add one image at a time.",
       altEn: "English image description", altZhHant: "Traditional Chinese image description", altZhHans: "Simplified Chinese image description",
       focal: "Choose the crop focus", cancel: "Cancel", save: "Save image", restore: "Restore default image",
       restoring: "Restoring…", optimizing: "Optimizing image…", uploading: "Uploading…", processing: "Server is preparing responsive images…",
@@ -19,13 +23,16 @@
       altRequired: "Complete all three image descriptions using 2–300 characters.", failed: "The image could not be updated.",
       forbidden: "Your administrator session has expired.", conflict: "Another administrator changed this image. Reload and try again.",
       confirmRestore: "Restore the original image? The current custom image will be removed.", liveBlocked: "A newer image is available. Finish or cancel this edit to refresh.",
-      editAvatar: "Change avatar", titleAvatar: "Change avatar", introAvatar: "Upload a portrait, preview the circular crop, and describe it for each language.",
-      restoreAvatar: "Restore initials", restoredAvatar: "Initials restored", confirmRestoreAvatar: "Restore the initials? The current avatar photo will be removed.",
+      editAvatar: "Change avatar", titleAvatar: "Change avatar", introAvatar: "Upload or paste a portrait, then crop the person you want to show.",
+      restoreAvatar: "Delete photo", restoredAvatar: "Photo deleted", confirmRestoreAvatar: "Delete this profile photo? The name initials will be shown instead.",
+      cropCurrent: "Crop current photo", cropReady: "Square crop ready. Save when it looks right.", cropUnavailable: "The crop editor is still loading. Please try again.",
+      autoTranslate: "Automatically update Chinese descriptions", replaceTranslation: "Also overwrite manually edited Chinese descriptions", preparingTranslation: "Translating…", translationReady: "Chinese descriptions are ready. Review them, then save.",
       positions: ["Top left", "Top center", "Top right", "Center left", "Center", "Center right", "Bottom left", "Bottom center", "Bottom right"],
     },
     zhHant: {
       edit: "更換圖片", title: "更換圖片", intro: "上傳照片、預覽裁切位置，並填寫三種語言的圖片描述。",
-      drop: "拖曳圖片到這裡，或點擊選擇檔案", formats: "PNG、JPEG 或 WebP · 最大 20MB", choose: "選擇圖片",
+      drop: "拖曳圖片到這裡、按 Ctrl+V／Cmd+V 貼上，或選擇檔案", formats: "PNG、JPEG 或 WebP · 最大 20MB", choose: "選擇圖片",
+      clipboardEmpty: "剪貼簿中沒有可使用的圖片，請先複製一張圖片再試一次。", multipleImages: "一次只能加入一張圖片。",
       altEn: "英文圖片描述", altZhHant: "繁體中文圖片描述", altZhHans: "簡體中文圖片描述",
       focal: "選擇裁切焦點", cancel: "取消", save: "確認儲存", restore: "恢復預設圖片",
       restoring: "正在恢復…", optimizing: "正在最佳化圖片…", uploading: "正在上傳…", processing: "伺服器正在產生響應式圖片…",
@@ -35,13 +42,16 @@
       altRequired: "三種語言的圖片描述都必須填寫 2–300 個字元。", failed: "無法更新圖片。",
       forbidden: "管理員登入已失效。", conflict: "另一位管理員已更改圖片，請重新整理後再試。",
       confirmRestore: "確定恢復原始圖片？目前的自訂圖片將被移除。", liveBlocked: "已有較新的圖片，請先完成或取消目前編輯。",
-      editAvatar: "更換頭像", titleAvatar: "更換頭像", introAvatar: "上傳人物照片、預覽圓形裁切位置，並填寫三種語言的圖片描述。",
-      restoreAvatar: "恢復文字縮寫", restoredAvatar: "已恢復文字縮寫", confirmRestoreAvatar: "確定恢復文字縮寫？目前的頭像照片將被移除。",
+      editAvatar: "更換頭像", titleAvatar: "更換頭像", introAvatar: "上傳或貼上人物照片，再裁切要顯示的單一人物。",
+      restoreAvatar: "刪除照片", restoredAvatar: "照片已刪除", confirmRestoreAvatar: "確定要刪除這張頭像照片嗎？刪除後將改為顯示姓名縮寫。",
+      cropCurrent: "裁切目前照片", cropReady: "方形裁切已準備好，確認效果後即可儲存。", cropUnavailable: "裁切工具仍在載入，請稍後再試。",
+      autoTranslate: "自動更新中文圖片描述", replaceTranslation: "同時覆蓋人工修改過的中文圖片描述", preparingTranslation: "翻譯中…", translationReady: "中文圖片描述已完成，請檢查後再儲存。",
       positions: ["左上", "中上", "右上", "左中", "正中", "右中", "左下", "中下", "右下"],
     },
     zhHans: {
       edit: "更换图片", title: "更换图片", intro: "上传照片、预览裁切位置，并填写三种语言的图片描述。",
-      drop: "拖曳图片到这里，或点击选择文件", formats: "PNG、JPEG 或 WebP · 最大 20MB", choose: "选择图片",
+      drop: "拖曳图片到这里、按 Ctrl+V／Cmd+V 粘贴，或选择文件", formats: "PNG、JPEG 或 WebP · 最大 20MB", choose: "选择图片",
+      clipboardEmpty: "剪贴板中没有可使用的图片，请先复制一张图片再试一次。", multipleImages: "一次只能添加一张图片。",
       altEn: "英文图片描述", altZhHant: "繁体中文图片描述", altZhHans: "简体中文图片描述",
       focal: "选择裁切焦点", cancel: "取消", save: "确认保存", restore: "恢复默认图片",
       restoring: "正在恢复…", optimizing: "正在优化图片…", uploading: "正在上传…", processing: "服务器正在生成响应式图片…",
@@ -51,8 +61,10 @@
       altRequired: "三种语言的图片描述都必须填写 2–300 个字符。", failed: "无法更新图片。",
       forbidden: "管理员登录已失效。", conflict: "另一位管理员已更改图片，请刷新后重试。",
       confirmRestore: "确定恢复原始图片？当前的自定义图片将被删除。", liveBlocked: "已有较新的图片，请先完成或取消当前编辑。",
-      editAvatar: "更换头像", titleAvatar: "更换头像", introAvatar: "上传人物照片、预览圆形裁切位置，并填写三种语言的图片描述。",
-      restoreAvatar: "恢复文字缩写", restoredAvatar: "已恢复文字缩写", confirmRestoreAvatar: "确定恢复文字缩写？当前的头像照片将被删除。",
+      editAvatar: "更换头像", titleAvatar: "更换头像", introAvatar: "上传或粘贴人物照片，再裁切要显示的单一人物。",
+      restoreAvatar: "删除照片", restoredAvatar: "照片已删除", confirmRestoreAvatar: "确定要删除这张头像照片吗？删除后将改为显示姓名缩写。",
+      cropCurrent: "裁切目前照片", cropReady: "方形裁切已准备好，确认效果后即可保存。", cropUnavailable: "裁切工具仍在加载，请稍后再试。",
+      autoTranslate: "自动更新中文图片描述", replaceTranslation: "同时覆盖人工修改过的中文图片描述", preparingTranslation: "翻译中…", translationReady: "中文图片描述已完成，请检查后再保存。",
       positions: ["左上", "中上", "右上", "左中", "正中", "右中", "左下", "中下", "右下"],
     },
   };
@@ -92,6 +104,9 @@
       zhHans: host.dataset.siteMediaAltZhHans || host.dataset.siteMediaAltEn || image.alt || "网站图片",
     },
     objectPosition: image.style.objectPosition || "50% 50%",
+    objectFit: image.style.objectFit,
+    transform: image.style.transform,
+    transformOrigin: image.style.transformOrigin,
   };
 
   let currentItem = null;
@@ -102,6 +117,8 @@
   let compressionController = null;
   let activeRequest = null;
   let dirty = false;
+  let translationReceipt = "";
+  let englishGuardAccepted = false;
   let applyToken = 0;
 
   function locale() {
@@ -143,6 +160,9 @@
       image.alt = defaults.alt[locale()] || defaults.alt.en;
     }
     image.style.objectPosition = defaults.objectPosition;
+    image.style.objectFit = defaults.objectFit;
+    image.style.transform = defaults.transform;
+    image.style.transformOrigin = defaults.transformOrigin;
     host.removeAttribute("data-site-media-custom");
   }
 
@@ -157,11 +177,20 @@
       node.setAttribute("type", "image/webp");
     });
     image.src = item.src;
-    image.alt = item.alt?.[locale()] || item.alt?.en || defaults.alt.en;
-    image.style.objectPosition = `${item.focalX}% ${item.focalY}%`;
+    image.alt = isAvatar ? "" : (item.alt?.[locale()] || item.alt?.en || defaults.alt.en);
     if (isAvatar) {
+      image.style.objectPosition = "50% 50%";
+      const square = variants.every((variant) => Number(variant.pixelWidth) === Number(variant.pixelHeight));
+      image.style.objectFit = square ? "cover" : "contain";
+      image.style.transform = square ? "none" : `scale(${Math.max(100, Math.min(250, Number(item.zoom) || 100)) / 100})`;
+      image.style.transformOrigin = square ? "50% 50%" : `${item.focalX}% ${item.focalY}%`;
       picture.hidden = false;
       fallbackInitials.hidden = true;
+    } else {
+      image.style.objectPosition = `${item.focalX}% ${item.focalY}%`;
+      image.style.objectFit = defaults.objectFit;
+      image.style.transform = defaults.transform;
+      image.style.transformOrigin = defaults.transformOrigin;
     }
     host.setAttribute("data-site-media-custom", "true");
   }
@@ -262,7 +291,7 @@
           <div><h2 data-media-title></h2><p data-media-intro></p></div>
           <button type="button" class="site-media-close" data-media-cancel aria-label="Close">×</button>
         </div>
-        <label class="site-media-drop" data-media-drop>
+        <label class="site-media-drop" data-media-drop tabindex="0">
           <input type="file" accept="image/png,image/jpeg,image/webp" data-media-file>
           <span class="site-media-camera" aria-hidden="true">📷</span>
           <strong data-media-drop-title></strong><small data-media-formats></small>
@@ -271,17 +300,22 @@
         </label>
         <div class="site-media-preview-wrap">
           <div class="site-media-preview-frame"><img data-media-preview alt=""></div>
-          <fieldset class="site-media-focal"><legend data-media-focal-title></legend><div class="site-media-focal-grid" data-media-focal-grid></div></fieldset>
+          <fieldset class="site-media-focal" data-media-focal><legend data-media-focal-title></legend><div class="site-media-focal-grid" data-media-focal-grid></div></fieldset>
         </div>
         <div class="site-media-alt-grid">
-          <label><span data-media-alt-en-label></span><input type="text" minlength="2" maxlength="300" data-media-alt-en></label>
-          <label><span data-media-alt-zht-label></span><input type="text" minlength="2" maxlength="300" data-media-alt-zht></label>
-          <label><span data-media-alt-zhs-label></span><input type="text" minlength="2" maxlength="300" data-media-alt-zhs></label>
+          <label><span data-media-alt-en-label></span><input type="text" minlength="2" maxlength="300" data-media-alt-en></label><div class="language-guard-warning" data-media-guard="en" hidden></div>
+          <label><span data-media-alt-zht-label></span><input type="text" minlength="2" maxlength="300" data-media-alt-zht></label><div class="language-guard-warning" data-media-guard="zhHant" hidden></div>
+          <label><span data-media-alt-zhs-label></span><input type="text" minlength="2" maxlength="300" data-media-alt-zhs></label><div class="language-guard-warning" data-media-guard="zhHans" hidden></div>
+        </div>
+        <div class="site-media-translation-options">
+          <label><input type="checkbox" data-media-auto-translate checked><span data-media-auto-translate-label></span></label>
+          <label><input type="checkbox" data-media-replace-translation><span data-media-replace-translation-label></span></label>
         </div>
         <div class="site-media-progress-wrap" aria-live="polite">
           <progress max="100" data-media-progress hidden></progress><p data-media-status></p>
         </div>
         <div class="site-media-actions">
+          <button type="button" class="ihear-inline-action site-media-recrop" data-media-recrop></button>
           <button type="button" class="ihear-inline-action site-media-restore" data-media-restore></button>
           <span class="site-media-action-spacer"></span>
           <button type="button" class="ihear-inline-action" data-media-cancel></button>
@@ -290,9 +324,13 @@
       </form>`;
     document.body.appendChild(node);
     node.querySelectorAll("[data-media-cancel]").forEach((button) => button.addEventListener("click", closeDialog));
-    node.querySelector("[data-media-file]").addEventListener("change", (event) => selectFile(event.target.files?.[0]));
+    node.querySelector("[data-media-file]").addEventListener("change", (event) => {
+      selectFile(event.target.files?.[0]);
+      event.target.value = "";
+    });
     node.querySelector("[data-media-save]").addEventListener("click", saveImage);
     node.querySelector("[data-media-restore]").addEventListener("click", restoreImage);
+    node.querySelector("[data-media-recrop]").addEventListener("click", cropCurrentAvatar);
     const drop = node.querySelector("[data-media-drop]");
     ["dragenter", "dragover"].forEach((name) => drop.addEventListener(name, (event) => {
       event.preventDefault();
@@ -303,14 +341,47 @@
       drop.classList.remove("is-dragging");
     }));
     drop.addEventListener("drop", (event) => {
-      if (!node.hasAttribute("data-busy")) selectFile(event.dataTransfer?.files?.[0]);
+      if (!node.hasAttribute("data-busy")) void receiveTransferredImage(event.dataTransfer, false);
+    });
+    drop.addEventListener("paste", (event) => {
+      if (node.hasAttribute("data-busy")) return;
+      event.preventDefault();
+      void receiveTransferredImage(event.clipboardData, true);
+    });
+    node.addEventListener("paste", (event) => {
+      if (event.defaultPrevented || node.hasAttribute("data-busy")) return;
+      const hasFiles = Boolean(event.clipboardData?.files?.length)
+        || Array.from(event.clipboardData?.items || []).some((item) => item.kind === "file");
+      if (!hasFiles) return;
+      event.preventDefault();
+      void receiveTransferredImage(event.clipboardData, true);
     });
     node.addEventListener("cancel", (event) => {
       if (node.hasAttribute("data-busy")) event.preventDefault();
       else { event.preventDefault(); closeDialog(); }
     });
-    node.querySelectorAll("input[type=text]").forEach((input) => input.addEventListener("input", () => { dirty = true; }));
+    node.querySelectorAll("input[type=text]").forEach((input) => input.addEventListener("input", () => { dirty = true; if (input.matches("[data-media-alt-en]")) { translationReceipt = ""; englishGuardAccepted = false; } void renderLanguageGuards(); }));
+    node.querySelectorAll("[data-media-auto-translate],[data-media-replace-translation]").forEach((input) => input.addEventListener("change", () => { translationReceipt = ""; dirty = true; }));
     return node;
+  }
+
+  async function receiveTransferredImage(transfer, fromClipboard) {
+    const intake = await imageIntakePromise;
+    if (!intake) {
+      setStatus(labels().failed, { error: true });
+      return;
+    }
+    const result = intake.singleImageFromTransfer(transfer);
+    if (result.status === "empty") {
+      if (fromClipboard) setStatus(labels().clipboardEmpty, { error: true });
+      else setStatus(labels().invalidType, { error: true });
+      return;
+    }
+    if (result.status === "multiple") {
+      setStatus(labels().multipleImages, { error: true });
+      return;
+    }
+    await selectFile(result.file);
   }
 
   function renderFocalGrid() {
@@ -353,13 +424,16 @@
       "[data-media-formats]": text.formats, "[data-media-choose]": text.choose, "[data-media-alt-en-label]": text.altEn,
       "[data-media-alt-zht-label]": text.altZhHant, "[data-media-alt-zhs-label]": text.altZhHans,
       "[data-media-focal-title]": text.focal, "[data-media-save]": text.save, "[data-media-restore]": text.restore,
+      "[data-media-recrop]": text.cropCurrent || "",
+      "[data-media-auto-translate-label]": text.autoTranslate, "[data-media-replace-translation-label]": text.replaceTranslation,
     };
     Object.entries(values).forEach(([selector, value]) => { dialog.querySelector(selector).textContent = value; });
+    dialog.querySelector("[data-media-drop]").setAttribute("aria-label", text.drop);
     dialog.querySelectorAll("[data-media-cancel]").forEach((button) => {
       if (!button.classList.contains("site-media-close")) button.textContent = text.cancel;
       button.setAttribute("aria-label", text.cancel);
     });
-    renderFocalGrid();
+    if (!isAvatar) renderFocalGrid();
   }
 
   function populateDialog() {
@@ -369,12 +443,38 @@
     dialog.querySelector("[data-media-alt-zhs]").value = alt.zhHans;
     dialog.querySelector("[data-media-preview]").src = currentItem?.src || defaults.previewSrc;
     selectFocal(currentItem?.focalX ?? 50, currentItem?.focalY ?? 50);
+    dialog.querySelector("[data-media-focal]").hidden = isAvatar;
+    dialog.querySelector(".site-media-alt-grid").hidden = isAvatar;
+    dialog.querySelector(".site-media-translation-options").hidden = isAvatar;
+    dialog.querySelector("[data-media-recrop]").hidden = !isAvatar || !currentItem;
     dialog.querySelector("[data-media-restore]").hidden = !currentItem;
     dialog.querySelector("[data-media-file-name]").textContent = "";
     compressedFile = null;
+    translationReceipt = "";
+    englishGuardAccepted = false;
     setStatus("");
     dirty = false;
     setBusy(false);
+    void renderLanguageGuards();
+  }
+
+  async function renderLanguageGuards() {
+    if (!dialog) return;
+    if (isAvatar) {
+      dialog.querySelectorAll("[data-media-guard]").forEach((element) => { element.hidden = true; });
+      return;
+    }
+    const guard = await languageGuardPromise;
+    if (!guard) return;
+    const values = altValues();
+    const inputs = { en: "[data-media-alt-en]", zhHant: "[data-media-alt-zht]", zhHans: "[data-media-alt-zhs]" };
+    Object.keys(inputs).forEach((language) => {
+      guard.renderLanguageGuard(dialog.querySelector(`[data-media-guard="${language}"]`), {
+        language, value: values[language], uiLocale: locale(), englishAccepted: englishGuardAccepted, disabled: dialog.hasAttribute("data-busy"),
+        onAcceptEnglish: () => { englishGuardAccepted = true; void renderLanguageGuards(); },
+        onChange: (value) => { dialog.querySelector(inputs[language]).value = value; dirty = true; translationReceipt = ""; void renderLanguageGuards(); },
+      });
+    });
   }
 
   function openDialog() {
@@ -382,7 +482,7 @@
     localizeDialog();
     populateDialog();
     dialog.showModal();
-    dialog.querySelector("[data-media-file]").focus();
+    dialog.querySelector("[data-media-drop]").focus();
   }
 
   function closeDialog() {
@@ -399,6 +499,10 @@
 
   async function selectFile(file) {
     if (!file) return;
+    if (isAvatar) {
+      await cropAvatarSource(file, file.name);
+      return;
+    }
     compressedFile = null;
     dirty = true;
     dialog.querySelector("[data-media-save]").disabled = true;
@@ -422,9 +526,10 @@
     compressionController = new AbortController();
     setStatus(labels().optimizing, { progress: true, value: 0 });
     try {
+      const targetBytes = isAvatar ? MAX_AVATAR_BYTES : MAX_COMPRESSED_BYTES;
       const result = await window.imageCompression(file, {
-        maxSizeMB: 0.95,
-        maxWidthOrHeight: 1600,
+        maxSizeMB: isAvatar ? 500 / 1024 : 0.95,
+        maxWidthOrHeight: isAvatar ? 800 : 1600,
         useWebWorker: true,
         fileType: "image/webp",
         preserveExif: false,
@@ -433,7 +538,7 @@
         onProgress(value) { setStatus(labels().optimizing, { progress: true, value }); },
       });
       const safeFile = new File([result], "site-media.webp", { type: "image/webp", lastModified: Date.now() });
-      if (safeFile === file || safeFile.type !== "image/webp" || safeFile.size < 1 || safeFile.size > MAX_COMPRESSED_BYTES) {
+      if (safeFile === file || safeFile.type !== "image/webp" || safeFile.size < 1 || safeFile.size > targetBytes) {
         throw new Error("invalid compressed output");
       }
       compressedFile = safeFile;
@@ -451,6 +556,37 @@
     }
   }
 
+  async function cropAvatarSource(source, fileName) {
+    if (!window.iHearAvatarCropper) {
+      setStatus(labels().cropUnavailable, { error: true });
+      return;
+    }
+    setBusy(true);
+    setStatus("");
+    try {
+      const result = await window.iHearAvatarCropper.open({ source, locale: locale() });
+      if (!result) return;
+      compressedFile = result.file;
+      setPreviewFile(result.file);
+      dialog.querySelector("[data-media-file-name]").textContent = fileName || "avatar.webp";
+      selectFocal(50, 50);
+      dirty = true;
+      setStatus(labels().cropReady);
+    } catch (error) {
+      const message = error?.message || labels().compressionFailed;
+      setStatus(message, { error: true });
+      window.iHearToast?.(message, { error: true });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function cropCurrentAvatar() {
+    if (!isAvatar || !currentItem) return;
+    const source = `${API_URL}/source?expectedVersion=${encodeURIComponent(currentItem.recordVersion)}`;
+    await cropAvatarSource(source, "avatar.webp");
+  }
+
   function altValues() {
     return {
       en: dialog.querySelector("[data-media-alt-en]").value.trim(),
@@ -465,12 +601,27 @@
     return data?.error || labels().failed;
   }
 
-  function saveImage() {
-    if (!compressedFile || compressedFile.type !== "image/webp" || compressedFile.size < 1 || compressedFile.size > MAX_COMPRESSED_BYTES) {
+  async function saveImage() {
+    const targetBytes = isAvatar ? MAX_AVATAR_BYTES : MAX_COMPRESSED_BYTES;
+    if (!compressedFile || compressedFile.type !== "image/webp" || compressedFile.size < 1 || compressedFile.size > targetBytes) {
       setStatus(labels().invalidOutput, { error: true });
       return;
     }
     const alt = altValues();
+    const autoTranslate = !isAvatar && dialog.querySelector("[data-media-auto-translate]").checked;
+    const guard = await languageGuardPromise;
+    if (autoTranslate && guard?.inspectEnglishSource(alt.en).warning && !englishGuardAccepted) { await renderLanguageGuards(); dialog.querySelector("[data-media-alt-en]").focus(); return; }
+    if (autoTranslate && !translationReceipt) {
+      if (alt.en.length < 2 || alt.en.length > 300) { setStatus(labels().altRequired, { error: true }); return; }
+      setBusy(true); setStatus(labels().preparingTranslation);
+      try {
+        const response = await fetch("/api/admin/translations/preview", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ resource: { type: "media", scope: "", id: slot, version: currentItem?.recordVersion || 0 }, fields: { alt }, allowCjkEnglish: englishGuardAccepted, force: dialog.querySelector("[data-media-replace-translation]").checked ? { alt: ["zhHant", "zhHans"] } : {} }) });
+        const data = await response.json().catch(() => null); if (!response.ok) throw new Error(data?.error || labels().failed);
+        dialog.querySelector("[data-media-alt-zht]").value = data.fields.alt.value.zhHant; dialog.querySelector("[data-media-alt-zhs]").value = data.fields.alt.value.zhHans; translationReceipt = data.receipt; dirty = true; setStatus(labels().translationReady);
+      } catch (error) { setStatus(error?.message || labels().failed, { error: true }); }
+      finally { setBusy(false); }
+      return;
+    }
     if (!Object.values(alt).every((value) => value.length >= 2 && value.length <= 300)) {
       setStatus(labels().altRequired, { error: true });
       return;
@@ -482,7 +633,9 @@
     form.append("altZhHans", alt.zhHans);
     form.append("focalX", dialog.dataset.focalX || "50");
     form.append("focalY", dialog.dataset.focalY || "50");
+    form.append("zoom", "100");
     form.append("expectedVersion", String(currentItem?.recordVersion || 0));
+    if (autoTranslate && translationReceipt) form.append("translationReceipt", translationReceipt);
 
     setBusy(true);
     setStatus(labels().uploading, { progress: true, value: 0 });
@@ -549,7 +702,7 @@
   function languageChanged() {
     renderAdminControl();
     localizeDialog();
-    if (currentItem) image.alt = currentItem.alt?.[locale()] || currentItem.alt?.en || defaults.alt.en;
+    if (currentItem) image.alt = isAvatar ? "" : (currentItem.alt?.[locale()] || currentItem.alt?.en || defaults.alt.en);
     else image.alt = isAvatar ? "" : (defaults.alt[locale()] || defaults.alt.en);
   }
 

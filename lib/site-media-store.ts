@@ -4,6 +4,8 @@ import path from "node:path";
 import postgres from "postgres";
 
 import type { SiteMediaAlt, SiteMediaAsset, SiteMediaSlot, SiteMediaVariant } from "./site-media-types";
+import { saveTranslationStates, upsertTranslationStatesInTransaction } from "./translation-state";
+import type { TranslationStateWrite } from "./translation-types";
 
 export class SiteMediaConfigurationError extends Error {
   constructor() {
@@ -24,8 +26,9 @@ type AssetRow = {
   alt_en: string;
   alt_zh_hant: string;
   alt_zh_hans: string;
-  focal_x: 0 | 50 | 100;
-  focal_y: 0 | 50 | 100;
+  focal_x: number;
+  focal_y: number;
+  zoom: number;
   record_version: number;
   updated_at: Date | string;
   updated_by: string;
@@ -44,7 +47,9 @@ type VariantRow = {
 
 type SiteMediaFileStore = { assets: SiteMediaAsset[] };
 
-const databaseUrl = process.env.POSTGRES_URL || process.env.DATABASE_URL || "";
+const databaseUrl = process.env.IHEAR_FORCE_FILE_STORE === "1"
+  ? ""
+  : process.env.POSTGRES_URL || process.env.DATABASE_URL || "";
 const isHostedProduction = process.env.NODE_ENV === "production" && Boolean(process.env.VERCEL || process.env.NETLIFY || process.env.CONTEXT);
 const filePath = path.join(process.cwd(), "data", "site-media.json");
 const globalForSiteMedia = globalThis as typeof globalThis & {
@@ -82,6 +87,7 @@ async function ensureSchema() {
           alt_zh_hans TEXT NOT NULL,
           focal_x SMALLINT NOT NULL,
           focal_y SMALLINT NOT NULL,
+          zoom SMALLINT NOT NULL DEFAULT 100,
           record_version INTEGER NOT NULL DEFAULT 1,
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           created_by TEXT NOT NULL,
@@ -93,9 +99,10 @@ async function ensureSchema() {
             AND char_length(alt_zh_hant) BETWEEN 2 AND 300
             AND char_length(alt_zh_hans) BETWEEN 2 AND 300
           ),
-          CONSTRAINT site_media_assets_focal_grid CHECK (
-            focal_x IN (0, 50, 100) AND focal_y IN (0, 50, 100)
+          CONSTRAINT site_media_assets_focal_range CHECK (
+            focal_x BETWEEN 0 AND 100 AND focal_y BETWEEN 0 AND 100
           ),
+          CONSTRAINT site_media_assets_zoom_range CHECK (zoom BETWEEN 100 AND 250),
           CONSTRAINT site_media_assets_version_positive CHECK (record_version >= 1),
           CONSTRAINT site_media_assets_actor_length CHECK (
             char_length(created_by) BETWEEN 1 AND 320
@@ -104,6 +111,12 @@ async function ensureSchema() {
           CONSTRAINT site_media_assets_timestamp_order CHECK (updated_at >= created_at)
         )
       `;
+      await sql`ALTER TABLE public.site_media_assets ADD COLUMN IF NOT EXISTS zoom SMALLINT NOT NULL DEFAULT 100`;
+      await sql`ALTER TABLE public.site_media_assets DROP CONSTRAINT IF EXISTS site_media_assets_focal_grid`;
+      await sql`ALTER TABLE public.site_media_assets DROP CONSTRAINT IF EXISTS site_media_assets_focal_range`;
+      await sql`ALTER TABLE public.site_media_assets ADD CONSTRAINT site_media_assets_focal_range CHECK (focal_x BETWEEN 0 AND 100 AND focal_y BETWEEN 0 AND 100)`;
+      await sql`ALTER TABLE public.site_media_assets DROP CONSTRAINT IF EXISTS site_media_assets_zoom_range`;
+      await sql`ALTER TABLE public.site_media_assets ADD CONSTRAINT site_media_assets_zoom_range CHECK (zoom BETWEEN 100 AND 250)`;
       await sql`
         CREATE TABLE IF NOT EXISTS public.site_media_variants (
           slot TEXT NOT NULL,
@@ -141,8 +154,9 @@ function fromRows(assetRows: AssetRow[], variantRows: VariantRow[]) {
   return assetRows.map((row) => ({
     slot: row.slot,
     alt: { en: row.alt_en, zhHant: row.alt_zh_hant, zhHans: row.alt_zh_hans },
-    focalX: Number(row.focal_x) as 0 | 50 | 100,
-    focalY: Number(row.focal_y) as 0 | 50 | 100,
+    focalX: Number(row.focal_x),
+    focalY: Number(row.focal_y),
+    zoom: Number(row.zoom || 100),
     recordVersion: Number(row.record_version),
     updatedAt: new Date(row.updated_at).toISOString(),
     updatedBy: row.updated_by,
@@ -163,7 +177,9 @@ function fromRows(assetRows: AssetRow[], variantRows: VariantRow[]) {
 
 async function readFileStore(): Promise<SiteMediaFileStore> {
   try {
-    return JSON.parse(await readFile(filePath, "utf8")) as SiteMediaFileStore;
+    const store = JSON.parse(await readFile(filePath, "utf8")) as SiteMediaFileStore;
+    store.assets = (store.assets || []).map((asset) => ({ ...asset, zoom: Number(asset.zoom || 100) }));
+    return store;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return { assets: [] };
     throw error;
@@ -196,16 +212,18 @@ export async function listSiteMediaAssets(): Promise<SiteMediaAsset[]> {
 export async function replaceSiteMediaAsset(params: {
   slot: SiteMediaSlot;
   alt: SiteMediaAlt;
-  focalX: 0 | 50 | 100;
-  focalY: 0 | 50 | 100;
+  focalX: number;
+  focalY: number;
+  zoom: number;
   expectedVersion: number;
   updatedBy: string;
   variants: SiteMediaVariant[];
+  translationStates?: TranslationStateWrite[];
 }) {
   assertPersistence();
   const sql = sqlClient();
   if (!sql) {
-    return mutateFile((store) => {
+    const result = await mutateFile((store) => {
       const existingIndex = store.assets.findIndex((asset) => asset.slot === params.slot);
       const existing = store.assets[existingIndex];
       if ((existing?.recordVersion || 0) !== params.expectedVersion) throw new SiteMediaConflictError();
@@ -215,6 +233,7 @@ export async function replaceSiteMediaAsset(params: {
         alt: params.alt,
         focalX: params.focalX,
         focalY: params.focalY,
+        zoom: params.zoom,
         recordVersion: params.expectedVersion + 1,
         updatedAt: now,
         updatedBy: params.updatedBy,
@@ -224,6 +243,8 @@ export async function replaceSiteMediaAsset(params: {
       else store.assets.push(asset);
       return { asset, previousStoragePaths: existing?.variants.map((variant) => variant.storagePath) || [] };
     });
+    await saveTranslationStates({ type: "media", scope: "", id: params.slot }, params.translationStates || [], params.updatedBy);
+    return result;
   }
 
   await ensureSchema();
@@ -241,7 +262,7 @@ export async function replaceSiteMediaAsset(params: {
         await tx`
           UPDATE public.site_media_assets SET
             alt_en = ${params.alt.en}, alt_zh_hant = ${params.alt.zhHant}, alt_zh_hans = ${params.alt.zhHans},
-            focal_x = ${params.focalX}, focal_y = ${params.focalY},
+            focal_x = ${params.focalX}, focal_y = ${params.focalY}, zoom = ${params.zoom},
             record_version = record_version + 1, updated_at = NOW(), updated_by = ${params.updatedBy}
           WHERE slot = ${params.slot}
         `;
@@ -249,10 +270,10 @@ export async function replaceSiteMediaAsset(params: {
       } else {
         await tx`
           INSERT INTO public.site_media_assets (
-            slot, alt_en, alt_zh_hant, alt_zh_hans, focal_x, focal_y, created_by, updated_by
+            slot, alt_en, alt_zh_hant, alt_zh_hans, focal_x, focal_y, zoom, created_by, updated_by
           ) VALUES (
             ${params.slot}, ${params.alt.en}, ${params.alt.zhHant}, ${params.alt.zhHans},
-            ${params.focalX}, ${params.focalY}, ${params.updatedBy}, ${params.updatedBy}
+            ${params.focalX}, ${params.focalY}, ${params.zoom}, ${params.updatedBy}, ${params.updatedBy}
           )
         `;
       }
@@ -267,6 +288,7 @@ export async function replaceSiteMediaAsset(params: {
           )
         `;
       }
+      await upsertTranslationStatesInTransaction(tx, { type: "media", scope: "", id: params.slot }, params.translationStates || [], params.updatedBy);
       const [assetRows, variantRows] = await Promise.all([
         tx<AssetRow[]>`SELECT * FROM public.site_media_assets WHERE slot = ${params.slot}`,
         tx<VariantRow[]>`SELECT * FROM public.site_media_variants WHERE slot = ${params.slot} ORDER BY width`,
@@ -280,6 +302,62 @@ export async function replaceSiteMediaAsset(params: {
     if ((error as { code?: string }).code === "23505") throw new SiteMediaConflictError();
     throw error;
   }
+}
+
+export async function updateSiteMediaAssetMetadata(params: {
+  slot: SiteMediaSlot;
+  alt: SiteMediaAlt;
+  focalX: number;
+  focalY: number;
+  zoom: number;
+  expectedVersion: number;
+  updatedBy: string;
+  translationStates?: TranslationStateWrite[];
+}) {
+  assertPersistence();
+  const sql = sqlClient();
+  if (!sql) {
+    const result = await mutateFile((store) => {
+      const index = store.assets.findIndex((asset) => asset.slot === params.slot);
+      const existing = store.assets[index];
+      if (!existing || existing.recordVersion !== params.expectedVersion) throw new SiteMediaConflictError();
+      const asset: SiteMediaAsset = {
+        ...existing,
+        alt: params.alt,
+        focalX: params.focalX,
+        focalY: params.focalY,
+        zoom: params.zoom,
+        recordVersion: existing.recordVersion + 1,
+        updatedAt: new Date().toISOString(),
+        updatedBy: params.updatedBy,
+      };
+      store.assets[index] = asset;
+      return asset;
+    });
+    await saveTranslationStates({ type: "media", scope: "", id: params.slot }, params.translationStates || [], params.updatedBy);
+    return result;
+  }
+
+  await ensureSchema();
+  return sql.begin(async (tx) => {
+    const [existing] = await tx<AssetRow[]>`
+      SELECT * FROM public.site_media_assets WHERE slot = ${params.slot} FOR UPDATE
+    `;
+    if (!existing || Number(existing.record_version) !== params.expectedVersion) throw new SiteMediaConflictError();
+    await tx`
+      UPDATE public.site_media_assets SET
+        alt_en = ${params.alt.en}, alt_zh_hant = ${params.alt.zhHant}, alt_zh_hans = ${params.alt.zhHans},
+        focal_x = ${params.focalX}, focal_y = ${params.focalY}, zoom = ${params.zoom},
+        record_version = record_version + 1, updated_at = NOW(), updated_by = ${params.updatedBy}
+      WHERE slot = ${params.slot}
+    `;
+    await upsertTranslationStatesInTransaction(tx, { type: "media", scope: "", id: params.slot }, params.translationStates || [], params.updatedBy);
+    const [assetRows, variantRows] = await Promise.all([
+      tx<AssetRow[]>`SELECT * FROM public.site_media_assets WHERE slot = ${params.slot}`,
+      tx<VariantRow[]>`SELECT * FROM public.site_media_variants WHERE slot = ${params.slot} ORDER BY width`,
+    ]);
+    return fromRows(assetRows, variantRows)[0];
+  });
 }
 
 export async function deleteSiteMediaAsset(slot: SiteMediaSlot, expectedVersion: number) {

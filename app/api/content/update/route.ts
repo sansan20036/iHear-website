@@ -11,8 +11,15 @@ import {
   ContentConflictError,
   publicContentStore,
   updateContentItem,
+  updateContentItems,
 } from "../../../../lib/content-store";
+import { isCatalogContent, validateCatalogValue } from "../../../../lib/content-catalog";
 import { revisionAfterMutation } from "../../../../lib/live-revisions";
+import {
+  manualTranslationWrites,
+  TranslationReceiptError,
+  verifyTranslationReceipt,
+} from "../../../../lib/translation-core";
 import {
   enforceRateLimit,
   RATE_LIMIT_POLICIES,
@@ -46,11 +53,18 @@ function isValidExpectedUpdatedAt(value: unknown) {
   return value === null || (typeof value === "string" && !Number.isNaN(Date.parse(value)));
 }
 
+function isSameOrigin(request: Request) {
+  const origin = request.headers.get("origin");
+  if (!origin) return true;
+  try { return new URL(origin).origin === new URL(request.url).origin; } catch { return false; }
+}
+
 export async function POST(request: Request) {
+  if (!isSameOrigin(request)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   const session = await auth();
   const email = normalizeEmail(session?.user?.email);
 
-  if (!isAllowedAdmin(email)) {
+  if (!(await isAllowedAdmin(email))) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -75,7 +89,53 @@ export async function POST(request: Request) {
     locale: ContentLocale;
     value: string;
     expectedUpdatedAt: string | null;
+    values: Record<ContentLocale, string>;
+    expectedUpdatedAtByLocale: Record<ContentLocale, string | null>;
+    translationReceipt: string;
   }>;
+
+  if (payload.values && payload.expectedUpdatedAtByLocale) {
+    if (!isValidPage(payload.page) || !isValidKey(payload.key) || !isCatalogContent(payload.page!, payload.key!)) {
+      return respond(NextResponse.json({ error: "Unknown content slot" }, { status: 400 }));
+    }
+    const valid = CONTENT_LOCALES.every((locale) =>
+      typeof payload.values?.[locale] === "string" &&
+      validateCatalogValue(payload.page!, payload.key!, payload.values[locale]) &&
+      isValidExpectedUpdatedAt(payload.expectedUpdatedAtByLocale?.[locale])
+    );
+    if (!valid) return respond(NextResponse.json({ error: "Invalid localized content fields" }, { status: 400 }));
+    try {
+      const localizedFields = { value: payload.values };
+      const translationStates = payload.translationReceipt
+        ? verifyTranslationReceipt({
+            receipt: payload.translationReceipt,
+            email,
+            resource: {
+              type: "content",
+              scope: payload.page!,
+              id: payload.key!,
+              version: payload.expectedUpdatedAtByLocale.en,
+            },
+            fields: localizedFields,
+          })
+        : manualTranslationWrites(localizedFields);
+      const content = await updateContentItems({
+        page: payload.page!, key: payload.key!, values: payload.values,
+        expectedUpdatedAt: payload.expectedUpdatedAtByLocale,
+        updatedBy: email,
+        translationStates,
+      });
+      revalidatePath(payload.page! === "/__global__" ? "/" : payload.page!);
+      revalidatePath("/api/content/get");
+      revalidatePath("/api/live-revisions");
+      const revision = await revisionAfterMutation("content");
+      return respond(NextResponse.json({ ok: true, content: publicContentStore(content), revision }));
+    } catch (error) {
+      if (error instanceof TranslationReceiptError) return respond(NextResponse.json({ error: error.message, code: error.code }, { status: 409 }));
+      if (error instanceof ContentConflictError) return respond(NextResponse.json({ error: error.message }, { status: 409 }));
+      throw error;
+    }
+  }
 
   if (!Object.prototype.hasOwnProperty.call(payload, "expectedUpdatedAt")) {
     return respond(NextResponse.json(

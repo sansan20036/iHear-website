@@ -32,6 +32,8 @@ export type ImpactMilestone = {
   createdBy: string;
   updatedBy: string;
   archivedAt?: string;
+  archivedBy?: string;
+  archivedFromStatus?: "draft" | "published";
 };
 
 export type ImpactMilestoneInput = Pick<

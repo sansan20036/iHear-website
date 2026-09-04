@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import path from "node:path";
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
@@ -22,6 +24,9 @@ export class SiteMediaStorageError extends Error {
 const supabaseUrl = process.env.SUPABASE_URL || "";
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 const bucket = process.env.SUPABASE_STORAGE_BUCKET || "site-media";
+const useLocalStorage = process.env.IHEAR_FORCE_FILE_STORE === "1";
+const localPublicRoot = path.join(process.cwd(), "public");
+const localStorageRoot = path.join(localPublicRoot, "uploads", "site-media");
 const globalForSiteMediaStorage = globalThis as typeof globalThis & {
   ihearSiteMediaSupabase?: SupabaseClient;
 };
@@ -40,17 +45,87 @@ function slotPrefix(slot: SiteMediaSlot) {
   return slot.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "");
 }
 
+export function expectedSiteMediaWidths(slot: SiteMediaSlot) {
+  return slot.startsWith("team.") && slot.endsWith(".avatar")
+    ? [480, 800]
+    : [480, 800, 1200];
+}
+
 export async function removeSiteMediaObjects(paths: string[]) {
   if (!paths.length) return;
+  if (useLocalStorage) {
+    await Promise.all(paths.map(async (storagePath) => {
+      if (!storagePath.startsWith("local:")) return;
+      const resolved = path.resolve(localPublicRoot, storagePath.slice("local:".length));
+      if (!resolved.startsWith(`${localStorageRoot}${path.sep}`)) {
+        throw new SiteMediaStorageError("The local image path is invalid");
+      }
+      await unlink(resolved).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== "ENOENT") throw error;
+      });
+    }));
+    return;
+  }
   const { error } = await client().storage.from(bucket).remove(paths);
   if (error) throw new SiteMediaStorageError(error.message);
+}
+
+export async function readSiteMediaObject(storagePath: string) {
+  if (useLocalStorage) {
+    if (!storagePath.startsWith("local:")) throw new SiteMediaStorageError("The local image path is invalid");
+    const resolved = path.resolve(localPublicRoot, storagePath.slice("local:".length));
+    if (!resolved.startsWith(`${localStorageRoot}${path.sep}`)) {
+      throw new SiteMediaStorageError("The local image path is invalid");
+    }
+    try {
+      return await readFile(resolved);
+    } catch (error) {
+      throw new SiteMediaStorageError((error as Error)?.message);
+    }
+  }
+  const { data, error } = await client().storage.from(bucket).download(storagePath);
+  if (error || !data) throw new SiteMediaStorageError(error?.message || "Could not read the image");
+  return Buffer.from(await data.arrayBuffer());
+}
+
+async function uploadLocalSiteMediaVariants(
+  slot: SiteMediaSlot,
+  versionId: string,
+  processed: ProcessedSiteMediaVariant[],
+): Promise<SiteMediaVariant[]> {
+  const prefix = slotPrefix(slot);
+  const directory = path.join(localStorageRoot, prefix, versionId);
+  const uploaded: string[] = [];
+  await mkdir(directory, { recursive: true });
+  try {
+    const variants: SiteMediaVariant[] = [];
+    for (const variant of processed) {
+      const relativePath = `uploads/site-media/${prefix}/${versionId}/${variant.width}.webp`;
+      const filePath = path.join(localPublicRoot, ...relativePath.split("/"));
+      await writeFile(filePath, variant.buffer, { flag: "wx" });
+      uploaded.push(filePath);
+      variants.push({
+        width: variant.width,
+        pixelWidth: variant.pixelWidth,
+        pixelHeight: variant.pixelHeight,
+        byteSize: variant.byteSize,
+        mimeType: variant.mimeType,
+        url: `/${relativePath}`,
+        storagePath: `local:${relativePath}`,
+      });
+    }
+    return variants;
+  } catch (error) {
+    await Promise.all(uploaded.map((filePath) => unlink(filePath).catch(() => undefined)));
+    throw new SiteMediaStorageError((error as Error)?.message);
+  }
 }
 
 export async function uploadSiteMediaVariants(
   slot: SiteMediaSlot,
   processed: ProcessedSiteMediaVariant[],
 ): Promise<SiteMediaVariant[]> {
-  const expectedWidths = [480, 800, 1200];
+  const expectedWidths = expectedSiteMediaWidths(slot);
   const actualWidths = processed.map((variant) => variant.width).sort((left, right) => left - right);
   if (
     actualWidths.length !== expectedWidths.length
@@ -65,8 +140,11 @@ export async function uploadSiteMediaVariants(
   ) {
     throw new SiteMediaStorageError("The responsive image set is invalid");
   }
-  const storage = client().storage.from(bucket);
   const versionId = randomUUID();
+  if (useLocalStorage) {
+    return uploadLocalSiteMediaVariants(slot, versionId, processed);
+  }
+  const storage = client().storage.from(bucket);
   const uploaded: string[] = [];
   const variants: SiteMediaVariant[] = [];
 

@@ -3,7 +3,9 @@ import postgres from "postgres";
 type HealthSql = ReturnType<typeof postgres>;
 type HealthRow = { ready: boolean };
 
-const databaseUrl = process.env.POSTGRES_URL || process.env.DATABASE_URL || "";
+const databaseUrl = process.env.IHEAR_FORCE_FILE_STORE === "1"
+  ? ""
+  : process.env.POSTGRES_URL || process.env.DATABASE_URL || "";
 const globalForHealth = globalThis as typeof globalThis & {
   ihearHealthSql?: HealthSql;
 };

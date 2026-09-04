@@ -41,6 +41,8 @@ export type TeamProfile = TeamProfileSeed & {
   createdAt: string;
   updatedAt: string;
   updatedBy: string;
+  deletedAt: string | null;
+  deletedBy: string | null;
 };
 
 export type TeamProfileInput = Omit<

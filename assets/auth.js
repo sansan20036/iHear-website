@@ -5,19 +5,19 @@
     en: {
       signIn: "Sign in", signInFull: "Sign in as an administrator with Google", signOut: "Sign out",
       signedIn: "Administrator signed in", loading: "Checking access…", unavailable: "Could not check sign-in status.",
-      retry: "Retry", account: "Administrator account", failedOut: "Sign out failed. You are still signed in.",
+      retry: "Retry", account: "Administrator account", dashboard: "Admin dashboard", dashboardHint: "Manage website content, Team, and Impact", failedOut: "Sign out failed. You are still signed in.",
       failedIn: "Sign in could not start. Please try again.",
     },
     zhHant: {
       signIn: "登入", signInFull: "使用 Google 登入管理員帳號", signOut: "登出",
       signedIn: "管理員已登入", loading: "正在確認權限…", unavailable: "暫時無法確認登入狀態。",
-      retry: "重試", account: "管理員帳號", failedOut: "登出失敗，您目前仍保持登入。",
+      retry: "重試", account: "管理員帳號", dashboard: "管理後台", dashboardHint: "管理網站內容、團隊與成果資料", failedOut: "登出失敗，您目前仍保持登入。",
       failedIn: "無法開始登入，請再試一次。",
     },
     zhHans: {
       signIn: "登录", signInFull: "使用 Google 登录管理员账号", signOut: "登出",
       signedIn: "管理员已登录", loading: "正在确认权限…", unavailable: "暂时无法确认登录状态。",
-      retry: "重试", account: "管理员账号", failedOut: "登出失败，您目前仍保持登录。",
+      retry: "重试", account: "管理员账号", dashboard: "管理后台", dashboardHint: "管理网站内容、团队与成果数据", failedOut: "登出失败，您目前仍保持登录。",
       failedIn: "无法开始登录，请重试。",
     },
   };
@@ -120,10 +120,11 @@
     const name = escapeHtml(user.name || user.email || copy.signedIn);
     const email = escapeHtml(user.email || "");
     const avatar = avatarHtml(user);
+    const dashboard = `<a class="auth-admin-link" href="/admin"${mode === "desktop" ? ' role="menuitem"' : ""}><span>${escapeHtml(copy.dashboard)}</span><small>${escapeHtml(copy.dashboardHint)}</small></a>`;
     if (mode === "mobile") {
-      return `<div class="auth-mobile-panel"><div class="auth-mobile-identity" title="${email}">${avatar}<span class="auth-name">${name}</span></div><button class="auth-signout" type="button" data-auth-signout>${escapeHtml(copy.signOut)}</button></div>`;
+      return `<div class="auth-mobile-panel"><div class="auth-mobile-identity" title="${email}">${avatar}<span class="auth-name">${name}</span></div>${dashboard}<button class="auth-signout" type="button" data-auth-signout>${escapeHtml(copy.signOut)}</button></div>`;
     }
-    return `<div class="auth-menu"><button class="auth-profile" type="button" title="${email}" aria-haspopup="menu" aria-expanded="false" aria-controls="authPopover">${avatar}<span class="auth-name">${name}</span></button><div class="auth-popover" id="authPopover" role="menu" hidden><strong>${name}</strong><span class="auth-email">${email}</span><button class="auth-signout" role="menuitem" type="button" data-auth-signout>${escapeHtml(copy.signOut)}</button></div></div>`;
+    return `<div class="auth-menu"><button class="auth-profile" type="button" title="${email}" aria-haspopup="menu" aria-expanded="false" aria-controls="authPopover">${avatar}<span class="auth-name">${name}</span></button><div class="auth-popover" id="authPopover" role="menu" hidden><strong>${name}</strong><span class="auth-email">${email}</span>${dashboard}<div class="auth-menu-separator" aria-hidden="true"></div><button class="auth-signout" role="menuitem" type="button" data-auth-signout>${escapeHtml(copy.signOut)}</button></div></div>`;
   }
 
   function bindPopover() {
@@ -139,7 +140,7 @@
     function open() {
       popover.hidden = false;
       trigger.setAttribute("aria-expanded", "true");
-      popover.querySelector("button")?.focus();
+      popover.querySelector("a,button")?.focus();
     }
     trigger.addEventListener("click", () => popover.hidden ? open() : close());
     document.addEventListener("pointerdown", (event) => { if (!menu.contains(event.target)) close(); });

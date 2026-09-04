@@ -676,13 +676,23 @@
     });
   }
 
+  function setLocalizedText(element, value) {
+    if (!element.children.length) { element.textContent = value; return; }
+    const textNodes = Array.from(element.childNodes).filter((node) => node.nodeType === Node.TEXT_NODE);
+    const target = textNodes.find((node) => node.nodeValue.trim()) || textNodes[0];
+    if (target) {
+      target.nodeValue = value;
+      textNodes.filter((node) => node !== target).forEach((node) => { node.nodeValue = ""; });
+    } else element.appendChild(document.createTextNode(value));
+  }
+
   function updateTranslatedText() {
     const dictionary = I18N[activeLanguage] || I18N.en;
     document.querySelectorAll("[data-i18n]").forEach((element) => {
       const key = element.getAttribute("data-i18n");
       const translated = activeLanguage === "en" ? englishText.get(key) : dictionary[key];
-      if (translated != null) element.textContent = translated;
-      else if (englishText.has(key)) element.textContent = englishText.get(key);
+      if (translated != null) setLocalizedText(element, translated);
+      else if (englishText.has(key)) setLocalizedText(element, englishText.get(key));
     });
     document.documentElement.lang = languageAttributes[activeLanguage] || "en";
     document.querySelectorAll("#langSwitch button[data-lang]").forEach((button) => {
@@ -763,9 +773,10 @@
     const nav = document.getElementById("nav");
     const toggle = document.getElementById("navToggle");
     const drawer = document.getElementById("navLinks");
+    if (!nav || !toggle || !drawer) return;
+
     const languageSwitch = document.getElementById("langSwitch");
     const cta = nav.querySelector(".nav-inner > .btn-cta");
-    if (!nav || !toggle || !drawer) return;
 
     const media = window.matchMedia("(max-width: 1024px)");
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");

@@ -37,7 +37,7 @@ try {
   }
   if (
     backup.payload?.format !== "ihear-postgres-backup" ||
-    ![1, 2, 3, 4, 5].includes(backup.payload?.version)
+    ![1, 2, 3, 4, 5, 6, 7, 8].includes(backup.payload?.version)
   ) {
     throw new Error("Unsupported backup format.");
   }
@@ -56,6 +56,9 @@ try {
   if (backup.payload.version >= 3) required.push("localized_content_overrides");
   if (backup.payload.version >= 4) required.push("site_media_assets", "site_media_variants");
   if (backup.payload.version >= 5) required.push("site_settings");
+  if (backup.payload.version >= 6) required.push("site_layout_configs");
+  if (backup.payload.version >= 7) required.push("admin_accounts", "admin_activity_log");
+  if (backup.payload.version >= 8) required.push("localized_translation_states");
   for (const tableName of required) {
     if (!Array.isArray(tables[tableName])) {
       throw new Error(`Backup is missing ${tableName}.`);
@@ -97,8 +100,16 @@ try {
       throw new Error("Backup has no valid site_theme setting.");
     }
   }
+  if (backup.payload.version >= 6) assertUnique(tables.site_layout_configs, (row) => row.page, "site_layout_configs");
+  if (backup.payload.version >= 7) {
+    assertUnique(tables.admin_accounts, (row) => row.email, "admin_accounts");
+    assertUnique(tables.admin_activity_log, (row) => row.id, "admin_activity_log");
+  }
+  if (backup.payload.version >= 8) {
+    assertUnique(tables.localized_translation_states, (row) => `${row.resource_type}\u0000${row.resource_scope}\u0000${row.resource_id}\u0000${row.field_key}\u0000${row.locale}`, "localized_translation_states");
+  }
 
-  const requiredMigration = backup.payload.version >= 5 ? "012" : backup.payload.version >= 4 ? "011" : backup.payload.version >= 3 ? "010" : "009";
+  const requiredMigration = backup.payload.version >= 8 ? "017" : backup.payload.version >= 7 ? "015" : backup.payload.version >= 6 ? "014" : backup.payload.version >= 5 ? "012" : backup.payload.version >= 4 ? "011" : backup.payload.version >= 3 ? "010" : "009";
   if (!tables.schema_migrations.some((row) => String(row.version) === requiredMigration)) {
     throw new Error(`Backup does not include migration ${requiredMigration}.`);
   }

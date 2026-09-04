@@ -86,6 +86,13 @@ async function currentCounts(client) {
   const siteSettings = settingsTable.available
     ? await client`SELECT COUNT(*)::INTEGER AS count FROM site_settings`
     : [{ count: 0 }];
+  const [layoutTable] = await client`SELECT to_regclass('public.site_layout_configs') IS NOT NULL AS available`;
+  const siteLayoutConfigs = layoutTable.available ? await client`SELECT COUNT(*)::INTEGER AS count FROM site_layout_configs` : [{ count: 0 }];
+  const [adminTables] = await client`SELECT to_regclass('public.admin_accounts') IS NOT NULL AS accounts, to_regclass('public.admin_activity_log') IS NOT NULL AS activity`;
+  const adminAccounts = adminTables.accounts ? await client`SELECT COUNT(*)::INTEGER AS count FROM admin_accounts` : [{ count: 0 }];
+  const adminActivityLog = adminTables.activity ? await client`SELECT COUNT(*)::INTEGER AS count FROM admin_activity_log` : [{ count: 0 }];
+  const [translationTable] = await client`SELECT to_regclass('public.localized_translation_states') IS NOT NULL AS available`;
+  const localizedTranslationStates = translationTable.available ? await client`SELECT COUNT(*)::INTEGER AS count FROM localized_translation_states` : [{ count: 0 }];
   return {
     impact_milestones: Number(impact[0].count),
     impact_milestone_settings: Number(settings[0].count),
@@ -96,6 +103,10 @@ async function currentCounts(client) {
     site_media_assets: Number(siteMediaAssets[0].count),
     site_media_variants: Number(siteMediaVariants[0].count),
     site_settings: Number(siteSettings[0].count),
+    site_layout_configs: Number(siteLayoutConfigs[0].count),
+    admin_accounts: Number(adminAccounts[0].count),
+    admin_activity_log: Number(adminActivityLog[0].count),
+    localized_translation_states: Number(localizedTranslationStates[0].count),
   };
 }
 
@@ -138,7 +149,7 @@ try {
   }
   if (
     backup.payload?.format !== "ihear-postgres-backup" ||
-    ![1, 2, 3, 4, 5].includes(backup.payload?.version)
+    ![1, 2, 3, 4, 5, 6, 7, 8].includes(backup.payload?.version)
   ) {
     throw new Error("Unsupported backup format.");
   }
@@ -159,6 +170,10 @@ try {
   const siteMediaAssets = backup.payload.version >= 4 ? tables.site_media_assets : [];
   const siteMediaVariants = backup.payload.version >= 4 ? tables.site_media_variants : [];
   const siteSettings = backup.payload.version >= 5 ? tables.site_settings : [];
+  const siteLayoutConfigs = backup.payload.version >= 6 ? tables.site_layout_configs : [];
+  const adminAccounts = backup.payload.version >= 7 ? tables.admin_accounts : [];
+  const adminActivityLog = backup.payload.version >= 7 ? tables.admin_activity_log : [];
+  const localizedTranslationStates = backup.payload.version >= 8 ? tables.localized_translation_states : [];
 
   if (
     !Array.isArray(impactMilestones) ||
@@ -170,7 +185,11 @@ try {
     !Array.isArray(teamProfiles) ||
     !Array.isArray(siteMediaAssets) ||
     !Array.isArray(siteMediaVariants) ||
-    !Array.isArray(siteSettings)
+    !Array.isArray(siteSettings) ||
+    !Array.isArray(siteLayoutConfigs) ||
+    !Array.isArray(adminAccounts) ||
+    !Array.isArray(adminActivityLog) ||
+    !Array.isArray(localizedTranslationStates)
   ) {
     throw new Error("Backup is missing one or more required tables.");
   }
@@ -190,6 +209,10 @@ try {
   assertUnique(siteMediaVariants, (row) => `${row.slot}\u0000${row.width}`, "site_media_variants");
   assertUnique(siteMediaVariants, (row) => row.storage_path, "site_media_variants.storage_path");
   assertUnique(siteSettings, (row) => row.key, "site_settings");
+  assertUnique(siteLayoutConfigs, (row) => row.page, "site_layout_configs");
+  assertUnique(adminAccounts, (row) => row.email, "admin_accounts");
+  assertUnique(adminActivityLog, (row) => row.id, "admin_activity_log");
+  assertUnique(localizedTranslationStates, (row) => `${row.resource_type}\u0000${row.resource_scope}\u0000${row.resource_id}\u0000${row.field_key}\u0000${row.locale}`, "localized_translation_states");
 
   const countsBefore = await currentCounts(sql);
   const revisionsBefore = await currentRevisions(sql);
@@ -218,7 +241,7 @@ try {
             country_names_zh_hans, country_names_en, title_zh_hant, title_zh_hans, title_en,
             description_zh_hant, description_zh_hans, description_en,
             status, sort_order, version, created_at, updated_at,
-            created_by, updated_by, archived_at
+            created_by, updated_by, archived_at, archived_by, archived_from_status
           ) VALUES (
             ${row.id}, ${row.kind}, ${row.period}, ${row.volunteers}, ${row.volunteers_plus},
             ${row.students}, ${row.students_plus}, ${row.sessions}, ${row.sessions_plus},
@@ -227,7 +250,9 @@ try {
             ${row.title_zh_hant}, ${row.title_zh_hans}, ${row.title_en},
             ${row.description_zh_hant}, ${row.description_zh_hans}, ${row.description_en},
             ${row.status}, ${row.sort_order}, ${row.version}, ${row.created_at}, ${row.updated_at},
-            ${row.created_by}, ${row.updated_by}, ${row.archived_at}
+            ${row.created_by}, ${row.updated_by}, ${row.archived_at},
+            ${row.archived_by || (row.status === "archived" ? row.updated_by : null)},
+            ${row.archived_from_status || (row.status === "archived" ? "draft" : null)}
           )
           ON CONFLICT (id) DO UPDATE SET
             kind = EXCLUDED.kind,
@@ -255,7 +280,9 @@ try {
             updated_at = EXCLUDED.updated_at,
             created_by = EXCLUDED.created_by,
             updated_by = EXCLUDED.updated_by,
-            archived_at = EXCLUDED.archived_at
+            archived_at = EXCLUDED.archived_at,
+            archived_by = EXCLUDED.archived_by,
+            archived_from_status = EXCLUDED.archived_from_status
         `;
       }
 
@@ -342,7 +369,7 @@ try {
             summary_en, summary_zh_hant, summary_zh_hans,
             bio_en, bio_zh_hant, bio_zh_hans,
             hobbies_en, hobbies_zh_hant, hobbies_zh_hans,
-            version, created_at, updated_at, created_by, updated_by
+            version, created_at, updated_at, created_by, updated_by, deleted_at, deleted_by
           ) VALUES (
             ${row.id}, ${row.person_id}, ${row.section}, ${row.status}, ${row.sort_order},
             ${row.school}, ${row.grade}, ${row.show_school}, ${row.show_grade},
@@ -353,7 +380,8 @@ try {
             ${row.summary_en}, ${row.summary_zh_hant}, ${row.summary_zh_hans},
             ${row.bio_en}, ${row.bio_zh_hant}, ${row.bio_zh_hans},
             ${row.hobbies_en}, ${row.hobbies_zh_hant}, ${row.hobbies_zh_hans},
-            ${row.version}, ${row.created_at}, ${row.updated_at}, ${row.created_by}, ${row.updated_by}
+            ${row.version}, ${row.created_at}, ${row.updated_at}, ${row.created_by}, ${row.updated_by},
+            ${row.deleted_at || null}, ${row.deleted_by || null}
           )
           ON CONFLICT (id) DO UPDATE SET
             person_id = EXCLUDED.person_id,
@@ -389,7 +417,9 @@ try {
             created_at = EXCLUDED.created_at,
             updated_at = EXCLUDED.updated_at,
             created_by = EXCLUDED.created_by,
-            updated_by = EXCLUDED.updated_by
+            updated_by = EXCLUDED.updated_by,
+            deleted_at = EXCLUDED.deleted_at,
+            deleted_by = EXCLUDED.deleted_by
         `;
       }
 
@@ -427,7 +457,7 @@ try {
           "strengths_en", "strengths_zh_hant", "strengths_zh_hans",
           "summary_en", "summary_zh_hant", "summary_zh_hans",
           "bio_en", "bio_zh_hant", "bio_zh_hans",
-          "hobbies_en", "hobbies_zh_hant", "hobbies_zh_hans", "version",
+          "hobbies_en", "hobbies_zh_hant", "hobbies_zh_hans", "version", "deleted_at", "deleted_by",
         ];
         for (const row of teamProfiles) {
           const value = byId.get(row.id);
@@ -457,7 +487,9 @@ try {
             created_at = EXCLUDED.created_at,
             created_by = EXCLUDED.created_by,
             updated_at = EXCLUDED.updated_at,
-            updated_by = EXCLUDED.updated_by
+            updated_by = EXCLUDED.updated_by,
+            deleted_at = EXCLUDED.deleted_at,
+            deleted_by = EXCLUDED.deleted_by
         `;
       }
 
@@ -489,6 +521,47 @@ try {
             record_version = EXCLUDED.record_version,
             updated_at = EXCLUDED.updated_at,
             updated_by = EXCLUDED.updated_by
+        `;
+      }
+
+      for (const row of siteLayoutConfigs) {
+        await transaction`
+          INSERT INTO site_layout_configs (page, config, record_version, updated_at, updated_by)
+          VALUES (${row.page}, ${transaction.json(row.config)}, ${row.record_version}, ${row.updated_at}, ${row.updated_by})
+          ON CONFLICT (page) DO UPDATE SET config=EXCLUDED.config, record_version=EXCLUDED.record_version, updated_at=EXCLUDED.updated_at, updated_by=EXCLUDED.updated_by
+        `;
+      }
+
+      for (const row of adminAccounts) {
+        await transaction`
+          INSERT INTO admin_accounts (email, role, enabled, version, invited_by, created_at, updated_at, updated_by)
+          VALUES (${row.email}, ${row.role}, ${row.enabled}, ${row.version}, ${row.invited_by}, ${row.created_at}, ${row.updated_at}, ${row.updated_by})
+          ON CONFLICT (email) DO UPDATE SET role=EXCLUDED.role, enabled=EXCLUDED.enabled,
+            version=EXCLUDED.version, invited_by=EXCLUDED.invited_by, created_at=EXCLUDED.created_at,
+            updated_at=EXCLUDED.updated_at, updated_by=EXCLUDED.updated_by
+        `;
+      }
+
+      for (const row of adminActivityLog) {
+        await transaction`
+          INSERT INTO admin_activity_log (id, actor_email, actor_role, action, entity_type, entity_id, changed_fields, entity_status, entity_version, created_at)
+          VALUES (${row.id}, ${row.actor_email}, ${row.actor_role}, ${row.action}, ${row.entity_type}, ${row.entity_id}, ${row.changed_fields}, ${row.entity_status}, ${row.entity_version}, ${row.created_at})
+          ON CONFLICT (id) DO NOTHING
+        `;
+      }
+
+      for (const row of localizedTranslationStates) {
+        await transaction`
+          INSERT INTO localized_translation_states (
+            resource_type, resource_scope, resource_id, field_key, locale,
+            source_hash, origin, glossary_version, updated_by, updated_at
+          ) VALUES (
+            ${row.resource_type}, ${row.resource_scope}, ${row.resource_id}, ${row.field_key}, ${row.locale},
+            ${row.source_hash}, ${row.origin}, ${row.glossary_version}, ${row.updated_by}, ${row.updated_at}
+          )
+          ON CONFLICT (resource_type, resource_scope, resource_id, field_key, locale)
+          DO UPDATE SET source_hash=EXCLUDED.source_hash, origin=EXCLUDED.origin,
+            glossary_version=EXCLUDED.glossary_version, updated_by=EXCLUDED.updated_by, updated_at=EXCLUDED.updated_at
         `;
       }
 
@@ -546,6 +619,9 @@ try {
             }
           : {}),
         ...(backup.payload.version >= 5 ? { site_settings: siteSettings.length } : {}),
+        ...(backup.payload.version >= 6 ? { site_layout_configs: siteLayoutConfigs.length } : {}),
+        ...(backup.payload.version >= 7 ? { admin_accounts: adminAccounts.length, admin_activity_log: adminActivityLog.length } : {}),
+        ...(backup.payload.version >= 8 ? { localized_translation_states: localizedTranslationStates.length } : {}),
       })) {
         if (restoredCounts[tableName] < expectedRows) {
           throw new Error(`Restore verification produced too few rows for ${tableName}.`);
@@ -561,6 +637,7 @@ try {
             : []),
           ...(teamPeople.length || teamProfiles.length ? ["team"] : []),
           ...(siteSettings.length ? ["theme"] : []),
+          ...(siteLayoutConfigs.length ? ["layout"] : []),
         ];
         for (const scope of expectedScopes) {
           if (
@@ -605,6 +682,10 @@ try {
       site_media_assets: siteMediaAssets.length,
       site_media_variants: siteMediaVariants.length,
       site_settings: siteSettings.length,
+      site_layout_configs: siteLayoutConfigs.length,
+      admin_accounts: adminAccounts.length,
+      admin_activity_log: adminActivityLog.length,
+      localized_translation_states: localizedTranslationStates.length,
       schema_migrations: schemaMigrations.length,
     },
   }));

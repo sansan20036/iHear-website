@@ -81,7 +81,7 @@ describe("production operations configuration", () => {
 
     expect(backup).toContain("site_media_assets: siteMediaAssets");
     expect(backup).toContain("site_media_variants: siteMediaVariants");
-    expect(verifier).toContain("[1, 2, 3, 4, 5]");
+    expect(verifier).toContain("[1, 2, 3, 4, 5, 6, 7, 8]");
     expect(verifier).toContain('backup.payload.version >= 4 ? "011"');
     expect(restoreVerifier).toContain("site_media_assets: siteMediaAssets.length");
     expect(restoreVerifier).toContain("INSERT INTO site_media_variants");
@@ -113,7 +113,7 @@ describe("production operations configuration", () => {
     expect(verifier).toContain('backup.payload.version >= 5 ? "012"');
     expect(restore).toContain("INSERT INTO site_settings");
     expect(audit).toContain('"site_settings_live_revision"');
-    expect(audit).toContain("('content', 'impact', 'team', 'theme')");
+    expect(audit).toContain("('content', 'impact', 'team', 'theme', 'layout')");
     expect(workflow).toContain("version = '012'");
     expect(workflow).toContain("site_settings");
     expect(build).toContain("verifyThemeBuild");
@@ -121,5 +121,64 @@ describe("production operations configuration", () => {
     expect(layout).toContain('data-theme="warm"');
     expect(layout).toContain('src="/api/site-theme/bootstrap"');
     expect(headers).toContain("script-src 'self' 'unsafe-inline' blob:");
+  });
+
+  it("keeps semantic content and controlled layout configuration recoverable and flash-free", async () => {
+    const seed = await read("db/migrations/013_content_slots_seed.sql");
+    const migration = await read("db/migrations/014_site_layout_configs.sql");
+    const backup = await read("scripts/backup-database.mjs");
+    const verifier = await read("scripts/verify-backup-file.mjs");
+    const restore = await read("scripts/verify-backup.mjs");
+    const audit = await read("scripts/audit-database.mjs");
+    const build = await read("scripts/prepare-public.mjs");
+    const workflow = await read(".github/workflows/monthly-restore-drill.yml");
+
+    expect(seed).toContain("localized_content_overrides");
+    expect(seed).toContain("ON CONFLICT (page,key,locale) DO NOTHING");
+    expect(migration).toContain("CREATE TABLE IF NOT EXISTS public.site_layout_configs");
+    expect(migration).toContain("site_layout_configs_live_revision");
+    expect(backup).toContain("site_layout_configs: siteLayoutConfigs");
+    expect(verifier).toContain('backup.payload.version >= 6 ? "014"');
+    expect(restore).toContain("INSERT INTO site_layout_configs");
+    expect(audit).toContain('"site_layout_configs_live_revision"');
+    expect(workflow).toContain("version = '014'");
+    expect(build).toContain("layoutBootstrapScript");
+    expect(build).toContain("content-slots.json");
+  });
+
+  it("keeps the admin console server-owned, recoverable, and auditable", async () => {
+    const migration = await read("db/migrations/015_admin_console.sql");
+    const backup = await read("scripts/backup-database.mjs");
+    const verifier = await read("scripts/verify-backup-file.mjs");
+    const restore = await read("scripts/verify-backup.mjs");
+    const audit = await read("scripts/audit-database.mjs");
+
+    expect(migration).toContain("CREATE TABLE IF NOT EXISTS public.admin_accounts");
+    expect(migration).toContain("CREATE TABLE IF NOT EXISTS public.admin_activity_log");
+    expect(migration).toContain("deleted_at TIMESTAMPTZ");
+    expect(migration).toContain("archived_from_status TEXT");
+    expect(backup).toContain("admin_accounts: adminAccounts");
+    expect(backup).toContain("admin_activity_log: adminActivityLog");
+    expect(verifier).toContain('backup.payload.version >= 7 ? "015"');
+    expect(restore).toContain("INSERT INTO admin_accounts");
+    expect(restore).toContain("INSERT INTO admin_activity_log");
+    expect(audit).toContain('"admin_accounts"');
+    expect(audit).toContain('"admin_activity_log"');
+  });
+
+  it("keeps translation provenance migrated, private, backed up, and auditable", async () => {
+    const migration = await read("db/migrations/017_translation_workflow.sql");
+    const backup = await read("scripts/backup-database.mjs");
+    const verifier = await read("scripts/verify-backup-file.mjs");
+    const restore = await read("scripts/verify-backup.mjs");
+    const audit = await read("scripts/audit-database.mjs");
+
+    expect(migration).toContain("CREATE TABLE IF NOT EXISTS public.localized_translation_states");
+    expect(migration).toContain("protected_legacy");
+    expect(migration).toContain("ENABLE ROW LEVEL SECURITY");
+    expect(backup).toContain("localized_translation_states: localizedTranslationStates");
+    expect(verifier).toContain('backup.payload.version >= 8 ? "017"');
+    expect(restore).toContain("INSERT INTO localized_translation_states");
+    expect(audit).toContain('"localized_translation_states"');
   });
 });

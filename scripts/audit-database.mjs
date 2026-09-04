@@ -24,8 +24,11 @@ const sql = postgres(databaseUrl, {
 
 const expectedTables = [
   "api_rate_limits",
+  "admin_accounts",
+  "admin_activity_log",
   "content_overrides",
   "localized_content_overrides",
+  "localized_translation_states",
   "impact_milestone_settings",
   "impact_milestones",
   "schema_migrations",
@@ -33,11 +36,26 @@ const expectedTables = [
   "site_media_assets",
   "site_media_variants",
   "site_settings",
+  "site_layout_configs",
   "team_people",
   "team_profiles",
 ];
 
 const expectedConstraints = [
+  "admin_accounts_actor_length",
+  "admin_accounts_email_format",
+  "admin_accounts_pkey",
+  "admin_accounts_role_allowed",
+  "admin_accounts_timestamp_order",
+  "admin_accounts_version_positive",
+  "admin_activity_log_actor_length",
+  "admin_activity_log_changed_fields_bounded",
+  "admin_activity_log_entity_id_check",
+  "admin_activity_log_entity_type_check",
+  "admin_activity_log_action_check",
+  "admin_activity_log_actor_role_check",
+  "admin_activity_log_pkey",
+  "admin_activity_log_version_positive",
   "api_rate_limits_bucket_key_format",
   "api_rate_limits_pkey",
   "api_rate_limits_request_count_positive",
@@ -45,8 +63,19 @@ const expectedConstraints = [
   "content_overrides_page_path",
   "content_overrides_pkey",
   "localized_content_overrides_pkey",
+  "localized_translation_states_resource_type_check",
+  "localized_translation_states_resource_scope_check",
+  "localized_translation_states_resource_id_check",
+  "localized_translation_states_field_key_check",
+  "localized_translation_states_locale_check",
+  "localized_translation_states_source_hash_check",
+  "localized_translation_states_origin_check",
+  "localized_translation_states_glossary_version_check",
+  "localized_translation_states_updated_by_check",
+  "localized_translation_states_pkey",
   "impact_milestones_actor_length",
   "impact_milestones_archive_state",
+  "impact_milestones_archived_actor_state",
   "impact_milestones_countries_range",
   "impact_milestones_country_names_length",
   "impact_milestones_description_length",
@@ -90,6 +119,11 @@ const expectedConstraints = [
   "site_settings_theme_allowed",
   "site_settings_value_length",
   "site_settings_version_positive",
+  "site_layout_configs_actor_length",
+  "site_layout_configs_object",
+  "site_layout_configs_page_path",
+  "site_layout_configs_pkey",
+  "site_layout_configs_version_positive",
   "team_people_consent_pair",
   "team_people_pkey",
   "team_people_timestamp_order",
@@ -98,15 +132,22 @@ const expectedConstraints = [
   "team_profiles_public_visibility",
   "team_profiles_published_english",
   "team_profiles_timestamp_order",
+  "team_profiles_deleted_state",
 ];
 
 const expectedIndexes = [
+  "admin_accounts_enabled_idx",
+  "admin_activity_log_created_at_idx",
+  "admin_activity_log_entity_idx",
   "api_rate_limits_updated_at_idx",
   "impact_milestones_unique_published_metrics_period",
   "localized_content_overrides_updated_at_idx",
+  "localized_translation_states_updated_at_idx",
   "site_media_assets_updated_at_idx",
   "site_settings_updated_at_idx",
+  "site_layout_configs_updated_at_idx",
   "team_profiles_public_order_idx",
+  "team_profiles_deleted_at_idx",
 ];
 
 const expectedTriggers = [
@@ -116,7 +157,7 @@ const expectedTriggers = [
   "impact_milestones_live_revision",
   "site_media_assets_live_revision",
   "site_settings_live_revision",
-  "team_people_live_revision",
+  "site_layout_configs_live_revision",
   "team_profiles_live_revision",
 ];
 
@@ -127,15 +168,19 @@ try {
     WHERE
       (table_schema = 'public' AND table_name IN (
         'api_rate_limits',
+        'admin_accounts',
+        'admin_activity_log',
         'impact_milestones',
         'impact_milestone_settings',
         'content_overrides',
         'localized_content_overrides',
+        'localized_translation_states',
         'schema_migrations',
         'site_content_revisions',
         'site_media_assets',
         'site_media_variants',
         'site_settings',
+        'site_layout_configs',
         'team_people',
         'team_profiles'
       ))
@@ -154,7 +199,7 @@ try {
     JOIN pg_class AS relation ON relation.oid = con.conrelid
     JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
     WHERE namespace.nspname = 'public'
-      AND relation.relname IN ('api_rate_limits', 'impact_milestones', 'content_overrides', 'localized_content_overrides', 'site_content_revisions', 'site_media_assets', 'site_media_variants', 'site_settings', 'team_people', 'team_profiles')
+      AND relation.relname IN ('api_rate_limits', 'admin_accounts', 'admin_activity_log', 'impact_milestones', 'content_overrides', 'localized_content_overrides', 'localized_translation_states', 'site_content_revisions', 'site_media_assets', 'site_media_variants', 'site_settings', 'site_layout_configs', 'team_people', 'team_profiles')
     ORDER BY relation.relname, con.conname
   `;
 
@@ -168,7 +213,7 @@ try {
     JOIN pg_class AS index_relation ON index_relation.oid = idx.indexrelid
     JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
     WHERE namespace.nspname = 'public'
-      AND relation.relname IN ('api_rate_limits', 'impact_milestones', 'localized_content_overrides', 'site_media_assets', 'site_media_variants', 'site_settings', 'team_people', 'team_profiles')
+      AND relation.relname IN ('api_rate_limits', 'admin_accounts', 'admin_activity_log', 'impact_milestones', 'localized_content_overrides', 'localized_translation_states', 'site_media_assets', 'site_media_variants', 'site_settings', 'site_layout_configs', 'team_people', 'team_profiles')
     ORDER BY index_relation.relname
   `;
 
@@ -176,7 +221,7 @@ try {
     SELECT schemaname, tablename, policyname, roles, cmd
     FROM pg_policies
     WHERE schemaname = 'public'
-      AND tablename IN ('api_rate_limits', 'impact_milestones', 'content_overrides', 'localized_content_overrides', 'site_content_revisions', 'site_media_assets', 'site_media_variants', 'site_settings', 'team_people', 'team_profiles')
+      AND tablename IN ('api_rate_limits', 'admin_accounts', 'admin_activity_log', 'impact_milestones', 'content_overrides', 'localized_content_overrides', 'localized_translation_states', 'site_content_revisions', 'site_media_assets', 'site_media_variants', 'site_settings', 'site_layout_configs', 'team_people', 'team_profiles')
     ORDER BY tablename, policyname
   `;
 
@@ -187,15 +232,19 @@ try {
     WHERE namespace.nspname = 'public'
       AND relation.relname IN (
         'api_rate_limits',
+        'admin_accounts',
+        'admin_activity_log',
         'impact_milestones',
         'impact_milestone_settings',
         'content_overrides',
         'localized_content_overrides',
+        'localized_translation_states',
         'schema_migrations',
         'site_content_revisions',
         'site_media_assets',
         'site_media_variants',
         'site_settings',
+        'site_layout_configs',
         'team_people',
         'team_profiles'
       )
@@ -324,6 +373,7 @@ try {
         'impact_milestones_live_revision',
         'site_media_assets_live_revision',
         'site_settings_live_revision',
+        'site_layout_configs_live_revision',
         'team_people_live_revision',
         'team_profiles_live_revision'
       )
@@ -382,9 +432,9 @@ try {
 
   const [invalidRevisions] = await sql`
     SELECT
-      COUNT(*) FILTER (WHERE scope NOT IN ('content', 'impact', 'team', 'theme'))::INTEGER AS invalid_scope,
+      COUNT(*) FILTER (WHERE scope NOT IN ('content', 'impact', 'team', 'theme', 'layout'))::INTEGER AS invalid_scope,
       COUNT(*) FILTER (WHERE revision < 1)::INTEGER AS invalid_revision,
-      (4 - COUNT(DISTINCT scope))::INTEGER AS missing_scope
+      (5 - COUNT(DISTINCT scope))::INTEGER AS missing_scope
     FROM site_content_revisions
   `;
 
@@ -449,6 +499,12 @@ try {
     SELECT 'api_rate_limits' AS table_name, COUNT(*)::INTEGER AS row_count
     FROM api_rate_limits
     UNION ALL
+    SELECT 'admin_accounts', COUNT(*)::INTEGER
+    FROM admin_accounts
+    UNION ALL
+    SELECT 'admin_activity_log', COUNT(*)::INTEGER
+    FROM admin_activity_log
+    UNION ALL
     SELECT 'impact_milestones', COUNT(*)::INTEGER
     FROM impact_milestones
     UNION ALL
@@ -460,6 +516,9 @@ try {
     UNION ALL
     SELECT 'localized_content_overrides', COUNT(*)::INTEGER
     FROM localized_content_overrides
+    UNION ALL
+    SELECT 'localized_translation_states', COUNT(*)::INTEGER
+    FROM localized_translation_states
     UNION ALL
     SELECT 'team_people', COUNT(*)::INTEGER
     FROM team_people
@@ -478,6 +537,9 @@ try {
     UNION ALL
     SELECT 'site_settings', COUNT(*)::INTEGER
     FROM site_settings
+    UNION ALL
+    SELECT 'site_layout_configs', COUNT(*)::INTEGER
+    FROM site_layout_configs
     ORDER BY table_name
   `;
 

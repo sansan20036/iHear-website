@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const VALID_SCOPES = new Set(["content", "impact", "team", "theme"]);
+  const VALID_SCOPES = new Set(["content", "impact", "team", "theme", "layout"]);
   const CHANNEL_NAME = "ihear-content-updates";
   const STORAGE_KEY = "ihear-content-update";
   const NORMAL_INTERVAL = 10000;
@@ -31,12 +31,22 @@
 
   async function refreshHandler(scope, record, revision, external) {
     if (record.handler.isDirty && record.handler.isDirty()) {
-      record.pending = { revision, external };
-      if (!record.blockedNotified && record.handler.onBlocked) {
-        record.blockedNotified = true;
-        record.handler.onBlocked();
+      let shouldBlock = true;
+      if (typeof record.handler.shouldBlock === "function") {
+        try {
+          shouldBlock = await record.handler.shouldBlock({ revision, external });
+        } catch {
+          shouldBlock = true;
+        }
       }
-      return;
+      if (shouldBlock) {
+        record.pending = { revision, external };
+        if (!record.blockedNotified && record.handler.onBlocked) {
+          record.blockedNotified = true;
+          record.handler.onBlocked();
+        }
+        return;
+      }
     }
 
     try {

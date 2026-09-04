@@ -40,6 +40,7 @@ vi.mock("../lib/site-media-store", () => {
     SiteMediaConflictError,
     listSiteMediaAssets: vi.fn(),
     replaceSiteMediaAsset: vi.fn(),
+    updateSiteMediaAssetMetadata: vi.fn(),
     deleteSiteMediaAsset: vi.fn(),
   };
 });
@@ -51,13 +52,15 @@ vi.mock("../lib/site-media-storage", () => {
     SiteMediaStorageError,
     uploadSiteMediaVariants: vi.fn(),
     removeSiteMediaObjects: vi.fn(),
+    readSiteMediaObject: vi.fn(),
   };
 });
 
 import { revalidatePath } from "next/cache";
 import { auth } from "../auth.js";
 import { GET as getSiteMedia } from "../app/api/site-media/route";
-import { DELETE as deleteSiteMedia, POST as postSiteMedia } from "../app/api/site-media/[slot]/route";
+import { DELETE as deleteSiteMedia, PATCH as patchSiteMedia, POST as postSiteMedia } from "../app/api/site-media/[slot]/route";
+import { GET as getSiteMediaSource } from "../app/api/site-media/[slot]/source/route";
 import * as liveRevisions from "../lib/live-revisions";
 import { enforceRateLimit } from "../lib/rate-limit";
 import * as image from "../lib/site-media-image";
@@ -79,6 +82,7 @@ const asset = {
   alt: { en: "Students learning", zhHant: "學生學習溝通", zhHans: "学生学习沟通" },
   focalX: 50,
   focalY: 50,
+  zoom: 100,
   recordVersion: 1,
   updatedAt: "2026-08-16T00:00:00.000Z",
   updatedBy: "admin@example.com",
@@ -95,6 +99,7 @@ function uploadRequest({ version = "0", contentLength, origin = "https://example
   form.set("altZhHans", asset.alt.zhHans);
   form.set("focalX", "50");
   form.set("focalY", "50");
+  form.set("zoom", "100");
   form.set("file", new File([new Uint8Array([1, 2, 3])], "hero.webp", { type: "image/webp" }));
   const headers = new Headers({ Origin: origin });
   if (contentLength) headers.set("Content-Length", String(contentLength));
@@ -115,8 +120,10 @@ beforeEach(() => {
   image.processSiteMediaImage.mockResolvedValue([]);
   storage.uploadSiteMediaVariants.mockResolvedValue(variants);
   storage.removeSiteMediaObjects.mockResolvedValue(undefined);
+  storage.readSiteMediaObject.mockResolvedValue(Buffer.from([1, 2, 3, 4]));
   store.listSiteMediaAssets.mockResolvedValue([asset]);
   store.replaceSiteMediaAsset.mockResolvedValue({ asset, previousStoragePaths: [] });
+  store.updateSiteMediaAssetMetadata.mockResolvedValue({ ...asset, recordVersion: 2, zoom: 175 });
   store.deleteSiteMediaAsset.mockResolvedValue(variants.map((variant) => variant.storagePath));
   liveRevisions.revisionAfterMutation.mockResolvedValue("2");
 });
@@ -162,6 +169,19 @@ describe("site media API", () => {
     expect(revalidatePath).toHaveBeenCalledWith("/");
     expect(revalidatePath).toHaveBeenCalledWith("/api/site-media");
     expect(revalidatePath).toHaveBeenCalledWith("/api/live-revisions");
+  });
+
+  test("POST normalizes a cropped avatar to centered square rendering metadata", async () => {
+    const response = await postSiteMedia(uploadRequest(), context("team.zoe-lu.avatar"));
+
+    expect(response.status).toBe(200);
+    expect(image.processSiteMediaImage).toHaveBeenCalledWith(expect.any(File), { avatar: true });
+    expect(store.replaceSiteMediaAsset).toHaveBeenCalledWith(expect.objectContaining({
+      slot: "team.zoe-lu.avatar",
+      focalX: 50,
+      focalY: 50,
+      zoom: 100,
+    }));
   });
 
   test.each([
@@ -215,6 +235,85 @@ describe("site media API", () => {
       variants.map((variant) => variant.storagePath),
     );
     expect(revalidatePath).toHaveBeenCalledWith("/");
+  });
+
+  test("PATCH normalizes legacy avatar crop settings without re-uploading or replacing image variants", async () => {
+    store.updateSiteMediaAssetMetadata.mockResolvedValueOnce({
+      ...asset,
+      focalX: 50,
+      focalY: 50,
+      zoom: 100,
+      recordVersion: 2,
+    });
+    const response = await patchSiteMedia(new Request("https://example.com/api/site-media/team.zoe-lu.avatar", {
+      method: "PATCH",
+      headers: { Origin: "https://example.com", "Content-Type": "application/json" },
+      body: JSON.stringify({
+        expectedVersion: 1,
+        alt: asset.alt,
+        focalX: 37,
+        focalY: 64,
+        zoom: 175,
+      }),
+    }), context("team.zoe-lu.avatar"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(store.updateSiteMediaAssetMetadata).toHaveBeenCalledWith(expect.objectContaining({
+      slot: "team.zoe-lu.avatar",
+      focalX: 50,
+      focalY: 50,
+      zoom: 100,
+      expectedVersion: 1,
+    }));
+    expect(image.processSiteMediaImage).not.toHaveBeenCalled();
+    expect(storage.uploadSiteMediaVariants).not.toHaveBeenCalled();
+    expect(body.item.zoom).toBe(100);
+    expect(revalidatePath).toHaveBeenCalledWith("/api/site-media");
+  });
+
+  test("PATCH validates continuous focal coordinates, zoom range, and optimistic version", async () => {
+    const invalid = await patchSiteMedia(new Request("https://example.com/api/site-media/team.zoe-lu.avatar", {
+      method: "PATCH",
+      headers: { Origin: "https://example.com", "Content-Type": "application/json" },
+      body: JSON.stringify({ expectedVersion: 1, alt: asset.alt, focalX: 101, focalY: 50, zoom: 99 }),
+    }), context("team.zoe-lu.avatar"));
+    expect(invalid.status).toBe(400);
+    expect(store.updateSiteMediaAssetMetadata).not.toHaveBeenCalled();
+
+    const missingVersion = await patchSiteMedia(new Request("https://example.com/api/site-media/team.zoe-lu.avatar", {
+      method: "PATCH",
+      headers: { Origin: "https://example.com", "Content-Type": "application/json" },
+      body: JSON.stringify({ alt: asset.alt, focalX: 50, focalY: 50, zoom: 100 }),
+    }), context("team.zoe-lu.avatar"));
+    expect(missingVersion.status).toBe(428);
+  });
+
+  test("avatar source is admin-only, version-locked, same-origin, and never exposes a storage path", async () => {
+    const sourceAsset = {
+      ...asset,
+      slot: "team.zoe-lu.avatar",
+      variants: variants.slice(0, 2),
+    };
+    store.listSiteMediaAssets.mockResolvedValue([sourceAsset]);
+    const request = (query = "?expectedVersion=1", origin = "https://example.com") => new Request(
+      `https://example.com/api/site-media/team.zoe-lu.avatar/source${query}`,
+      { headers: { Origin: origin } },
+    );
+
+    auth.mockResolvedValue(null);
+    expect((await getSiteMediaSource(request(), context("team.zoe-lu.avatar"))).status).toBe(403);
+    auth.mockResolvedValue({ user: { email: "admin@example.com" } });
+    expect((await getSiteMediaSource(request("?expectedVersion=1", "https://evil.example"), context("team.zoe-lu.avatar"))).status).toBe(403);
+    expect((await getSiteMediaSource(request(""), context("team.zoe-lu.avatar"))).status).toBe(428);
+    expect((await getSiteMediaSource(request("?expectedVersion=2"), context("team.zoe-lu.avatar"))).status).toBe(409);
+
+    const response = await getSiteMediaSource(request(), context("team.zoe-lu.avatar"));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toContain("no-store");
+    expect(response.headers.get("Content-Type")).toBe("image/webp");
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3, 4]));
+    expect(storage.readSiteMediaObject).toHaveBeenCalledWith(variants[1].storagePath);
   });
 
   test("rate limiting returns 429 without touching image processing", async () => {

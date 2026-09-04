@@ -68,6 +68,14 @@ export default [
     rules: commonRules,
   },
   {
+    files: ["assets/text-language-guard.js", "assets/image-intake.js"],
+    languageOptions: {
+      ecmaVersion: "latest",
+      sourceType: "module",
+      globals: globals.browser,
+    },
+  },
+  {
     files: ["**/*.js", "**/*.mjs"],
     ignores: ["assets/**/*.js"],
     languageOptions: {

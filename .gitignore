@@ -1,6 +1,9 @@
 .agents/
 .codex/
-data/
+.playwright-cli/
+data/*
+!data/content-slots.json
+!data/layout-slots.json
 backups/
 scheduling/
 node_modules/

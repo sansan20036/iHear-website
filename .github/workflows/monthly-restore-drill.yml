@@ -96,6 +96,9 @@ jobs:
               OR to_regclass('public.site_media_assets') IS NULL
               OR to_regclass('public.site_media_variants') IS NULL
               OR to_regclass('public.site_settings') IS NULL
+              OR to_regclass('public.site_layout_configs') IS NULL
+              OR to_regclass('public.admin_accounts') IS NULL
+              OR to_regclass('public.admin_activity_log') IS NULL
               OR to_regclass('public.site_content_revisions') IS NULL THEN
               RAISE EXCEPTION 'Required application tables are missing';
             END IF;
@@ -108,7 +111,13 @@ jobs:
             IF NOT EXISTS (SELECT 1 FROM public.schema_migrations WHERE version = '012') THEN
               RAISE EXCEPTION 'Migration 012 is missing';
             END IF;
-            IF (SELECT COUNT(*) FROM public.site_content_revisions WHERE scope IN ('content', 'impact', 'team', 'theme')) <> 4 THEN
+            IF NOT EXISTS (SELECT 1 FROM public.schema_migrations WHERE version = '014') THEN
+              RAISE EXCEPTION 'Migration 014 is missing';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM public.schema_migrations WHERE version = '015') THEN
+              RAISE EXCEPTION 'Migration 015 is missing';
+            END IF;
+            IF (SELECT COUNT(*) FROM public.site_content_revisions WHERE scope IN ('content', 'impact', 'team', 'theme', 'layout')) <> 5 THEN
               RAISE EXCEPTION 'Live revision scopes are incomplete';
             END IF;
             IF NOT EXISTS (SELECT 1 FROM public.site_settings WHERE key = 'site_theme' AND value IN ('warm', 'ocean', 'sage', 'lavender', 'slate')) THEN
@@ -124,7 +133,10 @@ jobs:
             'team_profiles', (SELECT COUNT(*) FROM public.team_profiles),
             'site_media_assets', (SELECT COUNT(*) FROM public.site_media_assets),
             'site_media_variants', (SELECT COUNT(*) FROM public.site_media_variants),
-            'site_settings', (SELECT COUNT(*) FROM public.site_settings)
+            'site_settings', (SELECT COUNT(*) FROM public.site_settings),
+            'site_layout_configs', (SELECT COUNT(*) FROM public.site_layout_configs),
+            'admin_accounts', (SELECT COUNT(*) FROM public.admin_accounts),
+            'admin_activity_log', (SELECT COUNT(*) FROM public.admin_activity_log)
           ) AS restored_row_counts;
           SQL
 

@@ -5,6 +5,9 @@ import path from "node:path";
 import { unstable_cache } from "next/cache";
 import postgres from "postgres";
 
+import { saveTranslationStates, upsertTranslationStatesInTransaction } from "./translation-state";
+import type { TranslationStateWrite } from "./translation-types";
+
 import { IMPACT_MILESTONE_SEED } from "./impact-seed";
 import type {
   ImpactMilestone,
@@ -81,10 +84,14 @@ type ImpactRow = {
   created_by: string;
   updated_by: string;
   archived_at: Date | string | null;
+  archived_by: string | null;
+  archived_from_status: "draft" | "published" | null;
 };
 
 const filePath = path.join(process.cwd(), "data", "impact-milestones.json");
-const databaseUrl = process.env.POSTGRES_URL || process.env.DATABASE_URL || "";
+const databaseUrl = process.env.IHEAR_FORCE_FILE_STORE === "1"
+  ? ""
+  : process.env.POSTGRES_URL || process.env.DATABASE_URL || "";
 const isHostedProduction =
   process.env.NODE_ENV === "production" &&
   Boolean(process.env.VERCEL || process.env.NETLIFY || process.env.CONTEXT);
@@ -140,6 +147,8 @@ function fromRow(row: ImpactRow): ImpactMilestone {
     createdBy: row.created_by,
     updatedBy: row.updated_by,
     archivedAt: iso(row.archived_at),
+    archivedBy: row.archived_by || undefined,
+    archivedFromStatus: row.archived_from_status || undefined,
   };
 }
 
@@ -188,7 +197,9 @@ async function ensurePostgresSchema() {
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           created_by TEXT NOT NULL,
           updated_by TEXT NOT NULL,
-          archived_at TIMESTAMPTZ
+          archived_at TIMESTAMPTZ,
+          archived_by TEXT,
+          archived_from_status TEXT
         )
       `;
       await sql`ALTER TABLE impact_milestones ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'metrics'`;
@@ -199,6 +210,8 @@ async function ensurePostgresSchema() {
       await sql`ALTER TABLE impact_milestones ADD COLUMN IF NOT EXISTS country_names_zh_hant TEXT NOT NULL DEFAULT ''`;
       await sql`ALTER TABLE impact_milestones ADD COLUMN IF NOT EXISTS country_names_zh_hans TEXT NOT NULL DEFAULT ''`;
       await sql`ALTER TABLE impact_milestones ADD COLUMN IF NOT EXISTS country_names_en TEXT NOT NULL DEFAULT ''`;
+      await sql`ALTER TABLE impact_milestones ADD COLUMN IF NOT EXISTS archived_by TEXT`;
+      await sql`ALTER TABLE impact_milestones ADD COLUMN IF NOT EXISTS archived_from_status TEXT`;
       await sql`
         CREATE INDEX IF NOT EXISTS impact_milestones_public_idx
         ON impact_milestones (status, sort_order, period)
@@ -415,7 +428,15 @@ export async function listAllImpactMilestones() {
   );
 }
 
-export async function createImpactMilestone(input: ImpactMilestoneInput, email: string) {
+export async function listActiveImpactMilestones() {
+  return (await listAllImpactMilestones()).filter((item) => item.status !== "archived");
+}
+
+export async function listArchivedImpactMilestones() {
+  return (await listAllImpactMilestones()).filter((item) => item.status === "archived");
+}
+
+export async function createImpactMilestone(input: ImpactMilestoneInput, email: string, translationStates: TranslationStateWrite[] = []) {
   assertPersistenceAvailable();
   const sql = sqlClient();
   const id = randomUUID();
@@ -424,33 +445,38 @@ export async function createImpactMilestone(input: ImpactMilestoneInput, email: 
   if (sql) {
     await ensurePostgresSchema();
     try {
-      const rows = await sql<ImpactRow[]>`
-        INSERT INTO impact_milestones (
-          id, kind, period, volunteers, volunteers_plus, students, students_plus,
-          sessions, sessions_plus, countries, country_names_zh_hant,
-          country_names_zh_hans, country_names_en, title_zh_hant, title_zh_hans, title_en,
-          description_zh_hant, description_zh_hans, description_en,
-          status, sort_order, version, created_at, updated_at,
-          created_by, updated_by, archived_at
-        ) VALUES (
-          ${id}, ${input.kind}, ${input.period}, ${input.volunteers}, ${input.volunteersPlus},
-          ${input.students}, ${input.studentsPlus}, ${input.sessions}, ${input.sessionsPlus},
-          ${input.countries}, ${input.countryNames.zhHant}, ${input.countryNames.zhHans},
-          ${input.countryNames.en},
-          ${input.title.zhHant}, ${input.title.zhHans}, ${input.title.en},
-          ${input.description.zhHant}, ${input.description.zhHans}, ${input.description.en},
-          ${input.status}, ${input.sortOrder}, 1, ${now}, ${now}, ${email}, ${email},
-          ${input.status === "archived" ? now : null}
-        ) RETURNING *
-      `;
-      return fromRow(rows[0]);
+      return await sql.begin(async (tx) => {
+        const rows = await tx<ImpactRow[]>`
+          INSERT INTO impact_milestones (
+            id, kind, period, volunteers, volunteers_plus, students, students_plus,
+            sessions, sessions_plus, countries, country_names_zh_hant,
+            country_names_zh_hans, country_names_en, title_zh_hant, title_zh_hans, title_en,
+            description_zh_hant, description_zh_hans, description_en,
+            status, sort_order, version, created_at, updated_at,
+            created_by, updated_by, archived_at, archived_by, archived_from_status
+          ) VALUES (
+            ${id}, ${input.kind}, ${input.period}, ${input.volunteers}, ${input.volunteersPlus},
+            ${input.students}, ${input.studentsPlus}, ${input.sessions}, ${input.sessionsPlus},
+            ${input.countries}, ${input.countryNames.zhHant}, ${input.countryNames.zhHans},
+            ${input.countryNames.en},
+            ${input.title.zhHant}, ${input.title.zhHans}, ${input.title.en},
+            ${input.description.zhHant}, ${input.description.zhHans}, ${input.description.en},
+            ${input.status}, ${input.sortOrder}, 1, ${now}, ${now}, ${email}, ${email},
+            ${input.status === "archived" ? now : null},
+            ${input.status === "archived" ? email : null},
+            ${input.status === "archived" ? "draft" : null}
+          ) RETURNING *
+        `;
+        await upsertTranslationStatesInTransaction(tx, { type: "impact", scope: "", id }, translationStates, email);
+        return fromRow(rows[0]);
+      });
     } catch (error) {
       if (isDuplicatePublishedMetricsPeriod(error)) throw new ImpactDuplicatePeriodError();
       throw error;
     }
   }
 
-  return withFileMutation(async () => {
+  const created = await withFileMutation(async () => {
     const store = await readFileStore();
     if (hasPublishedMetricsForPeriod(store.milestones, input)) {
       throw new ImpactDuplicatePeriodError();
@@ -464,18 +490,23 @@ export async function createImpactMilestone(input: ImpactMilestoneInput, email: 
       createdBy: email,
       updatedBy: email,
       archivedAt: input.status === "archived" ? now : undefined,
+      archivedBy: input.status === "archived" ? email : undefined,
+      archivedFromStatus: input.status === "archived" ? "draft" : undefined,
     };
     store.version += 1;
     store.milestones.push(milestone);
     await writeFileStore(store);
     return milestone;
   });
+  await saveTranslationStates({ type: "impact", scope: "", id }, translationStates, email);
+  return created;
 }
 
 export async function updateImpactMilestone(
   id: string,
   input: ImpactMilestoneUpdateInput,
   email: string,
+  translationStates: TranslationStateWrite[] = [],
 ) {
   assertPersistenceAvailable();
   const sql = sqlClient();
@@ -484,7 +515,8 @@ export async function updateImpactMilestone(
   if (sql) {
     await ensurePostgresSchema();
     try {
-      const rows = await sql<ImpactRow[]>`
+      return await sql.begin(async (tx) => {
+      const rows = await tx<ImpactRow[]>`
         UPDATE impact_milestones SET
           kind = ${input.kind},
           period = ${input.period},
@@ -509,21 +541,31 @@ export async function updateImpactMilestone(
           version = version + 1,
           updated_at = ${now},
           updated_by = ${email},
-          archived_at = ${input.status === "archived" ? now : null}
+          archived_at = ${input.status === "archived" ? now : null},
+          archived_by = ${input.status === "archived" ? email : null},
+          archived_from_status = CASE
+            WHEN ${input.status} = 'archived' THEN CASE WHEN status = 'archived'
+              THEN COALESCE(archived_from_status, 'draft') ELSE status END
+            ELSE NULL
+          END
         WHERE id = ${id} AND version = ${input.version}
         RETURNING *
       `;
-      if (rows[0]) return fromRow(rows[0]);
-      const existing = await sql<{ id: string }[]>`SELECT id FROM impact_milestones WHERE id = ${id}`;
+      if (rows[0]) {
+        await upsertTranslationStatesInTransaction(tx, { type: "impact", scope: "", id }, translationStates, email);
+        return fromRow(rows[0]);
+      }
+      const existing = await tx<{ id: string }[]>`SELECT id FROM impact_milestones WHERE id = ${id}`;
       if (!existing[0]) throw new ImpactNotFoundError();
       throw new ImpactConflictError();
+      });
     } catch (error) {
       if (isDuplicatePublishedMetricsPeriod(error)) throw new ImpactDuplicatePeriodError();
       throw error;
     }
   }
 
-  return withFileMutation(async () => {
+  const result = await withFileMutation(async () => {
     const store = await readFileStore();
     const index = store.milestones.findIndex((item) => item.id === id);
     if (index < 0) throw new ImpactNotFoundError();
@@ -538,12 +580,20 @@ export async function updateImpactMilestone(
       updatedAt: now,
       updatedBy: email,
       archivedAt: input.status === "archived" ? now : undefined,
+      archivedBy: input.status === "archived" ? email : undefined,
+      archivedFromStatus: input.status === "archived"
+        ? (store.milestones[index].status === "archived"
+          ? store.milestones[index].archivedFromStatus || "draft"
+          : store.milestones[index].status as "draft" | "published")
+        : undefined,
     };
     store.version += 1;
     store.milestones[index] = updated;
     await writeFileStore(store);
     return updated;
   });
+  await saveTranslationStates({ type: "impact", scope: "", id }, translationStates, email);
+  return result;
 }
 
 export async function deleteImpactMilestone(id: string, version: number) {
@@ -554,7 +604,7 @@ export async function deleteImpactMilestone(id: string, version: number) {
     await ensurePostgresSchema();
     const deleted = await sql<{ id: string }[]>`
       DELETE FROM impact_milestones
-      WHERE id = ${id} AND version = ${version}
+      WHERE id = ${id} AND version = ${version} AND status = 'archived'
       RETURNING id
     `;
     if (deleted[0]) return deleted[0].id;
@@ -567,10 +617,83 @@ export async function deleteImpactMilestone(id: string, version: number) {
     const store = await readFileStore();
     const index = store.milestones.findIndex((item) => item.id === id);
     if (index < 0) throw new ImpactNotFoundError();
-    if (store.milestones[index].version !== version) throw new ImpactConflictError();
+    if (store.milestones[index].version !== version || store.milestones[index].status !== "archived") throw new ImpactConflictError();
     store.version += 1;
     store.milestones.splice(index, 1);
     await writeFileStore(store);
     return id;
+  });
+}
+
+export async function trashImpactMilestone(id: string, version: number, email: string) {
+  assertPersistenceAvailable();
+  const sql = sqlClient();
+  const now = new Date().toISOString();
+  if (sql) {
+    await ensurePostgresSchema();
+    const rows = await sql<ImpactRow[]>`
+      UPDATE impact_milestones SET
+        archived_from_status = status, status = 'archived', archived_at = ${now}, archived_by = ${email},
+        version = version + 1, updated_at = ${now}, updated_by = ${email}
+      WHERE id = ${id} AND version = ${version} AND status <> 'archived'
+      RETURNING *
+    `;
+    if (rows[0]) return fromRow(rows[0]);
+    const existing = await sql`SELECT id FROM impact_milestones WHERE id = ${id}`;
+    if (!existing[0]) throw new ImpactNotFoundError();
+    throw new ImpactConflictError();
+  }
+  return withFileMutation(async () => {
+    const store = await readFileStore();
+    const item = store.milestones.find((candidate) => candidate.id === id);
+    if (!item) throw new ImpactNotFoundError();
+    if (item.version !== version || item.status === "archived") throw new ImpactConflictError();
+    item.archivedFromStatus = item.status;
+    item.status = "archived";
+    item.archivedAt = now;
+    item.archivedBy = email;
+    item.version += 1;
+    item.updatedAt = now;
+    item.updatedBy = email;
+    store.version += 1;
+    await writeFileStore(store);
+    return item;
+  });
+}
+
+export async function restoreImpactMilestone(id: string, version: number, email: string) {
+  assertPersistenceAvailable();
+  const sql = sqlClient();
+  const now = new Date().toISOString();
+  if (sql) {
+    await ensurePostgresSchema();
+    const rows = await sql<ImpactRow[]>`
+      UPDATE impact_milestones SET
+        status = COALESCE(archived_from_status, 'draft'), archived_at = NULL,
+        archived_by = NULL, archived_from_status = NULL,
+        version = version + 1, updated_at = ${now}, updated_by = ${email}
+      WHERE id = ${id} AND version = ${version} AND status = 'archived'
+      RETURNING *
+    `;
+    if (rows[0]) return fromRow(rows[0]);
+    const existing = await sql`SELECT id FROM impact_milestones WHERE id = ${id}`;
+    if (!existing[0]) throw new ImpactNotFoundError();
+    throw new ImpactConflictError();
+  }
+  return withFileMutation(async () => {
+    const store = await readFileStore();
+    const item = store.milestones.find((candidate) => candidate.id === id);
+    if (!item) throw new ImpactNotFoundError();
+    if (item.version !== version || item.status !== "archived") throw new ImpactConflictError();
+    item.status = item.archivedFromStatus || "draft";
+    item.archivedAt = undefined;
+    item.archivedBy = undefined;
+    item.archivedFromStatus = undefined;
+    item.version += 1;
+    item.updatedAt = now;
+    item.updatedBy = email;
+    store.version += 1;
+    await writeFileStore(store);
+    return item;
   });
 }

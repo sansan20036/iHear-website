@@ -23,7 +23,9 @@ export class SiteThemeConflictError extends Error {
   }
 }
 
-const databaseUrl = process.env.POSTGRES_URL || process.env.DATABASE_URL || "";
+const databaseUrl = process.env.IHEAR_FORCE_FILE_STORE === "1"
+  ? ""
+  : process.env.POSTGRES_URL || process.env.DATABASE_URL || "";
 const isHostedProduction =
   process.env.NODE_ENV === "production" &&
   Boolean(process.env.VERCEL || process.env.NETLIFY || process.env.CONTEXT);

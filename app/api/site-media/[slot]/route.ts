@@ -11,6 +11,7 @@ import {
 import {
   deleteSiteMediaAsset,
   replaceSiteMediaAsset,
+  updateSiteMediaAssetMetadata,
 } from "../../../../lib/site-media-store";
 import {
   removeSiteMediaObjects,
@@ -26,6 +27,11 @@ import {
   RATE_LIMIT_POLICIES,
   withRateLimitHeaders,
 } from "../../../../lib/rate-limit";
+import {
+  manualTranslationWrites,
+  TranslationReceiptError,
+  verifyTranslationReceipt,
+} from "../../../../lib/translation-core";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -50,9 +56,14 @@ function parseVersion(value: FormDataEntryValue | unknown) {
   return Number.isSafeInteger(version) && version >= 0 ? version : null;
 }
 
-function parseFocal(value: FormDataEntryValue | unknown): 0 | 50 | 100 | null {
+function parseFocal(value: FormDataEntryValue | unknown): number | null {
   const parsed = Number(value);
-  return parsed === 0 || parsed === 50 || parsed === 100 ? parsed : null;
+  return Number.isInteger(parsed) && parsed >= 0 && parsed <= 100 ? parsed : null;
+}
+
+function parseZoom(value: FormDataEntryValue | unknown): number | null {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 100 && parsed <= 250 ? parsed : null;
 }
 
 function parseAlt(form: FormData): SiteMediaAlt | null {
@@ -72,13 +83,24 @@ function parseAlt(form: FormData): SiteMediaAlt | null {
     : null;
 }
 
+function parseAltObject(value: unknown): SiteMediaAlt | null {
+  if (!value || typeof value !== "object") return null;
+  const input = value as Record<string, unknown>;
+  const alt = {
+    en: typeof input.en === "string" ? input.en.trim() : "",
+    zhHant: typeof input.zhHant === "string" ? input.zhHant.trim() : "",
+    zhHans: typeof input.zhHans === "string" ? input.zhHans.trim() : "",
+  };
+  return Object.values(alt).every((item) => item.length >= 2 && item.length <= 300) ? alt : null;
+}
+
 async function authorized(request: Request, policy: typeof RATE_LIMIT_POLICIES.adminMutation | typeof RATE_LIMIT_POLICIES.mediaUpload) {
   if (!isSameOrigin(request)) {
     return { response: NextResponse.json({ error: "Forbidden" }, { status: 403 }) };
   }
   const session = await auth();
   const email = normalizeEmail(session?.user?.email);
-  if (!isAllowedAdmin(email)) {
+  if (!(await isAllowedAdmin(email))) {
     return { response: NextResponse.json({ error: "Forbidden" }, { status: 403 }) };
   }
   const decision = await enforceRateLimit(request, { ...policy, identifier: email });
@@ -112,26 +134,35 @@ export async function POST(request: Request, context: RouteContext) {
   const alt = parseAlt(form);
   const focalX = parseFocal(form.get("focalX"));
   const focalY = parseFocal(form.get("focalY"));
+  const zoom = parseZoom(form.get("zoom") ?? "100");
   const file = form.get("file");
-  if (expectedVersion === null || !alt || focalX === null || focalY === null || !(file instanceof File)) {
+  if (expectedVersion === null || !alt || focalX === null || focalY === null || zoom === null || !(file instanceof File)) {
     return respond(NextResponse.json({ error: "Invalid image upload fields" }, { status: 400 }));
   }
 
   let uploadedPaths: string[] = [];
   try {
-    const processed = await processSiteMediaImage(file);
+    const avatar = slot.startsWith("team.") && slot.endsWith(".avatar");
+    const processed = await processSiteMediaImage(file, { avatar });
     const variants = await uploadSiteMediaVariants(slot, processed);
     uploadedPaths = variants.map((variant) => variant.storagePath);
     let result;
     try {
+      const receipt = typeof form.get("translationReceipt") === "string" ? String(form.get("translationReceipt")) : "";
+      const fields = { alt };
+      const translationStates = receipt
+        ? verifyTranslationReceipt({ receipt, email: access.email, resource: { type: "media", scope: "", id: slot, version: expectedVersion }, fields })
+        : manualTranslationWrites(fields);
       result = await replaceSiteMediaAsset({
         slot,
         alt,
-        focalX,
-        focalY,
+        focalX: avatar ? 50 : focalX,
+        focalY: avatar ? 50 : focalY,
+        zoom: avatar ? 100 : zoom,
         expectedVersion,
         updatedBy: access.email,
         variants,
+        translationStates,
       });
     } catch (error) {
       await removeSiteMediaObjects(uploadedPaths).catch((cleanupError) => {
@@ -152,6 +183,58 @@ export async function POST(request: Request, context: RouteContext) {
       revision,
     }));
   } catch (error) {
+    if (error instanceof TranslationReceiptError) return respond(NextResponse.json({ error: error.message, code: error.code }, { status: 409 }));
+    return respond(siteMediaApiError(error));
+  }
+}
+
+export async function PATCH(request: Request, context: RouteContext) {
+  const access = await authorized(request, RATE_LIMIT_POLICIES.adminMutation);
+  if ("response" in access) return access.response;
+  const respond = <T extends Response>(response: T) => withRateLimitHeaders(response, access.decision);
+  const { slot } = await context.params;
+  if (!isSiteMediaSlot(slot)) return respond(NextResponse.json({ error: "Unknown image slot" }, { status: 400 }));
+
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return respond(NextResponse.json({ error: "Invalid JSON body" }, { status: 400 }));
+  }
+  const payload = body as Record<string, unknown>;
+  if (!Object.prototype.hasOwnProperty.call(payload, "expectedVersion")) {
+    return respond(NextResponse.json({ error: "Reload the page before changing this image" }, { status: 428 }));
+  }
+  const expectedVersion = parseVersion(String(payload.expectedVersion));
+  const alt = parseAltObject(payload.alt);
+  const focalX = parseFocal(payload.focalX);
+  const focalY = parseFocal(payload.focalY);
+  const zoom = parseZoom(payload.zoom);
+  if (expectedVersion === null || expectedVersion === 0 || !alt || focalX === null || focalY === null || zoom === null) {
+    return respond(NextResponse.json({ error: "Invalid image settings" }, { status: 400 }));
+  }
+
+  try {
+    const avatar = slot.startsWith("team.") && slot.endsWith(".avatar");
+    const receipt = typeof payload.translationReceipt === "string" ? payload.translationReceipt : "";
+    const fields = { alt };
+    const translationStates = receipt
+      ? verifyTranslationReceipt({ receipt, email: access.email, resource: { type: "media", scope: "", id: slot, version: expectedVersion }, fields })
+      : manualTranslationWrites(fields);
+    const asset = await updateSiteMediaAssetMetadata({
+      slot,
+      alt,
+      focalX: avatar ? 50 : focalX,
+      focalY: avatar ? 50 : focalY,
+      zoom: avatar ? 100 : zoom,
+      expectedVersion,
+      updatedBy: access.email,
+      translationStates,
+    });
+    const revision = await invalidateSiteMedia();
+    return respond(NextResponse.json({ ok: true, item: publicSiteMediaAsset(asset), revision }));
+  } catch (error) {
+    if (error instanceof TranslationReceiptError) return respond(NextResponse.json({ error: error.message, code: error.code }, { status: 409 }));
     return respond(siteMediaApiError(error));
   }
 }

@@ -1,6 +1,6 @@
 import postgres from "postgres";
 
-export type LiveContentScope = "content" | "impact" | "team" | "theme";
+export type LiveContentScope = "content" | "impact" | "team" | "theme" | "layout";
 
 export type LiveRevision = {
   revision: string;
@@ -15,7 +15,9 @@ type RevisionRow = {
   updated_at: Date | string;
 };
 
-const databaseUrl = process.env.POSTGRES_URL || process.env.DATABASE_URL || "";
+const databaseUrl = process.env.IHEAR_FORCE_FILE_STORE === "1"
+  ? ""
+  : process.env.POSTGRES_URL || process.env.DATABASE_URL || "";
 const isHostedProduction =
   process.env.NODE_ENV === "production" &&
   Boolean(process.env.VERCEL || process.env.NETLIFY || process.env.CONTEXT);
@@ -45,6 +47,7 @@ function fallbackRevisions() {
       impact: { revision: "1", updatedAt: now },
       team: { revision: "1", updatedAt: now },
       theme: { revision: "1", updatedAt: now },
+      layout: { revision: "1", updatedAt: now },
     };
   }
   return globalForLiveRevisions.ihearFallbackLiveRevisions;
@@ -58,7 +61,7 @@ function fromRows(rows: RevisionRow[]): LiveRevisions {
       updatedAt: new Date(row.updated_at).toISOString(),
     };
   }
-  for (const scope of ["content", "impact", "team", "theme"] as const) {
+  for (const scope of ["content", "impact", "team", "theme", "layout"] as const) {
     if (!revisions[scope]) throw new Error(`Missing live revision scope: ${scope}`);
   }
   return revisions;

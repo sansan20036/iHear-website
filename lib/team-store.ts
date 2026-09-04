@@ -4,6 +4,9 @@ import path from "node:path";
 
 import postgres from "postgres";
 
+import { saveTranslationStates, upsertTranslationStatesInTransaction } from "./translation-state";
+import type { TranslationStateWrite } from "./translation-types";
+
 import { TEAM_PEOPLE_SEED, TEAM_PROFILES_SEED } from "./team-seed";
 import type {
   LocalizedText,
@@ -45,9 +48,13 @@ type TeamRow = Record<string, unknown> & {
   created_at: Date | string;
   updated_at: Date | string;
   updated_by: string;
+  deleted_at: Date | string | null;
+  deleted_by: string | null;
 };
 
-const databaseUrl = process.env.POSTGRES_URL || process.env.DATABASE_URL || "";
+const databaseUrl = process.env.IHEAR_FORCE_FILE_STORE === "1"
+  ? ""
+  : process.env.POSTGRES_URL || process.env.DATABASE_URL || "";
 const isHostedProduction =
   process.env.NODE_ENV === "production" &&
   Boolean(process.env.VERCEL || process.env.NETLIFY || process.env.CONTEXT);
@@ -113,6 +120,8 @@ function fromRow(row: TeamRow): TeamProfile {
     createdAt: iso(row.created_at)!,
     updatedAt: iso(row.updated_at)!,
     updatedBy: row.updated_by,
+    deletedAt: iso(row.deleted_at),
+    deletedBy: row.deleted_by || null,
   };
 }
 
@@ -127,6 +136,7 @@ const SELECT_COLUMNS = `
   profile.bio_en, profile.bio_zh_hant, profile.bio_zh_hans,
   profile.hobbies_en, profile.hobbies_zh_hant, profile.hobbies_zh_hans,
   profile.version AS profile_version, profile.created_at, profile.updated_at, profile.updated_by,
+  profile.deleted_at, profile.deleted_by,
   person.name, person.initials, person.publication_consent_at,
   person.version AS person_version
 `;
@@ -187,6 +197,8 @@ function fromFile(store: TeamFileStore) {
       createdAt: profile.createdAt,
       updatedAt: profile.updatedAt,
       updatedBy: profile.updatedBy,
+      deletedAt: (profile as TeamProfileSeed & { deletedAt?: string }).deletedAt || null,
+      deletedBy: (profile as TeamProfileSeed & { deletedBy?: string }).deletedBy || null,
     } satisfies TeamProfile;
   });
 }
@@ -199,13 +211,13 @@ export async function listPublishedTeamProfiles() {
       `SELECT ${SELECT_COLUMNS}
        FROM team_profiles AS profile
        JOIN team_people AS person ON person.id = profile.person_id
-       WHERE profile.status = 'published'
+       WHERE profile.status = 'published' AND profile.deleted_at IS NULL
        ORDER BY profile.section, profile.sort_order, profile.id`,
     );
     return rows.map(fromRow);
   }
   return fromFile(await readFileStore())
-    .filter((profile) => profile.status === "published")
+    .filter((profile) => profile.status === "published" && !profile.deletedAt)
     .sort((a, b) => a.section.localeCompare(b.section) || a.sortOrder - b.sortOrder || a.id.localeCompare(b.id));
 }
 
@@ -217,20 +229,39 @@ export async function listAllTeamProfiles() {
       `SELECT ${SELECT_COLUMNS}
        FROM team_profiles AS profile
        JOIN team_people AS person ON person.id = profile.person_id
+       WHERE profile.deleted_at IS NULL
        ORDER BY profile.section, profile.sort_order, profile.id`,
     );
     return rows.map(fromRow);
   }
-  return fromFile(await readFileStore()).sort(
+  return fromFile(await readFileStore()).filter((profile) => !profile.deletedAt).sort(
     (a, b) => a.section.localeCompare(b.section) || a.sortOrder - b.sortOrder || a.id.localeCompare(b.id),
   );
+}
+
+export async function listDeletedTeamProfiles() {
+  assertPersistence();
+  const sql = sqlClient();
+  if (sql) {
+    const rows = await sql.unsafe<TeamRow[]>(
+      `SELECT ${SELECT_COLUMNS}
+       FROM team_profiles AS profile
+       JOIN team_people AS person ON person.id = profile.person_id
+       WHERE profile.deleted_at IS NOT NULL
+       ORDER BY profile.deleted_at DESC, profile.id`,
+    );
+    return rows.map(fromRow);
+  }
+  return fromFile(await readFileStore())
+    .filter((profile) => Boolean(profile.deletedAt))
+    .sort((a, b) => String(b.deletedAt).localeCompare(String(a.deletedAt)));
 }
 
 function newId(prefix: string) {
   return `${prefix}-${randomUUID()}`;
 }
 
-export async function createTeamProfile(input: TeamProfileInput, email: string) {
+export async function createTeamProfile(input: TeamProfileInput, email: string, translationStates: TranslationStateWrite[] = []) {
   assertPersistence();
   const sql = sqlClient();
   if (sql) {
@@ -268,9 +299,15 @@ export async function createTeamProfile(input: TeamProfileInput, email: string) 
           input.sortOrder ??
           Number((await tx`
             SELECT COALESCE(MAX(sort_order), 0) + 10 AS value
-            FROM team_profiles WHERE section = ${input.section}
+            FROM team_profiles WHERE section = ${input.section} AND deleted_at IS NULL
           `)[0].value);
         await insertProfile(tx, id, personId, input, sortOrder, email);
+        await upsertTranslationStatesInTransaction(
+          tx,
+          { type: "team", scope: "", id },
+          translationStates,
+          email,
+        );
         const rows = await tx.unsafe<TeamRow[]>(
           `SELECT ${SELECT_COLUMNS}
            FROM team_profiles AS profile JOIN team_people AS person ON person.id = profile.person_id
@@ -287,7 +324,7 @@ export async function createTeamProfile(input: TeamProfileInput, email: string) 
     }
   }
 
-  return mutateFile(async (store) => {
+  const created = await mutateFile(async (store) => {
     let person = input.personId ? store.people.find((item) => item.id === input.personId) : undefined;
     const now = new Date().toISOString();
     if (!person) {
@@ -320,10 +357,14 @@ export async function createTeamProfile(input: TeamProfileInput, email: string) 
       updatedAt: now,
       createdBy: email,
       updatedBy: email,
+      deletedAt: null,
+      deletedBy: null,
     };
     store.profiles.push(profile);
     return fromFile(store).find((item) => item.id === profile.id)!;
   });
+  await saveTranslationStates({ type: "team", scope: "", id: created.id }, translationStates, email);
+  return created;
 }
 
 async function insertProfile(
@@ -360,14 +401,14 @@ async function insertProfile(
   `;
 }
 
-export async function updateTeamProfile(id: string, input: TeamProfileUpdateInput, email: string) {
+export async function updateTeamProfile(id: string, input: TeamProfileUpdateInput, email: string, translationStates: TranslationStateWrite[] = []) {
   assertPersistence();
   const sql = sqlClient();
   if (sql) {
     return sql.begin(async (tx) => {
       const [current] = await tx`
         SELECT person_id FROM team_profiles
-        WHERE id = ${id} AND version = ${input.profileVersion}
+        WHERE id = ${id} AND version = ${input.profileVersion} AND deleted_at IS NULL
         FOR UPDATE
       `;
       if (!current) {
@@ -405,10 +446,16 @@ export async function updateTeamProfile(id: string, input: TeamProfileUpdateInpu
           hobbies_en = ${input.hobbies.en}, hobbies_zh_hant = ${input.hobbies.zhHant},
           hobbies_zh_hans = ${input.hobbies.zhHans},
           updated_at = NOW(), updated_by = ${email}, version = version + 1
-        WHERE id = ${id} AND version = ${input.profileVersion}
+        WHERE id = ${id} AND version = ${input.profileVersion} AND deleted_at IS NULL
         RETURNING id
       `;
       if (!updated[0]) throw new TeamConflictError("Team profile changed");
+      await upsertTranslationStatesInTransaction(
+        tx,
+        { type: "team", scope: "", id },
+        translationStates,
+        email,
+      );
       const rows = await tx.unsafe<TeamRow[]>(
         `SELECT ${SELECT_COLUMNS}
          FROM team_profiles AS profile JOIN team_people AS person ON person.id = profile.person_id
@@ -418,7 +465,7 @@ export async function updateTeamProfile(id: string, input: TeamProfileUpdateInpu
       return fromRow(rows[0]);
     });
   }
-  return mutateFile(async (store) => {
+  const result = await mutateFile(async (store) => {
     const profile = store.profiles.find((item) => item.id === id);
     if (!profile) throw new TeamNotFoundError("Team profile not found");
     const person = store.people.find((item) => item.id === profile.personId)!;
@@ -446,6 +493,68 @@ export async function updateTeamProfile(id: string, input: TeamProfileUpdateInpu
     });
     return fromFile(store).find((item) => item.id === id)!;
   });
+  await saveTranslationStates({ type: "team", scope: "", id }, translationStates, email);
+  return result;
+}
+
+export async function trashTeamProfile(id: string, profileVersion: number, email: string) {
+  assertPersistence();
+  const sql = sqlClient();
+  if (sql) {
+    const rows = await sql`
+      UPDATE team_profiles
+      SET deleted_at = NOW(), deleted_by = ${email}, version = version + 1,
+          updated_at = NOW(), updated_by = ${email}
+      WHERE id = ${id} AND version = ${profileVersion} AND deleted_at IS NULL
+      RETURNING id
+    `;
+    if (rows[0]) return id;
+    const exists = await sql`SELECT id FROM team_profiles WHERE id = ${id}`;
+    if (!exists[0]) throw new TeamNotFoundError("Team profile not found");
+    throw new TeamConflictError("Team profile changed");
+  }
+  return mutateFile(async (store) => {
+    const profile = store.profiles.find((item) => item.id === id) as typeof store.profiles[number] & { deletedAt?: string; deletedBy?: string };
+    if (!profile) throw new TeamNotFoundError("Team profile not found");
+    if (profile.version !== profileVersion || profile.deletedAt) throw new TeamConflictError("Team profile changed");
+    const now = new Date().toISOString();
+    profile.deletedAt = now;
+    profile.deletedBy = email;
+    profile.version += 1;
+    profile.updatedAt = now;
+    profile.updatedBy = email;
+    return id;
+  });
+}
+
+export async function restoreTeamProfile(id: string, profileVersion: number, email: string) {
+  assertPersistence();
+  const sql = sqlClient();
+  if (sql) {
+    const rows = await sql`
+      UPDATE team_profiles
+      SET deleted_at = NULL, deleted_by = NULL, version = version + 1,
+          updated_at = NOW(), updated_by = ${email}
+      WHERE id = ${id} AND version = ${profileVersion} AND deleted_at IS NOT NULL
+      RETURNING id
+    `;
+    if (rows[0]) return id;
+    const exists = await sql`SELECT id FROM team_profiles WHERE id = ${id}`;
+    if (!exists[0]) throw new TeamNotFoundError("Team profile not found");
+    throw new TeamConflictError("Team profile changed");
+  }
+  return mutateFile(async (store) => {
+    const profile = store.profiles.find((item) => item.id === id) as typeof store.profiles[number] & { deletedAt?: string; deletedBy?: string };
+    if (!profile) throw new TeamNotFoundError("Team profile not found");
+    if (profile.version !== profileVersion || !profile.deletedAt) throw new TeamConflictError("Team profile changed");
+    const now = new Date().toISOString();
+    profile.deletedAt = "";
+    profile.deletedBy = "";
+    profile.version += 1;
+    profile.updatedAt = now;
+    profile.updatedBy = email;
+    return id;
+  });
 }
 
 export async function deleteTeamProfile(id: string, profileVersion: number) {
@@ -455,7 +564,7 @@ export async function deleteTeamProfile(id: string, profileVersion: number) {
     return sql.begin(async (tx) => {
       const deleted = await tx`
         DELETE FROM team_profiles
-        WHERE id = ${id} AND version = ${profileVersion}
+        WHERE id = ${id} AND version = ${profileVersion} AND deleted_at IS NOT NULL
         RETURNING person_id
       `;
       if (!deleted[0]) {
@@ -480,7 +589,7 @@ export async function deleteTeamProfile(id: string, profileVersion: number) {
     if (profileIndex < 0) throw new TeamNotFoundError("Team profile not found");
     const profile = store.profiles[profileIndex];
     const person = store.people.find((item) => item.id === profile.personId)!;
-    if (profile.version !== profileVersion) {
+    if (profile.version !== profileVersion || !(profile as typeof profile & { deletedAt?: string }).deletedAt) {
       throw new TeamConflictError("Team profile changed");
     }
     store.profiles.splice(profileIndex, 1);
@@ -501,7 +610,7 @@ export async function reorderTeamProfiles(
   if (sql) {
     return sql.begin(async (tx) => {
       const rows = await tx`
-        SELECT id, version FROM team_profiles WHERE section = ${section} ORDER BY sort_order, id FOR UPDATE
+        SELECT id, version FROM team_profiles WHERE section = ${section} AND deleted_at IS NULL ORDER BY sort_order, id FOR UPDATE
       `;
       if (
         rows.length !== ordered.length ||
@@ -509,19 +618,21 @@ export async function reorderTeamProfiles(
       ) {
         throw new TeamConflictError("Team profile order changed");
       }
-      for (const [index, item] of ordered.entries()) {
+      const nextOrder = ordered.map((item, index) => ({ id: item.id, sort_order: (index + 1) * 10 }));
+      if (nextOrder.length) {
         await tx`
-          UPDATE team_profiles
-          SET sort_order = ${(index + 1) * 10}, version = version + 1,
+          UPDATE team_profiles AS profile
+          SET sort_order = ordering.sort_order, version = profile.version + 1,
               updated_at = NOW(), updated_by = ${email}
-          WHERE id = ${item.id}
+          FROM ${tx(nextOrder, "id", "sort_order")} AS ordering
+          WHERE profile.id = ordering.id
         `;
       }
       return true;
     });
   }
   return mutateFile(async (store) => {
-    const current = store.profiles.filter((item) => item.section === section);
+    const current = store.profiles.filter((item) => item.section === section && !(item as typeof item & { deletedAt?: string }).deletedAt);
     if (
       current.length !== ordered.length ||
       current.some((profile) => !ordered.some((item) => item.id === profile.id && item.version === profile.version))

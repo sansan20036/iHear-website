@@ -44,7 +44,7 @@ export async function POST(request: Request) {
   if (!isSameOrigin(request)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   const session = await auth();
   const email = normalizeEmail(session?.user?.email);
-  if (!isAllowedAdmin(email)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (!(await isAllowedAdmin(email))) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   const decision = await enforceRateLimit(request, {
     ...RATE_LIMIT_POLICIES.adminMutation,
     identifier: email,

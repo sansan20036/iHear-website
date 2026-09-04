@@ -1,0 +1,1132 @@
+{
+  "version": 2,
+  "pages": [
+    {
+      "page": "/",
+      "label": {
+        "en": "Home",
+        "zhHant": "首頁",
+        "zhHans": "首页"
+      }
+    },
+    {
+      "page": "/about",
+      "label": {
+        "en": "About us",
+        "zhHant": "關於我們",
+        "zhHans": "关于我们"
+      }
+    },
+    {
+      "page": "/academy",
+      "label": {
+        "en": "Academy",
+        "zhHant": "線上學院",
+        "zhHans": "在线学院"
+      }
+    },
+    {
+      "page": "/contact",
+      "label": {
+        "en": "Contact",
+        "zhHant": "聯絡我們",
+        "zhHans": "联系我们"
+      }
+    },
+    {
+      "page": "/donate",
+      "label": {
+        "en": "Donate",
+        "zhHant": "捐款支持",
+        "zhHans": "捐款支持"
+      }
+    },
+    {
+      "page": "/get-involved",
+      "label": {
+        "en": "Get involved",
+        "zhHant": "參與我們",
+        "zhHans": "参与我们"
+      }
+    },
+    {
+      "page": "/programs",
+      "label": {
+        "en": "Programs",
+        "zhHant": "服務項目",
+        "zhHans": "服务项目"
+      }
+    },
+    {
+      "page": "/resources",
+      "label": {
+        "en": "Resources",
+        "zhHant": "學習資源",
+        "zhHans": "学习资源"
+      }
+    },
+    {
+      "page": "/stories",
+      "label": {
+        "en": "Stories",
+        "zhHant": "生命故事",
+        "zhHans": "生命故事"
+      }
+    },
+    {
+      "page": "/team",
+      "label": {
+        "en": "Team",
+        "zhHant": "團隊介紹",
+        "zhHans": "团队介绍"
+      }
+    },
+    {
+      "page": "/__global__",
+      "label": {
+        "en": "Shared across the site",
+        "zhHant": "全站共用",
+        "zhHans": "全站共用"
+      }
+    }
+  ],
+  "sections": [
+    {
+      "page": "/about",
+      "key": "about.journey",
+      "label": {
+        "en": "Our journey",
+        "zhHant": "我們的歷程",
+        "zhHans": "我们的历程"
+      },
+      "description": {
+        "en": "Milestones in iHear's development.",
+        "zhHant": "iHear 發展的重要里程碑。",
+        "zhHans": "iHear 发展的重要里程碑。"
+      },
+      "icon": "timeline",
+      "previewSelector": "[data-layout-section=\"about.journey\"]"
+    },
+    {
+      "page": "/",
+      "key": "home.about",
+      "label": {
+        "en": "About iHear",
+        "zhHant": "認識 iHear",
+        "zhHans": "认识 iHear"
+      },
+      "description": {
+        "en": "A short introduction to our work.",
+        "zhHant": "簡介 iHear 的服務與理念。",
+        "zhHans": "简介 iHear 的服务与理念。"
+      },
+      "icon": "heart",
+      "previewSelector": "[data-layout-section=\"home.about\"]"
+    },
+    {
+      "page": "/",
+      "key": "home.donate",
+      "label": {
+        "en": "Support our work",
+        "zhHant": "支持我們",
+        "zhHans": "支持我们"
+      },
+      "description": {
+        "en": "Donation options and their impact.",
+        "zhHant": "捐款方式與可帶來的改變。",
+        "zhHans": "捐款方式与可带来的改变。"
+      },
+      "icon": "gift",
+      "previewSelector": "[data-layout-section=\"home.donate\"]"
+    },
+    {
+      "page": "/",
+      "key": "home.how",
+      "label": {
+        "en": "How it works",
+        "zhHant": "服務流程",
+        "zhHans": "服务流程"
+      },
+      "description": {
+        "en": "The steps from request to learning.",
+        "zhHant": "從提出申請到開始學習的流程。",
+        "zhHans": "从提出申请到开始学习的流程。"
+      },
+      "icon": "steps",
+      "previewSelector": "[data-layout-section=\"home.how\"]"
+    },
+    {
+      "page": "/",
+      "key": "home.impact",
+      "label": {
+        "en": "Our impact",
+        "zhHant": "我們的影響力",
+        "zhHans": "我们的影响力"
+      },
+      "description": {
+        "en": "Stories and outcomes from the community.",
+        "zhHant": "社群故事與服務成果。",
+        "zhHans": "社群故事与服务成果。"
+      },
+      "icon": "spark",
+      "previewSelector": "[data-layout-section=\"home.impact\"]"
+    },
+    {
+      "page": "/",
+      "key": "home.involve",
+      "label": {
+        "en": "Get involved",
+        "zhHant": "參與我們",
+        "zhHans": "参与我们"
+      },
+      "description": {
+        "en": "Ways to volunteer or request support.",
+        "zhHant": "成為志工或申請服務的方式。",
+        "zhHans": "成为志工或申请服务的方式。"
+      },
+      "icon": "people",
+      "previewSelector": "[data-layout-section=\"home.involve\"]"
+    },
+    {
+      "page": "/",
+      "key": "home.programs",
+      "label": {
+        "en": "Programs",
+        "zhHant": "服務項目",
+        "zhHans": "服务项目"
+      },
+      "description": {
+        "en": "Tutoring and community outreach services.",
+        "zhHant": "一對一輔導與社區推廣服務。",
+        "zhHans": "一对一辅导与社区推广服务。"
+      },
+      "icon": "cards",
+      "previewSelector": "[data-layout-section=\"home.programs\"]"
+    },
+    {
+      "page": "/",
+      "key": "home.stats",
+      "label": {
+        "en": "Impact numbers",
+        "zhHant": "成果數字",
+        "zhHans": "成果数字"
+      },
+      "description": {
+        "en": "Student, class, and volunteer totals.",
+        "zhHant": "顯示學生、課程與志工成果。",
+        "zhHans": "显示学生、课程与志工成果。"
+      },
+      "icon": "chart",
+      "previewSelector": "[data-layout-section=\"home.stats\"]"
+    },
+    {
+      "page": "/",
+      "key": "home.stories",
+      "label": {
+        "en": "Student stories",
+        "zhHant": "學習故事",
+        "zhHans": "学习故事"
+      },
+      "description": {
+        "en": "Experiences shared by learners and families.",
+        "zhHant": "學員與家庭分享的經驗。",
+        "zhHans": "学员与家庭分享的经验。"
+      },
+      "icon": "quote",
+      "previewSelector": "[data-layout-section=\"home.stories\"]"
+    },
+    {
+      "page": "/",
+      "key": "home.video",
+      "label": {
+        "en": "Impact video",
+        "zhHant": "影響力影片",
+        "zhHans": "影响力影片"
+      },
+      "description": {
+        "en": "The featured video on the home page.",
+        "zhHant": "首頁中的精選影片。",
+        "zhHans": "首页中的精选影片。"
+      },
+      "icon": "video",
+      "previewSelector": "[data-layout-section=\"home.video\"]"
+    },
+    {
+      "page": "/programs",
+      "key": "programs.how",
+      "label": {
+        "en": "How to get started",
+        "zhHant": "如何開始",
+        "zhHans": "如何开始"
+      },
+      "description": {
+        "en": "The application and matching process.",
+        "zhHant": "申請、媒合到學習的流程。",
+        "zhHans": "申请、媒合到学习的流程。"
+      },
+      "icon": "steps",
+      "previewSelector": "[data-layout-section=\"programs.how\"]"
+    },
+    {
+      "page": "/stories",
+      "key": "stories.video",
+      "label": {
+        "en": "Featured story video",
+        "zhHant": "精選故事影片",
+        "zhHans": "精选故事影片"
+      },
+      "description": {
+        "en": "A video story from the iHear community.",
+        "zhHant": "iHear 社群的精選故事影片。",
+        "zhHans": "iHear 社群的精选故事影片。"
+      },
+      "icon": "video",
+      "previewSelector": "[data-layout-section=\"stories.video\"]"
+    }
+  ],
+  "groups": [
+    {
+      "page": "/about",
+      "key": "about.mission.pillars",
+      "items": [
+        {
+          "id": "inclusive",
+          "label": {
+            "en": "Inclusive communication",
+            "zhHant": "包容性溝通",
+            "zhHans": "包容性沟通"
+          },
+          "description": {
+            "en": "Support through accessible communication.",
+            "zhHant": "以無障礙溝通提供支持。",
+            "zhHans": "以无障碍沟通提供支持。"
+          }
+        },
+        {
+          "id": "awareness",
+          "label": {
+            "en": "Community awareness",
+            "zhHant": "社區意識",
+            "zhHans": "社区意识"
+          },
+          "description": {
+            "en": "Build understanding in the community.",
+            "zhHant": "提升社區對聽損議題的理解。",
+            "zhHans": "提升社区对听损议题的理解。"
+          }
+        },
+        {
+          "id": "volunteer",
+          "label": {
+            "en": "Volunteer driven",
+            "zhHant": "志工驅動",
+            "zhHans": "志工驱动"
+          },
+          "description": {
+            "en": "Powered by committed volunteers.",
+            "zhHant": "由投入服務的志工共同推動。",
+            "zhHans": "由投入服务的志工共同推动。"
+          }
+        }
+      ],
+      "label": {
+        "en": "Mission highlights",
+        "zhHant": "使命重點",
+        "zhHans": "使命重点"
+      },
+      "description": {
+        "en": "The three ideas behind our mission.",
+        "zhHant": "支持使命的三項核心理念。",
+        "zhHans": "支持使命的三项核心理念。"
+      },
+      "icon": "pillars",
+      "previewSelector": "[data-layout-group=\"about.mission.pillars\"]"
+    },
+    {
+      "page": "/contact",
+      "key": "contact.methods",
+      "items": [
+        {
+          "id": "email",
+          "label": {
+            "en": "Email us",
+            "zhHant": "電子郵件",
+            "zhHans": "电子邮件"
+          },
+          "description": {
+            "en": "Contact the team by email.",
+            "zhHant": "透過電子郵件聯絡團隊。",
+            "zhHans": "通过电子邮件联系团队。"
+          }
+        },
+        {
+          "id": "social",
+          "label": {
+            "en": "Social media",
+            "zhHant": "社群媒體",
+            "zhHans": "社群媒体"
+          },
+          "description": {
+            "en": "Connect with iHear on social platforms.",
+            "zhHant": "在社群平台關注 iHear。",
+            "zhHans": "在社群平台关注 iHear。"
+          }
+        }
+      ],
+      "label": {
+        "en": "Contact methods",
+        "zhHant": "聯絡方式",
+        "zhHans": "联系方式"
+      },
+      "description": {
+        "en": "Ways visitors can reach iHear.",
+        "zhHant": "訪客可以聯絡 iHear 的方式。",
+        "zhHans": "访客可以联系 iHear 的方式。"
+      },
+      "icon": "contact",
+      "previewSelector": "[data-layout-group=\"contact.methods\"]"
+    },
+    {
+      "page": "/__global__",
+      "key": "donate.options",
+      "items": [
+        {
+          "id": "monthly",
+          "label": {
+            "en": "Monthly support",
+            "zhHant": "每月支持",
+            "zhHans": "每月支持"
+          },
+          "description": {
+            "en": "Help sustain tutoring over time.",
+            "zhHant": "長期支持輔導服務。",
+            "zhHans": "长期支持辅导服务。"
+          }
+        },
+        {
+          "id": "materials",
+          "label": {
+            "en": "Learning materials",
+            "zhHant": "學習教材",
+            "zhHans": "学习教材"
+          },
+          "description": {
+            "en": "Provide accessible learning resources.",
+            "zhHant": "提供無障礙學習資源。",
+            "zhHans": "提供无障碍学习资源。"
+          }
+        },
+        {
+          "id": "outreach",
+          "label": {
+            "en": "Community outreach",
+            "zhHant": "社區推廣",
+            "zhHans": "社区推广"
+          },
+          "description": {
+            "en": "Support awareness events and talks.",
+            "zhHant": "支持倡議活動與講座。",
+            "zhHans": "支持倡议活动与讲座。"
+          }
+        }
+      ],
+      "label": {
+        "en": "Donation options",
+        "zhHant": "捐款用途",
+        "zhHans": "捐款用途"
+      },
+      "description": {
+        "en": "Ways a donation can support our work.",
+        "zhHant": "了解捐款可支持的服務項目。",
+        "zhHans": "了解捐款可支持的服务项目。"
+      },
+      "icon": "gift",
+      "previewSelector": "[data-layout-group=\"donate.options\"]"
+    },
+    {
+      "page": "/",
+      "key": "home.mission.pillars",
+      "items": [
+        {
+          "id": "inclusive",
+          "label": {
+            "en": "Inclusive communication",
+            "zhHant": "包容性溝通",
+            "zhHans": "包容性沟通"
+          },
+          "description": {
+            "en": "Support through accessible communication.",
+            "zhHant": "以無障礙溝通提供支持。",
+            "zhHans": "以无障碍沟通提供支持。"
+          }
+        },
+        {
+          "id": "awareness",
+          "label": {
+            "en": "Community awareness",
+            "zhHant": "社區意識",
+            "zhHans": "社区意识"
+          },
+          "description": {
+            "en": "Build understanding in the community.",
+            "zhHant": "提升社區對聽損議題的理解。",
+            "zhHans": "提升社区对听损议题的理解。"
+          }
+        },
+        {
+          "id": "volunteer",
+          "label": {
+            "en": "Volunteer driven",
+            "zhHant": "志工驅動",
+            "zhHans": "志工驱动"
+          },
+          "description": {
+            "en": "Powered by committed volunteers.",
+            "zhHant": "由投入服務的志工共同推動。",
+            "zhHans": "由投入服务的志工共同推动。"
+          }
+        }
+      ],
+      "label": {
+        "en": "Mission highlights",
+        "zhHant": "使命重點",
+        "zhHans": "使命重点"
+      },
+      "description": {
+        "en": "The three ideas behind our mission.",
+        "zhHant": "支持使命的三項核心理念。",
+        "zhHans": "支持使命的三项核心理念。"
+      },
+      "icon": "pillars",
+      "previewSelector": "[data-layout-group=\"home.mission.pillars\"]"
+    },
+    {
+      "page": "/__global__",
+      "key": "involvement.options",
+      "items": [
+        {
+          "id": "tutor",
+          "label": {
+            "en": "Become a tutor",
+            "zhHant": "成為志工老師",
+            "zhHans": "成为志工老师"
+          },
+          "description": {
+            "en": "Share your time as a volunteer tutor.",
+            "zhHant": "投入時間陪伴學生學習。",
+            "zhHans": "投入时间陪伴学生学习。"
+          }
+        },
+        {
+          "id": "student",
+          "label": {
+            "en": "Request tutoring",
+            "zhHant": "申請輔導服務",
+            "zhHans": "申请辅导服务"
+          },
+          "description": {
+            "en": "Apply for one-to-one learning support.",
+            "zhHant": "申請一對一學習支持。",
+            "zhHans": "申请一对一学习支持。"
+          }
+        }
+      ],
+      "label": {
+        "en": "Ways to participate",
+        "zhHant": "參與方式",
+        "zhHans": "参与方式"
+      },
+      "description": {
+        "en": "Volunteer or request tutoring support.",
+        "zhHant": "成為志工或申請輔導服務。",
+        "zhHans": "成为志工或申请辅导服务。"
+      },
+      "icon": "people",
+      "previewSelector": "[data-layout-group=\"involvement.options\"]"
+    },
+    {
+      "page": "/__global__",
+      "key": "programs.services",
+      "items": [
+        {
+          "id": "tutoring",
+          "label": {
+            "en": "One-to-one English tutoring",
+            "zhHant": "一對一英語輔導",
+            "zhHans": "一对一英语辅导"
+          },
+          "description": {
+            "en": "Personal learning support for students.",
+            "zhHant": "為學生提供個人化學習支持。",
+            "zhHans": "为学生提供个人化学习支持。"
+          }
+        },
+        {
+          "id": "outreach",
+          "label": {
+            "en": "Community outreach and talks",
+            "zhHant": "社區推廣與講座",
+            "zhHans": "社区推广与讲座"
+          },
+          "description": {
+            "en": "Awareness activities for schools and communities.",
+            "zhHant": "為學校與社區提供倡議活動。",
+            "zhHans": "为学校与社区提供倡议活动。"
+          }
+        }
+      ],
+      "label": {
+        "en": "Services",
+        "zhHant": "服務項目",
+        "zhHans": "服务项目"
+      },
+      "description": {
+        "en": "Tutoring and community outreach options.",
+        "zhHant": "一對一英語輔導與社區推廣。",
+        "zhHans": "一对一英语辅导与社区推广。"
+      },
+      "icon": "cards",
+      "previewSelector": "[data-layout-group=\"programs.services\"]"
+    },
+    {
+      "page": "/__global__",
+      "key": "programs.steps",
+      "items": [
+        {
+          "id": "request",
+          "label": {
+            "en": "Submit a request",
+            "zhHant": "提出申請",
+            "zhHans": "提出申请"
+          },
+          "description": {
+            "en": "Tell us what support is needed.",
+            "zhHant": "告訴我們需要的協助。",
+            "zhHans": "告诉我们需要的协助。"
+          }
+        },
+        {
+          "id": "match",
+          "label": {
+            "en": "Get matched",
+            "zhHant": "進行媒合",
+            "zhHans": "进行媒合"
+          },
+          "description": {
+            "en": "We find a suitable volunteer tutor.",
+            "zhHant": "由團隊媒合合適的志工老師。",
+            "zhHans": "由团队媒合合适的志工老师。"
+          }
+        },
+        {
+          "id": "learn",
+          "label": {
+            "en": "Start learning",
+            "zhHant": "開始學習",
+            "zhHans": "开始学习"
+          },
+          "description": {
+            "en": "Meet online and work toward goals.",
+            "zhHant": "在線上見面並朝學習目標前進。",
+            "zhHans": "在线上见面并朝学习目标前进。"
+          }
+        }
+      ],
+      "label": {
+        "en": "Learning journey",
+        "zhHant": "服務流程",
+        "zhHans": "服务流程"
+      },
+      "description": {
+        "en": "The three steps to begin tutoring.",
+        "zhHant": "開始輔導服務的三個步驟。",
+        "zhHans": "开始辅导服务的三个步骤。"
+      },
+      "icon": "steps",
+      "previewSelector": "[data-layout-group=\"programs.steps\"]"
+    },
+    {
+      "page": "/resources",
+      "key": "resources.guides",
+      "items": [
+        {
+          "id": "communication",
+          "label": {
+            "en": "Communication",
+            "zhHant": "溝通",
+            "zhHans": "沟通"
+          },
+          "description": {
+            "en": "A guide in this resource topic.",
+            "zhHant": "此主題的實用學習指南。",
+            "zhHans": "此主题的实用学习指南。"
+          }
+        },
+        {
+          "id": "classroom",
+          "label": {
+            "en": "Classroom",
+            "zhHant": "教室",
+            "zhHans": "教室"
+          },
+          "description": {
+            "en": "A guide in this resource topic.",
+            "zhHant": "此主題的實用學習指南。",
+            "zhHans": "此主题的实用学习指南。"
+          }
+        },
+        {
+          "id": "family",
+          "label": {
+            "en": "Family",
+            "zhHant": "家庭",
+            "zhHans": "家庭"
+          },
+          "description": {
+            "en": "A guide in this resource topic.",
+            "zhHant": "此主題的實用學習指南。",
+            "zhHans": "此主题的实用学习指南。"
+          }
+        },
+        {
+          "id": "hearing-loss",
+          "label": {
+            "en": "Hearing loss",
+            "zhHant": "聽力損失",
+            "zhHans": "听力损失"
+          },
+          "description": {
+            "en": "A guide in this resource topic.",
+            "zhHant": "此主題的實用學習指南。",
+            "zhHans": "此主题的实用学习指南。"
+          }
+        },
+        {
+          "id": "implant",
+          "label": {
+            "en": "Cochlear implants",
+            "zhHant": "人工電子耳",
+            "zhHans": "人工耳蜗"
+          },
+          "description": {
+            "en": "A guide in this resource topic.",
+            "zhHant": "此主題的實用學習指南。",
+            "zhHans": "此主题的实用学习指南。"
+          }
+        },
+        {
+          "id": "hearing-aid",
+          "label": {
+            "en": "Hearing aids",
+            "zhHant": "助聽器",
+            "zhHans": "助听器"
+          },
+          "description": {
+            "en": "A guide in this resource topic.",
+            "zhHant": "此主題的實用學習指南。",
+            "zhHans": "此主题的实用学习指南。"
+          }
+        },
+        {
+          "id": "activities",
+          "label": {
+            "en": "Activities",
+            "zhHant": "活動",
+            "zhHans": "活动"
+          },
+          "description": {
+            "en": "A guide in this resource topic.",
+            "zhHant": "此主題的實用學習指南。",
+            "zhHans": "此主题的实用学习指南。"
+          }
+        },
+        {
+          "id": "tracking",
+          "label": {
+            "en": "Progress tracking",
+            "zhHant": "進度追蹤",
+            "zhHans": "进度追踪"
+          },
+          "description": {
+            "en": "A guide in this resource topic.",
+            "zhHant": "此主題的實用學習指南。",
+            "zhHans": "此主题的实用学习指南。"
+          }
+        },
+        {
+          "id": "handbook",
+          "label": {
+            "en": "Handbook",
+            "zhHant": "手冊",
+            "zhHans": "手册"
+          },
+          "description": {
+            "en": "A guide in this resource topic.",
+            "zhHant": "此主題的實用學習指南。",
+            "zhHans": "此主题的实用学习指南。"
+          }
+        }
+      ],
+      "label": {
+        "en": "Resource topics",
+        "zhHant": "資源主題",
+        "zhHans": "资源主题"
+      },
+      "description": {
+        "en": "Browse guides by topic.",
+        "zhHant": "依主題瀏覽學習指南。",
+        "zhHans": "依主题浏览学习指南。"
+      },
+      "icon": "book",
+      "previewSelector": "[data-layout-group=\"resources.guides\"]"
+    },
+    {
+      "page": "/__global__",
+      "key": "stories.testimonials",
+      "items": [
+        {
+          "id": "story1",
+          "label": {
+            "en": "Story 1",
+            "zhHant": "故事 1",
+            "zhHans": "故事 1"
+          },
+          "description": {
+            "en": "A story from the iHear community.",
+            "zhHant": "來自 iHear 社群的真實經驗。",
+            "zhHans": "来自 iHear 社群的真实经验。"
+          }
+        },
+        {
+          "id": "story2",
+          "label": {
+            "en": "Story 2",
+            "zhHant": "故事 2",
+            "zhHans": "故事 2"
+          },
+          "description": {
+            "en": "A story from the iHear community.",
+            "zhHant": "來自 iHear 社群的真實經驗。",
+            "zhHans": "来自 iHear 社群的真实经验。"
+          }
+        },
+        {
+          "id": "story3",
+          "label": {
+            "en": "Story 3",
+            "zhHant": "故事 3",
+            "zhHans": "故事 3"
+          },
+          "description": {
+            "en": "A story from the iHear community.",
+            "zhHant": "來自 iHear 社群的真實經驗。",
+            "zhHans": "来自 iHear 社群的真实经验。"
+          }
+        },
+        {
+          "id": "story4",
+          "label": {
+            "en": "Story 4",
+            "zhHant": "故事 4",
+            "zhHans": "故事 4"
+          },
+          "description": {
+            "en": "A story from the iHear community.",
+            "zhHant": "來自 iHear 社群的真實經驗。",
+            "zhHans": "来自 iHear 社群的真实经验。"
+          }
+        }
+      ],
+      "label": {
+        "en": "Community stories",
+        "zhHant": "社群故事",
+        "zhHans": "社群故事"
+      },
+      "description": {
+        "en": "Stories shared by students and families.",
+        "zhHant": "學生與家庭分享的服務經驗。",
+        "zhHans": "学生与家庭分享的服务经验。"
+      },
+      "icon": "quote",
+      "previewSelector": "[data-layout-group=\"stories.testimonials\"]"
+    }
+  ],
+  "links": [
+    {
+      "page": "/academy",
+      "key": "academy.acad.cta1.href",
+      "defaultHref": "mailto:ihearprogram@gmail.com?subject=iHear%20Academy%20enquiry",
+      "label": {
+        "en": "Academy primary button",
+        "zhHant": "學院主要按鈕",
+        "zhHans": "学院主要按钮"
+      },
+      "description": {
+        "en": "The main action on the Academy page.",
+        "zhHant": "線上學院頁面的主要行動按鈕。",
+        "zhHans": "在线学院页面上的主要行动按钮。"
+      },
+      "locations": {
+        "en": "Academy page",
+        "zhHant": "線上學院頁面",
+        "zhHans": "在线学院页面"
+      },
+      "shared": false,
+      "usageCount": 1,
+      "previewSelector": "[data-layout-link=\"academy.acad.cta1.href\"]"
+    },
+    {
+      "page": "/academy",
+      "key": "academy.acad.cta2.href",
+      "defaultHref": "mailto:ihearprogram@gmail.com?subject=iHear%20Academy%20pricing",
+      "label": {
+        "en": "Academy secondary button",
+        "zhHant": "學院次要按鈕",
+        "zhHans": "学院次要按钮"
+      },
+      "description": {
+        "en": "The secondary action on the Academy page.",
+        "zhHant": "線上學院頁面的次要行動按鈕。",
+        "zhHans": "在线学院页面的次要行动按钮。"
+      },
+      "locations": {
+        "en": "Academy page",
+        "zhHant": "線上學院頁面",
+        "zhHans": "在线学院页面"
+      },
+      "shared": false,
+      "usageCount": 1,
+      "previewSelector": "[data-layout-link=\"academy.acad.cta2.href\"]"
+    },
+    {
+      "page": "/contact",
+      "key": "contact.contact.email.cta.href",
+      "defaultHref": "mailto:ihearprogram@gmail.com",
+      "label": {
+        "en": "Contact email link",
+        "zhHant": "聯絡信箱連結",
+        "zhHans": "联系邮箱链接"
+      },
+      "description": {
+        "en": "Opens an email to the iHear team.",
+        "zhHant": "開啟寄給 iHear 團隊的電子郵件。",
+        "zhHans": "开启寄给 iHear 团队的电子邮件。"
+      },
+      "locations": {
+        "en": "Contact page",
+        "zhHant": "聯絡頁面",
+        "zhHans": "联系页面"
+      },
+      "shared": false,
+      "usageCount": 1,
+      "previewSelector": "[data-layout-link=\"contact.contact.email.cta.href\"]"
+    },
+    {
+      "page": "/contact",
+      "key": "contact.contact.form.cta.href",
+      "defaultHref": "https://forms.gle/vHzJULFc5Rwee49eA",
+      "label": {
+        "en": "Contact form button",
+        "zhHant": "聯絡表單按鈕",
+        "zhHans": "联系表单按钮"
+      },
+      "description": {
+        "en": "Opens the contact form.",
+        "zhHant": "開啟 iHear 聯絡表單。",
+        "zhHans": "开启 iHear 联系表单。"
+      },
+      "locations": {
+        "en": "Contact page",
+        "zhHant": "聯絡頁面",
+        "zhHans": "联系页面"
+      },
+      "shared": false,
+      "usageCount": 1,
+      "previewSelector": "[data-layout-link=\"contact.contact.form.cta.href\"]"
+    },
+    {
+      "page": "/resources",
+      "key": "resources.res.cta.href",
+      "defaultHref": "mailto:ihearprogram@gmail.com?subject=Resource%20guide%20request",
+      "label": {
+        "en": "Resources button",
+        "zhHant": "資源按鈕",
+        "zhHans": "资源按钮"
+      },
+      "description": {
+        "en": "The main resource action link.",
+        "zhHant": "學習資源頁面的主要連結。",
+        "zhHans": "学习资源页面的主要链接。"
+      },
+      "locations": {
+        "en": "Resources page",
+        "zhHant": "學習資源頁面",
+        "zhHans": "学习资源页面"
+      },
+      "shared": false,
+      "usageCount": 1,
+      "previewSelector": "[data-layout-link=\"resources.res.cta.href\"]"
+    },
+    {
+      "page": "/__global__",
+      "key": "shared.donate.cta.href",
+      "defaultHref": "https://donate.stripe.com/8x2fZgfDg4nZ1cu01k1RC01",
+      "label": {
+        "en": "Donation button",
+        "zhHant": "捐款按鈕",
+        "zhHans": "捐款按钮"
+      },
+      "description": {
+        "en": "Used by donation calls to action across the site.",
+        "zhHant": "用於全站捐款行動按鈕。",
+        "zhHans": "用于全站捐款行动按钮。"
+      },
+      "locations": {
+        "en": "Home and donation calls to action",
+        "zhHant": "首頁與捐款頁面",
+        "zhHans": "首页与捐款页面"
+      },
+      "shared": true,
+      "usageCount": 2,
+      "previewSelector": "[data-layout-link=\"shared.donate.cta.href\"]"
+    },
+    {
+      "page": "/__global__",
+      "key": "shared.inv1.cta.href",
+      "defaultHref": "https://forms.gle/BpH1Pno9cHHUa7TN7",
+      "label": {
+        "en": "Get involved button",
+        "zhHant": "參與我們按鈕",
+        "zhHans": "参与我们按钮"
+      },
+      "description": {
+        "en": "Used by participation calls to action across the site.",
+        "zhHant": "用於全站參與行動按鈕。",
+        "zhHans": "用于全站参与行动按钮。"
+      },
+      "locations": {
+        "en": "Home and involvement calls to action",
+        "zhHant": "首頁與參與頁面",
+        "zhHans": "首页与参与页面"
+      },
+      "shared": true,
+      "usageCount": 2,
+      "previewSelector": "[data-layout-link=\"shared.inv1.cta.href\"]"
+    },
+    {
+      "page": "/__global__",
+      "key": "site.cta.request_seminar.href",
+      "defaultHref": "mailto:ihearprogram@gmail.com?subject=Seminar%20request",
+      "label": {
+        "en": "Request a seminar button",
+        "zhHant": "申請講座按鈕",
+        "zhHans": "申请讲座按钮"
+      },
+      "description": {
+        "en": "Used by seminar calls to action across the site.",
+        "zhHant": "用於全站講座申請的行動按鈕。",
+        "zhHans": "用于全站讲座申请的行动按钮。"
+      },
+      "locations": {
+        "en": "Programs and outreach calls to action",
+        "zhHant": "服務項目與推廣頁面",
+        "zhHans": "服务项目与推广页面"
+      },
+      "shared": true,
+      "usageCount": 2,
+      "previewSelector": "[data-layout-link=\"site.cta.request_seminar.href\"]"
+    },
+    {
+      "page": "/__global__",
+      "key": "site.cta.request_tutoring.href",
+      "defaultHref": "https://forms.gle/vHzJULFc5Rwee49eA",
+      "label": {
+        "en": "Request tutoring button",
+        "zhHant": "申請輔導服務按鈕",
+        "zhHans": "申请辅导服务按钮"
+      },
+      "description": {
+        "en": "Used by tutoring calls to action across the site.",
+        "zhHant": "用於全站的輔導服務行動按鈕。",
+        "zhHans": "用于全站的辅导服务行动按钮。"
+      },
+      "locations": {
+        "en": "Header, programs, and involvement calls to action",
+        "zhHant": "頁首、服務項目與參與頁面",
+        "zhHans": "页首、服务项目与参与页面"
+      },
+      "shared": true,
+      "usageCount": 5,
+      "previewSelector": "[data-layout-link=\"site.cta.request_tutoring.href\"]"
+    },
+    {
+      "page": "/__global__",
+      "key": "site.cta.volunteer.href",
+      "defaultHref": "https://forms.gle/BpH1Pno9cHHUa7TN7",
+      "label": {
+        "en": "Volunteer button",
+        "zhHant": "志工申請按鈕",
+        "zhHans": "志工申请按钮"
+      },
+      "description": {
+        "en": "Used by volunteer calls to action across the site.",
+        "zhHant": "用於全站志工招募的行動按鈕。",
+        "zhHans": "用于全站志工招募的行动按钮。"
+      },
+      "locations": {
+        "en": "Home and involvement calls to action",
+        "zhHant": "首頁與參與頁面",
+        "zhHans": "首页与参与页面"
+      },
+      "shared": true,
+      "usageCount": 1,
+      "previewSelector": "[data-layout-link=\"site.cta.volunteer.href\"]"
+    },
+    {
+      "page": "/__global__",
+      "key": "site.nav.request_tutoring.href",
+      "defaultHref": "https://forms.gle/vHzJULFc5Rwee49eA",
+      "label": {
+        "en": "Navigation request button",
+        "zhHant": "導覽列申請按鈕",
+        "zhHans": "导航栏申请按钮"
+      },
+      "description": {
+        "en": "The request button in the main navigation.",
+        "zhHant": "主導覽列中的申請按鈕。",
+        "zhHans": "主导航栏中的申请按钮。"
+      },
+      "locations": {
+        "en": "Main navigation",
+        "zhHant": "主導覽列",
+        "zhHans": "主导航栏"
+      },
+      "shared": true,
+      "usageCount": 13,
+      "previewSelector": "[data-layout-link=\"site.nav.request_tutoring.href\"]"
+    },
+    {
+      "page": "/team",
+      "key": "team.team.cta.href",
+      "defaultHref": "#roster",
+      "label": {
+        "en": "Team action button",
+        "zhHant": "團隊頁面按鈕",
+        "zhHans": "团队页面按钮"
+      },
+      "description": {
+        "en": "The main action on the Team page.",
+        "zhHant": "團隊頁面的主要行動按鈕。",
+        "zhHans": "团队页面的主要行动按钮。"
+      },
+      "locations": {
+        "en": "Team page",
+        "zhHant": "團隊頁面",
+        "zhHans": "团队页面"
+      },
+      "shared": false,
+      "usageCount": 1,
+      "previewSelector": "[data-layout-link=\"team.team.cta.href\"]"
+    }
+  ]
+}

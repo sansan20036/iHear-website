@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import sharp from "sharp";
 
 const publicDir = path.resolve("public");
 const contentTypes = {
@@ -16,11 +17,21 @@ const contentTypes = {
   ".webp": "image/webp",
 };
 let testServer;
+const e2ePort = Number(process.env.IHEAR_E2E_PORT || 3210);
+const e2eOrigin = `http://127.0.0.1:${e2ePort}`;
+
+async function previewAndSaveMedia(dialog) {
+  const save = dialog.locator("[data-media-save]");
+  await save.click();
+  await expect(dialog.locator("[data-media-status]")).toContainText(/preview ready|預覽已完成|预览已完成|descriptions are ready|圖片描述已完成|图片描述已完成/);
+  await expect(save).toBeEnabled();
+  await save.click();
+}
 
 test.beforeAll(async () => {
   testServer = createServer(async (request, response) => {
     try {
-      const pathname = new URL(request.url, "http://127.0.0.1:3210").pathname;
+      const pathname = new URL(request.url, e2eOrigin).pathname;
       const cleanRoutes = Object.fromEntries([
         "about", "programs", "impact", "team", "submit-bio", "stories", "get-involved",
         "academy", "donate", "resources", "faq", "contact",
@@ -45,11 +56,13 @@ test.beforeAll(async () => {
 
   await new Promise((resolve, reject) => {
     testServer.once("error", reject);
-    testServer.listen(3210, "127.0.0.1", resolve);
+    testServer.listen(e2ePort, "127.0.0.1", resolve);
   });
 });
 
 test.afterAll(async () => {
+  testServer.closeIdleConnections?.();
+  testServer.closeAllConnections?.();
   await new Promise((resolve, reject) => {
     testServer.close((error) => (error ? reject(error) : resolve()));
   });
@@ -138,16 +151,30 @@ const futureJourneyEvent = {
 async function mockApplication(page, { admin = true, duplicateAvatar = false } = {}) {
   const requests = [];
   let publishedPayload = null;
+  let translationPreviewCount = 0;
   const mediaItems = {};
   let mediaUploadCount = 0;
   let themeSetting = { theme: "warm", recordVersion: 1, updatedAt: "2026-08-17T00:00:00.000Z" };
   let themeReadOverride = null;
   let themeGetCount = 0;
+  const layoutRecords = new Map([["/__global__", { page: "/__global__", config: { hiddenSections: [], orders: {}, links: {} }, recordVersion: 1, updatedAt: "" }]]);
+  let layoutPostCount = 0;
+  let layoutDelay = 0;
+  let contentResponse = {
+    version: 3,
+    updatedAt: "",
+    locales: {
+      en: { pages: {}, itemUpdatedAt: {} },
+      zhHant: { pages: {}, itemUpdatedAt: {} },
+      zhHans: { pages: {}, itemUpdatedAt: {} },
+    },
+  };
   const liveRevisions = {
     content: { revision: "1", updatedAt: "2026-07-31T00:00:00.000Z" },
     impact: { revision: "1", updatedAt: "2026-07-31T00:00:00.000Z" },
     team: { revision: "1", updatedAt: "2026-07-31T00:00:00.000Z" },
     theme: { revision: "1", updatedAt: "2026-08-17T00:00:00.000Z" },
+    layout: { revision: "1", updatedAt: "2026-08-23T00:00:00.000Z" },
   };
 
   await page.route("**/api/auth/session", (route) => route.fulfill({
@@ -162,10 +189,10 @@ async function mockApplication(page, { admin = true, duplicateAvatar = false } =
     } : {}),
   }));
 
-  await page.route("**/api/content/get", (route) => route.fulfill({
+  await page.route("**/api/content/get**", (route) => route.fulfill({
     status: 200,
     contentType: "application/json",
-    body: JSON.stringify({ version: 2, updatedAt: "", pages: {}, itemUpdatedAt: {} }),
+    body: JSON.stringify(contentResponse),
   }));
 
   await page.route("**/api/live-revisions", (route) => route.fulfill({
@@ -173,6 +200,50 @@ async function mockApplication(page, { admin = true, duplicateAvatar = false } =
     contentType: "application/json",
     body: JSON.stringify({ version: 1, revisions: liveRevisions }),
   }));
+
+  await page.route("**/api/admin/translations/preview", (route) => {
+    translationPreviewCount += 1;
+    const submitted = route.request().postDataJSON();
+    const fields = Object.fromEntries(Object.entries(submitted.fields || {}).map(([field, value]) => [field, {
+      value: {
+        en: value.en || "",
+        zhHant: value.zhHant || `繁中 ${value.en || ""}`,
+        zhHans: value.zhHans || `简中 ${value.en || ""}`,
+      },
+      zhHantStatus: value.zhHant ? "protected" : "translated",
+      zhHansStatus: value.zhHans ? "protected" : "translated",
+    }]));
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ receipt: "e2e-signed-receipt", fields }) });
+  });
+
+  await page.route("**/api/admin/translations/traditionalize", (route) => {
+    const submitted = route.request().postDataJSON();
+    const value = String(submitted.value || "").replaceAll("开发", "開發").replaceAll("服务器", "伺服器").replaceAll("软件", "軟體");
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ value }) });
+  });
+
+  await page.route("**/api/site-layout**", async (route) => {
+    const request = route.request();
+    const pagePath = new URL(request.url()).searchParams.get("page") || "/";
+    if (!layoutRecords.has(pagePath)) layoutRecords.set(pagePath, { page: pagePath, config: { hiddenSections: [], orders: {}, links: {} }, recordVersion: 1, updatedAt: "" });
+    const records = [layoutRecords.get("/__global__"), layoutRecords.get(pagePath)];
+    if (new URL(request.url()).pathname.endsWith("/bootstrap")) return route.fulfill({ status: 200, contentType: "application/javascript", body: `window.__IHEAR_SITE_LAYOUT__=${JSON.stringify({ version: 1, page: pagePath, records })};` });
+    if (request.method() === "GET") return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ version: 1, records }) });
+    const submitted = request.postDataJSON();
+    layoutPostCount += 1;
+    if (layoutDelay) await new Promise((resolve) => { setTimeout(resolve, layoutDelay); });
+    const updates = submitted.updates || [submitted];
+    if (updates.some((update) => !layoutRecords.has(update.page) || layoutRecords.get(update.page).recordVersion !== update.expectedVersion)) {
+      return route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error: "Layout changed elsewhere" }) });
+    }
+    const saved = updates.map((update) => {
+      const current = layoutRecords.get(update.page);
+      const next = { page: update.page, config: update.config, recordVersion: current.recordVersion + 1, updatedAt: "2026-08-23T00:01:00.000Z" };
+      layoutRecords.set(update.page, next); return next;
+    });
+    liveRevisions.layout = { revision: String(Number(liveRevisions.layout.revision) + 1), updatedAt: "2026-08-23T00:01:00.000Z" };
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(submitted.updates ? { ok: true, records: saved, revision: liveRevisions.layout } : { ok: true, record: saved[0], revision: liveRevisions.layout }) });
+  });
 
   await page.route("**/api/site-theme**", async (route) => {
     const request = route.request();
@@ -204,6 +275,15 @@ async function mockApplication(page, { admin = true, duplicateAvatar = false } =
   await page.route("**/api/site-media**", async (route) => {
     const request = route.request();
     const method = request.method();
+    const requestUrl = new URL(request.url());
+    if (method === "GET" && requestUrl.pathname.endsWith("/source")) {
+      return route.fulfill({
+        status: 200,
+        contentType: "image/webp",
+        body: await readFile(path.resolve("assets/images/hero-classroom-800.webp")),
+        headers: { "Cache-Control": "private, no-store" },
+      });
+    }
     if (method === "GET") {
       return route.fulfill({
         status: 200,
@@ -211,7 +291,7 @@ async function mockApplication(page, { admin = true, duplicateAvatar = false } =
         body: JSON.stringify({ version: 1, items: mediaItems }),
       });
     }
-    const slot = decodeURIComponent(new URL(request.url()).pathname.split("/").pop());
+    const slot = decodeURIComponent(requestUrl.pathname.split("/").pop());
     requests.push(`${method} ${request.url()}`);
     if (method === "DELETE") {
       delete mediaItems[slot];
@@ -249,16 +329,17 @@ async function mockApplication(page, { admin = true, duplicateAvatar = false } =
         zhHant: "學生學習溝通技巧",
         zhHans: "学生学习沟通技巧",
       },
-      focalX: isTutoring ? 0 : isOutreach || isAvatar ? 100 : 50,
-      focalY: isTutoring ? 100 : isOutreach || isAvatar ? 0 : 50,
+      focalX: isAvatar ? 50 : isTutoring ? 0 : isOutreach ? 100 : 50,
+      focalY: isAvatar ? 50 : isTutoring ? 100 : isOutreach ? 0 : 50,
+      zoom: 100,
       recordVersion: mediaUploadCount,
       updatedAt: "2026-08-16T00:00:00.000Z",
       src: "/assets/images/volunteers-1200.webp",
       srcSet: "/assets/images/volunteers-480.webp 480w, /assets/images/volunteers-800.webp 800w, /assets/images/volunteers-1200.webp 1200w",
-      variants: [480, 800, 1200].map((width) => ({
+      variants: (isAvatar ? [480, 800] : [480, 800, 1200]).map((width) => ({
         width,
         pixelWidth: width,
-        pixelHeight: Math.round(width * 0.75),
+        pixelHeight: isAvatar ? width : Math.round(width * 0.75),
         byteSize: 1000,
         mimeType: "image/webp",
         url: `/assets/images/volunteers-${width}.webp`,
@@ -379,11 +460,22 @@ async function mockApplication(page, { admin = true, duplicateAvatar = false } =
   return {
     requests,
     getPublishedPayload: () => publishedPayload,
+    getTranslationPreviewCount: () => translationPreviewCount,
     getMediaItem: (slot = "home.hero") => mediaItems[slot] || null,
     getMediaUploadCount: () => mediaUploadCount,
     getTheme: () => themeSetting,
     getThemeGetCount: () => themeGetCount,
+    getLayoutPostCount: () => layoutPostCount,
+    getLayoutRecord: (scope) => layoutRecords.get(scope),
+    setLayoutDelay: (value) => { layoutDelay = value; },
     setThemeReadOverride: (value) => { themeReadOverride = value; },
+    setContentItemVersion: (pagePath, key, version) => {
+      contentResponse = structuredClone(contentResponse);
+      for (const language of ["en", "zhHant", "zhHans"]) {
+        contentResponse.locales[language].itemUpdatedAt[pagePath] ||= {};
+        contentResponse.locales[language].itemUpdatedAt[pagePath][key] = version;
+      }
+    },
     liveRevisions,
   };
 }
@@ -399,6 +491,34 @@ test("environment-defined admin receives inline editing controls", async ({ page
   expect(requestedUrls.some((url) => url.includes("/cdn-cgi/rum"))).toBe(false);
 });
 
+test("administrator avatar menu is the only public-site admin navigation entry", async ({ page }) => {
+  await mockApplication(page);
+
+  for (const route of ["/", "/team", "/impact"]) {
+    await page.goto(route);
+    await expect(page.locator(".auth-admin-link")).toHaveCount(2);
+    await expect(page.locator('a[href^="/admin"]:not(.auth-admin-link)')).toHaveCount(0);
+    await expect(page.locator(".site-metrics-admin-row")).toHaveCount(0);
+  }
+
+  await page.goto("/");
+  const profile = page.locator("[data-auth-desktop] .auth-profile");
+  await profile.click();
+  const popover = page.locator("[data-auth-desktop] .auth-popover");
+  await expect(popover).toBeVisible();
+  await expect(page.locator('.auth-admin-link:visible')).toHaveCount(1);
+  await expect(popover.locator(".auth-admin-link")).toHaveAttribute("href", "/admin");
+  await expect(popover.locator(".auth-admin-link")).toHaveText(/Admin dashboard/);
+  await expect(popover.locator("[data-auth-signout]")).toHaveText("Sign out");
+  await page.keyboard.press("Escape");
+  await expect(popover).toBeHidden();
+  await expect(profile).toBeFocused();
+
+  await page.locator('#langSwitch button[data-lang="zhTW"]').click();
+  await page.locator("[data-auth-desktop] .auth-profile").click();
+  await expect(page.locator("[data-auth-desktop] .auth-admin-link")).toContainText("管理後台");
+});
+
 test("favicon is linked and served from the generated public directory", async ({ page }) => {
   await mockApplication(page);
   await page.goto("/about");
@@ -409,6 +529,214 @@ test("favicon is linked and served from the generated public directory", async (
   expect(response.status()).toBe(200);
   expect(response.headers()["content-type"]).toContain("image/x-icon");
   expect((await response.body()).byteLength).toBeGreaterThan(0);
+});
+
+test("all static i18n text has an explicit semantic editable slot", async ({ page }) => {
+  await mockApplication(page, { admin: false });
+  const routes = ["/", "/about", "/programs", "/impact", "/team", "/submit-bio", "/stories", "/get-involved", "/academy", "/donate", "/resources", "/faq", "/contact"];
+  const managed = new Set(["latest_label", "latest_period", "latest_headline", "latest_description", "latest_link", "stat_asof", "stat_countries_sub"]);
+  for (const route of routes) {
+    await page.goto(route);
+    const missing = await page.locator("[data-i18n]").evaluateAll((nodes, excluded) => nodes.filter((node) => !excluded.includes(node.dataset.i18n) && !node.hasAttribute("data-editable-content")).map((node) => node.dataset.i18n), [...managed]);
+    expect(missing, route).toEqual([]);
+  }
+});
+
+test("language switching reapplies semantic overrides from memory", async ({ page }) => {
+  await mockApplication(page);
+  await page.route("**/api/content/get**", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ version: 3, updatedAt: "", locales: {
+    en: { pages: { "/": { "home.mission.heading": "English override" } }, itemUpdatedAt: {} },
+    zhHant: { pages: { "/": { "home.mission.heading": "繁中覆寫" } }, itemUpdatedAt: {} },
+    zhHans: { pages: { "/": { "home.mission.heading": "简中覆写" } }, itemUpdatedAt: {} },
+  } }) }));
+  await page.goto("/");
+  const heading = page.locator('[data-editable-content="home.mission.heading"]');
+  const external = page.locator('a[data-editable-content][target="_blank"]').first();
+  await external.evaluate((link) => { window.__externalHintNode = link.querySelector(".external-hint"); });
+  await expect(heading).toHaveText("English override");
+  await page.getByRole("button", { name: "繁" }).click(); await expect(heading).toHaveText("繁中覆寫");
+  await page.getByRole("button", { name: "简" }).click(); await expect(heading).toHaveText("简中覆写");
+  expect(await external.evaluate((link) => window.__externalHintNode === link.querySelector(".external-hint"))).toBe(true);
+});
+
+test("language safeguards pause a Chinese English source and preview Taiwan Traditional conversion", async ({ page }) => {
+  const mocked = await mockApplication(page);
+  await page.goto("/");
+  const target = page.locator('[data-editable-content="home.stat.countries"]');
+  await expect(page.locator(".ihear-inline-edit-button")).toBeVisible();
+  await target.evaluate((element) => element.click());
+  const dialog = page.locator(".ihear-content-dialog");
+  await expect(dialog).toBeVisible();
+
+  await dialog.getByRole("textbox", { name: "English" }).fill("這是一整段中文內容");
+  await expect(dialog.getByText(/Chinese content was detected/)).toBeVisible();
+  await page.waitForTimeout(1_000);
+  expect(mocked.getTranslationPreviewCount()).toBe(0);
+
+  await dialog.getByRole("button", { name: "Translate this content anyway" }).click();
+  await expect.poll(() => mocked.getTranslationPreviewCount()).toBe(1);
+  await expect(dialog.getByText(/Chinese preview ready/)).toBeVisible();
+
+  await dialog.getByRole("tab", { name: "繁體中文" }).click();
+  const traditional = dialog.getByRole("textbox", { name: "繁體中文" });
+  await traditional.fill("This English sentence was pasted into Chinese");
+  await expect(dialog.getByText(/contains no Chinese characters/)).toBeVisible();
+  await traditional.fill("开发服务器和软件");
+  await dialog.getByRole("button", { name: "Convert to Taiwan Traditional Chinese" }).click();
+  await expect(dialog.getByText("開發伺服器和軟體", { exact: true })).toBeVisible();
+  await dialog.getByRole("button", { name: "Apply conversion" }).click();
+  await expect(traditional).toHaveValue("開發伺服器和軟體");
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+});
+
+test("a media revision refreshes around a text draft without reporting a false content conflict", async ({ page }) => {
+  const mocked = await mockApplication(page);
+  await page.goto("/programs");
+  const key = "shared.train2.title";
+  await page.locator(`[data-editable-content="${key}"]`).click();
+  const dialog = page.locator(".ihear-content-dialog");
+  const english = dialog.getByRole("textbox", { name: "English" });
+  await english.fill("Mentorship draft that must remain intact");
+
+  await page.evaluate(() => window.iHearLiveContent.announce("content", { revision: "2" }));
+  await expect(english).toHaveValue("Mentorship draft that must remain intact");
+  await expect(page.locator(".ihear-inline-live-notice")).toBeHidden();
+
+  mocked.setContentItemVersion("/__global__", key, "2026-09-02T00:00:00.000Z");
+  await page.evaluate(() => window.iHearLiveContent.announce("content", { revision: "3" }));
+  await expect(page.locator(".ihear-inline-live-notice")).toBeVisible();
+  await expect(english).toHaveValue("Mentorship draft that must remain intact");
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+});
+
+test("static card reordering preserves the exact DOM nodes", async ({ page }) => {
+  await mockApplication(page);
+  await page.goto("/programs");
+  const result = await page.evaluate(() => {
+    const container = document.querySelector('[data-layout-group="programs.services"]');
+    const before = Array.from(container.children);
+    window.iHearSiteLayout.moveExisting(container, ["outreach", "tutoring"]);
+    const after = Array.from(container.children);
+    return { sameFirst: before[1] === after[0], sameSecond: before[0] === after[1], order: after.map((node) => node.dataset.layoutItem) };
+  });
+  expect(result).toEqual({ sameFirst: true, sameSecond: true, order: ["outreach", "tutoring"] });
+});
+
+test("visual layout drawer publishes one atomic batch and preserves keyed card nodes", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 720 });
+  const mocked = await mockApplication(page);
+  mocked.setLayoutDelay(250);
+  await page.goto("/programs");
+  await page.evaluate(() => { const nodes = document.querySelectorAll('[data-layout-group="programs.services"] > [data-layout-item]'); window.__programNodes = Array.from(nodes); });
+  await page.getByRole("button", { name: "Adjust this page layout" }).click();
+  const dialog = page.getByRole("dialog", { name: "Adjust this page layout" });
+  await expect(dialog).toBeVisible();
+  expect(await dialog.evaluate((node) => ({ width: node.getBoundingClientRect().width, viewport: innerWidth, overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth }))).toEqual({ width: 320, viewport: 320, overflow: false });
+  await expect(dialog).not.toContainText(/programs\.how|programs\.services|site\.cta|\.href/);
+  await dialog.getByRole("switch", { name: /How to get started/ }).uncheck();
+  await dialog.getByRole("tab", { name: "Card order" }).click();
+  await dialog.getByRole("button", { name: "Move down: One-to-one English tutoring" }).click();
+  await dialog.getByRole("tab", { name: "Button links" }).click();
+  const linkCard = dialog.locator(".ihear-layout-link-card").filter({ hasText: "Request tutoring button" }).first();
+  await linkCard.getByRole("textbox", { name: "Link address" }).fill("https://example.org/request");
+  await expect(linkCard).toContainText("This shared link appears");
+  await dialog.getByRole("button", { name: "Preview" }).click();
+  await expect(dialog).toBeHidden(); await expect(page.getByText("Previewing unpublished layout changes", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Return to settings" }).click();
+  await dialog.getByRole("button", { name: "Review and publish" }).click();
+  await expect(dialog).toContainText("This page"); await expect(dialog).toContainText("Across the site");
+  await dialog.getByRole("button", { name: "Confirm publish" }).evaluate((node) => { node.click(); node.click(); node.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+  await expect(dialog.getByRole("button", { name: "Publishing…" })).toBeDisabled();
+  await expect(dialog).toBeHidden();
+  expect(mocked.getLayoutPostCount()).toBe(1);
+  await expect(page.locator('[data-layout-section="programs.how"]')).toBeHidden();
+  await expect(page.locator('[data-layout-link="site.cta.request_tutoring.href"]').first()).toHaveAttribute("href", "https://example.org/request");
+  const result = await page.evaluate(() => { const nodes = Array.from(document.querySelectorAll('[data-layout-group="programs.services"] > [data-layout-item]')); return { order: nodes.map((node) => node.dataset.layoutItem), same: nodes[0] === window.__programNodes[1] && nodes[1] === window.__programNodes[0], overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth }; });
+  expect(result).toEqual({ order: ["outreach", "tutoring"], same: true, overflow: false });
+  await page.getByRole("button", { name: "Undo this publish" }).click();
+  await expect(page.getByText("The previous layout was restored.")).toBeVisible();
+  await expect(page.locator('[data-layout-section="programs.how"]')).toBeVisible();
+  const restored = await page.evaluate(() => { const nodes = Array.from(document.querySelectorAll('[data-layout-group="programs.services"] > [data-layout-item]')); return { order: nodes.map((node) => node.dataset.layoutItem), same: nodes[0] === window.__programNodes[0] && nodes[1] === window.__programNodes[1] }; });
+  expect(restored).toEqual({ order: ["tutoring", "outreach"], same: true });
+});
+
+test("layout drawer follows all three languages without losing its draft", async ({ page }) => {
+  await mockApplication(page); await page.goto("/programs");
+  await page.getByRole("button", { name: "Adjust this page layout" }).click();
+  const dialog = page.getByRole("dialog"); await dialog.getByRole("switch", { name: /How to get started/ }).uncheck();
+  await dialog.getByRole("button", { name: "繁", exact: true }).click();
+  await expect(dialog.getByRole("heading", { name: "調整本頁版面" })).toBeVisible(); await expect(dialog).toContainText("尚有 1 項未發布變更");
+  await dialog.getByRole("button", { name: "简", exact: true }).click();
+  await expect(dialog.getByRole("heading", { name: "调整本页版面" })).toBeVisible(); await expect(dialog).toContainText("还有 1 项未发布更改");
+  await dialog.getByRole("button", { name: "EN", exact: true }).click();
+  await expect(dialog.getByRole("switch", { name: /How to get started/ })).not.toBeChecked();
+  await dialog.getByRole("button", { name: "Discard changes" }).click();
+  await expect(page.locator('[data-layout-section="programs.how"]')).toBeVisible();
+});
+
+test("layout drawer fits desktop, narrow mobile, and short landscape viewports", async ({ page }) => {
+  await mockApplication(page);
+  for (const viewport of [
+    { width: 1440, height: 900 }, { width: 1024, height: 768 }, { width: 768, height: 900 },
+    { width: 390, height: 844 }, { width: 375, height: 812 }, { width: 320, height: 720 }, { width: 568, height: 320 },
+  ]) {
+    await page.setViewportSize(viewport); await page.goto("/programs"); await page.getByRole("button", { name: "Adjust this page layout" }).click();
+    const dialog = page.getByRole("dialog", { name: "Adjust this page layout" }); await expect(dialog).toBeVisible();
+    const metrics = await dialog.evaluate((node) => ({
+      width: Math.round(node.getBoundingClientRect().width), height: Math.round(node.getBoundingClientRect().height),
+      viewportWidth: innerWidth, viewportHeight: innerHeight, pageOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      panelScrollable: node.querySelector(".ihear-layout-panel").scrollHeight >= node.querySelector(".ihear-layout-panel").clientHeight,
+    }));
+    expect(metrics.width).toBe(viewport.width <= 390 ? viewport.width : 380); expect(metrics.height).toBe(viewport.height); expect(metrics.pageOverflow).toBe(false); expect(metrics.panelScrollable).toBe(true);
+    await dialog.getByRole("button", { name: "Close" }).click();
+  }
+});
+
+test("pages without supported layout slots do not show administrator layout controls", async ({ page }) => {
+  await mockApplication(page); await page.goto("/faq");
+  await page.evaluate(() => {
+    document.querySelectorAll("[data-layout-section],[data-layout-group],[data-layout-link]").forEach((node) => {
+      node.removeAttribute("data-layout-section"); node.removeAttribute("data-layout-group"); node.removeAttribute("data-layout-link");
+    });
+    window.dispatchEvent(new CustomEvent("ihear:auth", { detail: { session: { user: { isAdmin: true } } } }));
+  });
+  await expect(page.locator(".ihear-layout-trigger")).toHaveCount(0);
+});
+
+test("layout metadata failure shows a friendly message without engineering identifiers", async ({ page }) => {
+  await mockApplication(page); await page.route("**/assets/layout-slots.json", (route) => route.fulfill({ status: 503, body: "unavailable" })); await page.goto("/programs");
+  await page.getByRole("button", { name: "Adjust this page layout" }).click(); const dialog = page.getByRole("dialog", { name: "Adjust this page layout" });
+  await expect(dialog).toContainText("Page settings could not be loaded"); await expect(dialog).not.toContainText(/programs\.|site\.|\.href/);
+  await page.keyboard.press("Escape"); await expect(dialog).toBeHidden(); await expect(page.getByRole("button", { name: "Adjust this page layout" })).toBeFocused();
+});
+
+test("failed layout publish keeps the draft and permits a deliberate retry", async ({ page }) => {
+  let failedPosts = 0; await mockApplication(page);
+  await page.route("**/api/site-layout", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    failedPosts += 1; return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "internal detail" }) });
+  });
+  await page.goto("/programs"); await page.getByRole("button", { name: "Adjust this page layout" }).click(); const dialog = page.getByRole("dialog");
+  await dialog.getByRole("switch", { name: /How to get started/ }).uncheck(); await dialog.getByRole("button", { name: "Review and publish" }).click(); await dialog.getByRole("button", { name: "Confirm publish" }).click();
+  await expect(dialog.getByRole("alert")).toContainText("Your draft is still here"); expect(failedPosts).toBe(1); await expect(dialog.getByRole("button", { name: "Confirm publish" })).toBeEnabled();
+  await dialog.getByRole("button", { name: "Back to editing" }).click(); await expect(dialog.getByRole("switch", { name: /How to get started/ })).not.toBeChecked();
+});
+
+test("an external layout revision protects a dirty draft and pauses publishing", async ({ page }) => {
+  const mocked = await mockApplication(page); await page.goto("/programs"); await page.evaluate(() => window.iHearLiveContent.checkNow({ force: true }));
+  await page.getByRole("button", { name: "Adjust this page layout" }).click(); const dialog = page.getByRole("dialog"); await dialog.getByRole("switch", { name: /How to get started/ }).uncheck();
+  mocked.liveRevisions.layout = { revision: "9", updatedAt: "2026-08-24T00:00:00.000Z" }; await page.evaluate(() => window.iHearLiveContent.checkNow({ force: true }));
+  await expect(dialog.getByRole("alert")).toContainText("changed in another tab"); await expect(dialog.getByRole("button", { name: "Review and publish" })).toBeDisabled(); await expect(dialog.getByRole("switch", { name: /How to get started/ })).not.toBeChecked();
+});
+
+test("layout bootstrap hides configured sections before first paint without CLS", async ({ page }) => {
+  await mockApplication(page, { admin: false });
+  await page.route("**/assets/site-layout.js**", async (route) => { const response = await route.fetch(); const client = await response.text(); const measure = `(function(name){document.addEventListener("DOMContentLoaded",function(){const target=document.querySelector('[data-layout-section="home.video"]'),next=target&&target.nextElementSibling;window[name]={hidden:target?getComputedStyle(target).display==="none":false,nextTop:next?next.getBoundingClientRect().top:null}}, {once:true})})`; await route.fulfill({ response, body: `${measure}("__layoutBeforeClient");\n${client}\n${measure}("__layoutAfterClient");` }); });
+  await page.route("**/api/site-layout/bootstrap**", (route) => route.fulfill({ status: 200, contentType: "application/javascript", body: `(()=>{window.__IHEAR_SITE_LAYOUT__={version:1,page:"/",records:[{page:"/",config:{hiddenSections:["home.video"],orders:{},links:{}},recordVersion:1,updatedAt:""}]};const s=document.createElement("style");s.id="ihear-layout-bootstrap-style";s.textContent='[data-layout-section="home.video"]{display:none!important}';document.head.appendChild(s)})();` }));
+  await page.goto("/");
+  await expect(page.locator('[data-layout-section="home.video"]')).toBeHidden();
+  const positions = await page.evaluate(() => ({ before: window.__layoutBeforeClient, after: window.__layoutAfterClient }));
+  expect(positions.before).toEqual(positions.after);
 });
 
 test("administrator previews, cancels, publishes, and restores the global theme", async ({ page }) => {
@@ -503,7 +831,7 @@ test("Hero image editor compresses before upload and restores the repository fal
   await dialog.locator("[data-media-file]").setInputFiles("assets/images/hero-classroom.jpg");
   await expect(dialog.locator("[data-media-save]")).toBeEnabled({ timeout: 20_000 });
   await dialog.locator('[data-media-focal-grid] button[data-x="100"][data-y="0"]').click();
-  await dialog.locator("[data-media-save]").click();
+  await previewAndSaveMedia(dialog);
   await expect(dialog).not.toBeVisible({ timeout: 20_000 });
   expect(mocked.getMediaUploadCount()).toBe(1);
   await expect(hero).toHaveAttribute("data-site-media-custom", "true");
@@ -555,7 +883,7 @@ test("sitewide media slots independently update service cards, localized alt tex
   await openDialog.locator("[data-media-file]").setInputFiles("assets/images/hero-classroom.jpg");
   await expect(openDialog.locator("[data-media-save]")).toBeEnabled({ timeout: 20_000 });
   await openDialog.locator('[data-media-focal-grid] button[data-x="0"][data-y="100"]').click();
-  await openDialog.locator("[data-media-save]").click();
+  await previewAndSaveMedia(openDialog);
   await expect(openDialog).not.toBeVisible({ timeout: 20_000 });
 
   await expect(tutoring).toHaveAttribute("data-site-media-custom", "true");
@@ -574,7 +902,7 @@ test("sitewide media slots independently update service cards, localized alt tex
   await openDialog.locator("[data-media-file]").setInputFiles("assets/images/hero-classroom.jpg");
   await expect(openDialog.locator("[data-media-save]")).toBeEnabled({ timeout: 20_000 });
   await openDialog.locator('[data-media-focal-grid] button[data-x="100"][data-y="0"]').click();
-  await openDialog.locator("[data-media-save]").click();
+  await previewAndSaveMedia(openDialog);
   await expect(openDialog).not.toBeVisible({ timeout: 20_000 });
 
   await expect(tutoring).toHaveAttribute("data-site-media-custom", "true");
@@ -618,7 +946,7 @@ test("all repository content photos expose stable sitewide media slots", async (
   let openDialog = page.locator(".site-media-dialog[open]");
   await openDialog.locator("[data-media-file]").setInputFiles("assets/images/hero-classroom.jpg");
   await expect(openDialog.locator("[data-media-save]")).toBeEnabled({ timeout: 20_000 });
-  await openDialog.locator("[data-media-save]").click();
+  await previewAndSaveMedia(openDialog);
   await expect(openDialog).not.toBeVisible({ timeout: 20_000 });
   await expect(volunteers).toHaveAttribute("data-site-media-custom", "true");
   await page.locator('#langSwitch button[data-lang="zhTW"]').click();
@@ -635,7 +963,7 @@ test("all repository content photos expose stable sitewide media slots", async (
   await expect(volunteers.locator("img")).toHaveAttribute("src", /volunteers\.jpg$/);
 });
 
-test("team avatars upload with focal and localized alt text, then restore initials", async ({ page }) => {
+test("team avatars crop one person into a square WebP, recrop, and delete the photo", async ({ page }) => {
   const mocked = await mockApplication(page, { duplicateAvatar: true });
   await page.goto("/team");
 
@@ -645,8 +973,9 @@ test("team avatars upload with focal and localized alt text, then restore initia
   await expect(page.locator('[data-site-media-slot="team.howard-ren.avatar"]')).toHaveCount(1);
   const tutorAvatar = page.locator('[data-site-media-slot="team.test.avatar"]');
   await expect(tutorAvatar).toHaveCount(1);
+  await page.locator('[data-profile-id="tutor-test"] details').evaluate((details) => { details.open = true; });
   await tutorAvatar.hover();
-  await expect(page.locator('[data-profile-id="tutor-test"] > .site-media-avatar-edit')).toBeVisible();
+  await expect(page.locator('[data-profile-id="tutor-test"] .site-media-avatar-edit')).toBeVisible();
 
   const avatar = zoeAvatars.first();
   const initials = avatar.locator(".avatar-initials");
@@ -661,9 +990,70 @@ test("team avatars upload with focal and localized alt text, then restore initia
 
   let dialog = page.locator('.site-media-dialog[open][data-media-kind="avatar"]');
   await expect(dialog.getByRole("heading", { name: "Change avatar" })).toBeVisible();
-  await dialog.locator("[data-media-file]").setInputFiles("assets/images/hero-classroom.jpg");
+  await expect(dialog.locator(".site-media-alt-grid")).toBeHidden();
+  await expect(dialog.locator(".site-media-translation-options")).toBeHidden();
+  const quadrantPhoto = await sharp({
+    create: { width: 800, height: 800, channels: 3, background: "#ef4444" },
+  }).composite([
+    { input: { create: { width: 400, height: 400, channels: 3, background: "#22c55e" } }, left: 400, top: 0 },
+    { input: { create: { width: 400, height: 400, channels: 3, background: "#2563eb" } }, left: 0, top: 400 },
+    { input: { create: { width: 400, height: 400, channels: 3, background: "#facc15" } }, left: 400, top: 400 },
+  ]).png().toBuffer();
+  await expect(dialog.locator("[data-media-drop]")).toContainText("Ctrl+V");
+  await dialog.evaluate((node, bytes) => {
+    const file = new File([new Uint8Array(bytes)], "four-people.png", { type: "image/png" });
+    const transfer = new DataTransfer();
+    transfer.items.add(file);
+    const event = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", { value: transfer });
+    node.dispatchEvent(event);
+  }, Array.from(quadrantPhoto));
+  const cropper = page.locator(".ihear-avatar-crop-dialog[open]");
+  await expect(cropper.getByRole("heading", { name: "Crop one person" })).toBeVisible();
+  await expect(cropper.locator("[data-avatar-crop-intake-hint]")).toContainText("paste or drop");
+  await cropper.locator("[data-avatar-crop-stage]").evaluate((node, bytes) => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File([new Uint8Array(bytes)], "replacement.png", { type: "image/png" }));
+    const event = new Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "dataTransfer", { value: transfer });
+    node.dispatchEvent(event);
+  }, Array.from(quadrantPhoto));
+  await expect(cropper.locator("[data-avatar-crop-quality]")).toContainText("400 × 400");
+  await expect(cropper.locator("[data-crop-handle]")).toHaveCount(4);
+  await expect(cropper.locator("[data-avatar-crop-preview]")).toBeVisible();
+  await expect(dialog.locator("[data-media-focal]")).toBeHidden();
+
+  const zoom = cropper.locator("[data-avatar-crop-zoom]");
+  await zoom.evaluate((input) => {
+    input.value = "400";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  const selection = cropper.locator("[data-avatar-crop-selection]");
+  await selection.focus();
+  for (let index = 0; index < 10; index += 1) await selection.press("Shift+ArrowRight");
+  for (let index = 0; index < 10; index += 1) await selection.press("Shift+ArrowDown");
+  await expect(cropper.locator("[data-avatar-crop-warning]")).toBeVisible();
+  await cropper.locator("[data-avatar-crop-confirm]").click();
+  await expect(cropper).not.toBeVisible({ timeout: 20_000 });
   await expect(dialog.locator("[data-media-save]")).toBeEnabled({ timeout: 20_000 });
-  await dialog.locator('[data-media-focal-grid] button[data-x="100"][data-y="0"]').click();
+
+  const cropResult = await dialog.locator("[data-media-preview]").evaluate(async (image) => {
+    await image.decode();
+    const blob = await fetch(image.src).then((response) => response.blob());
+    const canvas = document.createElement("canvas");
+    canvas.width = image.naturalWidth;
+    canvas.height = image.naturalHeight;
+    const context = canvas.getContext("2d");
+    context.drawImage(image, 0, 0);
+    const center = context.getImageData(Math.floor(canvas.width / 2), Math.floor(canvas.height / 2), 1, 1).data;
+    return { width: image.naturalWidth, height: image.naturalHeight, size: blob.size, center: [...center] };
+  });
+  expect(cropResult.width).toBe(800);
+  expect(cropResult.height).toBe(800);
+  expect(cropResult.size).toBeLessThanOrEqual(500 * 1024);
+  expect(cropResult.center[0]).toBeGreaterThan(200);
+  expect(cropResult.center[1]).toBeGreaterThan(150);
+  expect(cropResult.center[2]).toBeLessThan(80);
   await dialog.locator("[data-media-save]").click();
   await expect(dialog).not.toBeVisible({ timeout: 20_000 });
 
@@ -671,15 +1061,24 @@ test("team avatars upload with focal and localized alt text, then restore initia
   await expect(page.locator('[data-site-media-slot="team.zoe-lu.avatar"][data-site-media-custom="true"]')).toHaveCount(2);
   await expect(initials).toBeHidden();
   await expect(avatar.locator("picture")).toBeVisible();
-  await expect(avatar.locator("img")).toHaveCSS("object-position", "100% 0%");
-  await expect(avatar.locator("img")).toHaveAttribute("alt", "Portrait of Zoe Lu");
+  await expect(avatar.locator("img")).toHaveCSS("object-position", "50% 50%");
+  await expect.poll(() => avatar.locator("img").evaluate((image) => ({
+    transform: image.style.transform,
+    transformOrigin: image.style.transformOrigin,
+  }))).toEqual({ transform: "none", transformOrigin: "50% 50%" });
+  await expect(avatar.locator("img")).toHaveAttribute("alt", "");
   await page.locator('#langSwitch button[data-lang="zhTW"]').click();
-  await expect(avatar.locator("img")).toHaveAttribute("alt", "Zoe Lu 的個人頭像");
+  await expect(avatar.locator("img")).toHaveAttribute("alt", "");
 
   await avatar.hover();
   await avatar.getByRole("button", { name: "更換頭像" }).click();
   dialog = page.locator('.site-media-dialog[open][data-media-kind="avatar"]');
-  await expect(dialog.locator("[data-media-restore]")).toHaveText("恢復文字縮寫");
+  await expect(dialog.locator("[data-media-restore]")).toHaveText("刪除照片");
+  await dialog.locator("[data-media-recrop]").click();
+  const recropper = page.locator(".ihear-avatar-crop-dialog[open]");
+  await expect(recropper.getByRole("heading", { name: "裁切單一人物" })).toBeVisible();
+  await recropper.locator("[data-avatar-crop-cancel]").last().click();
+  await expect(recropper).not.toBeVisible();
   page.once("dialog", (nativeDialog) => nativeDialog.accept());
   await dialog.locator("[data-media-restore]").click();
 
@@ -690,12 +1089,62 @@ test("team avatars upload with focal and localized alt text, then restore initia
   expect(mocked.requests.some((request) => request.includes("/api/site-media/team.zoe-lu.avatar"))).toBe(true);
 });
 
+test("avatar cropper stays usable without horizontal overflow at supported viewports", async ({ page }) => {
+  const viewports = [
+    { width: 1440, height: 900 },
+    { width: 768, height: 900 },
+    { width: 390, height: 844 },
+    { width: 375, height: 812 },
+    { width: 320, height: 700 },
+    { width: 568, height: 320 },
+  ];
+
+  await mockApplication(page);
+  for (const viewport of viewports) {
+    await page.setViewportSize(viewport);
+    await page.goto("/team");
+    const avatar = page.locator('[data-site-media-slot="team.zoe-lu.avatar"]').first();
+    await avatar.hover();
+    await avatar.getByRole("button", { name: "Change avatar" }).click();
+    const mediaDialog = page.locator('.site-media-dialog[open][data-media-kind="avatar"]');
+    await mediaDialog.locator("[data-media-file]").setInputFiles("assets/images/hero-classroom.jpg");
+    const cropper = page.locator(".ihear-avatar-crop-dialog[open]");
+    await expect(cropper).toBeVisible();
+    const geometry = await cropper.evaluate((node) => {
+      const rectangle = node.getBoundingClientRect();
+      const stage = node.querySelector("[data-avatar-crop-stage]").getBoundingClientRect();
+      const confirm = node.querySelector("[data-avatar-crop-confirm]").getBoundingClientRect();
+      return {
+        left: rectangle.left,
+        right: rectangle.right,
+        stageLeft: stage.left,
+        stageRight: stage.right,
+        confirmLeft: confirm.left,
+        confirmRight: confirm.right,
+        viewportWidth: document.documentElement.clientWidth,
+        horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      };
+    });
+    expect(geometry.horizontalOverflow).toBe(false);
+    expect(geometry.left).toBeGreaterThanOrEqual(0);
+    expect(geometry.right).toBeLessThanOrEqual(geometry.viewportWidth + 1);
+    expect(geometry.stageLeft).toBeGreaterThanOrEqual(0);
+    expect(geometry.stageRight).toBeLessThanOrEqual(geometry.viewportWidth + 1);
+    expect(geometry.confirmLeft).toBeGreaterThanOrEqual(0);
+    expect(geometry.confirmRight).toBeLessThanOrEqual(geometry.viewportWidth + 1);
+    await cropper.locator("[data-avatar-crop-cancel]").last().click();
+    await mediaDialog.locator("[data-media-cancel]").last().click();
+  }
+});
+
 test("team directory renders API data, switches language, and excludes generic pencils", async ({ page }) => {
   await mockApplication(page, { admin: false });
   await page.goto("/team");
 
   await expect(page.locator("[data-team-tutors] .tutor-prof")).toHaveCount(1);
   await expect(page.getByText("Test Tutor")).toBeVisible();
+  await expect(page.getByText("English biography")).toBeHidden();
+  await expect(page.locator("[data-team-tutors] .tutor-prof summary")).not.toContainText("Lead Tutor");
   await page.getByText("Test Tutor").click();
   await expect(page.getByText("English biography")).toBeVisible();
   await expect(page.locator("[data-team-tutors] .ihear-inline-edit-button")).toHaveCount(0);
@@ -770,7 +1219,7 @@ test("team manager is mobile-safe and exposes structured editing controls", asyn
   expect(await page.evaluate(() => document.body.classList.contains("team-profile-modal-open"))).toBe(false);
 });
 
-test("team manager confirms deletion in-page and removes the profile", async ({ page }) => {
+test("team manager confirms moving a profile to trash and removes it from the active roster", async ({ page }) => {
   await mockApplication(page);
   await page.unroute("**/api/team-profiles**");
 
@@ -834,14 +1283,14 @@ test("team manager confirms deletion in-page and removes the profile", async ({ 
   await page.locator(`[data-profile-id="${profile.id}"] summary`).click();
   await page.locator(`[data-edit="${profile.id}"]`).click();
 
-  await page.getByRole("button", { name: "Permanently delete" }).click();
-  await expect(page.getByText("Permanently delete this profile placement? This cannot be undone.")).toBeVisible();
+  await page.getByRole("button", { name: "Move to trash" }).click();
+  await expect(page.getByText("Move this profile to trash? You can restore it in the admin dashboard.")).toBeVisible();
   expect(nativeDialogCount).toBe(0);
 
   await page.locator("[data-delete-confirm]").click();
   await expect(page.locator(`[data-profile-id="${profile.id}"]`)).toHaveCount(0);
   await expect(page.getByRole("dialog")).toBeHidden();
-  await expect(page.getByText("Team profile deleted.")).toBeVisible();
+  await expect(page.getByText("Team profile moved to trash.")).toBeVisible();
   expect(deletePayload).toEqual({ profileVersion: 3 });
   expect(nativeDialogCount).toBe(0);
 });
@@ -1027,7 +1476,7 @@ test("content overrides still apply when admin controls render before content fi
     }),
   }));
 
-  await page.route("**/api/content/get", async (route) => {
+  await page.route("**/api/content/get**", async (route) => {
     await new Promise((resolve) => {
       setTimeout(resolve, 150);
     });
@@ -1038,7 +1487,7 @@ test("content overrides still apply when admin controls render before content fi
         version: 3,
         updatedAt: "2026-07-31T00:00:00.000Z",
         locales: {
-          en: { pages: { "/about": { "i18n:mission_h2": "Production override loaded" } }, itemUpdatedAt: {} },
+          en: { pages: { "/about": { "about.mission.heading": "Production override loaded" } }, itemUpdatedAt: {} },
           zhHant: { pages: {}, itemUpdatedAt: {} },
           zhHans: { pages: {}, itemUpdatedAt: {} },
         },
@@ -1102,7 +1551,7 @@ test("Google sign-in clears stale OAuth cookies before creating a new PKCE flow"
     return route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ url: "http://127.0.0.1:3210/about?oauth=started" }),
+      body: JSON.stringify({ url: `${e2eOrigin}/about?oauth=started` }),
     });
   });
 
@@ -1113,38 +1562,29 @@ test("Google sign-in clears stale OAuth cookies before creating a new PKCE flow"
   await expect(signInButton).not.toContainText("Admin sign in");
   const historyLength = await page.evaluate(() => window.history.length);
   await signInButton.click();
-  await expect(page).toHaveURL("http://127.0.0.1:3210/about?oauth=started");
+  await expect(page).toHaveURL(`${e2eOrigin}/about?oauth=started`);
   expect(await page.evaluate(() => window.history.length)).toBe(historyLength);
 
   expect(authRequests).toEqual(["clear-stale", "csrf", "signin"]);
 });
 
-test("manual multilingual editor clears stale copy status and publishes once complete", async ({ page }) => {
+test("English-first impact editor previews Chinese and publishes all languages atomically", async ({ page }) => {
   const mocked = await mockApplication(page);
   await page.goto("/about");
   await page.getByRole("button", { name: "繁" }).click();
 
   await page.getByRole("button", { name: "新增歷程" }).click();
-  await page.getByRole("textbox", { name: "標題 — 繁體中文" }).fill("人工翻譯測試");
-  await page.getByRole("textbox", { name: "說明文案 — 繁體中文" }).fill("繁體中文測試說明。");
-
+  await page.getByRole("textbox", { name: "標題 — English" }).fill("English-first translation test");
+  await page.getByRole("textbox", { name: "說明文案 — English" }).fill("English text entered by an administrator.");
   await page.getByRole("button", { name: "發布" }).click();
-  const combinedError = page.getByText("發布前必須完成三種語言的標題與說明文案。");
-  await expect(combinedError).toHaveCount(1);
-
-  await page.getByRole("tab", { name: "简体中文 (未填寫)" }).click();
-  await page.getByRole("button", { name: "複製自 繁體中文" }).click();
-  await expect(page.locator("[data-manual-status]")).toContainText("已複製自");
-
-  await page.getByRole("tab", { name: "English (未填寫)" }).click();
-  await expect(page.locator("[data-manual-status]")).toHaveText("");
-  await page.getByRole("button", { name: "複製自 繁體中文" }).click();
-  await page.getByRole("textbox", { name: "標題 — English" }).fill("Manual translation test");
-  await page.getByRole("textbox", { name: "說明文案 — English" }).fill("English text revised by an administrator.");
-
+  await expect(page.getByRole("textbox", { name: "標題 — 繁體中文" })).toHaveValue("繁中 English-first translation test");
+  await expect(page.getByRole("textbox", { name: "說明文案 — 繁體中文" })).toHaveValue("繁中 English text entered by an administrator.");
+  await page.getByRole("textbox", { name: "標題 — 繁體中文" }).fill("人工修正的翻譯測試");
   await page.getByRole("button", { name: "發布" }).click();
   await expect(page.getByRole("dialog")).not.toBeVisible();
   expect(mocked.getPublishedPayload()?.status).toBe("published");
+  expect(mocked.getPublishedPayload()?.translationReceipt).toBe("e2e-signed-receipt");
+  expect(mocked.getPublishedPayload()?.title.zhHant).toBe("人工修正的翻譯測試");
   expect(mocked.requests.some((request) => request.includes("/translate"))).toBe(false);
 });
 
@@ -1246,8 +1686,8 @@ test("live refresh restores metrics and inline content fallbacks after deletion"
     updatedAt: "2026-07-31T00:00:00.000Z",
     locales: {
       en: {
-        pages: { "/about": { "i18n:mission_h2": "Temporary override" } },
-        itemUpdatedAt: { "/about": { "i18n:mission_h2": "2026-07-31T00:00:00.000Z" } },
+        pages: { "/about": { "about.mission.heading": "Temporary override" } },
+        itemUpdatedAt: { "/about": { "about.mission.heading": "2026-07-31T00:00:00.000Z" } },
       },
       zhHant: { pages: {}, itemUpdatedAt: {} },
       zhHans: { pages: {}, itemUpdatedAt: {} },
@@ -1408,7 +1848,7 @@ test("FAQ filtering and bio-form safeguards provide recoverable feedback", async
   await page.getByLabel("Full name *").fill("   ");
   await page.getByLabel(/Short bio/).fill("   ");
   await page.getByRole("checkbox").check();
-  await page.getByRole("button", { name: "Open mail app" }).click();
+  await page.getByRole("button", { name: "Email My Bio" }).click();
   await expect(page.getByLabel("Full name *")).toHaveAttribute("aria-invalid", "true");
   await expect(page.getByLabel("Full name *")).toBeFocused();
   await page.getByLabel("Full name *").fill("Test Tutor");

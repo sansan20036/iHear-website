@@ -65,6 +65,22 @@ try {
   const siteSettings = hasSiteSettings
     ? await sql`SELECT * FROM site_settings ORDER BY key`
     : [];
+  const [layoutTable] = await sql`SELECT to_regclass('public.site_layout_configs') IS NOT NULL AS available`;
+  const hasSiteLayouts = Boolean(layoutTable.available);
+  const siteLayoutConfigs = hasSiteLayouts ? await sql`SELECT * FROM site_layout_configs ORDER BY page` : [];
+  const [adminTables] = await sql`
+    SELECT
+      to_regclass('public.admin_accounts') IS NOT NULL AS accounts,
+      to_regclass('public.admin_activity_log') IS NOT NULL AS activity
+  `;
+  const hasAdminTables = Boolean(adminTables.accounts && adminTables.activity);
+  const adminAccounts = hasAdminTables ? await sql`SELECT * FROM admin_accounts ORDER BY email` : [];
+  const adminActivityLog = hasAdminTables ? await sql`SELECT * FROM admin_activity_log ORDER BY created_at, id` : [];
+  const [translationTable] = await sql`SELECT to_regclass('public.localized_translation_states') IS NOT NULL AS available`;
+  const hasTranslationStates = Boolean(translationTable.available);
+  const localizedTranslationStates = hasTranslationStates
+    ? await sql`SELECT * FROM localized_translation_states ORDER BY resource_type, resource_scope, resource_id, field_key, locale`
+    : [];
   const schemaMigrations = await sql`SELECT * FROM public.schema_migrations ORDER BY version`;
   const constraints = await sql`
     SELECT
@@ -77,15 +93,19 @@ try {
     WHERE namespace.nspname = 'public'
       AND relation.relname IN (
         'api_rate_limits',
+        'admin_accounts',
+        'admin_activity_log',
         'impact_milestones',
         'impact_milestone_settings',
         'content_overrides',
         'localized_content_overrides',
+        'localized_translation_states',
         'team_people',
         'team_profiles',
         'site_media_assets',
         'site_media_variants',
         'site_settings',
+        'site_layout_configs',
         'schema_migrations',
         'site_content_revisions'
       )
@@ -103,15 +123,19 @@ try {
     WHERE namespace.nspname = 'public'
       AND relation.relname IN (
         'api_rate_limits',
+        'admin_accounts',
+        'admin_activity_log',
         'impact_milestones',
         'impact_milestone_settings',
         'content_overrides',
         'localized_content_overrides',
+        'localized_translation_states',
         'team_people',
         'team_profiles',
         'site_media_assets',
         'site_media_variants',
         'site_settings',
+        'site_layout_configs',
         'schema_migrations',
         'site_content_revisions'
       )
@@ -120,7 +144,7 @@ try {
 
   const payload = {
     format: "ihear-postgres-backup",
-    version: hasSiteSettings ? 5 : hasSiteMediaTables ? 4 : hasLocalizedContent ? 3 : 2,
+    version: hasTranslationStates ? 8 : hasAdminTables ? 7 : hasSiteLayouts ? 6 : hasSiteSettings ? 5 : hasSiteMediaTables ? 4 : hasLocalizedContent ? 3 : 2,
     createdAt: new Date().toISOString(),
     tables: {
       impact_milestones: impactMilestones,
@@ -134,6 +158,9 @@ try {
         ? { site_media_assets: siteMediaAssets, site_media_variants: siteMediaVariants }
         : {}),
       ...(hasSiteSettings ? { site_settings: siteSettings } : {}),
+      ...(hasSiteLayouts ? { site_layout_configs: siteLayoutConfigs } : {}),
+      ...(hasAdminTables ? { admin_accounts: adminAccounts, admin_activity_log: adminActivityLog } : {}),
+      ...(hasTranslationStates ? { localized_translation_states: localizedTranslationStates } : {}),
       schema_migrations: schemaMigrations,
     },
     schema: {
@@ -177,6 +204,9 @@ try {
           }
         : {}),
       ...(hasSiteSettings ? { site_settings: siteSettings.length } : {}),
+      ...(hasSiteLayouts ? { site_layout_configs: siteLayoutConfigs.length } : {}),
+      ...(hasAdminTables ? { admin_accounts: adminAccounts.length, admin_activity_log: adminActivityLog.length } : {}),
+      ...(hasTranslationStates ? { localized_translation_states: localizedTranslationStates.length } : {}),
       schema_migrations: schemaMigrations.length,
     },
   }));

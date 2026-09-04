@@ -1,172 +1,52 @@
 import { NextResponse } from "next/server";
 
-// @ts-ignore - auth.js is the existing Auth.js configuration.
-import { auth } from "../../../../auth.js";
-import { isAllowedAdmin, normalizeEmail } from "../../../../lib/admins";
+import { authorizeAdminRequest } from "../../../../lib/admin-auth";
 import {
-  enforceRateLimit,
-  RATE_LIMIT_POLICIES,
-  withRateLimitHeaders,
-} from "../../../../lib/rate-limit";
+  buildTranslationPreview,
+  TranslationConfigurationError,
+  TranslationIntegrityError,
+} from "../../../../lib/translation-core";
+import { withRateLimitHeaders } from "../../../../lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+export const maxDuration = 15;
 
-const LOCALES = ["zhHant", "zhHans", "en"] as const;
-type Locale = (typeof LOCALES)[number];
-type Translation = { title: string; description: string };
-
-function isLocale(value: unknown): value is Locale {
-  return typeof value === "string" && LOCALES.includes(value as Locale);
-}
-
-function cleanText(value: unknown, max: number) {
-  return typeof value === "string" ? value.trim().slice(0, max) : "";
-}
-
-function outputText(response: unknown) {
-  if (!response || typeof response !== "object") return "";
-  const body = response as {
-    output_text?: unknown;
-    output?: Array<{ content?: Array<{ type?: string; text?: unknown }> }>;
-  };
-  if (typeof body.output_text === "string") return body.output_text;
-  return (body.output || [])
-    .flatMap((item) => item.content || [])
-    .filter((item) => item.type === "output_text" && typeof item.text === "string")
-    .map((item) => item.text as string)
-    .join("");
-}
-
-function parseTranslations(text: string, targets: Locale[]) {
-  const normalized = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
-  const parsed = JSON.parse(normalized) as Record<string, Partial<Translation>>;
-  const translations: Partial<Record<Locale, Translation>> = {};
-  for (const locale of targets) {
-    const candidate = parsed[locale];
-    if (!candidate || typeof candidate !== "object") throw new Error(`Missing ${locale} translation`);
-    translations[locale] = {
-      title: cleanText(candidate.title, 200),
-      description: cleanText(candidate.description, 2_000),
-    };
-  }
-  return translations;
+function clean(value: unknown, maximum: number) {
+  return typeof value === "string" ? value.trim().slice(0, maximum) : "";
 }
 
 export async function POST(request: Request) {
-  const session = await auth();
-  const email = normalizeEmail(session?.user?.email);
-  if (!isAllowedAdmin(email)) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
-
-  const decision = await enforceRateLimit(request, {
-    ...RATE_LIMIT_POLICIES.translation,
-    identifier: email,
-  });
-  if (decision.limited) return decision.response;
-  const respond = <T extends Response>(response: T) => withRateLimitHeaders(response, decision);
-
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    return respond(NextResponse.json(
-      { error: "Automatic translation is not configured", code: "TRANSLATION_NOT_CONFIGURED" },
-      { status: 503 },
-    ));
-  }
-
+  const access = await authorizeAdminRequest(request, { translation: true });
+  if ("response" in access) return access.response;
+  const respond = <T extends Response>(response: T) => withRateLimitHeaders(response, access.decision!);
   try {
-    const body = (await request.json()) as Record<string, unknown>;
-    if (!isLocale(body.sourceLocale)) {
-      return respond(NextResponse.json({ error: "Invalid source locale" }, { status: 400 }));
-    }
-
-    const sourceLocale = body.sourceLocale;
-    const title = cleanText(body.title, 200);
-    const description = cleanText(body.description, 2_000);
-    if (!title && !description) {
-      return respond(NextResponse.json({ error: "Nothing to translate" }, { status: 400 }));
-    }
-
-    const requestedTargets = Array.isArray(body.targetLocales)
-      ? body.targetLocales.filter(isLocale)
-      : LOCALES.filter((locale) => locale !== sourceLocale);
-    const targetLocales = [...new Set(requestedTargets)].filter((locale) => locale !== sourceLocale);
-    if (!targetLocales.length) {
-      return respond(NextResponse.json({ translations: {} }));
-    }
-
-    const localeGuide: Record<Locale, string> = {
-      zhHant: "Traditional Chinese using natural Taiwan wording",
-      zhHans: "Simplified Chinese using natural Mainland Chinese wording",
-      en: "clear, natural English for a nonprofit website",
+    const body = await request.json();
+    if (body.sourceLocale !== "en") return respond(NextResponse.json({ error: "Automatic translation uses English as the source language" }, { status: 400 }));
+    const title = clean(body.title, 200);
+    const description = clean(body.description, 2_000);
+    if (!title && !description) return respond(NextResponse.json({ error: "Nothing to translate" }, { status: 400 }));
+    const fields = {
+      title: { en: title || "—", zhHant: "", zhHans: "" },
+      description: { en: description || "—", zhHant: "", zhHans: "" },
     };
-    const targetGuide = targetLocales.map((locale) => `${locale}: ${localeGuide[locale]}`).join("; ");
-    const translationSchema = {
-      type: "object",
-      properties: Object.fromEntries(
-        targetLocales.map((locale) => [
-          locale,
-          {
-            type: "object",
-            properties: {
-              title: { type: "string" },
-              description: { type: "string" },
-            },
-            required: ["title", "description"],
-            additionalProperties: false,
-          },
-        ]),
-      ),
-      required: targetLocales,
-      additionalProperties: false,
-    };
-    const response = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: process.env.OPENAI_TRANSLATION_MODEL || "gpt-5.6-luna",
-        reasoning: { effort: "none" },
-        store: false,
-        max_output_tokens: 1_200,
-        text: {
-          format: {
-            type: "json_schema",
-            name: "timeline_translations",
-            strict: true,
-            schema: translationSchema,
-          },
-        },
-        instructions: [
-          "Translate an iHear nonprofit journey timeline entry.",
-          "Preserve all names, dates, numbers, symbols, acronyms, and organization names exactly.",
-          "Do not add claims or commentary. Keep the title concise and preserve the source tone.",
-          `Target language guidance: ${targetGuide}.`,
-          "Return JSON only. Use each requested locale as a top-level key, with title and description string fields.",
-        ].join(" "),
-        input: JSON.stringify({ sourceLocale, targetLocales, title, description }),
-      }),
+    const preview = await buildTranslationPreview({
+      email: access.principal.email,
+      resource: { type: "impact", scope: "", id: "__new__" },
+      fields,
+      states: [],
+      force: { title: ["zhHant", "zhHans"], description: ["zhHant", "zhHans"] },
     });
-
-    const responseBody = await response.json().catch(() => null);
-    if (!response.ok) {
-      console.error("OpenAI translation request failed", response.status, responseBody);
-      return respond(NextResponse.json(
-        { error: response.status === 429 ? "Translation limit reached; try again shortly" : "Translation service unavailable" },
-        { status: response.status === 429 ? 429 : 502 },
-      ));
-    }
-
-    const translations = parseTranslations(outputText(responseBody), targetLocales);
-    return respond(NextResponse.json(
-      { translations },
-      { headers: { "Cache-Control": "private, no-store" } },
-    ));
+    const targets = Array.isArray(body.targetLocales) ? body.targetLocales : ["zhHant", "zhHans"];
+    const translations = Object.fromEntries(targets.filter((locale: unknown) => locale === "zhHant" || locale === "zhHans").map((locale: "zhHant" | "zhHans") => [locale, {
+      title: title ? preview.fields.title.value[locale] : "",
+      description: description ? preview.fields.description.value[locale] : "",
+    }]));
+    return respond(NextResponse.json({ translations }, { headers: { "Cache-Control": "private, no-store" } }));
   } catch (error) {
-    console.error("Timeline translation failed", error);
-    return respond(NextResponse.json({ error: "Could not translate this content" }, { status: 502 }));
+    if (error instanceof TranslationConfigurationError) return respond(NextResponse.json({ error: error.message, code: error.code }, { status: 503 }));
+    if (error instanceof TranslationIntegrityError) return respond(NextResponse.json({ error: error.message, code: error.code }, { status: 502 }));
+    console.error("Impact translation failed", error);
+    return respond(NextResponse.json({ error: "Translation service unavailable" }, { status: 502 }));
   }
 }

@@ -29,7 +29,9 @@ export type RateLimitDecision =
   | { limited: true; response: NextResponse }
   | { limited: false; result: RateLimitResult };
 
-const databaseUrl = process.env.POSTGRES_URL || process.env.DATABASE_URL || "";
+const databaseUrl = process.env.IHEAR_FORCE_FILE_STORE === "1"
+  ? ""
+  : process.env.POSTGRES_URL || process.env.DATABASE_URL || "";
 const localBuckets = new Map<string, { count: number; windowStartedAt: number }>();
 const globalForRateLimit = globalThis as typeof globalThis & {
   ihearRateLimitSql?: RateLimitSql;

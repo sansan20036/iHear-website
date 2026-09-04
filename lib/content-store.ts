@@ -3,6 +3,9 @@ import path from "node:path";
 
 import postgres from "postgres";
 
+import { saveTranslationStates, upsertTranslationStatesInTransaction } from "./translation-state";
+import type { TranslationStateWrite } from "./translation-types";
+
 export const CONTENT_LOCALES = ["en", "zhHant", "zhHans"] as const;
 export type ContentLocale = (typeof CONTENT_LOCALES)[number];
 export type ContentPages = Record<string, Record<string, string>>;
@@ -45,7 +48,9 @@ export class ContentConflictError extends Error {
 }
 
 const contentPath = path.join(process.cwd(), "content.json");
-const databaseUrl = process.env.POSTGRES_URL || process.env.DATABASE_URL || "";
+const databaseUrl = process.env.IHEAR_FORCE_FILE_STORE === "1"
+  ? ""
+  : process.env.POSTGRES_URL || process.env.DATABASE_URL || "";
 const isHostedProduction =
   process.env.NODE_ENV === "production" &&
   Boolean(process.env.VERCEL || process.env.NETLIFY || process.env.CONTEXT);
@@ -218,13 +223,26 @@ async function withFileMutation<T>(callback: () => Promise<T>) {
   return operation;
 }
 
-async function readContentStoreUncached() {
+async function readContentStoreUncached(page?: string) {
   assertPersistenceAvailable();
   const sql = sqlClient();
   if (!sql) return readFileStore();
 
   await ensurePostgresSchema();
-  const [localizedRows, legacyRows] = await Promise.all([
+  const [localizedRows, legacyRows] = page ? await Promise.all([
+    sql<ContentOverrideRow[]>`
+      SELECT page, key, locale, value, updated_at, updated_by
+      FROM localized_content_overrides
+      WHERE page IN (${page}, '/__global__')
+      ORDER BY page ASC, key ASC, locale ASC
+    `,
+    sql<ContentOverrideRow[]>`
+      SELECT page, key, value, updated_at, updated_by
+      FROM content_overrides
+      WHERE page IN (${page}, '/__global__')
+      ORDER BY page ASC, key ASC
+    `,
+  ]) : await Promise.all([
     sql<ContentOverrideRow[]>`
       SELECT page, key, locale, value, updated_at, updated_by
       FROM localized_content_overrides
@@ -239,8 +257,16 @@ async function readContentStoreUncached() {
   return fromRows(localizedRows, legacyRows);
 }
 
-export async function readContentStore() {
-  return readContentStoreUncached();
+export async function readContentStore(page?: string) {
+  const store = await readContentStoreUncached(page);
+  if (!page || sqlClient()) return store;
+  for (const locale of CONTENT_LOCALES) {
+    const pages = store.locales[locale].pages;
+    const metadata = store.locales[locale].itemUpdatedAt;
+    store.locales[locale].pages = Object.fromEntries(Object.entries(pages).filter(([key]) => key === page || key === "/__global__"));
+    store.locales[locale].itemUpdatedAt = Object.fromEntries(Object.entries(metadata).filter(([key]) => key === page || key === "/__global__"));
+  }
+  return store;
 }
 
 export function publicContentStore(store: ContentStore): PublicContentStore {
@@ -308,6 +334,73 @@ export async function updateContentItem(params: {
     store.updatedAt = updatedAt;
     store.updatedBy = params.updatedBy;
     await writeFileStore(store);
+    return store;
+  });
+}
+
+export async function updateContentItems(params: {
+  page: string;
+  key: string;
+  values: Record<ContentLocale, string>;
+  updatedBy: string;
+  expectedUpdatedAt: Record<ContentLocale, string | null>;
+  translationStates?: TranslationStateWrite[];
+}) {
+  assertPersistenceAvailable();
+  const sql = sqlClient();
+  if (sql) {
+    await ensurePostgresSchema();
+    await sql.begin(async (transaction) => {
+      const current = await transaction<ContentOverrideRow[]>`
+        SELECT page, key, locale, value, updated_at, updated_by
+        FROM localized_content_overrides
+        WHERE page = ${params.page} AND key = ${params.key}
+        FOR UPDATE
+      `;
+      const byLocale = new Map(current.map((row) => [row.locale, new Date(row.updated_at).toISOString()]));
+      for (const locale of CONTENT_LOCALES) {
+        if ((byLocale.get(locale) || null) !== params.expectedUpdatedAt[locale]) throw new ContentConflictError();
+      }
+      const changedAt = new Date();
+      await transaction`
+        INSERT INTO localized_content_overrides (page, key, locale, value, updated_at, updated_by)
+        VALUES
+          (${params.page}, ${params.key}, 'en', ${params.values.en}, ${changedAt}, ${params.updatedBy}),
+          (${params.page}, ${params.key}, 'zhHant', ${params.values.zhHant}, ${changedAt}, ${params.updatedBy}),
+          (${params.page}, ${params.key}, 'zhHans', ${params.values.zhHans}, ${changedAt}, ${params.updatedBy})
+        ON CONFLICT (page, key, locale) DO UPDATE SET
+          value = EXCLUDED.value, updated_at = EXCLUDED.updated_at, updated_by = EXCLUDED.updated_by
+      `;
+      await upsertTranslationStatesInTransaction(
+        transaction,
+        { type: "content", scope: params.page, id: params.key },
+        params.translationStates || [],
+        params.updatedBy,
+      );
+    });
+    return readContentStoreUncached(params.page);
+  }
+  return withFileMutation(async () => {
+    const store = await readFileStore();
+    for (const locale of CONTENT_LOCALES) {
+      const current = store.locales[locale].itemUpdatedAt[params.page]?.[params.key] || null;
+      if (current !== params.expectedUpdatedAt[locale]) throw new ContentConflictError();
+    }
+    const updatedAt = new Date().toISOString();
+    for (const locale of CONTENT_LOCALES) {
+      store.locales[locale].pages[params.page] ??= {};
+      store.locales[locale].itemUpdatedAt[params.page] ??= {};
+      store.locales[locale].pages[params.page][params.key] = params.values[locale];
+      store.locales[locale].itemUpdatedAt[params.page][params.key] = updatedAt;
+    }
+    store.updatedAt = updatedAt;
+    store.updatedBy = params.updatedBy;
+    await writeFileStore(store);
+    await saveTranslationStates(
+      { type: "content", scope: params.page, id: params.key },
+      params.translationStates || [],
+      params.updatedBy,
+    );
     return store;
   });
 }

@@ -1,6 +1,6 @@
 import NextAuth from "next-auth";
 import Google from "next-auth/providers/google";
-import { isAllowedAdmin } from "./lib/admins";
+import { resolveAdminPrincipal } from "./lib/admins";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   providers: [Google],
@@ -17,9 +17,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     maxAge: 30 * 24 * 60 * 60,
   },
   callbacks: {
-    session({ session }) {
+    async session({ session }) {
       if (session.user) {
-        session.user.isAdmin = isAllowedAdmin(session.user.email);
+        const principal = await resolveAdminPrincipal(session.user.email);
+        session.user.isAdmin = Boolean(principal);
+        session.user.adminRole = principal?.role || null;
       }
       return session;
     },

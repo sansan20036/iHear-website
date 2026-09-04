@@ -29,8 +29,9 @@ export type SiteMediaVariant = {
 export type SiteMediaAsset = {
   slot: SiteMediaSlot;
   alt: SiteMediaAlt;
-  focalX: 0 | 50 | 100;
-  focalY: 0 | 50 | 100;
+  focalX: number;
+  focalY: number;
+  zoom: number;
   recordVersion: number;
   updatedAt: string;
   updatedBy: string;
@@ -61,6 +62,7 @@ export function publicSiteMediaAsset(asset: SiteMediaAsset): PublicSiteMediaAsse
     alt: asset.alt,
     focalX: asset.focalX,
     focalY: asset.focalY,
+    zoom: asset.zoom,
     recordVersion: asset.recordVersion,
     updatedAt: asset.updatedAt,
     variants,

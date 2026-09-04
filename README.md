@@ -121,6 +121,7 @@ You can override this later with:
 
 ```text
 AUTH_ADMIN_EMAILS=sansan20036@gmail.com,shuchen.peng@gmail.com,ihearprogram@gmail.com
+AUTH_OWNER_EMAILS=sansan20036@gmail.com,shuchen.peng@gmail.com,ihearprogram@gmail.com
 ```
 
 Auth.js calculates `session.user.isAdmin` from this server-side list. Browser editing
@@ -308,10 +309,31 @@ Allowed admins can use the management controls on `/about` to edit every timelin
 date, title, description, and metric, and to add, save as draft, publish, or permanently
 delete records. Deletion is version-checked, requires confirmation in the UI, and cannot
 be undone. The editor includes Traditional Chinese, Simplified Chinese, and English tabs
-with completion indicators and a live preview. The editor currently uses manual translation
-mode: admins enter or paste each language themselves, or copy another language into the
-active tab as a starting point before revising it. Drafts may contain incomplete languages,
+with completion indicators and a live preview. English is the primary editing language.
+Administrators generate a protected Traditional Chinese preview through Google Cloud
+Translation, and OpenCC derives Simplified Chinese from that result. Existing or manually
+corrected Chinese remains locked unless the administrator explicitly requests a retranslation.
+Drafts may contain incomplete languages,
 while publishing requires all three descriptions and, for journey events, all three titles.
+
+To enable automatic translation locally, first enable Cloud Translation in a billing-enabled
+Google Cloud project and download a JSON key for a dedicated service account. Keep that JSON
+outside this repository, then import it without copying secrets into the terminal:
+
+```powershell
+npm run translation:configure -- "C:\Users\you\Downloads\service-account.json"
+```
+
+The command validates the credential, writes the project ID, service-account email and private
+key to the Git-ignored `.env.local`, and generates a new receipt-signing secret. It never prints
+either secret. Restart `npm run dev` after configuration. Do not commit or share the downloaded
+JSON key.
+
+For isolated admin testing, use `npm run dev:local`. This pins the local site to
+`http://localhost:3000`, matching the registered Google OAuth callback, and forces Team, Impact,
+content, layout, request protection, and translation-state persistence to the Git-ignored local
+file stores even when `.env.local` contains a hosted database URL. Translation preview requests
+can still send the administrator-entered English text to Google Cloud Translation.
 Published impact-metrics records also require a country count and country names in all
 three languages. Only one metrics record may be published for a given month.
 Admin APIs use:
@@ -322,9 +344,10 @@ PATCH  /api/impact-milestones/:id
 DELETE /api/impact-milestones/:id
 ```
 
-The server-side automatic translation route remains available for future evaluation, but
-the current browser editor does not call it. Manual multilingual editing therefore does not
-depend on an OpenAI key or any external translation service.
+The translation preview is signed for 15 minutes and is bound to the administrator, record,
+version, and English content hash. Final mutations save all three languages and their
+translation provenance together. If Google credentials are absent or the service fails,
+manual three-language editing remains available and published content is unchanged.
 
 Set either `POSTGRES_URL` or `DATABASE_URL` in hosted production. The schema is in
 `db/migrations/`; migration 006 adds the single-source homepage country fields and

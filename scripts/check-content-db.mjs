@@ -1,5 +1,6 @@
 import nextEnv from "@next/env";
 import postgres from "postgres";
+import { readFile } from "node:fs/promises";
 
 const { loadEnvConfig } = nextEnv;
 loadEnvConfig(process.cwd());
@@ -52,11 +53,26 @@ async function inspectTable(tableName) {
 try {
   const legacy = await inspectTable("content_overrides");
   const localized = await inspectTable("localized_content_overrides");
+  const catalog = JSON.parse(await readFile(new URL("../data/content-slots.json", import.meta.url), "utf8"));
+  const rows = localized.table ? await sql`SELECT page, key, locale, value FROM public.localized_content_overrides` : [];
+  const byIdentity = new Map(rows.map((row) => [`${row.page}\u0000${row.key}\u0000${row.locale}`, row.value]));
+  const expected = catalog.slots.flatMap((slot) => ["en", "zhHant", "zhHans"].map((locale) => ({ page: slot.page, key: slot.key, locale })));
+  const missing = expected.filter((item) => !byIdentity.has(`${item.page}\u0000${item.key}\u0000${item.locale}`));
+  const blank = expected.filter((item) => !String(byIdentity.get(`${item.page}\u0000${item.key}\u0000${item.locale}`) || "").trim());
+  const legacyMappings = [
+    { source: ["/", "i18n:prog1_h", "en"], target: ["/__global__", "programs.services.tutoring.title", "en"] },
+    { source: ["/about", "section:nth-of-type(1)>div:nth-of-type(1)>div:nth-of-type(1)>h2:nth-of-type(1)", "zhHant"], target: ["/about", "about.mission.heading", "zhHant"] },
+    { source: ["/team", "i18n:tlnote_h", "en"], target: ["/team", "team.leadership_note.heading", "en"] },
+    { source: ["/team", "i18n:tlnote_p", "en"], target: ["/team", "team.leadership_note.body", "en"] },
+  ];
+  const preservedLegacyMappings = legacyMappings.filter(({ source, target }) => byIdentity.get(source.join("\u0000")) === byIdentity.get(target.join("\u0000"))).length;
+  const catalogCheck = { logicalSlots: catalog.slots.length, expectedLocalizedRows: expected.length, presentLocalizedRows: expected.length - missing.length, missing: missing.length, blank: blank.length, preservedLegacyMappings };
   const healthy = Boolean(
     legacy.table && localized.table && legacy.rowLevelSecurity && localized.rowLevelSecurity &&
-    localized.columns.includes("locale") && localized.primaryKey === "{page,key,locale}"
+    localized.columns.includes("locale") && localized.primaryKey === "{page,key,locale}" &&
+    !missing.length && !blank.length && preservedLegacyMappings === legacyMappings.length
   );
-  console.log(JSON.stringify({ connected: true, healthy, legacy, localized }, null, 2));
+  console.log(JSON.stringify({ connected: true, healthy, legacy, localized, catalog: catalogCheck }, null, 2));
   if (!healthy) process.exitCode = 1;
 } catch (error) {
   console.error(JSON.stringify({

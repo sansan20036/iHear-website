@@ -51,7 +51,7 @@
   <link rel="stylesheet" href="/assets/site.css">
 </head>
 <body class="subpage">
-  <a class="skip-link" href="#main" data-i18n="skip">Skip to content</a>
+  <a class="skip-link" href="#main" data-i18n="skip" data-editable-content="site.accessibility.skip_to_content" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">Skip to content</a>
 
   <header class="nav" id="nav">
     <div class="container nav-inner">
@@ -63,13 +63,13 @@
       </button>
       <nav aria-label="Main">
         <ul class="nav-links" id="navLinks">
-          <li><a href="/about#about" data-i18n="nav_about">About</a></li>
-          <li><a href="/programs#programs" data-i18n="nav_programs">Programs</a></li>
-          <li><a href="/impact#impact" data-i18n="nav_impact">Impact</a></li>
-          <li><a href="/team#team" data-i18n="nav_team">Team</a></li>
-          <li><a href="/get-involved#involve" data-i18n="nav_involve">Get Involved</a></li>
-          <li><a href="/resources#resources" data-i18n="nav_resources">Resources</a></li>
-          <li><a href="#donate" data-i18n="nav_donate">Donate</a></li>
+          <li><a href="/about#about" data-i18n="nav_about" data-editable-content="site.nav.about" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">About</a></li>
+          <li><a href="/programs#programs" data-i18n="nav_programs" data-editable-content="site.nav.programs" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">Programs</a></li>
+          <li><a href="/impact#impact" data-i18n="nav_impact" data-editable-content="site.nav.impact" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">Impact</a></li>
+          <li><a href="/team#team" data-i18n="nav_team" data-editable-content="site.nav.team" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">Team</a></li>
+          <li><a href="/get-involved#involve" data-i18n="nav_involve" data-editable-content="site.nav.involve" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">Get Involved</a></li>
+          <li><a href="/resources#resources" data-i18n="nav_resources" data-editable-content="site.nav.resources" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">Resources</a></li>
+          <li><a href="#donate" data-i18n="nav_donate" data-editable-content="site.nav.donate" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">Donate</a></li>
         </ul>
       </nav>
       <div class="lang-switch" role="group" aria-label="Language / 語言 / 语言" id="langSwitch">
@@ -77,7 +77,7 @@
         <button type="button" data-lang="zhTW" lang="zh-Hant" aria-pressed="false" title="繁體中文">繁</button>
         <button type="button" data-lang="zhCN" lang="zh-Hans" aria-pressed="false" title="简体中文">简</button>
       </div>
-      <a class="btn btn-primary btn-cta" href="https://forms.gle/vHzJULFc5Rwee49eA" target="_blank" rel="noopener noreferrer" data-i18n="nav_cta">Request Tutoring</a>
+      <a class="btn btn-primary btn-cta" href="https://forms.gle/vHzJULFc5Rwee49eA" target="_blank" rel="noopener noreferrer" data-i18n="nav_cta" data-editable-content="site.nav.request_tutoring" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__" data-layout-link="site.nav.request_tutoring.href" data-layout-page="/__global__">Request Tutoring</a>
     </div>
   </header>
 
@@ -85,31 +85,31 @@
 <section class="donate" id="donate" aria-labelledby="donate-h">
       <div class="container">
         <div class="sec-head" data-animate>
-          <span class="eyebrow" style="background:rgba(255,255,255,.1); border-color:rgba(255,255,255,.2); color:#fff"><span class="dot" aria-hidden="true"></span><span data-i18n="donate_eyebrow">Support iHear's Mission</span></span>
-          <h1 id="donate-h" data-i18n="donate_h2">Every contribution creates opportunity</h1>
-          <p data-i18n="donate_sub">Your support creates life-changing opportunities for students with communication needs. Every donation, regardless of amount, is an investment in students' futures.</p>
+          <span class="eyebrow" style="background:rgba(255,255,255,.1); border-color:rgba(255,255,255,.2); color:#fff"><span class="dot" aria-hidden="true"></span><span data-i18n="donate_eyebrow" data-editable-content="shared.donate.eyebrow" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">Support iHear's Mission</span></span>
+          <h1 id="donate-h" data-i18n="donate_h2" data-editable-content="shared.donate.heading" data-editable-mode="singleline" data-editable-maxlength="200" data-editable-page="/__global__">Every contribution creates opportunity</h1>
+          <p data-i18n="donate_sub" data-editable-content="shared.donate.subtitle" data-editable-mode="multiline" data-editable-maxlength="5000" data-editable-page="/__global__">Your support creates life-changing opportunities for students with communication needs. Every donation, regardless of amount, is an investment in students' futures.</p>
         </div>
-        <div class="donate-grid">
-          <div class="donate-card" data-animate>
+        <div class="donate-grid" data-layout-group="donate.options" data-layout-page="/__global__">
+          <div data-layout-item="monthly" class="donate-card" data-animate>
             <div class="icon" aria-hidden="true"><svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M16 11c1.7 0 3-1.3 3-3s-1.3-3-3-3-3 1.3-3 3 1.3 3 3 3zm-8 0c1.7 0 3-1.3 3-3S9.7 5 8 5 5 6.3 5 8s1.3 3 3 3zm0 2c-2.3 0-7 1.2-7 3.5V19h14v-2.5C15 14.2 10.3 13 8 13zm8 0c-.3 0-.6 0-1 .1 1.2.8 2 1.9 2 3.4V19h6v-2.5c0-2.3-4.7-3.5-7-3.5z"/></svg></div>
-            <h2 data-i18n="don1_h">Support more students</h2>
-            <p data-i18n="don1_p">Enable us to serve more students with hearing loss and communication needs across multiple countries.</p>
+            <h2 data-i18n="don1_h" data-editable-content="shared.don1.title" data-editable-mode="singleline" data-editable-maxlength="200" data-editable-page="/__global__">Support more students</h2>
+            <p data-i18n="don1_p" data-editable-content="shared.don1.body" data-editable-mode="multiline" data-editable-maxlength="5000" data-editable-page="/__global__">Enable us to serve more students with hearing loss and communication needs across multiple countries.</p>
           </div>
-          <div class="donate-card" data-animate>
+          <div data-layout-item="materials" class="donate-card" data-animate>
             <div class="icon" aria-hidden="true"><svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3L1 9l11 6 9-4.9V17h2V9L12 3zM5 13.2V17c0 1.7 3.1 3 7 3s7-1.3 7-3v-3.8l-7 3.8-7-3.8z"/></svg></div>
-            <h2 data-i18n="don2_h">Raise teaching quality</h2>
-            <p data-i18n="don2_p">Invest in tutor training, curriculum development, and AI-powered learning tools.</p>
+            <h2 data-i18n="don2_h" data-editable-content="shared.don2.title" data-editable-mode="singleline" data-editable-maxlength="200" data-editable-page="/__global__">Raise teaching quality</h2>
+            <p data-i18n="don2_p" data-editable-content="shared.don2.body" data-editable-mode="multiline" data-editable-maxlength="5000" data-editable-page="/__global__">Invest in tutor training, curriculum development, and AI-powered learning tools.</p>
           </div>
-          <div class="donate-card" data-animate>
+          <div data-layout-item="outreach" class="donate-card" data-animate>
             <div class="icon" aria-hidden="true"><svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm7.9 9h-3a15.7 15.7 0 00-1.2-5.4A8 8 0 0119.9 11zM12 4c.9 1.2 1.7 3.3 1.9 7h-3.8c.2-3.7 1-5.8 1.9-7zM4.1 13h3a15.7 15.7 0 001.2 5.4A8 8 0 014.1 13zm3-2h-3a8 8 0 014.2-5.4A15.7 15.7 0 007.1 11zM12 20c-.9-1.2-1.7-3.3-1.9-7h3.8c-.2 3.7-1 5.8-1.9 7zm3.7-1.6a15.7 15.7 0 001.2-5.4h3a8 8 0 01-4.2 5.4z"/></svg></div>
-            <h2 data-i18n="don3_h">Expand global reach</h2>
-            <p data-i18n="don3_p">Bring barrier-free communication to new communities worldwide.</p>
+            <h2 data-i18n="don3_h" data-editable-content="shared.don3.title" data-editable-mode="singleline" data-editable-maxlength="200" data-editable-page="/__global__">Expand global reach</h2>
+            <p data-i18n="don3_p" data-editable-content="shared.don3.body" data-editable-mode="multiline" data-editable-maxlength="5000" data-editable-page="/__global__">Bring barrier-free communication to new communities worldwide.</p>
           </div>
         </div>
         <div class="donate-cta" data-animate>
-          <p class="line" data-i18n="donate_line">Any amount directly supports our mission, and donors are recognized on our site with heartfelt thanks.</p>
-          <a class="btn btn-primary" href="https://donate.stripe.com/8x2fZgfDg4nZ1cu01k1RC01" target="_blank" rel="noopener noreferrer" data-i18n="donate_cta">Donate Now</a>
-        <p class="donor-note" data-animate><span data-i18n="donor_p">We are building our donor list. Your name could be here! Donors are recognized in tiers: Founding Donors, Major ($500+), Supporting ($100–$499), and Friends of iHear.</span></p>
+          <p class="line" data-i18n="donate_line" data-editable-content="shared.donate.line" data-editable-mode="multiline" data-editable-maxlength="5000" data-editable-page="/__global__">Any amount directly supports our mission, and donors are recognized on our site with heartfelt thanks.</p>
+          <a class="btn btn-primary" href="https://donate.stripe.com/8x2fZgfDg4nZ1cu01k1RC01" target="_blank" rel="noopener noreferrer" data-i18n="donate_cta" data-editable-content="shared.donate.cta" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__" data-layout-link="shared.donate.cta.href" data-layout-page="/__global__">Donate Now</a>
+        <p class="donor-note" data-animate><span data-i18n="donor_p" data-editable-content="shared.donor.body" data-editable-mode="multiline" data-editable-maxlength="5000" data-editable-page="/__global__">We are building our donor list. Your name could be here! Donors are recognized in tiers: Founding Donors, Major ($500+), Supporting ($100–$499), and Friends of iHear.</span></p>
         </div>
       </div>
     </section>
@@ -120,43 +120,43 @@
       <div class="foot-grid">
         <div class="foot-brand">
           <img src="assets/logo.png" alt="iHear Initiative logo" width="140" height="52" loading="lazy">
-          <p class="tag" data-i18n="foot_tag">Building confident communication — one conversation at a time.</p>
-          <p data-i18n="foot_desc">Inclusive English communication support for students with hearing loss and other communication needs.</p>
+          <p class="tag" data-i18n="foot_tag" data-editable-content="site.footer.tag" data-editable-mode="multiline" data-editable-maxlength="5000" data-editable-page="/__global__">Building confident communication — one conversation at a time.</p>
+          <p data-i18n="foot_desc" data-editable-content="site.footer.desc" data-editable-mode="multiline" data-editable-maxlength="5000" data-editable-page="/__global__">Inclusive English communication support for students with hearing loss and other communication needs.</p>
         </div>
         <div>
-          <h2 data-i18n="foot_prog_h">Programs</h2>
+          <h2 data-i18n="foot_prog_h" data-editable-content="site.footer.prog.title" data-editable-mode="singleline" data-editable-maxlength="200" data-editable-page="/__global__">Programs</h2>
           <ul>
-            <li><a href="/programs#programs" data-i18n="foot_prog1">English Tutoring</a></li>
-            <li><a href="/programs#programs" data-i18n="foot_prog2">Community Outreach</a></li>
-            <li><a href="/resources#resources" data-i18n="foot_prog3">Resource Library</a></li>
-            <li><a href="/academy#academy" data-i18n="foot_prog4">iHear Academy</a></li>
+            <li><a href="/programs#programs" data-i18n="foot_prog1" data-editable-content="site.footer.prog1" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">English Tutoring</a></li>
+            <li><a href="/programs#programs" data-i18n="foot_prog2" data-editable-content="site.footer.prog2" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">Community Outreach</a></li>
+            <li><a href="/resources#resources" data-i18n="foot_prog3" data-editable-content="site.footer.prog3" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">Resource Library</a></li>
+            <li><a href="/academy#academy" data-i18n="foot_prog4" data-editable-content="site.footer.prog4" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">iHear Academy</a></li>
           </ul>
         </div>
         <div>
-          <h2 data-i18n="foot_inv_h">Get Involved</h2>
+          <h2 data-i18n="foot_inv_h" data-editable-content="site.footer.inv.title" data-editable-mode="singleline" data-editable-maxlength="200" data-editable-page="/__global__">Get Involved</h2>
           <ul>
-            <li><a href="https://forms.gle/BpH1Pno9cHHUa7TN7" target="_blank" rel="noopener noreferrer" data-i18n="foot_inv1">Volunteer at iHear</a></li>
-            <li><a href="https://forms.gle/vHzJULFc5Rwee49eA" target="_blank" rel="noopener noreferrer" data-i18n="foot_inv2">Request Tutoring</a></li>
-            <li><a href="#donate" data-i18n="foot_inv3">Support Our Mission</a></li>
-            <li><a href="https://forms.gle/rR1qPSunmPaAJaY5A" target="_blank" rel="noopener noreferrer" data-i18n="foot_inv4">Session Feedback Form</a></li>
-            <li><a href="/submit-bio#bio-form" data-i18n="foot_inv5">Submit Your Tutor Bio</a></li>
+            <li><a href="https://forms.gle/BpH1Pno9cHHUa7TN7" target="_blank" rel="noopener noreferrer" data-i18n="foot_inv1" data-editable-content="site.footer.inv1" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">Volunteer at iHear</a></li>
+            <li><a href="https://forms.gle/vHzJULFc5Rwee49eA" target="_blank" rel="noopener noreferrer" data-i18n="foot_inv2" data-editable-content="site.footer.inv2" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">Request Tutoring</a></li>
+            <li><a href="#donate" data-i18n="foot_inv3" data-editable-content="site.footer.inv3" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">Support Our Mission</a></li>
+            <li><a href="https://forms.gle/rR1qPSunmPaAJaY5A" target="_blank" rel="noopener noreferrer" data-i18n="foot_inv4" data-editable-content="site.footer.inv4" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">Session Feedback Form</a></li>
+            <li><a href="/submit-bio#bio-form" data-i18n="foot_inv5" data-editable-content="site.footer.inv5" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">Submit Your Tutor Bio</a></li>
           </ul>
         </div>
         <div>
-          <h2 data-i18n="foot_more_h">More</h2>
+          <h2 data-i18n="foot_more_h" data-editable-content="site.footer.more.title" data-editable-mode="singleline" data-editable-maxlength="200" data-editable-page="/__global__">More</h2>
           <ul>
-            <li><a href="/about#about" data-i18n="foot_more1">About Us</a></li>
-            <li><a href="/impact#impact" data-i18n="foot_more2">Our Impact</a></li>
-            <li><a href="/contact#contact" data-i18n="foot_more3">Contact Us</a></li>
-            <li><a href="/team#team" data-i18n="foot_more4">Our Team</a></li>
-            <li><a href="/faq#faq" data-i18n="foot_more5">FAQ</a></li>
-            <li><a href="/stories#stories" data-i18n="foot_more6">Success Stories</a></li>
+            <li><a href="/about#about" data-i18n="foot_more1" data-editable-content="site.footer.more1" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">About Us</a></li>
+            <li><a href="/impact#impact" data-i18n="foot_more2" data-editable-content="site.footer.more2" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">Our Impact</a></li>
+            <li><a href="/contact#contact" data-i18n="foot_more3" data-editable-content="site.footer.more3" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">Contact Us</a></li>
+            <li><a href="/team#team" data-i18n="foot_more4" data-editable-content="site.footer.more4" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">Our Team</a></li>
+            <li><a href="/faq#faq" data-i18n="foot_more5" data-editable-content="site.footer.more5" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">FAQ</a></li>
+            <li><a href="/stories#stories" data-i18n="foot_more6" data-editable-content="site.footer.more6" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">Success Stories</a></li>
           </ul>
         </div>
       </div>
       <div class="foot-bottom">
-        <span data-i18n="foot_copy">© 2024–Present iHear Program. All rights reserved. Affiliated with CAPA-MC (501(c)(3)).</span>
-        <span data-i18n="foot_made">Designed, launched, and maintained by Monnast.</span>
+        <span data-i18n="foot_copy" data-editable-content="site.footer.copy" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">© 2024–Present iHear Program. All rights reserved. Affiliated with CAPA-MC (501(c)(3)).</span>
+        <span data-i18n="foot_made" data-editable-content="site.footer.made" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">Designed, launched, and maintained by Monnast.</span>
       </div>
     </div>
   </footer>

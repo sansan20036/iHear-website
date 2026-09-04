@@ -51,7 +51,7 @@
   <link rel="stylesheet" href="/assets/site.css">
 </head>
 <body class="subpage">
-  <a class="skip-link" href="#main" data-i18n="skip">Skip to content</a>
+  <a class="skip-link" href="#main" data-i18n="skip" data-editable-content="site.accessibility.skip_to_content" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">Skip to content</a>
 
   <header class="nav" id="nav">
     <div class="container nav-inner">
@@ -63,13 +63,13 @@
       </button>
       <nav aria-label="Main">
         <ul class="nav-links" id="navLinks">
-          <li><a href="/about#about" data-i18n="nav_about">About</a></li>
-          <li><a href="/programs#programs" data-i18n="nav_programs">Programs</a></li>
-          <li><a href="/impact#impact" data-i18n="nav_impact">Impact</a></li>
-          <li><a href="/team#team" data-i18n="nav_team">Team</a></li>
-          <li><a href="/get-involved#involve" data-i18n="nav_involve">Get Involved</a></li>
-          <li><a href="/resources#resources" data-i18n="nav_resources">Resources</a></li>
-          <li><a href="/donate#donate" data-i18n="nav_donate">Donate</a></li>
+          <li><a href="/about#about" data-i18n="nav_about" data-editable-content="site.nav.about" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">About</a></li>
+          <li><a href="/programs#programs" data-i18n="nav_programs" data-editable-content="site.nav.programs" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">Programs</a></li>
+          <li><a href="/impact#impact" data-i18n="nav_impact" data-editable-content="site.nav.impact" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">Impact</a></li>
+          <li><a href="/team#team" data-i18n="nav_team" data-editable-content="site.nav.team" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">Team</a></li>
+          <li><a href="/get-involved#involve" data-i18n="nav_involve" data-editable-content="site.nav.involve" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">Get Involved</a></li>
+          <li><a href="/resources#resources" data-i18n="nav_resources" data-editable-content="site.nav.resources" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">Resources</a></li>
+          <li><a href="/donate#donate" data-i18n="nav_donate" data-editable-content="site.nav.donate" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">Donate</a></li>
         </ul>
       </nav>
       <div class="lang-switch" role="group" aria-label="Language / 語言 / 语言" id="langSwitch">
@@ -77,7 +77,7 @@
         <button type="button" data-lang="zhTW" lang="zh-Hant" aria-pressed="false" title="繁體中文">繁</button>
         <button type="button" data-lang="zhCN" lang="zh-Hans" aria-pressed="false" title="简体中文">简</button>
       </div>
-      <a class="btn btn-primary btn-cta" href="https://forms.gle/vHzJULFc5Rwee49eA" target="_blank" rel="noopener noreferrer" data-i18n="nav_cta">Request Tutoring</a>
+      <a class="btn btn-primary btn-cta" href="https://forms.gle/vHzJULFc5Rwee49eA" target="_blank" rel="noopener noreferrer" data-i18n="nav_cta" data-editable-content="site.nav.request_tutoring" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__" data-layout-link="site.nav.request_tutoring.href" data-layout-page="/__global__">Request Tutoring</a>
     </div>
   </header>
 
@@ -85,22 +85,22 @@
 <section id="contact" aria-labelledby="contact-h">
       <div class="container">
         <div class="sec-head" data-animate>
-          <span class="eyebrow"><span class="dot" aria-hidden="true"></span><span data-i18n="contact_eyebrow">Contact Us</span></span>
-          <h1 id="contact-h" data-i18n="contact_h2">We'd love to hear from you</h1>
-          <p data-i18n="contact_sub">Have questions? Want to get involved? Reach out any time, in English or Chinese.</p>
+          <span class="eyebrow"><span class="dot" aria-hidden="true"></span><span data-i18n="contact_eyebrow" data-editable-content="contact.contact.eyebrow" data-editable-mode="singleline" data-editable-maxlength="120">Contact Us</span></span>
+          <h1 id="contact-h" data-i18n="contact_h2" data-editable-content="contact.contact.heading" data-editable-mode="singleline" data-editable-maxlength="200">We'd love to hear from you</h1>
+          <p data-i18n="contact_sub" data-editable-content="contact.contact.subtitle" data-editable-mode="multiline" data-editable-maxlength="5000">Have questions? Want to get involved? Reach out any time, in English or Chinese.</p>
         </div>
-        <div class="contact-grid">
-          <div class="contact-card" data-animate>
-            <h2 data-i18n="contact_email_h">Email us</h2>
+        <div class="contact-grid" data-layout-group="contact.methods">
+          <div data-layout-item="email" class="contact-card" data-animate>
+            <h2 data-i18n="contact_email_h" data-editable-content="contact.contact.email.title" data-editable-mode="singleline" data-editable-maxlength="200">Email us</h2>
             <a class="email" href="mailto:ihearprogram@gmail.com">ihearprogram@gmail.com</a>
-            <p data-i18n="contact_email_p">When requesting tutoring, include the student's name and age, communication needs or goals, preferred session times, and anything else that would help us serve you.</p>
-            <a class="btn btn-navy" href="mailto:ihearprogram@gmail.com" data-i18n="contact_email_cta">Write an Email</a>
+            <p data-i18n="contact_email_p" data-editable-content="contact.contact.email.body" data-editable-mode="multiline" data-editable-maxlength="5000">When requesting tutoring, include the student's name and age, communication needs or goals, preferred session times, and anything else that would help us serve you.</p>
+            <a class="btn btn-navy" href="mailto:ihearprogram@gmail.com" data-i18n="contact_email_cta" data-editable-content="contact.contact.email.cta" data-editable-mode="singleline" data-editable-maxlength="120" data-layout-link="contact.contact.email.cta.href">Write an Email</a>
           </div>
-          <div class="contact-card" data-animate>
-            <h2 data-i18n="contact_region_h">Serving learners across regions</h2>
-            <p data-i18n="contact_region_p">Our volunteer tutors are primarily based in the United States (including Maryland and Michigan) and Taiwan, serving students in Taiwan, China, the US, and Canada. All sessions are held online via Zoom.</p>
-            <p><strong data-i18n="contact_forms_h">Prefer a form?</strong></p>
-            <a class="btn btn-ghost" href="https://forms.gle/vHzJULFc5Rwee49eA" target="_blank" rel="noopener noreferrer" data-i18n="contact_form_cta">Open the Request Form</a>
+          <div data-layout-item="social" class="contact-card" data-animate>
+            <h2 data-i18n="contact_region_h" data-editable-content="contact.contact.region.title" data-editable-mode="singleline" data-editable-maxlength="200">Serving learners across regions</h2>
+            <p data-i18n="contact_region_p" data-editable-content="contact.contact.region.body" data-editable-mode="multiline" data-editable-maxlength="5000">Our volunteer tutors are primarily based in the United States (including Maryland and Michigan) and Taiwan, serving students in Taiwan, China, the US, and Canada. All sessions are held online via Zoom.</p>
+            <p><strong data-i18n="contact_forms_h" data-editable-content="contact.contact.forms.title" data-editable-mode="singleline" data-editable-maxlength="120">Prefer a form?</strong></p>
+            <a class="btn btn-ghost" href="https://forms.gle/vHzJULFc5Rwee49eA" target="_blank" rel="noopener noreferrer" data-i18n="contact_form_cta" data-editable-content="contact.contact.form.cta" data-editable-mode="singleline" data-editable-maxlength="120" data-layout-link="contact.contact.form.cta.href">Open the Request Form</a>
           </div>
         </div>
       </div>
@@ -112,43 +112,43 @@
       <div class="foot-grid">
         <div class="foot-brand">
           <img src="assets/logo.png" alt="iHear Initiative logo" width="140" height="52" loading="lazy">
-          <p class="tag" data-i18n="foot_tag">Building confident communication — one conversation at a time.</p>
-          <p data-i18n="foot_desc">Inclusive English communication support for students with hearing loss and other communication needs.</p>
+          <p class="tag" data-i18n="foot_tag" data-editable-content="site.footer.tag" data-editable-mode="multiline" data-editable-maxlength="5000" data-editable-page="/__global__">Building confident communication — one conversation at a time.</p>
+          <p data-i18n="foot_desc" data-editable-content="site.footer.desc" data-editable-mode="multiline" data-editable-maxlength="5000" data-editable-page="/__global__">Inclusive English communication support for students with hearing loss and other communication needs.</p>
         </div>
         <div>
-          <h2 data-i18n="foot_prog_h">Programs</h2>
+          <h2 data-i18n="foot_prog_h" data-editable-content="site.footer.prog.title" data-editable-mode="singleline" data-editable-maxlength="200" data-editable-page="/__global__">Programs</h2>
           <ul>
-            <li><a href="/programs#programs" data-i18n="foot_prog1">English Tutoring</a></li>
-            <li><a href="/programs#programs" data-i18n="foot_prog2">Community Outreach</a></li>
-            <li><a href="/resources#resources" data-i18n="foot_prog3">Resource Library</a></li>
-            <li><a href="/academy#academy" data-i18n="foot_prog4">iHear Academy</a></li>
+            <li><a href="/programs#programs" data-i18n="foot_prog1" data-editable-content="site.footer.prog1" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">English Tutoring</a></li>
+            <li><a href="/programs#programs" data-i18n="foot_prog2" data-editable-content="site.footer.prog2" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">Community Outreach</a></li>
+            <li><a href="/resources#resources" data-i18n="foot_prog3" data-editable-content="site.footer.prog3" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">Resource Library</a></li>
+            <li><a href="/academy#academy" data-i18n="foot_prog4" data-editable-content="site.footer.prog4" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">iHear Academy</a></li>
           </ul>
         </div>
         <div>
-          <h2 data-i18n="foot_inv_h">Get Involved</h2>
+          <h2 data-i18n="foot_inv_h" data-editable-content="site.footer.inv.title" data-editable-mode="singleline" data-editable-maxlength="200" data-editable-page="/__global__">Get Involved</h2>
           <ul>
-            <li><a href="https://forms.gle/BpH1Pno9cHHUa7TN7" target="_blank" rel="noopener noreferrer" data-i18n="foot_inv1">Volunteer at iHear</a></li>
-            <li><a href="https://forms.gle/vHzJULFc5Rwee49eA" target="_blank" rel="noopener noreferrer" data-i18n="foot_inv2">Request Tutoring</a></li>
-            <li><a href="/donate#donate" data-i18n="foot_inv3">Support Our Mission</a></li>
-            <li><a href="https://forms.gle/rR1qPSunmPaAJaY5A" target="_blank" rel="noopener noreferrer" data-i18n="foot_inv4">Session Feedback Form</a></li>
-            <li><a href="/submit-bio#bio-form" data-i18n="foot_inv5">Submit Your Tutor Bio</a></li>
+            <li><a href="https://forms.gle/BpH1Pno9cHHUa7TN7" target="_blank" rel="noopener noreferrer" data-i18n="foot_inv1" data-editable-content="site.footer.inv1" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">Volunteer at iHear</a></li>
+            <li><a href="https://forms.gle/vHzJULFc5Rwee49eA" target="_blank" rel="noopener noreferrer" data-i18n="foot_inv2" data-editable-content="site.footer.inv2" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">Request Tutoring</a></li>
+            <li><a href="/donate#donate" data-i18n="foot_inv3" data-editable-content="site.footer.inv3" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">Support Our Mission</a></li>
+            <li><a href="https://forms.gle/rR1qPSunmPaAJaY5A" target="_blank" rel="noopener noreferrer" data-i18n="foot_inv4" data-editable-content="site.footer.inv4" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">Session Feedback Form</a></li>
+            <li><a href="/submit-bio#bio-form" data-i18n="foot_inv5" data-editable-content="site.footer.inv5" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">Submit Your Tutor Bio</a></li>
           </ul>
         </div>
         <div>
-          <h2 data-i18n="foot_more_h">More</h2>
+          <h2 data-i18n="foot_more_h" data-editable-content="site.footer.more.title" data-editable-mode="singleline" data-editable-maxlength="200" data-editable-page="/__global__">More</h2>
           <ul>
-            <li><a href="/about#about" data-i18n="foot_more1">About Us</a></li>
-            <li><a href="/impact#impact" data-i18n="foot_more2">Our Impact</a></li>
-            <li><a href="#contact" data-i18n="foot_more3">Contact Us</a></li>
-            <li><a href="/team#team" data-i18n="foot_more4">Our Team</a></li>
-            <li><a href="/faq#faq" data-i18n="foot_more5">FAQ</a></li>
-            <li><a href="/stories#stories" data-i18n="foot_more6">Success Stories</a></li>
+            <li><a href="/about#about" data-i18n="foot_more1" data-editable-content="site.footer.more1" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">About Us</a></li>
+            <li><a href="/impact#impact" data-i18n="foot_more2" data-editable-content="site.footer.more2" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">Our Impact</a></li>
+            <li><a href="#contact" data-i18n="foot_more3" data-editable-content="site.footer.more3" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">Contact Us</a></li>
+            <li><a href="/team#team" data-i18n="foot_more4" data-editable-content="site.footer.more4" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">Our Team</a></li>
+            <li><a href="/faq#faq" data-i18n="foot_more5" data-editable-content="site.footer.more5" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">FAQ</a></li>
+            <li><a href="/stories#stories" data-i18n="foot_more6" data-editable-content="site.footer.more6" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">Success Stories</a></li>
           </ul>
         </div>
       </div>
       <div class="foot-bottom">
-        <span data-i18n="foot_copy">© 2024–Present iHear Program. All rights reserved. Affiliated with CAPA-MC (501(c)(3)).</span>
-        <span data-i18n="foot_made">Designed, launched, and maintained by Monnast.</span>
+        <span data-i18n="foot_copy" data-editable-content="site.footer.copy" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">© 2024–Present iHear Program. All rights reserved. Affiliated with CAPA-MC (501(c)(3)).</span>
+        <span data-i18n="foot_made" data-editable-content="site.footer.made" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">Designed, launched, and maintained by Monnast.</span>
       </div>
     </div>
   </footer>

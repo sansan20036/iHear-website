@@ -1,23 +1,46 @@
 {
   "version": 3,
-  "updatedAt": "2026-07-11T20:23:20.365Z",
-  "updatedBy": "sansan20036@gmail.com",
+  "updatedAt": "2026-08-30T18:07:53.760Z",
   "locales": {
     "en": {
-      "pages": {},
-      "itemUpdatedAt": {}
+      "pages": {
+        "/": {
+          "home.stat.countries": "Countries Served"
+        }
+      },
+      "itemUpdatedAt": {
+        "/": {
+          "home.stat.countries": "2026-08-30T18:07:53.760Z"
+        }
+      }
     },
     "zhHant": {
       "pages": {
         "/about": {
           "section:nth-of-type(1)>div:nth-of-type(1)>div:nth-of-type(1)>h2:nth-of-type(1)": "iHear 為何而存在"
+        },
+        "/": {
+          "home.stat.countries": "服務國家"
         }
       },
-      "itemUpdatedAt": {}
+      "itemUpdatedAt": {
+        "/": {
+          "home.stat.countries": "2026-08-30T18:07:53.760Z"
+        }
+      }
     },
     "zhHans": {
-      "pages": {},
-      "itemUpdatedAt": {}
+      "pages": {
+        "/": {
+          "home.stat.countries": "服务国家"
+        }
+      },
+      "itemUpdatedAt": {
+        "/": {
+          "home.stat.countries": "2026-08-30T18:07:53.760Z"
+        }
+      }
     }
-  }
+  },
+  "updatedBy": "sansan20036@gmail.com"
 }

@@ -13,6 +13,11 @@ vi.mock("next/cache", () => ({
   revalidateTag: vi.fn(),
 }));
 
+vi.mock("../lib/admin-store", () => ({
+  findAdminAccount: vi.fn().mockResolvedValue(null),
+  appendAdminActivity: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock("../lib/impact-store", () => {
   class ImpactNotFoundError extends Error {}
   class ImpactConflictError extends Error {}
@@ -34,8 +39,12 @@ vi.mock("../lib/impact-store", () => {
     deleteImpactMilestone: vi.fn(),
     getCurrentSiteMetrics: vi.fn(),
     listAllImpactMilestones: vi.fn(),
+    listActiveImpactMilestones: vi.fn(),
+    listArchivedImpactMilestones: vi.fn(),
     listPublishedImpactMilestones: vi.fn(),
     updateImpactMilestone: vi.fn(),
+    trashImpactMilestone: vi.fn(),
+    restoreImpactMilestone: vi.fn(),
   };
 });
 
@@ -51,6 +60,7 @@ vi.mock("../lib/content-store", () => {
     }),
     readContentStore: vi.fn(),
     updateContentItem: vi.fn(),
+    updateContentItems: vi.fn(),
   };
 });
 
@@ -209,6 +219,7 @@ beforeEach(() => {
   impactStore.listPublishedImpactMilestones.mockResolvedValue([storedMilestone]);
   impactStore.getCurrentSiteMetrics.mockResolvedValue(currentMetrics);
   impactStore.listAllImpactMilestones.mockResolvedValue([storedMilestone]);
+  impactStore.listActiveImpactMilestones.mockResolvedValue([storedMilestone]);
   impactStore.createImpactMilestone.mockResolvedValue(storedMilestone);
   impactStore.updateImpactMilestone.mockResolvedValue({ ...storedMilestone, version: 2 });
   impactStore.deleteImpactMilestone.mockResolvedValue(storedMilestone.id);
@@ -233,6 +244,14 @@ beforeEach(() => {
         itemUpdatedAt: { "/about": { "main>h2:nth-of-type(1)": "2026-07-28T00:00:00.000Z" } },
       },
       zhHans: { pages: {}, itemUpdatedAt: {} },
+    },
+  });
+  contentStore.updateContentItems.mockResolvedValue({
+    version: 3, updatedAt: "2026-08-23T00:00:00.000Z", updatedBy: adminEmail,
+    locales: {
+      en: { pages: { "/": { "home.hero.eyebrow": "Student led" } }, itemUpdatedAt: {} },
+      zhHant: { pages: { "/": { "home.hero.eyebrow": "學生主導" } }, itemUpdatedAt: {} },
+      zhHans: { pages: { "/": { "home.hero.eyebrow": "学生主导" } }, itemUpdatedAt: {} },
     },
   });
   liveRevisions.revisionAfterMutation.mockResolvedValue({
@@ -314,6 +333,12 @@ describe("public API caching", () => {
     const body = await response.json();
     expect(body.updatedBy).toBeUndefined();
     expect(body.version).toBe(3);
+  });
+
+  test("scopes content reads to the requested page plus global content", async () => {
+    const response = await getContent(new Request("http://localhost/api/content/get?page=%2Fabout"));
+    expect(response.status).toBe(200);
+    expect(contentStore.readContentStore).toHaveBeenCalledWith("/about");
   });
 
   test("draft listing is private and never cached", async () => {
@@ -554,7 +579,10 @@ describe("authorized mutations", () => {
     );
 
     expect(response.status).toBe(201);
-    expect(impactStore.createImpactMilestone).toHaveBeenCalledWith(validPayload, adminEmail);
+    expect(impactStore.createImpactMilestone).toHaveBeenCalledWith(validPayload, adminEmail, expect.arrayContaining([
+      expect.objectContaining({ field: "title", locale: "zhHant", origin: "manual" }),
+      expect.objectContaining({ field: "description", locale: "zhHans", origin: "manual" }),
+    ]));
     expect(revalidateTag).toHaveBeenCalledWith("journey-timeline-v2", { expire: 0 });
     expect(revalidatePath).toHaveBeenCalledWith("/about");
     expect(revalidatePath).toHaveBeenCalledWith("/");
@@ -584,7 +612,7 @@ describe("authorized mutations", () => {
       jsonRequest(
         `http://localhost/api/impact-milestones/${storedMilestone.id}`,
         "DELETE",
-        { version: 1 },
+        { version: 1, permanent: true },
       ),
       routeContext(),
     );
@@ -633,6 +661,50 @@ describe("authorized mutations", () => {
 
     expect(response.status).toBe(428);
     expect(contentStore.updateContentItem).not.toHaveBeenCalled();
+  });
+
+  test("rejects cross-origin inline content writes", async () => {
+    const request = jsonRequest("http://localhost/api/content/update", "POST", {
+      page: "/about", key: "about.mission.heading", locale: "en", value: "Blocked", expectedUpdatedAt: null,
+    });
+    request.headers.set("origin", "https://attacker.example");
+    const response = await updateContent(request);
+    expect(response.status).toBe(403);
+    expect(contentStore.updateContentItem).not.toHaveBeenCalled();
+  });
+
+  test("publishes all three catalog languages atomically", async () => {
+    const values = { en: "Student led", zhHant: "學生主導", zhHans: "学生主导" };
+    const expectedUpdatedAtByLocale = { en: null, zhHant: null, zhHans: null };
+    const response = await updateContent(jsonRequest("http://localhost/api/content/update", "POST", {
+      page: "/", key: "home.hero.eyebrow", values, expectedUpdatedAtByLocale,
+    }));
+    expect(response.status).toBe(200);
+    expect(contentStore.updateContentItems).toHaveBeenCalledWith({ page: "/", key: "home.hero.eyebrow", values, expectedUpdatedAt: expectedUpdatedAtByLocale, updatedBy: adminEmail, translationStates: expect.arrayContaining([
+      expect.objectContaining({ field: "value", locale: "zhHant", origin: "manual" }),
+      expect.objectContaining({ field: "value", locale: "zhHans", origin: "manual" }),
+    ]) });
+    expect(liveRevisions.revisionAfterMutation).toHaveBeenCalledWith("content");
+  });
+
+  test("rejects unknown, incomplete, multiline, and over-limit semantic content", async () => {
+    const base = { values: { en: "Valid", zhHant: "有效", zhHans: "有效" }, expectedUpdatedAtByLocale: { en: null, zhHant: null, zhHans: null } };
+    const responses = await Promise.all([
+      updateContent(jsonRequest("http://localhost/api/content/update", "POST", { page: "/", key: "home.unknown.title", ...base })),
+      updateContent(jsonRequest("http://localhost/api/content/update", "POST", { page: "/", key: "home.hero.eyebrow", values: { en: "Valid", zhHant: "有效" }, expectedUpdatedAtByLocale: base.expectedUpdatedAtByLocale })),
+      updateContent(jsonRequest("http://localhost/api/content/update", "POST", { page: "/", key: "home.hero.eyebrow", ...base, values: { ...base.values, en: "line one\nline two" } })),
+      updateContent(jsonRequest("http://localhost/api/content/update", "POST", { page: "/", key: "home.hero.eyebrow", ...base, values: { ...base.values, en: "x".repeat(121) } })),
+    ]);
+    expect(responses.map((response) => response.status)).toEqual([400, 400, 400, 400]);
+    expect(contentStore.updateContentItems).not.toHaveBeenCalled();
+  });
+
+  test("returns 428 without bulk preconditions and 409 for any locale conflict", async () => {
+    const values = { en: "Student led", zhHant: "學生主導", zhHans: "学生主导" };
+    const missing = await updateContent(jsonRequest("http://localhost/api/content/update", "POST", { page: "/", key: "home.hero.eyebrow", values }));
+    contentStore.updateContentItems.mockRejectedValueOnce(new contentStore.ContentConflictError());
+    const conflict = await updateContent(jsonRequest("http://localhost/api/content/update", "POST", { page: "/", key: "home.hero.eyebrow", values, expectedUpdatedAtByLocale: { en: null, zhHant: null, zhHans: null } }));
+    expect([missing.status, conflict.status]).toEqual([428, 409]);
   });
 
   test("requires a supported inline-content locale", async () => {

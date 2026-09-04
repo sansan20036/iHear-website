@@ -183,6 +183,7 @@ function persistLanguage(language: Language) {
 export default function AuthErrorClient({ error, initialLanguage }: { error: string; initialLanguage: Language }) {
   const [language, setLanguage] = useState<Language>(initialLanguage);
   const kind = errorKind(error);
+  const contentKind = kind === "accessDenied" ? "access_denied" : kind;
   const activeCopy = copy[language][kind];
   const safeReference = kind === "generic" ? "SignInError" : error;
 
@@ -195,9 +196,15 @@ export default function AuthErrorClient({ error, initialLanguage }: { error: str
   useEffect(() => {
     document.documentElement.lang = htmlLanguage[language];
     document.title = activeCopy.documentTitle;
+    window.dispatchEvent(new CustomEvent("ihear:language", { detail: { locale: language } }));
   }, [activeCopy.documentTitle, language]);
 
   function selectLanguage(nextLanguage: Language) {
+    const before = new CustomEvent("ihear:before-language", {
+      cancelable: true,
+      detail: { from: language, to: nextLanguage, locale: nextLanguage },
+    });
+    if (!window.dispatchEvent(before)) return;
     setLanguage(nextLanguage);
     persistLanguage(nextLanguage);
   }
@@ -213,16 +220,16 @@ export default function AuthErrorClient({ error, initialLanguage }: { error: str
           <button type="button" lang="zh-Hans" aria-pressed={language === "zhHans"} onClick={() => selectLanguage("zhHans")}>简</button>
         </div>
 
-        <p className={styles.eyebrow}>{activeCopy.eyebrow}</p>
-        <h1 id="auth-error-title">{activeCopy.title}</h1>
-        <p className={styles.description}>{activeCopy.description}</p>
+        <p className={styles.eyebrow} data-editable-content={`errors.auth.${contentKind}.eyebrow`} data-editable-page="/auth-error" data-editable-mode="singleline" data-editable-maxlength="200">{activeCopy.eyebrow}</p>
+        <h1 id="auth-error-title" data-editable-content={`errors.auth.${contentKind}.title`} data-editable-page="/auth-error" data-editable-mode="singleline" data-editable-maxlength="200">{activeCopy.title}</h1>
+        <p className={styles.description} data-editable-content={`errors.auth.${contentKind}.description`} data-editable-page="/auth-error" data-editable-mode="multiline" data-editable-maxlength="5000">{activeCopy.description}</p>
 
         <div className={styles.actions}>
-          <a className={styles.primaryAction} href="/">{activeCopy.home}</a>
-          <a className={styles.secondaryAction} href="/contact">{activeCopy.contact}</a>
+          <a className={styles.primaryAction} href="/" data-editable-content={`errors.auth.${contentKind}.home`} data-editable-page="/auth-error" data-editable-mode="singleline" data-editable-maxlength="200">{activeCopy.home}</a>
+          <a className={styles.secondaryAction} href="/contact" data-editable-content={`errors.auth.${contentKind}.contact`} data-editable-page="/auth-error" data-editable-mode="singleline" data-editable-maxlength="200">{activeCopy.contact}</a>
         </div>
 
-        <p className={styles.reference}>{activeCopy.reference}: <code>{safeReference}</code></p>
+        <p className={styles.reference}><span data-editable-content={`errors.auth.${contentKind}.reference`} data-editable-page="/auth-error" data-editable-mode="singleline" data-editable-maxlength="200">{activeCopy.reference}</span>: <code>{safeReference}</code></p>
       </section>
     </main>
   );

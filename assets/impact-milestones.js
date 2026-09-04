@@ -3,6 +3,7 @@
 
   const mount = document.querySelector("[data-impact-milestones]");
   if (!mount) return;
+  const languageGuardPromise = import("/assets/text-language-guard.js").catch(() => null);
 
   const labelsByLocale = {
     en: {
@@ -44,10 +45,10 @@
       saveDraft: "Save draft",
       publish: "Publish",
       cancel: "Cancel",
-      deleteItem: "Delete timeline item",
+      deleteItem: "Move to trash",
       close: "Close editor",
       saved: "Milestone saved.",
-      deletedNotice: "Timeline item permanently deleted.",
+      deletedNotice: "Timeline item moved to trash.",
       loadFailed: "Could not load the latest impact data.",
       saveFailed: "Could not save this milestone.",
       conflict: "Someone else updated this milestone. Your draft is still here; reload before saving again.",
@@ -57,7 +58,7 @@
       draftDescription: "Add at least one description before saving a draft.",
       draftEventContent: "Add at least one title and description before saving a draft.",
       unsaved: "Discard your unsaved changes?",
-      deleteConfirm: "Permanently delete this timeline item? This cannot be undone.",
+      deleteConfirm: "Move this timeline item to trash? You can restore it in the admin dashboard.",
       manualMode: "Manual translation mode",
       manualHint: "Enter or paste each translation yourself. You can copy another language as a starting point, then revise it manually.",
       copyFrom: "Copy from",
@@ -109,10 +110,10 @@
       saveDraft: "儲存草稿",
       publish: "發布",
       cancel: "取消",
-      deleteItem: "刪除本歷程",
+      deleteItem: "移至回收區",
       close: "關閉編輯器",
       saved: "成果資料已儲存。",
-      deletedNotice: "本歷程已永久刪除。",
+      deletedNotice: "本歷程已移至回收區。",
       loadFailed: "暫時無法載入最新成果資料。",
       saveFailed: "無法儲存這筆成果資料。",
       conflict: "另一位管理員已更新這筆資料。你的草稿仍保留，請重新載入後再儲存。",
@@ -122,7 +123,7 @@
       draftDescription: "儲存草稿前至少填寫一種語言的說明。",
       draftEventContent: "儲存草稿前至少填寫一種語言的標題與說明文案。",
       unsaved: "要放棄尚未儲存的修改嗎？",
-      deleteConfirm: "確定要永久刪除本歷程嗎？刪除後無法復原。",
+      deleteConfirm: "確定將本歷程移至回收區？之後可在管理後台復原。",
       manualMode: "人工翻譯模式",
       manualHint: "請自行輸入或貼上各語言內容；也可先複製其他語言作為底稿，再手動調整。",
       copyFrom: "複製自",
@@ -174,10 +175,10 @@
       saveDraft: "保存草稿",
       publish: "发布",
       cancel: "取消",
-      deleteItem: "删除本历程",
+      deleteItem: "移至回收区",
       close: "关闭编辑器",
       saved: "成果数据已保存。",
-      deletedNotice: "本历程已永久删除。",
+      deletedNotice: "本历程已移至回收区。",
       loadFailed: "暂时无法加载最新成果数据。",
       saveFailed: "无法保存这笔成果数据。",
       conflict: "另一位管理员已更新这笔数据。你的草稿仍保留，请重新加载后再保存。",
@@ -187,7 +188,7 @@
       draftDescription: "保存草稿前至少填写一种语言的说明。",
       draftEventContent: "保存草稿前至少填写一种语言的标题与说明文案。",
       unsaved: "要放弃尚未保存的修改吗？",
-      deleteConfirm: "确定要永久删除本历程吗？删除后无法恢复。",
+      deleteConfirm: "确定将本历程移至回收区？之后可在管理后台恢复。",
       manualMode: "人工翻译模式",
       manualHint: "请自行输入或粘贴各语言内容；也可先复制其他语言作为底稿，再手动调整。",
       copyFrom: "复制自",
@@ -209,10 +210,13 @@
     loadingAdmin: false,
     draft: null,
     originalDraft: "",
-    activeLocale: "zhHant",
-    previewLocale: "zhHant",
+    activeLocale: "en",
+    previewLocale: "en",
     busy: false,
     manualStatus: "",
+    translationReceipt: "",
+    translationReady: false,
+    englishGuardAccepted: false,
   };
 
   const fallbackHtml = mount.innerHTML;
@@ -449,9 +453,12 @@
   function openEditor(item) {
     state.draft = copyDraft(item);
     state.originalDraft = JSON.stringify(state.draft);
-    state.activeLocale = locale() === "en" ? "en" : locale();
+    state.activeLocale = "en";
     state.previewLocale = state.activeLocale;
     state.manualStatus = "";
+    state.translationReceipt = "";
+    state.translationReady = false;
+    state.englishGuardAccepted = false;
     buildEditor();
     if (typeof dialog.showModal === "function") dialog.showModal();
     else dialog.setAttribute("open", "");
@@ -468,6 +475,9 @@
     state.busy = false;
     state.draft = null;
     state.originalDraft = "";
+    state.translationReceipt = "";
+    state.translationReady = false;
+    state.englishGuardAccepted = false;
     if (typeof dialog.close === "function" && dialog.open) dialog.close();
     else dialog.removeAttribute("open");
     if (window.iHearLiveContent) window.iHearLiveContent.checkNow({ force: true });
@@ -618,15 +628,18 @@
       <div class="impact-localized-title" data-title-field>
         <label for="impact-title-${key}">${l.title} — ${label}</label>
         <input id="impact-title-${key}" name="title.${key}" type="text" maxlength="200">
+        <div class="language-guard-warning" data-impact-language-guard="title.${key}" hidden></div>
         <span class="impact-field-error" data-error="title.${key}"></span>
       </div>
       <div class="impact-localized-country" data-country-names-field>
         <label for="impact-country-names-${key}">${l.countryNames} — ${label}</label>
         <input id="impact-country-names-${key}" name="countryNames.${key}" type="text" maxlength="500">
+        <div class="language-guard-warning" data-impact-language-guard="countryNames.${key}" hidden></div>
         <span class="impact-field-error" data-error="countryNames.${key}"></span>
       </div>
       <label class="impact-localized-description" for="impact-description-${key}">${l.description} — ${label}</label>
       <textarea id="impact-description-${key}" name="description.${key}" maxlength="2000"></textarea>
+      <div class="language-guard-warning" data-impact-language-guard="description.${key}" hidden></div>
       <span class="impact-field-error" data-error="description.${key}"></span>
     </div>`;
   }
@@ -709,6 +722,7 @@
     if (sourceLocale) {
       state.activeLocale = sourceLocale;
       state.manualStatus = "";
+      if (sourceLocale === "en") { state.translationReceipt = ""; state.translationReady = false; state.englishGuardAccepted = false; }
     }
     clearEditorErrors();
     updateEditor();
@@ -825,6 +839,19 @@
       : previewTitle;
     dialog.querySelector("[data-preview-description]").textContent = previewDescription || labels().previewEmpty;
     updateManualStatus();
+    void renderLanguageGuards();
+  }
+
+  async function renderLanguageGuards() {
+    if (!state.draft) return;
+    const guard = await languageGuardPromise; if (!guard) return;
+    ["title", "countryNames", "description"].forEach((field) => ["zhHant", "zhHans", "en"].forEach((language) => {
+      const container = dialog.querySelector(`[data-impact-language-guard="${field}.${language}"]`);
+      guard.renderLanguageGuard(container, { language, value: String(state.draft[field]?.[language] || ""), uiLocale: locale(), englishAccepted: state.englishGuardAccepted, disabled: state.busy,
+        onAcceptEnglish: () => { state.englishGuardAccepted = true; void renderLanguageGuards(); },
+        onChange: (value) => { state.draft[field][language] = value; const input = dialog.querySelector(`[name="${CSS.escape(`${field}.${language}`)}"]`); if (input) input.value = value; state.translationReceipt = ""; updateEditor(); },
+      });
+    }));
   }
 
   function clearEditorErrors() {
@@ -929,6 +956,7 @@
       },
       status,
       sortOrder: Number(item.sortOrder || String(item.period).replace("-", "")),
+      translationReceipt: state.translationReceipt || undefined,
       ...(item.id ? { version: Number(item.version) } : {}),
     };
   }
@@ -942,6 +970,25 @@
 
   async function saveCurrent(status) {
     if (!state.draft || state.busy) return;
+    const guard = await languageGuardPromise;
+    const englishFields = state.draft.kind === "event" ? [state.draft.title.en, state.draft.description.en] : [state.draft.countryNames.en, state.draft.description.en];
+    if (guard?.hasRiskyEnglish(englishFields.map((value) => String(value || ""))) && !state.englishGuardAccepted) { state.activeLocale = "en"; updateEditor(); dialog.querySelector('[data-locale-panel="en"] input,[data-locale-panel="en"] textarea')?.focus(); return; }
+    if (!state.translationReady) {
+      const fieldNames = state.draft.kind === "event" ? ["title", "description"] : ["countryNames", "description"];
+      const fields = Object.fromEntries(fieldNames.filter((field) => String(state.draft[field]?.en || "").trim()).map((field) => [field, state.draft[field]]));
+      if (Object.keys(fields).length) {
+        setBusy(true);
+        try {
+          const response = await fetch("/api/admin/translations/preview", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ resource: { type: "impact", scope: "", id: state.draft.id || "__new__", version: state.draft.id ? state.draft.version : undefined }, fields, allowCjkEnglish: state.englishGuardAccepted }) });
+          const data = await response.json().catch(() => null);
+          if (!response.ok) { const error = new Error((data && data.error) || labels().saveFailed); error.status = response.status; throw error; }
+          Object.entries(data.fields).forEach(([field, result]) => { state.draft[field] = result.value; });
+          state.translationReceipt = data.receipt; state.translationReady = true; state.activeLocale = "zhHant"; state.previewLocale = "zhHant"; state.manualStatus = locale() === "en" ? "Chinese preview ready. Review it, then save." : locale() === "zhHans" ? "中文预览已完成，请检查后再保存。" : "中文預覽已完成，請檢查後再儲存。";
+          buildEditor(); setBusy(false); return;
+        } catch (error) { setBusy(false); showToast(error.message || labels().saveFailed, true); return; }
+      }
+      state.translationReady = true;
+    }
     const errors = validateDraft(status);
     if (Object.keys(errors).length) {
       showValidation(errors);
