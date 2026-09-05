@@ -37,6 +37,7 @@
   "dependencies": {
     "@google-cloud/translate": "^10.0.1",
     "@supabase/supabase-js": "^2.112.3",
+    "@vercel/oidc": "^3.8.5",
     "browser-image-compression": "2.0.2",
     "next": "^16.2.11",
     "next-auth": "^5.0.0-beta.32",

@@ -329,6 +329,16 @@ key to the Git-ignored `.env.local`, and generates a new receipt-signing secret.
 either secret. Restart `npm run dev` after configuration. Do not commit or share the downloaded
 JSON key.
 
+Hosted Vercel deployments use OIDC federation instead of a service-account private key. Configure
+the Vercel project for Team issuer mode, create a Google Workload Identity Pool/provider restricted
+to this project's `production` subject, and set the non-secret `GOOGLE_CLOUD_PROJECT_ID`,
+`GOOGLE_CLOUD_PROJECT_NUMBER`, `GOOGLE_CLOUD_SERVICE_ACCOUNT_EMAIL`,
+`GOOGLE_CLOUD_WORKLOAD_IDENTITY_POOL_ID`, and `GOOGLE_CLOUD_WORKLOAD_IDENTITY_PROVIDER_ID`
+environment variables. Set a separate sensitive `TRANSLATION_RECEIPT_SECRET` for Production.
+Never set `GOOGLE_CLOUD_PRIVATE_KEY` on Vercel. The application fails closed on Vercel if the OIDC
+configuration is missing and will not fall back to a long-lived key. See
+[`docs/vercel-google-oidc.md`](docs/vercel-google-oidc.md) for the exact trust boundary and checks.
+
 For isolated admin testing, use `npm run dev:local`. This pins the local site to
 `http://localhost:3000`, matching the registered Google OAuth callback, and forces Team, Impact,
 content, layout, request protection, and translation-state persistence to the Git-ignored local

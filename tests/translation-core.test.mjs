@@ -5,6 +5,8 @@ import {
   createTranslationReceipt,
   finishProtectedTranslation,
   finishGoogleTranslationHtml,
+  googleTranslationAuthConfiguration,
+  isGoogleTranslationConfigured,
   prepareGoogleTranslationHtml,
   protectTranslationText,
   sha256,
@@ -15,9 +17,80 @@ import {
 } from "../lib/translation-core.ts";
 
 const originalSecret = process.env.TRANSLATION_RECEIPT_SECRET;
+const googleEnvironmentNames = [
+  "VERCEL",
+  "VERCEL_ENV",
+  "GOOGLE_CLOUD_PROJECT_ID",
+  "GOOGLE_CLOUD_PROJECT_NUMBER",
+  "GOOGLE_CLOUD_SERVICE_ACCOUNT_EMAIL",
+  "GOOGLE_CLOUD_WORKLOAD_IDENTITY_POOL_ID",
+  "GOOGLE_CLOUD_WORKLOAD_IDENTITY_PROVIDER_ID",
+  "GOOGLE_CLOUD_CLIENT_EMAIL",
+  "GOOGLE_CLOUD_PRIVATE_KEY",
+];
+const originalGoogleEnvironment = Object.fromEntries(googleEnvironmentNames.map((name) => [name, process.env[name]]));
 afterEach(() => {
   if (originalSecret == null) delete process.env.TRANSLATION_RECEIPT_SECRET;
   else process.env.TRANSLATION_RECEIPT_SECRET = originalSecret;
+  for (const name of googleEnvironmentNames) {
+    if (originalGoogleEnvironment[name] == null) delete process.env[name];
+    else process.env[name] = originalGoogleEnvironment[name];
+  }
+});
+
+describe("Google translation authentication", () => {
+  it("uses Workload Identity Federation in Vercel without a private key", () => {
+    process.env.VERCEL = "1";
+    process.env.GOOGLE_CLOUD_PROJECT_ID = "project-id";
+    process.env.GOOGLE_CLOUD_PROJECT_NUMBER = "123456789";
+    process.env.GOOGLE_CLOUD_SERVICE_ACCOUNT_EMAIL = "translation@project-id.iam.gserviceaccount.com";
+    process.env.GOOGLE_CLOUD_WORKLOAD_IDENTITY_POOL_ID = "vercel";
+    process.env.GOOGLE_CLOUD_WORKLOAD_IDENTITY_PROVIDER_ID = "vercel";
+    delete process.env.GOOGLE_CLOUD_PRIVATE_KEY;
+    const configuration = googleTranslationAuthConfiguration();
+    expect(configuration).toMatchObject({ mode: "vercel-oidc", projectId: "project-id", projectNumber: "123456789" });
+    expect(configuration).not.toHaveProperty("privateKey");
+    expect(configuration.credentialAudience).toBe("//iam.googleapis.com/projects/123456789/locations/global/workloadIdentityPools/vercel/providers/vercel");
+    expect(configuration.tokenAudience).toBe("https://iam.googleapis.com/projects/123456789/locations/global/workloadIdentityPools/vercel/providers/vercel");
+    expect(isGoogleTranslationConfigured()).toBe(true);
+  });
+
+  it("refuses to use a long-lived service-account key inside Vercel", () => {
+    process.env.VERCEL = "1";
+    process.env.GOOGLE_CLOUD_PROJECT_ID = "project-id";
+    process.env.GOOGLE_CLOUD_CLIENT_EMAIL = "translation@project-id.iam.gserviceaccount.com";
+    process.env.GOOGLE_CLOUD_PRIVATE_KEY = "private-key";
+    delete process.env.GOOGLE_CLOUD_PROJECT_NUMBER;
+    delete process.env.GOOGLE_CLOUD_SERVICE_ACCOUNT_EMAIL;
+    delete process.env.GOOGLE_CLOUD_WORKLOAD_IDENTITY_POOL_ID;
+    delete process.env.GOOGLE_CLOUD_WORKLOAD_IDENTITY_PROVIDER_ID;
+    expect(() => googleTranslationAuthConfiguration()).toThrow("OIDC");
+    expect(isGoogleTranslationConfigured()).toBe(false);
+  });
+
+  it("keeps the existing service-account key flow for localhost", () => {
+    delete process.env.VERCEL;
+    delete process.env.VERCEL_ENV;
+    process.env.GOOGLE_CLOUD_PROJECT_ID = "project-id";
+    process.env.GOOGLE_CLOUD_CLIENT_EMAIL = "translation@project-id.iam.gserviceaccount.com";
+    process.env.GOOGLE_CLOUD_PRIVATE_KEY = "line-one\\nline-two";
+    delete process.env.GOOGLE_CLOUD_PROJECT_NUMBER;
+    delete process.env.GOOGLE_CLOUD_SERVICE_ACCOUNT_EMAIL;
+    delete process.env.GOOGLE_CLOUD_WORKLOAD_IDENTITY_POOL_ID;
+    delete process.env.GOOGLE_CLOUD_WORKLOAD_IDENTITY_PROVIDER_ID;
+    expect(googleTranslationAuthConfiguration()).toMatchObject({ mode: "service-account-key", privateKey: "line-one\nline-two" });
+  });
+
+  it("fails closed when only part of the OIDC configuration exists", () => {
+    process.env.VERCEL = "1";
+    process.env.GOOGLE_CLOUD_PROJECT_ID = "project-id";
+    process.env.GOOGLE_CLOUD_PROJECT_NUMBER = "123456789";
+    delete process.env.GOOGLE_CLOUD_SERVICE_ACCOUNT_EMAIL;
+    delete process.env.GOOGLE_CLOUD_CLIENT_EMAIL;
+    delete process.env.GOOGLE_CLOUD_WORKLOAD_IDENTITY_POOL_ID;
+    delete process.env.GOOGLE_CLOUD_WORKLOAD_IDENTITY_PROVIDER_ID;
+    expect(() => googleTranslationAuthConfiguration()).toThrow("incomplete");
+  });
 });
 
 describe("translation glossary and placeholders", () => {

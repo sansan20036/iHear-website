@@ -1,6 +1,8 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
 import { TranslationServiceClient } from "@google-cloud/translate";
+import { getVercelOidcToken } from "@vercel/oidc";
+import { ExternalAccountClient } from "google-auth-library";
 import OpenCC from "opencc-js";
 
 import type {
@@ -179,16 +181,81 @@ export function finishProtectedTranslation(protectedValue: ProtectedValue, trans
   };
 }
 
-function googleCredentials() {
+type GoogleTranslationAuth =
+  | {
+      mode: "vercel-oidc";
+      projectId: string;
+      projectNumber: string;
+      serviceAccountEmail: string;
+      poolId: string;
+      providerId: string;
+      credentialAudience: string;
+      tokenAudience: string;
+    }
+  | {
+      mode: "service-account-key";
+      projectId: string;
+      clientEmail: string;
+      privateKey: string;
+    };
+
+function isVercelRuntime() {
+  return process.env.VERCEL === "1" || Boolean(process.env.VERCEL_ENV);
+}
+
+function oidcCredentials() {
+  const projectId = process.env.GOOGLE_CLOUD_PROJECT_ID?.trim();
+  const projectNumber = process.env.GOOGLE_CLOUD_PROJECT_NUMBER?.trim();
+  const serviceAccountEmail = process.env.GOOGLE_CLOUD_SERVICE_ACCOUNT_EMAIL?.trim();
+  const poolId = process.env.GOOGLE_CLOUD_WORKLOAD_IDENTITY_POOL_ID?.trim();
+  const providerId = process.env.GOOGLE_CLOUD_WORKLOAD_IDENTITY_PROVIDER_ID?.trim();
+  const oidcSpecificValues = [projectNumber, serviceAccountEmail, poolId, providerId];
+  if (!oidcSpecificValues.some(Boolean)) return null;
+  const values = [projectId, ...oidcSpecificValues];
+  if (!values.every(Boolean)) throw new TranslationConfigurationError("Google Cloud OIDC configuration is incomplete");
+  if (!/^\d{6,30}$/.test(projectNumber!) || !/^[a-z][a-z0-9-]{2,31}$/.test(poolId!) || !/^[a-z][a-z0-9-]{2,31}$/.test(providerId!)) {
+    throw new TranslationConfigurationError("Google Cloud OIDC configuration is invalid");
+  }
+  if (!/^[a-z0-9][a-z0-9._-]*@[a-z0-9.-]+\.iam\.gserviceaccount\.com$/i.test(serviceAccountEmail!)) {
+    throw new TranslationConfigurationError("Google Cloud OIDC service account is invalid");
+  }
+  const providerResource = `iam.googleapis.com/projects/${projectNumber}/locations/global/workloadIdentityPools/${poolId}/providers/${providerId}`;
+  // Google STS requires a protocol-relative resource name in the external
+  // account credential, while the Vercel-issued ID token must use the
+  // provider's HTTPS URL as its aud claim.
+  const credentialAudience = `//${providerResource}`;
+  const tokenAudience = `https://${providerResource}`;
+  return {
+    mode: "vercel-oidc",
+    projectId,
+    projectNumber,
+    serviceAccountEmail,
+    poolId,
+    providerId,
+    credentialAudience,
+    tokenAudience,
+  } as const;
+}
+
+function localServiceAccountCredentials() {
   const projectId = process.env.GOOGLE_CLOUD_PROJECT_ID?.trim();
   const clientEmail = process.env.GOOGLE_CLOUD_CLIENT_EMAIL?.trim();
   const privateKey = process.env.GOOGLE_CLOUD_PRIVATE_KEY?.replace(/\\n/g, "\n").trim();
   if (!projectId || !clientEmail || !privateKey) throw new TranslationConfigurationError("Automatic translation is not configured");
-  return { projectId, clientEmail, privateKey };
+  return { mode: "service-account-key", projectId, clientEmail, privateKey } as const;
+}
+
+export function googleTranslationAuthConfiguration(): GoogleTranslationAuth {
+  const oidc = oidcCredentials();
+  if (oidc) return oidc;
+  // Hosted Vercel functions must never fall back to a persisted service-account
+  // private key. Local development keeps the key flow for offline-safe testing.
+  if (isVercelRuntime()) throw new TranslationConfigurationError("Vercel OIDC translation authentication is not configured");
+  return localServiceAccountCredentials();
 }
 
 export function isGoogleTranslationConfigured() {
-  try { googleCredentials(); return true; } catch { return false; }
+  try { googleTranslationAuthConfiguration(); return true; } catch { return false; }
 }
 
 export function prepareGoogleTranslationHtml(value: string) {
@@ -212,11 +279,28 @@ export function finishGoogleTranslationHtml(value: string) {
 
 export async function googleTranslateToZhHant(contents: string[]) {
   if (!contents.length) return [];
-  const credentials = googleCredentials();
-  const client = new TranslationServiceClient({
-    projectId: credentials.projectId,
-    credentials: { client_email: credentials.clientEmail, private_key: credentials.privateKey },
-  });
+  const credentials = googleTranslationAuthConfiguration();
+  let client: TranslationServiceClient;
+  if (credentials.mode === "vercel-oidc") {
+    const authClient = ExternalAccountClient.fromJSON({
+      type: "external_account",
+      audience: credentials.credentialAudience,
+      subject_token_type: "urn:ietf:params:oauth:token-type:jwt",
+      token_url: "https://sts.googleapis.com/v1/token",
+      service_account_impersonation_url: `https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${credentials.serviceAccountEmail}:generateAccessToken`,
+      scopes: ["https://www.googleapis.com/auth/cloud-platform"],
+      subject_token_supplier: {
+        getSubjectToken: () => getVercelOidcToken({ audience: credentials.tokenAudience, expirationBufferMs: 5 * 60 * 1000 }),
+      },
+    });
+    if (!authClient) throw new TranslationConfigurationError("Could not initialize Google Cloud OIDC authentication");
+    client = new TranslationServiceClient({ projectId: credentials.projectId, authClient });
+  } else {
+    client = new TranslationServiceClient({
+      projectId: credentials.projectId,
+      credentials: { client_email: credentials.clientEmail, private_key: credentials.privateKey },
+    });
+  }
   const [response] = await client.translateText({
     parent: `projects/${credentials.projectId}/locations/global`,
     contents: contents.map(prepareGoogleTranslationHtml),
