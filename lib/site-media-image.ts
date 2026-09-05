@@ -1,28 +1,14 @@
 import sharp, { type Metadata } from "sharp";
 
+import { SiteMediaImageError } from "./site-media-errors";
+import type { ProcessedSiteMediaVariant } from "./site-media-types";
+export { SiteMediaImageError } from "./site-media-errors";
+export type { ProcessedSiteMediaVariant } from "./site-media-types";
+
 export const CLIENT_IMAGE_MAX_BYTES = Math.floor(0.95 * 1024 * 1024);
 export const AVATAR_IMAGE_MAX_BYTES = 500 * 1024;
 export const MULTIPART_MAX_BYTES = Math.floor(1.25 * 1024 * 1024);
 export const SITE_MEDIA_WIDTHS = [480, 800, 1200] as const;
-
-export class SiteMediaImageError extends Error {
-  status: number;
-
-  constructor(message: string, status = 400) {
-    super(message);
-    this.name = "SiteMediaImageError";
-    this.status = status;
-  }
-}
-
-export type ProcessedSiteMediaVariant = {
-  width: number;
-  pixelWidth: number;
-  pixelHeight: number;
-  byteSize: number;
-  mimeType: "image/webp";
-  buffer: Buffer;
-};
 
 async function encodeVariant(input: Buffer, width: number) {
   for (const quality of [82, 76, 70, 64]) {

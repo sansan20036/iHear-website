@@ -18,6 +18,12 @@ const nextConfig = {
   turbopack: {
     root: process.cwd(),
   },
+  // Sharp loads its platform-specific libvips package dynamically. Include the
+  // installed @img runtime files in media API functions so Vercel's output
+  // tracing cannot omit the Linux shared library.
+  outputFileTracingIncludes: {
+    "/api/site-media/[slot]": ["./node_modules/@img/**/*"],
+  },
   async rewrites() {
     return [
       { source: "/", destination: "/index.html" },

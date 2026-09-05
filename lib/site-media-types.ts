@@ -26,6 +26,15 @@ export type SiteMediaVariant = {
   storagePath: string;
 };
 
+export type ProcessedSiteMediaVariant = {
+  width: number;
+  pixelWidth: number;
+  pixelHeight: number;
+  byteSize: number;
+  mimeType: "image/webp";
+  buffer: Buffer;
+};
+
 export type SiteMediaAsset = {
   slot: SiteMediaSlot;
   alt: SiteMediaAlt;

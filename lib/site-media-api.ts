@@ -2,7 +2,7 @@ import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server";
 
 import { revisionAfterMutation } from "./live-revisions";
-import { SiteMediaImageError } from "./site-media-image";
+import { SiteMediaImageError } from "./site-media-errors";
 import { SiteMediaConfigurationError, SiteMediaConflictError } from "./site-media-store";
 import { SiteMediaStorageConfigurationError, SiteMediaStorageError } from "./site-media-storage";
 

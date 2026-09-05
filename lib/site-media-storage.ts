@@ -4,8 +4,7 @@ import path from "node:path";
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
-import type { ProcessedSiteMediaVariant } from "./site-media-image";
-import type { SiteMediaSlot, SiteMediaVariant } from "./site-media-types";
+import type { ProcessedSiteMediaVariant, SiteMediaSlot, SiteMediaVariant } from "./site-media-types";
 
 export class SiteMediaStorageConfigurationError extends Error {
   constructor() {

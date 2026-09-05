@@ -78,6 +78,8 @@ describe("production operations configuration", () => {
     const migration = await read("db/migrations/011_site_media_assets.sql");
     const publicBuild = await read("scripts/prepare-public.mjs");
     const ci = await read(".github/workflows/ci.yml");
+    const mediaApi = await read("lib/site-media-api.ts");
+    const nextConfig = await read("next.config.mjs");
 
     expect(backup).toContain("site_media_assets: siteMediaAssets");
     expect(backup).toContain("site_media_variants: siteMediaVariants");
@@ -93,6 +95,9 @@ describe("production operations configuration", () => {
     expect(ci).toContain("Verify sharp on Linux");
     expect(ci).toContain(".webp().toBuffer()");
     expect(ci).toContain("test -s public/assets/vendor/browser-image-compression.js");
+    expect(mediaApi).toContain('from "./site-media-errors"');
+    expect(mediaApi).not.toContain('from "./site-media-image"');
+    expect(nextConfig).toContain('"/api/site-media/[slot]": ["./node_modules/@img/**/*"]');
   });
 
   it("keeps the site theme accessible, recoverable, and flash-free on every page", async () => {
