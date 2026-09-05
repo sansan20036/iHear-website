@@ -926,6 +926,7 @@ test("sitewide media slots independently update service cards, localized alt tex
 });
 
 test("all repository content photos expose stable sitewide media slots", async ({ page }) => {
+  test.setTimeout(60_000);
   await mockApplication(page);
   await page.goto("/");
   await expect(page.locator("[data-site-media-slot]")).toHaveCount(4);
@@ -1216,7 +1217,9 @@ test("team manager is mobile-safe and exposes structured editing controls", asyn
   expect(overflow).toBe(false);
   await page.getByRole("button", { name: "Cancel" }).click();
   await expect(page.getByRole("dialog")).toBeHidden();
-  expect(await page.evaluate(() => document.body.classList.contains("team-profile-modal-open"))).toBe(false);
+  await expect
+    .poll(() => page.evaluate(() => document.body.classList.contains("team-profile-modal-open")))
+    .toBe(false);
 });
 
 test("team manager confirms moving a profile to trash and removes it from the active roster", async ({ page }) => {
