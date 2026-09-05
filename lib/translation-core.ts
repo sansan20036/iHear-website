@@ -17,6 +17,10 @@ export const TERM_PATTERN = /(?<![\p{L}\p{N}_])(?:(tutee|tutor)(s(?:['’])?|['�
 const PLACEHOLDER_PATTERN = /⟦IH_([A-Z0-9]{10})_(\d{4})⟧/g;
 const simplifiedConverter = OpenCC.Converter({ from: "twp", to: "cn" });
 
+export function convertZhHantToZhHans(value: string) {
+  return simplifiedConverter(value.normalize("NFC")).normalize("NFC");
+}
+
 type ProtectedValue = {
   source: string;
   placeholders: Array<{ token: string; zhHant: string; zhHans: string }>;
@@ -167,7 +171,7 @@ function restorePlaceholders(value: string, protectedValue: ProtectedValue, loca
 
 export function finishProtectedTranslation(protectedValue: ProtectedValue, translatedZhHant: string) {
   assertPlaceholderIntegrity(translatedZhHant, protectedValue);
-  const translatedZhHans = simplifiedConverter(translatedZhHant);
+  const translatedZhHans = convertZhHantToZhHans(translatedZhHant);
   assertPlaceholderIntegrity(translatedZhHans, protectedValue);
   return {
     zhHant: restorePlaceholders(translatedZhHant, protectedValue, "zhHant"),
@@ -187,6 +191,25 @@ export function isGoogleTranslationConfigured() {
   try { googleCredentials(); return true; } catch { return false; }
 }
 
+export function prepareGoogleTranslationHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(PLACEHOLDER_PATTERN, (token) => `<span translate="no">${token}</span>`);
+}
+
+export function finishGoogleTranslationHtml(value: string) {
+  return value
+    .replace(/<span\s+translate=(?:"no"|'no'|no)\s*>/giu, "")
+    .replace(/<\/span>/giu, "")
+    .replace(/&#x([0-9a-f]+);|&#([0-9]+);|&(amp|lt|gt|quot|#39);/giu, (entity, hexadecimal, decimal, named) => {
+      if (hexadecimal) return String.fromCodePoint(Number.parseInt(hexadecimal, 16));
+      if (decimal) return String.fromCodePoint(Number.parseInt(decimal, 10));
+      return ({ amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'" } as Record<string, string>)[String(named).toLowerCase()] || entity;
+    });
+}
+
 export async function googleTranslateToZhHant(contents: string[]) {
   if (!contents.length) return [];
   const credentials = googleCredentials();
@@ -196,14 +219,14 @@ export async function googleTranslateToZhHant(contents: string[]) {
   });
   const [response] = await client.translateText({
     parent: `projects/${credentials.projectId}/locations/global`,
-    contents,
-    mimeType: "text/plain",
+    contents: contents.map(prepareGoogleTranslationHtml),
+    mimeType: "text/html",
     sourceLanguageCode: "en",
     targetLanguageCode: "zh-TW",
   });
   const translations = response.translations || [];
   if (translations.length !== contents.length) throw new TranslationIntegrityError("The translation service returned an incomplete response");
-  return translations.map((item) => String(item.translatedText || ""));
+  return translations.map((item) => finishGoogleTranslationHtml(String(item.translatedText || "")));
 }
 
 function receiptSecret() {
@@ -363,7 +386,7 @@ export async function buildTranslationPreview(params: {
       || forceHans
       || (!hansLocked && (!hansState || hansState.sourceHash !== traditionalHash))
     )) {
-      result.value.zhHans = simplifiedConverter(result.value.zhHant);
+      result.value.zhHans = convertZhHantToZhHans(result.value.zhHant);
       result.zhHansOrigin = "machine";
       result.zhHansStatus = "translated";
     }

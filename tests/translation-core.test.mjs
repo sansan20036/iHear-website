@@ -4,6 +4,8 @@ import {
   buildTranslationPreview,
   createTranslationReceipt,
   finishProtectedTranslation,
+  finishGoogleTranslationHtml,
+  prepareGoogleTranslationHtml,
   protectTranslationText,
   sha256,
   TERM_PATTERN,
@@ -55,6 +57,16 @@ describe("translation glossary and placeholders", () => {
     expect(() => finishProtectedTranslation(protectedValue, protectedValue.source.replace(first.token, ""))).toThrow(TranslationIntegrityError);
     expect(() => finishProtectedTranslation(protectedValue, `${protectedValue.source} ${first.token}`)).toThrow(TranslationIntegrityError);
     expect(() => finishProtectedTranslation(protectedValue, `${protectedValue.source} ⟦IH_AAAAAAAAAA_9999⟧`)).toThrow(TranslationIntegrityError);
+  });
+
+  it("wraps protected tokens as non-translatable HTML and restores escaped text", () => {
+    const protectedValue = protectTranslationText("iHear tutors use A & B < C");
+    const html = prepareGoogleTranslationHtml(protectedValue.source);
+    expect(html).toContain('<span translate="no">⟦IH_');
+    expect(html).toContain("A &amp; B &lt; C");
+    const restored = finishGoogleTranslationHtml(html);
+    expect(restored).toBe(protectedValue.source);
+    expect(() => finishProtectedTranslation(protectedValue, restored)).not.toThrow();
   });
 });
 

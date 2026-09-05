@@ -18,7 +18,10 @@
     "serve:legacy": "node scripts/prepare-public.mjs && node server.js",
     "db:audit": "node scripts/audit-database.mjs",
     "db:backup": "node scripts/backup-database.mjs",
+    "site:snapshot-production": "node scripts/snapshot-production-site.mjs",
     "db:verify-backup-file": "node scripts/verify-backup-file.mjs",
+    "db:verify-preserve-legacy": "node scripts/verify-preserve-legacy-content.mjs",
+    "db:verify-production-preservation": "node scripts/verify-production-preservation.mjs",
     "db:migrate": "node scripts/migrate-database.mjs",
     "db:verify-rate-limit": "node scripts/verify-rate-limit.mjs",
     "db:migrate-content": "node scripts/migrate-content-overrides.mjs",
@@ -28,7 +31,8 @@
     "optimize:assets": "node scripts/optimize-static-images.mjs",
     "content:generate": "node scripts/generate-content-slots.mjs --write",
     "content:check": "node scripts/generate-content-slots.mjs",
-    "translation:configure": "node scripts/configure-google-translation.mjs"
+    "translation:configure": "node scripts/configure-google-translation.mjs",
+    "translation:backfill-team-local": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/backfill-local-team-translations.mjs"
   },
   "dependencies": {
     "@google-cloud/translate": "^10.0.1",

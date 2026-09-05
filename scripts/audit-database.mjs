@@ -99,11 +99,12 @@ const expectedConstraints = [
   "site_content_revisions_scope",
   "site_media_assets_actor_length",
   "site_media_assets_alt_length",
-  "site_media_assets_focal_grid",
+  "site_media_assets_focal_range",
   "site_media_assets_pkey",
   "site_media_assets_slot_length",
   "site_media_assets_timestamp_order",
   "site_media_assets_version_positive",
+  "site_media_assets_zoom_range",
   "site_media_variants_byte_size_range",
   "site_media_variants_dimensions_positive",
   "site_media_variants_mime_webp",
@@ -459,8 +460,9 @@ try {
           OR char_length(alt_en) NOT BETWEEN 2 AND 300
           OR char_length(alt_zh_hant) NOT BETWEEN 2 AND 300
           OR char_length(alt_zh_hans) NOT BETWEEN 2 AND 300
-          OR focal_x NOT IN (0, 50, 100)
-          OR focal_y NOT IN (0, 50, 100)
+          OR focal_x NOT BETWEEN 0 AND 100
+          OR focal_y NOT BETWEEN 0 AND 100
+          OR zoom NOT BETWEEN 100 AND 250
           OR record_version < 1
           OR char_length(created_by) NOT BETWEEN 1 AND 320
           OR char_length(updated_by) NOT BETWEEN 1 AND 320

@@ -1,8 +1,18 @@
 export const TEAM_SECTIONS = ["leader", "tutor"] as const;
 export const TEAM_STATUSES = ["draft", "published"] as const;
+export const TEAM_LOCALIZED_FIELDS = [
+  "role",
+  "schoolDisplay",
+  "languages",
+  "strengths",
+  "summary",
+  "bio",
+  "hobbies",
+] as const;
 
 export type TeamSection = (typeof TEAM_SECTIONS)[number];
 export type TeamStatus = (typeof TEAM_STATUSES)[number];
+export type TeamLocalizedField = (typeof TEAM_LOCALIZED_FIELDS)[number];
 export type LocalizedText = { en: string; zhHant: string; zhHans: string };
 
 export type TeamPersonSeed = {
@@ -154,10 +164,19 @@ export function parseTeamProfileInput(
 
   if (status === "published") {
     if (!parsed.consentConfirmed) issues.consentConfirmed = "Confirm publication consent";
-    if (!parsed.role.en) issues["role.en"] = "English role is required";
-    if (!parsed.bio.en) issues["bio.en"] = "English bio is required";
-    if (section === "tutor" && !parsed.summary.en) {
-      issues["summary.en"] = "English summary is required for tutors";
+    const requiredFields = new Set<TeamLocalizedField>([
+      "role",
+      "bio",
+      ...(section === "tutor" ? (["summary"] as TeamLocalizedField[]) : []),
+    ]);
+    for (const field of TEAM_LOCALIZED_FIELDS) {
+      const localizedValue = parsed[field];
+      const requiresCompleteTranslation = requiredFields.has(field)
+        || Boolean(localizedValue.en || localizedValue.zhHant || localizedValue.zhHans);
+      if (!requiresCompleteTranslation) continue;
+      if (!localizedValue.en) issues[`${field}.en`] = "English content is required before publishing";
+      if (!localizedValue.zhHant) issues[`${field}.zhHant`] = "Traditional Chinese translation is required before publishing";
+      if (!localizedValue.zhHans) issues[`${field}.zhHans`] = "Simplified Chinese translation is required before publishing";
     }
   }
 

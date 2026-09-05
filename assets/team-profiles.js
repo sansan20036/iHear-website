@@ -61,7 +61,7 @@
       ${actions(item,index,items)}</article>`;
   }
   function tutorCard(item,index,items){
-    const meta=[item.showSchool?(pick(item.schoolDisplay)||item.school):"",item.showGrade?(locale()==="en"?`Grade ${item.grade}`:`${item.grade} 年級`):""].filter(Boolean).join(" · ");
+    const meta=[item.showSchool?(pick(item.schoolDisplay)||item.school):"",item.showGrade?(locale()==="en"?`Grade ${item.grade}`:locale()==="zhHans"?`${item.grade} 年级`:`${item.grade} 年級`):""].filter(Boolean).join(" · ");
     const draft=item.status==="draft"?`<span class="team-profile-status">${l().draft}</span>`:"";
     return `<article class="team-profile-tutor-shell team-profile-admin-card" data-profile-id="${esc(item.id)}" data-status="${esc(item.status)}">
       ${dragHandle(item)}<details class="tutor-prof"><summary>

@@ -56,7 +56,11 @@ import * as adminStore from "../lib/admin-store";
 
 const email = "sansan20036@gmail.com";
 const nonAdminEmail = "signed-in-visitor@example.com";
-const localized = (en) => ({ en, zhHant: "", zhHans: "" });
+const localized = (en) => ({
+  en,
+  zhHant: en ? `繁中 ${en}` : "",
+  zhHans: en ? `简中 ${en}` : "",
+});
 const payload = {
   name: "Test Tutor",
   initials: "TT",
@@ -311,14 +315,36 @@ describe("team profile API", () => {
     expect(store.deleteTeamProfile).not.toHaveBeenCalled();
   });
 
-  test("rejects publishing without consent or required English content", async () => {
+  test("rejects publishing without consent or complete required translations", async () => {
     const response = await POST(json("http://localhost/api/team-profiles", "POST", {
       ...payload,
       consentConfirmed: false,
-      summary: localized(""),
+      summary: { en: "A patient tutor.", zhHant: "", zhHans: "" },
+      languages: { en: "English", zhHant: "", zhHans: "" },
     }));
     expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      issues: {
+        consentConfirmed: expect.any(String),
+        "summary.zhHant": expect.any(String),
+        "summary.zhHans": expect.any(String),
+        "languages.zhHant": expect.any(String),
+        "languages.zhHans": expect.any(String),
+      },
+    });
     expect(store.createTeamProfile).not.toHaveBeenCalled();
+  });
+
+  test("allows drafts to retain English while automatic translation is unavailable", async () => {
+    const response = await POST(json("http://localhost/api/team-profiles", "POST", {
+      ...payload,
+      status: "draft",
+      role: { en: "Lead Tutor", zhHant: "", zhHans: "" },
+      summary: { en: "A patient tutor.", zhHant: "", zhHans: "" },
+      bio: { en: "A complete biography.", zhHant: "", zhHans: "" },
+    }));
+    expect(response.status).toBe(201);
+    expect(store.createTeamProfile).toHaveBeenCalledOnce();
   });
 
   test("returns 409 when an optimistic update loses concurrency", async () => {
