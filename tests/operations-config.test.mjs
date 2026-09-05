@@ -80,6 +80,7 @@ describe("production operations configuration", () => {
     const ci = await read(".github/workflows/ci.yml");
     const mediaApi = await read("lib/site-media-api.ts");
     const nextConfig = await read("next.config.mjs");
+    const packageJson = await read("package.json");
 
     expect(backup).toContain("site_media_assets: siteMediaAssets");
     expect(backup).toContain("site_media_variants: siteMediaVariants");
@@ -98,6 +99,8 @@ describe("production operations configuration", () => {
     expect(mediaApi).toContain('from "./site-media-errors"');
     expect(mediaApi).not.toContain('from "./site-media-image"');
     expect(nextConfig).toContain('"/api/site-media/[slot]": ["./node_modules/@img/**/*"]');
+    expect(packageJson).toContain('"@img/sharp-libvips-linux-x64": "1.3.2"');
+    expect(packageJson).toContain('"@img/sharp-linux-x64": "0.35.3"');
   });
 
   it("keeps the site theme accessible, recoverable, and flash-free on every page", async () => {
