@@ -101,6 +101,7 @@ describe("production operations configuration", () => {
     expect(nextConfig).toContain('"/api/site-media/[slot]": ["./node_modules/@img/**/*"]');
     expect(packageJson).toContain('"@img/sharp-libvips-linux-x64": "1.3.2"');
     expect(packageJson).toContain('"@img/sharp-linux-x64": "0.35.3"');
+    expect(packageJson).toContain('"@img/sharp-wasm32": "0.35.3"');
   });
 
   it("keeps the site theme accessible, recoverable, and flash-free on every page", async () => {
