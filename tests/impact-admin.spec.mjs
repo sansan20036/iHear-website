@@ -1012,6 +1012,7 @@ test("all repository content photos expose stable sitewide media slots", async (
   await page.locator('#langSwitch button[data-lang="zhTW"]').click();
   await expect(volunteers.locator("img")).toHaveAttribute("alt", "年輕志工在戶外一同慶祝");
 
+  await expect(volunteersEdit).toBeEnabled({ timeout: 20_000 });
   await volunteers.scrollIntoViewIfNeeded();
   await volunteers.hover();
   await volunteersEdit.focus();
