@@ -65,9 +65,10 @@
     const draft=item.status==="draft"?`<span class="team-profile-status">${l().draft}</span>`:"";
     return `<article class="team-profile-tutor-shell team-profile-admin-card" data-profile-id="${esc(item.id)}" data-status="${esc(item.status)}">
       ${dragHandle(item)}<details class="tutor-prof"><summary>
+      ${avatar(item,"av-roster")}
       <span class="tp-id"><b>${esc(item.name)}${draft}</b></span>
       <svg class="chev" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7.4 8.6L12 13.2l4.6-4.6L18 10l-6 6-6-6z"/></svg></summary>
-      <div class="tp-body"><div class="tp-expanded-head">${avatar(item,"av-sm")}<p class="tp-role">${esc(pick(item.role))}</p></div>${meta?`<p class="tp-meta">${esc(meta)}</p>`:""}
+      <div class="tp-body"><p class="tp-role">${esc(pick(item.role))}</p>${meta?`<p class="tp-meta">${esc(meta)}</p>`:""}
       ${pick(item.languages)?`<p class="tp-langs">${esc(pick(item.languages))}</p>`:""}
       ${pick(item.strengths)?`<p class="tp-tags">${esc(pick(item.strengths))}</p>`:""}
       <p class="tp-lead">${esc(pick(item.summary))}</p><p>${esc(pick(item.bio))}</p>

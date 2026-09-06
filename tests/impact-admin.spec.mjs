@@ -148,7 +148,7 @@ const futureJourneyEvent = {
   sortOrder: 202801,
 };
 
-async function mockApplication(page, { admin = true, duplicateAvatar = false } = {}) {
+async function mockApplication(page, { admin = true, duplicateAvatar = false, tutorName = "Test Tutor" } = {}) {
   const requests = [];
   let publishedPayload = null;
   let translationPreviewCount = 0;
@@ -389,7 +389,7 @@ async function mockApplication(page, { admin = true, duplicateAvatar = false } =
     section: "tutor",
     status: "published",
     sortOrder: 10,
-    name: "Test Tutor",
+    name: tutorName,
     initials: "TT",
     school: "Test School",
     grade: "10",
@@ -452,7 +452,7 @@ async function mockApplication(page, { admin = true, duplicateAvatar = false } =
         { id: "person-zoe-lu", name: "Zoe Lu", initials: "ZL", consentConfirmed: true },
         { id: "person-daniel-hollis", name: "Daniel Hollis", initials: "DH", consentConfirmed: true },
         { id: "person-howard-m-ren", name: "Howard M. Ren", initials: "HR", consentConfirmed: true },
-        { id: "person-test", name: "Test Tutor", initials: "TT", consentConfirmed: true },
+        { id: "person-test", name: tutorName, initials: "TT", consentConfirmed: true },
       ],
       admin: route.request().url().includes("includeDrafts=true"),
     }),
@@ -1034,9 +1034,16 @@ test("team avatars crop one person into a square WebP, recrop, and delete the ph
   await expect(page.locator('[data-site-media-slot="team.howard-ren.avatar"]')).toHaveCount(1);
   const tutorAvatar = page.locator('[data-site-media-slot="team.test.avatar"]');
   await expect(tutorAvatar).toHaveCount(1);
-  await page.locator('[data-profile-id="tutor-test"] details').evaluate((details) => { details.open = true; });
+  const tutorDetails = page.locator('[data-profile-id="tutor-test"] details');
+  await expect(tutorDetails).not.toHaveAttribute("open", "");
+  await expect(tutorAvatar).toBeVisible();
   await tutorAvatar.hover();
-  await expect(page.locator('[data-profile-id="tutor-test"] .site-media-avatar-edit')).toBeVisible();
+  const tutorEdit = page.locator('[data-profile-id="tutor-test"] > .site-media-avatar-edit');
+  await expect(tutorEdit).toBeVisible();
+  await tutorEdit.click();
+  await expect(tutorDetails).not.toHaveAttribute("open", "");
+  await expect(page.locator('.site-media-dialog[open][data-media-kind="avatar"]')).toBeVisible();
+  await page.locator('.site-media-dialog[open] [data-media-cancel]').last().click();
 
   const avatar = zoeAvatars.first();
   const initials = avatar.locator(".avatar-initials");
@@ -1233,12 +1240,23 @@ test("team directory renders API data, switches language, and excludes generic p
   await mockApplication(page, { admin: false });
   await page.goto("/team");
 
-  await expect(page.locator("[data-team-tutors] .tutor-prof")).toHaveCount(1);
+  const details = page.locator("[data-team-tutors] .tutor-prof");
+  const summary = details.locator("summary");
+  const summaryAvatar = summary.locator(".team-avatar-slot");
+  await expect(details).toHaveCount(1);
+  await expect(details).not.toHaveAttribute("open", "");
+  await expect(summaryAvatar).toHaveCount(1);
+  await expect(summaryAvatar).toBeVisible();
+  await expect(summaryAvatar.locator("img")).toHaveAttribute("alt", "");
+  await expect(details.locator(".tp-body .team-avatar-slot")).toHaveCount(0);
   await expect(page.getByText("Test Tutor")).toBeVisible();
   await expect(page.getByText("English biography")).toBeHidden();
-  await expect(page.locator("[data-team-tutors] .tutor-prof summary")).not.toContainText("Lead Tutor");
+  await expect(summary).not.toContainText("Lead Tutor");
+  const avatarBeforeOpen = await summaryAvatar.elementHandle();
   await page.getByText("Test Tutor").click();
   await expect(page.getByText("English biography")).toBeVisible();
+  const avatarAfterOpen = await summaryAvatar.elementHandle();
+  expect(await avatarBeforeOpen.evaluate((node, after) => node === after, avatarAfterOpen)).toBe(true);
   await expect(page.locator("[data-team-tutors] .ihear-inline-edit-button")).toHaveCount(0);
   await expect(page.locator("[data-team-toggle]")).toHaveCount(0);
   await expect(page.locator("[data-team-add],[data-edit],[data-delete]")).toHaveCount(0);
@@ -1247,6 +1265,67 @@ test("team directory renders API data, switches language, and excludes generic p
   await expect(page.getByText("繁中完整介紹")).toBeVisible();
   await page.locator('#langSwitch button[data-lang="zhCN"]').click();
   await expect(page.getByText("简中完整介绍")).toBeVisible();
+});
+
+test("collapsed tutor summary keeps a long name, avatar, and chevron safe at supported viewports", async ({ page }) => {
+  const longName = "AlexandriaSupercalifragilisticMentorshipCoordinator Montgomery-Worthington";
+  const viewports = [
+    { width: 1440, height: 900 },
+    { width: 1024, height: 768 },
+    { width: 768, height: 900 },
+    { width: 390, height: 844 },
+    { width: 375, height: 812 },
+    { width: 320, height: 800 },
+    { width: 568, height: 320 },
+  ];
+  await mockApplication(page, { admin: false, tutorName: longName });
+
+  for (const viewport of viewports) {
+    await page.setViewportSize(viewport);
+    await page.goto("/team");
+
+    const details = page.locator('[data-profile-id="tutor-test"] details');
+    const summary = details.locator("summary");
+    const avatar = summary.locator(".av-roster");
+    await expect(details).not.toHaveAttribute("open", "");
+    await expect(avatar).toBeVisible();
+    await expect(page.getByText("English biography")).toBeHidden();
+
+    const geometry = await summary.evaluate((node) => {
+      const avatarNode = node.querySelector(".av-roster");
+      const nameNode = node.querySelector(".tp-id");
+      const chevronNode = node.querySelector(".chev");
+      const summaryRect = node.getBoundingClientRect();
+      const avatarRect = avatarNode.getBoundingClientRect();
+      const nameRect = nameNode.getBoundingClientRect();
+      const chevronRect = chevronNode.getBoundingClientRect();
+      return {
+        avatarWidth: avatarRect.width,
+        avatarHeight: avatarRect.height,
+        avatarShrink: getComputedStyle(avatarNode).flexShrink,
+        nameMinWidth: getComputedStyle(nameNode).minWidth,
+        nameWrap: getComputedStyle(nameNode.querySelector("b")).overflowWrap,
+        nameRight: nameRect.right,
+        chevronLeft: chevronRect.left,
+        chevronRight: chevronRect.right,
+        chevronShrink: getComputedStyle(chevronNode).flexShrink,
+        summaryRight: summaryRect.right,
+        viewportWidth: document.documentElement.clientWidth,
+        horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      };
+    });
+    const expectedAvatarSize = viewport.width <= 640 ? 64 : 72;
+    expect(geometry.avatarWidth).toBeCloseTo(expectedAvatarSize, 0);
+    expect(geometry.avatarHeight).toBeCloseTo(expectedAvatarSize, 0);
+    expect(geometry.avatarShrink).toBe("0");
+    expect(geometry.nameMinWidth).toBe("0px");
+    expect(geometry.nameWrap).toBe("anywhere");
+    expect(geometry.chevronShrink).toBe("0");
+    expect(geometry.nameRight).toBeLessThanOrEqual(geometry.chevronLeft);
+    expect(geometry.chevronRight).toBeLessThanOrEqual(geometry.summaryRight + 1);
+    expect(geometry.summaryRight).toBeLessThanOrEqual(geometry.viewportWidth + 1);
+    expect(geometry.horizontalOverflow).toBe(false);
+  }
 });
 
 test("team manager is mobile-safe and exposes structured editing controls", async ({ page }) => {

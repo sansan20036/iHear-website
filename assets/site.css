@@ -321,19 +321,21 @@
     .tutor-prof{ background:var(--bg-surface); border:1.5px solid var(--line); border-radius:18px; overflow:hidden; }
     .tutor-prof summary{
       cursor:pointer; list-style:none; display:flex; align-items:center; gap:14px;
-      padding:16px 20px; min-height:48px;
+      padding:12px 20px; min-height:96px;
     }
     .tutor-prof summary::-webkit-details-marker{ display:none; }
-    .tutor-prof .chev{ flex:none; margin-left:auto; transition: transform var(--speed-2); color: var(--orange); }
+    .tutor-prof .chev{ flex:0 0 auto; margin-left:auto; transition: transform var(--speed-2); color: var(--orange); }
     .tutor-prof[open] summary .chev{ transform: rotate(180deg); }
+    .avatar.av-roster{
+      width:72px; height:72px; flex:0 0 72px; aspect-ratio:1; font-size:1.2rem; border-width:3px;
+    }
     .avatar.av-sm{ width:48px; height:48px; font-size:1.05rem; border-width:3px; flex:none; }
     .avatar.av-xs{ width:30px; height:30px; font-size:.75rem; border-width:2px; flex:none; }
-    .tp-id{ display:flex; flex-direction:column; }
-    .tp-id b{ font-family:var(--font-h); color:var(--navy); font-size:1.05rem; }
+    .tp-id{ display:flex; flex:1 1 auto; min-width:0; flex-direction:column; }
+    .tp-id b{ font-family:var(--font-h); color:var(--navy); font-size:1.05rem; overflow-wrap:anywhere; }
     .tp-id i{ font-style:normal; color:#B4661F; font-weight:800; font-size:.82rem; }
     .tp-body{ padding:0 20px 20px; display:grid; gap:8px; }
-    .tp-expanded-head{ display:flex; align-items:center; gap:12px; padding-top:4px; }
-    .tp-expanded-head .tp-role{ margin:0; color:#B4661F; font-weight:800; }
+    .tp-role{ margin:4px 0 0; color:#B4661F!important; font-weight:800; }
     .tp-body p{ color:var(--ink-soft); font-size:.93rem; }
     .tp-body p:empty{ display:none; }
     .tp-meta{ font-weight:800; color:var(--navy) !important; font-size:.88rem !important; }
@@ -353,6 +355,10 @@
     .roster-cta a{ font-weight:800; }
     @media (max-width: 780px){
       .roster-grid{ grid-template-columns:1fr; }
+    }
+    @media (max-width: 640px){
+      .tutor-prof summary{ min-height:88px; padding:12px 14px; gap:12px; }
+      .avatar.av-roster{ width:64px; height:64px; flex-basis:64px; font-size:1.1rem; }
     }
 
     /* ---------- bio form ---------- */
