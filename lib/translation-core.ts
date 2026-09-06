@@ -13,7 +13,7 @@ import type {
   TranslationStateWrite,
 } from "./translation-types";
 
-export const TRANSLATION_GLOSSARY_VERSION = "ihear-2026-09-v2";
+export const TRANSLATION_GLOSSARY_VERSION = "ihear-2026-09-v3";
 export const TERM_PATTERN = /(?<![\p{L}\p{N}_])(?:(tutee|tutor)(s(?:['’])?|['’]s)?|(ihear)(['’]s)?)(?![\p{L}\p{N}_])/giu;
 const TUTOR_TITLE_PATTERN = /(?<![\p{L}\p{N}_])(?:(senior\s+lead|lead)\s+tutor)(s(?:['’])?|['’]s)?(?![\p{L}\p{N}_])/giu;
 
@@ -79,6 +79,18 @@ export function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+export function personNameContextTerms(value: string) {
+  const fullName = value.normalize("NFC").trim().replace(/\s+/gu, " ");
+  if (!fullName) return [];
+  const parts = fullName
+    .split(/\s+/gu)
+    .map((part) => part.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ""))
+    .filter((part) => (part.match(/[\p{L}\p{N}]/gu) || []).length >= 2);
+  return [...new Set([fullName, ...parts])]
+    .filter((term) => term.length >= 2 && term.length <= 300)
+    .sort((left, right) => right.length - left.length);
+}
+
 function possessive(value: string | undefined) {
   return Boolean(value && /['’]/.test(value));
 }
@@ -142,7 +154,10 @@ function invariantCandidates(text: string, contextTerms: string[]) {
   const terms = [...new Set(contextTerms.map((term) => term.trim()).filter((term) => term.length >= 2 && term.length <= 300))]
     .sort((left, right) => right.length - left.length);
   if (terms.length) {
-    const pattern = new RegExp(terms.map(escapeRegExp).join("|"), "giu");
+    // Context terms contain names and schools. Match their original casing and
+    // complete Unicode word boundaries so a person named "Will" does not also
+    // protect the ordinary lower-case verb "will" or a substring of another word.
+    const pattern = new RegExp(`(?<![\\p{L}\\p{N}_])(?:${terms.map(escapeRegExp).join("|")})(?![\\p{L}\\p{N}_])`, "gu");
     for (const match of text.matchAll(pattern)) {
       candidates.push({ start: match.index!, end: match.index! + match[0].length, zhHant: match[0], zhHans: match[0], priority: 80 });
     }

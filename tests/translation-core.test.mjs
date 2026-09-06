@@ -8,6 +8,7 @@ import {
   googleTranslationAuthConfiguration,
   isGoogleTranslationConfigured,
   machineTranslationQualityIssues,
+  personNameContextTerms,
   prepareGoogleTranslationHtml,
   protectTranslationText,
   sha256,
@@ -121,6 +122,19 @@ describe("translation glossary and placeholders", () => {
     expect(protectedValue.source).not.toContain("Taipei School");
     expect(protectedValue.source).not.toContain("ryan@example.org");
     expect(protectedValue.source).not.toContain("1,200+");
+  });
+
+  it("protects complete names and repeated given-name references without matching lower-case words", () => {
+    expect(personNameContextTerms("  Yi   Yi  ")).toEqual(["Yi Yi", "Yi"]);
+    const yiBio = "Yi supports iHear. As a Senior Lead Tutor, Yi helps students.";
+    const protectedYi = protectTranslationText(yiBio, personNameContextTerms("Yi Yi"));
+    expect(protectedYi.source).not.toMatch(/(?<![\p{L}\p{N}_])Yi(?![\p{L}\p{N}_])/gu);
+    const restoredYi = finishProtectedTranslation(protectedYi, protectedYi.source);
+    expect(restoredYi.zhHant.match(/(?<![\p{L}\p{N}_])Yi(?![\p{L}\p{N}_])/gu)).toHaveLength(2);
+
+    const protectedWill = protectTranslationText("Will will mentor students.", personNameContextTerms("Will Smith"));
+    expect(protectedWill.source).not.toMatch(/(?<![\p{L}\p{N}_])Will(?![\p{L}\p{N}_])/gu);
+    expect(protectedWill.source).toContain(" will mentor students.");
   });
 
   it("allows placeholder reordering and restores after OpenCC", () => {

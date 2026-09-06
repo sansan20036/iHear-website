@@ -5,6 +5,7 @@ import { authorizeAdminRequest } from "../../../../../lib/admin-auth";
 import { contentSlot } from "../../../../../lib/content-catalog";
 import {
   buildTranslationPreview,
+  personNameContextTerms,
   TranslationConfigurationError,
   TranslationIntegrityError,
 } from "../../../../../lib/translation-core";
@@ -91,6 +92,18 @@ export async function POST(request: Request) {
     ? body.contextTerms.filter((term): term is string => typeof term === "string").slice(0, 100)
     : [];
   if (contextTerms.some((term) => term.length > 300)) return respond(NextResponse.json({ error: "Invalid protected term" }, { status: 400 }));
+  const rawPersonNames = body.personNames;
+  if (rawPersonNames != null && (
+    !Array.isArray(rawPersonNames)
+    || resource.type !== "team"
+    || rawPersonNames.length > 12
+    || rawPersonNames.some((name) => typeof name !== "string" || name.length > 300)
+  )) return respond(NextResponse.json({ error: "Invalid protected person name" }, { status: 400 }));
+  const personNames = (rawPersonNames || []) as string[];
+  const protectedTerms = [...new Set([
+    ...contextTerms,
+    ...personNames.flatMap((name) => personNameContextTerms(name as string)),
+  ])];
 
   try {
     const states = resource.id === "__new__" ? [] : await readTranslationStates(resource);
@@ -101,7 +114,7 @@ export async function POST(request: Request) {
       states,
       force,
       autoTranslate: body.autoTranslate !== false,
-      contextTerms,
+      contextTerms: protectedTerms,
     });
     return respond(NextResponse.json(preview, { headers: { "Cache-Control": "private, no-store", "Vercel-CDN-Cache-Control": "no-store" } }));
   } catch (error) {

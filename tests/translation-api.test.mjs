@@ -4,6 +4,7 @@ vi.mock("../lib/admin-auth", () => ({ authorizeAdminRequest: vi.fn() }));
 vi.mock("../lib/translation-state", () => ({ readTranslationStates: vi.fn() }));
 vi.mock("../lib/translation-core", () => ({
   buildTranslationPreview: vi.fn(),
+  personNameContextTerms: vi.fn((name) => [String(name).trim(), ...String(name).trim().split(/\s+/)]),
   TranslationConfigurationError: class TranslationConfigurationError extends Error { code = "TRANSLATION_NOT_CONFIGURED"; },
   TranslationIntegrityError: class TranslationIntegrityError extends Error { code = "TRANSLATION_INTEGRITY_FAILED"; },
 }));
@@ -39,11 +40,18 @@ describe("translation preview API", () => {
   });
 
   it("loads provenance and returns a private signed preview", async () => {
-    const response = await previewTranslation(request({ resource: { type: "team", scope: "", id: "profile-1", version: 2 }, fields: { bio: { en: "Tutor", zhHant: "人工中文", zhHans: "人工中文" } } }));
+    const response = await previewTranslation(request({ resource: { type: "team", scope: "", id: "profile-1", version: 2 }, fields: { bio: { en: "Tutor", zhHant: "人工中文", zhHans: "人工中文" } }, personNames: ["Yi Yi"], contextTerms: ["Taipei School"] }));
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toContain("no-store");
     expect(readTranslationStates).toHaveBeenCalledWith({ type: "team", scope: "", id: "profile-1", version: 2 });
-    expect(buildTranslationPreview).toHaveBeenCalledWith(expect.objectContaining({ email: "admin@example.org", states: [] }));
+    expect(buildTranslationPreview).toHaveBeenCalledWith(expect.objectContaining({ email: "admin@example.org", states: [], contextTerms: ["Taipei School", "Yi Yi", "Yi"] }));
+  });
+
+  it("rejects protected person names outside Team or with invalid values", async () => {
+    const media = { resource: { type: "media", scope: "", id: "slot", version: 1 }, fields: { alt: { en: "A photo" } }, personNames: ["Yi Yi"] };
+    expect((await previewTranslation(request(media))).status).toBe(400);
+    const team = { resource: { type: "team", scope: "", id: "profile-1", version: 1 }, fields: { bio: { en: "A bio" } }, personNames: [7] };
+    expect((await previewTranslation(request(team))).status).toBe(400);
   });
 
   it("returns 503 when Google credentials are unavailable", async () => {

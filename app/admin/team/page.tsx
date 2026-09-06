@@ -95,7 +95,7 @@ export default function AdminTeamPage(){
   try{
    let nextReceipt="";let nextForm=form;
    if(Object.keys(localizedFields).length){
-    const result=await adminFetch<any>("/api/admin/translations/preview",{method:"POST",body:JSON.stringify({resource:{type:"team",scope:"",id:editing==="new"?"__new__":(editing as Profile).id,version:editing==="new"?undefined:(editing as Profile).profileVersion},fields:localizedFields,allowCjkEnglish:englishGuardAccepted,force:replaceTranslations?Object.fromEntries(Object.keys(localizedFields).map(field=>[field,["zhHant","zhHans"]])):{},contextTerms:[form.name,form.school].filter(Boolean)})});
+    const result=await adminFetch<any>("/api/admin/translations/preview",{method:"POST",body:JSON.stringify({resource:{type:"team",scope:"",id:editing==="new"?"__new__":(editing as Profile).id,version:editing==="new"?undefined:(editing as Profile).profileVersion},fields:localizedFields,allowCjkEnglish:englishGuardAccepted,force:replaceTranslations?Object.fromEntries(Object.keys(localizedFields).map(field=>[field,["zhHant","zhHans"]])):{},personNames:[form.name].filter(Boolean),contextTerms:[form.school].filter(Boolean)})});
     nextForm={...form,...Object.fromEntries(Object.entries(result.fields).map(([field,value]:any)=>[field,value.value]))};nextReceipt=result.receipt;
    }
    setForm(nextForm);setTranslationReceipt(nextReceipt);setTranslationReady(true);setPhotoNotice(translateText.ready);

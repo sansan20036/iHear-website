@@ -201,7 +201,7 @@
       if(Object.keys(fields).length){
         setBusy(true);
         try{
-          const response=await fetch("/api/admin/translations/preview",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify({resource:{type:"team",scope:"",id:state.draft.id||"__new__",version:state.draft.id?state.draft.profileVersion:undefined},fields,allowCjkEnglish:state.englishGuardAccepted,contextTerms:[state.draft.name,state.draft.school].filter(Boolean)})});
+          const response=await fetch("/api/admin/translations/preview",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify({resource:{type:"team",scope:"",id:state.draft.id||"__new__",version:state.draft.id?state.draft.profileVersion:undefined},fields,allowCjkEnglish:state.englishGuardAccepted,personNames:[state.draft.name].filter(Boolean),contextTerms:[state.draft.school].filter(Boolean)})});
           const data=await response.json().catch(()=>null);if(!response.ok)throw errorFrom(response,data);
           Object.entries(data.fields).forEach(([field,result])=>{state.draft[field]=result.value});state.translationReceipt=data.receipt;state.translationReady=true;state.activeLocale="zhHant";buildEditor();showToast(locale()==="en"?"Chinese preview ready. Review it, then save.":locale()==="zhHans"?"中文预览已完成，请检查后再保存。":"中文預覽已完成，請檢查後再儲存。",false);setBusy(false);return
         }catch(error){setBusy(false);showIssues(error);return}
