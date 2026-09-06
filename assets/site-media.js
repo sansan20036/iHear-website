@@ -19,6 +19,7 @@
       restoring: "Restoring…", optimizing: "Optimizing image…", uploading: "Uploading…", processing: "Server is preparing responsive images…",
       ready: "Image ready to upload", saved: "Image updated", restored: "Default image restored",
       savingPreview: "The new image is visible now. Saving in the background…", removingPreview: "The image is hidden now. Removing it in the background…",
+      savedPending: "The image was saved. Its final copy is still being prepared, so this preview will remain visible.",
       saveRollback: "The previous image has been restored.", removeRollback: "The deleted image has been restored.",
       invalidType: "Choose a PNG, JPEG, or WebP image.", tooLarge: "The original image must be 20MB or smaller.",
       compressionFailed: "The image could not be optimized. No file was uploaded.", invalidOutput: "The optimized image is invalid or larger than 0.95MB.",
@@ -40,6 +41,7 @@
       restoring: "正在恢復…", optimizing: "正在最佳化圖片…", uploading: "正在上傳…", processing: "伺服器正在產生響應式圖片…",
       ready: "圖片已準備好上傳", saved: "圖片已更新", restored: "已恢復預設圖片",
       savingPreview: "新圖片已立即顯示，正在背景儲存…", removingPreview: "圖片已立即隱藏，正在背景刪除…",
+      savedPending: "圖片已儲存，正式圖片仍在完成處理；目前會繼續顯示這張預覽。",
       saveRollback: "已恢復原本的圖片。", removeRollback: "已恢復剛才刪除的圖片。",
       invalidType: "請選擇 PNG、JPEG 或 WebP 圖片。", tooLarge: "原始圖片不可超過 20MB。",
       compressionFailed: "無法最佳化圖片，未送出任何檔案。", invalidOutput: "最佳化結果無效或超過 0.95MB。",
@@ -61,6 +63,7 @@
       restoring: "正在恢复…", optimizing: "正在优化图片…", uploading: "正在上传…", processing: "服务器正在生成响应式图片…",
       ready: "图片已准备好上传", saved: "图片已更新", restored: "已恢复默认图片",
       savingPreview: "新图片已立即显示，正在后台保存…", removingPreview: "图片已立即隐藏，正在后台删除…",
+      savedPending: "图片已保存，正式图片仍在完成处理；目前会继续显示这张预览。",
       saveRollback: "已恢复原来的图片。", removeRollback: "已恢复刚才删除的图片。",
       invalidType: "请选择 PNG、JPEG 或 WebP 图片。", tooLarge: "原始图片不可超过 20MB。",
       compressionFailed: "无法优化图片，未发送任何文件。", invalidOutput: "优化结果无效或超过 0.95MB。",
@@ -82,6 +85,25 @@
     const escaped = initials.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400"><circle cx="200" cy="200" r="200" fill="#263974"/><text x="200" y="216" fill="white" font-family="Arial,sans-serif" font-size="116" font-weight="700" text-anchor="middle">${escaped}</text></svg>`;
     return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+  }
+
+  function mediaProbeUrl(url, cacheBust) {
+    if (!cacheBust || !url || url.startsWith("blob:") || url.startsWith("data:")) return url;
+    return `${url}${url.includes("?") ? "&" : "?"}ihear_media=${encodeURIComponent(cacheBust)}`;
+  }
+
+  function probeMediaItem(item, cacheBust = "") {
+    const urls = [...new Set([
+      item?.src,
+      ...(Array.isArray(item?.variants) ? item.variants.map((variant) => variant.url) : []),
+    ].filter(Boolean))];
+    if (!item?.src || !item?.srcSet || !urls.length) return Promise.resolve(false);
+    return Promise.all(urls.map((url) => new Promise((resolve, reject) => {
+      const preload = new Image();
+      preload.onload = resolve;
+      preload.onerror = reject;
+      preload.src = mediaProbeUrl(url, cacheBust);
+    }))).then(() => true, () => false);
   }
 
   function createController(host) {
@@ -202,10 +224,10 @@
     host.setAttribute("data-site-media-custom", "true");
   }
 
-  function applyItem(item) {
+  function applyItem(item, options = {}) {
     if (!item) {
       restoreDefault();
-      return;
+      return Promise.resolve(true);
     }
     const token = ++applyToken;
     const urls = [...new Set([
@@ -216,10 +238,17 @@
       const preload = new Image();
       preload.onload = resolve;
       preload.onerror = reject;
-      preload.src = url;
+      preload.src = mediaProbeUrl(url, options.cacheBust);
     }))).then(
-      () => { if (token === applyToken) commitItem(item); },
-      () => { if (token === applyToken) restoreDefault(); },
+      () => {
+        if (token !== applyToken) return false;
+        commitItem(item);
+        return true;
+      },
+      () => {
+        if (token === applyToken && !options.keepCurrentOnFailure) restoreDefault();
+        return false;
+      },
     );
   }
 
@@ -721,34 +750,41 @@
     const operation = beginOptimisticSlot(slot, optimistic.item, optimistic.url);
     hideDialogForPending();
     window.iHearToast?.(labels().savingPreview);
+    const acceptSavedUpload = async (item, revision) => {
+      const ready = await completeOptimisticSlot(slot, operation, item);
+      finishPendingDialog();
+      if (revision) window.iHearLiveContent?.announce("content", revision);
+      window.iHearToast?.(ready ? labels().saved : labels().savedPending);
+    };
+    const handleUploadFailure = async (message) => {
+      const committed = await findCommittedUpload(slot, previousItem);
+      if (committed) {
+        await acceptSavedUpload(committed, null);
+        return;
+      }
+      if (!rollbackOptimisticSlot(slot, operation, previousItem)) return;
+      const rollbackMessage = `${message} ${labels().saveRollback}`;
+      reopenPendingDialog(rollbackMessage);
+      window.iHearToast?.(rollbackMessage, { error: true });
+    };
     xhr.upload.addEventListener("progress", (event) => {
       if (!event.lengthComputable) return setStatus(labels().uploading, { progress: true });
       const value = Math.round((event.loaded / event.total) * 100);
       setStatus(value >= 100 ? labels().processing : labels().uploading, { progress: true, value: value >= 100 ? undefined : value });
     });
-    xhr.addEventListener("load", () => {
+    xhr.addEventListener("load", async () => {
       activeRequest = null;
       let data = null;
       try { data = JSON.parse(xhr.responseText || "null"); } catch { data = null; }
       if (xhr.status < 200 || xhr.status >= 300) {
-        const message = requestError(xhr.status, data);
-        rollbackOptimisticSlot(slot, operation, previousItem);
-        const rollbackMessage = `${message} ${labels().saveRollback}`;
-        reopenPendingDialog(rollbackMessage);
-        window.iHearToast?.(rollbackMessage, { error: true });
+        await handleUploadFailure(requestError(xhr.status, data));
         return;
       }
-      completeOptimisticSlot(slot, operation, data.item);
-      finishPendingDialog();
-      window.iHearLiveContent?.announce("content", data.revision);
-      window.iHearToast?.(labels().saved);
+      await acceptSavedUpload(data.item, data.revision);
     });
-    xhr.addEventListener("error", () => {
+    xhr.addEventListener("error", async () => {
       activeRequest = null;
-      rollbackOptimisticSlot(slot, operation, previousItem);
-      const message = `${labels().failed} ${labels().saveRollback}`;
-      reopenPendingDialog(message);
-      window.iHearToast?.(message, { error: true });
+      await handleUploadFailure(labels().failed);
     });
     xhr.addEventListener("abort", () => {
       activeRequest = null;
@@ -758,10 +794,7 @@
       xhr.send(form);
     } catch {
       activeRequest = null;
-      rollbackOptimisticSlot(slot, operation, previousItem);
-      const message = `${labels().failed} ${labels().saveRollback}`;
-      reopenPendingDialog(message);
-      window.iHearToast?.(message, { error: true });
+      void handleUploadFailure(labels().failed);
     }
   }
 
@@ -821,10 +854,11 @@
     isDirty: () => pending || Boolean(dialog?.open && dirty),
     onBlocked: () => window.iHearToast?.(labels().liveBlocked, { error: true }),
     destroy,
-    applyRemoteItem(item) {
+    applyRemoteItem(item, options) {
       currentItem = item || null;
-      applyItem(currentItem);
+      const result = applyItem(currentItem, options);
       if (dialog?.open && !dirty) populateDialog();
+      return result;
     },
   };
   }
@@ -834,9 +868,13 @@
   let optimisticSequence = 0;
   const pendingSlots = new Map();
 
-  function releaseOptimisticUrl(url) {
+  function releaseOptimisticUrl(url, delay = 15_000) {
     if (!url) return;
-    window.setTimeout(() => URL.revokeObjectURL(url), 15_000);
+    window.setTimeout(() => URL.revokeObjectURL(url), delay);
+  }
+
+  function wait(delay) {
+    return new Promise((resolve) => { window.setTimeout(resolve, delay); });
   }
 
   function beginOptimisticSlot(slot, item, url) {
@@ -849,13 +887,56 @@
     return operation;
   }
 
-  function completeOptimisticSlot(slot, operation, item) {
+  async function completeOptimisticSlot(slot, operation, item) {
     if (pendingSlots.get(slot)?.id !== operation.id) return false;
+    if (item) {
+      const matching = controllers.filter((controller) => controller.slot === slot);
+      const delays = [0, 250, 750, 1_500, 3_000];
+      let ready = false;
+      for (let attempt = 0; attempt < delays.length && !ready; attempt += 1) {
+        if (delays[attempt]) await wait(delays[attempt]);
+        if (pendingSlots.get(slot)?.id !== operation.id) return false;
+        const marker = `${item.recordVersion || "new"}-${attempt}-${Date.now()}`;
+        ready = await probeMediaItem(item, attempt ? marker : "");
+      }
+      if (!ready) {
+        if (lastMediaData) lastMediaData.items[slot] = item;
+        pendingSlots.delete(slot);
+        matching.forEach((controller) => controller.setPending(false));
+        // The database accepted the image, so do not replace the administrator's
+        // valid local preview with initials just because the public CDN is late.
+        releaseOptimisticUrl(operation.url, 5 * 60_000);
+        return false;
+      }
+    }
     pendingSlots.delete(slot);
     syncSlot(slot, item);
     controllers.filter((controller) => controller.slot === slot).forEach((controller) => controller.setPending(false));
     releaseOptimisticUrl(operation.url);
     return true;
+  }
+
+  async function findCommittedUpload(slot, previousItem) {
+    const previousVersion = Number(previousItem?.recordVersion || 0);
+    for (const delay of [0, 400, 1_000]) {
+      if (delay) await wait(delay);
+      try {
+        const response = await fetch(`/api/site-media?verify=${Date.now()}`, {
+          credentials: "same-origin",
+          cache: "no-store",
+        });
+        if (!response.ok) continue;
+        const data = await response.json();
+        const item = data?.items?.[slot];
+        if (item && Number(item.recordVersion || 0) > previousVersion) {
+          lastMediaData = data;
+          return item;
+        }
+      } catch {
+        // A failed verification is treated as an ordinary failed upload below.
+      }
+    }
+    return null;
   }
 
   function rollbackOptimisticSlot(slot, operation, previousItem) {

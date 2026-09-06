@@ -156,6 +156,7 @@ async function mockApplication(page, { admin = true, duplicateAvatar = false } =
   let mediaUploadCount = 0;
   let mediaMutationDelay = 0;
   let mediaMutationFailure = false;
+  let mediaCommitThenFailure = false;
   let themeSetting = { theme: "warm", recordVersion: 1, updatedAt: "2026-08-17T00:00:00.000Z" };
   let themeReadOverride = null;
   let themeGetCount = 0;
@@ -356,6 +357,13 @@ async function mockApplication(page, { admin = true, duplicateAvatar = false } =
       })),
     };
     mediaItems[slot] = item;
+    if (mediaCommitThenFailure) {
+      return route.fulfill({
+        status: 504,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "simulated response timeout" }),
+      });
+    }
     return route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -475,6 +483,7 @@ async function mockApplication(page, { admin = true, duplicateAvatar = false } =
     getMediaUploadCount: () => mediaUploadCount,
     setMediaMutationDelay: (value) => { mediaMutationDelay = value; },
     setMediaMutationFailure: (value) => { mediaMutationFailure = value; },
+    setMediaCommitThenFailure: (value) => { mediaCommitThenFailure = value; },
     getTheme: () => themeSetting,
     getThemeGetCount: () => themeGetCount,
     getLayoutPostCount: () => layoutPostCount,
@@ -876,6 +885,26 @@ test("Hero compression failure never sends an upload request", async ({ page }) 
   await expect(page.locator("[data-media-save]")).toBeDisabled();
   expect(mocked.getMediaUploadCount()).toBe(0);
   expect(mocked.requests.some((request) => request.startsWith("POST "))).toBe(false);
+});
+
+test("a timed-out upload response is reconciled when the server already committed the image", async ({ page }) => {
+  const mocked = await mockApplication(page);
+  mocked.setMediaCommitThenFailure(true);
+  await page.goto("/");
+
+  const hero = page.locator('[data-site-media-slot="home.hero"]');
+  await hero.hover();
+  await hero.locator(".site-media-edit").click();
+  const dialog = page.locator(".site-media-dialog");
+  await dialog.locator("[data-media-file]").setInputFiles("assets/images/hero-classroom.jpg");
+  await expect(dialog.locator("[data-media-save]")).toBeEnabled({ timeout: 20_000 });
+  await previewAndSaveMedia(dialog);
+
+  await expect(dialog).not.toBeVisible({ timeout: 10_000 });
+  await expect(hero).toHaveAttribute("data-site-media-custom", "true");
+  await expect(hero.locator("img")).toHaveAttribute("src", "/assets/images/volunteers-1200.webp");
+  await expect(page.locator(".site-toast.is-error")).toHaveCount(0);
+  expect(mocked.getMediaItem("home.hero")?.recordVersion).toBeGreaterThan(0);
 });
 
 test("sitewide media slots independently update service cards, localized alt text, focus, and fallback", async ({ page }) => {

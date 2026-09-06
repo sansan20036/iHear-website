@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 
 // @ts-ignore - auth.js is the existing Auth.js configuration.
 import { auth } from "../../../../auth.js";
@@ -35,9 +35,23 @@ import {
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 15;
+export const maxDuration = 60;
 
 type RouteContext = { params: Promise<{ slot: string }> };
+
+function removeOldObjectsAfterResponse(paths: string[], message: string) {
+  if (!paths.length) return;
+  const cleanup = () => removeSiteMediaObjects(paths).catch((cleanupError) => {
+    console.error(message, cleanupError);
+  });
+  try {
+    after(cleanup);
+  } catch {
+    // Route unit tests and non-Next runtimes do not provide an after context.
+    // Start the best-effort cleanup without delaying the successful response.
+    void cleanup();
+  }
+}
 
 function isSameOrigin(request: Request) {
   const origin = request.headers.get("origin");
@@ -171,12 +185,11 @@ export async function POST(request: Request, context: RouteContext) {
       throw error;
     }
 
-    if (result.previousStoragePaths.length) {
-      await removeSiteMediaObjects(result.previousStoragePaths).catch((cleanupError) => {
-        console.error("Could not remove previous site-media objects", cleanupError);
-      });
-    }
     const revision = await invalidateSiteMedia();
+    removeOldObjectsAfterResponse(
+      result.previousStoragePaths,
+      "Could not remove previous site-media objects",
+    );
     return respond(NextResponse.json({
       ok: true,
       item: publicSiteMediaAsset(result.asset),
@@ -263,10 +276,11 @@ export async function DELETE(request: Request, context: RouteContext) {
 
   try {
     const storagePaths = await deleteSiteMediaAsset(slot, expectedVersion);
-    await removeSiteMediaObjects(storagePaths).catch((cleanupError) => {
-      console.error("Could not remove restored site-media objects", cleanupError);
-    });
     const revision = await invalidateSiteMedia();
+    removeOldObjectsAfterResponse(
+      storagePaths,
+      "Could not remove restored site-media objects",
+    );
     return respond(NextResponse.json({ ok: true, slot, revision }));
   } catch (error) {
     return respond(siteMediaApiError(error));

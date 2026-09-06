@@ -6,6 +6,8 @@ import postgres from "postgres";
 import type { TranslationResource, TranslationState, TranslationStateWrite } from "./translation-types";
 
 const databaseUrl = process.env.IHEAR_FORCE_FILE_STORE === "1" ? "" : process.env.POSTGRES_URL || process.env.DATABASE_URL || "";
+const isHostedProduction = process.env.NODE_ENV === "production" && Boolean(process.env.VERCEL || process.env.NETLIFY || process.env.CONTEXT);
+const shouldBootstrapSchema = !isHostedProduction || process.env.IHEAR_AUTO_BOOTSTRAP_DB === "1";
 const filePath = path.join(process.cwd(), "data", "translation-states.json");
 const globalForTranslation = globalThis as typeof globalThis & {
   ihearTranslationSql?: ReturnType<typeof postgres>;
@@ -23,6 +25,9 @@ function sqlClient() {
 
 export async function ensureTranslationSchema(client: any = sqlClient()) {
   if (!client) return;
+  // Production uses the tracked migration. Avoid issuing CREATE/ALTER statements
+  // inside every content transaction on serverless cold starts.
+  if (!shouldBootstrapSchema) return;
   if (client === sqlClient() && globalForTranslation.ihearTranslationSchemaReady) return globalForTranslation.ihearTranslationSchemaReady;
   const work = (async () => {
     await client`

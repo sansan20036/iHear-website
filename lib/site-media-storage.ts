@@ -158,10 +158,7 @@ export async function uploadSiteMediaVariants(
   }
   const storage = client().storage.from(bucket);
   const uploaded: string[] = [];
-  const variants: SiteMediaVariant[] = [];
-
-  try {
-    for (const variant of processed) {
+  const results = await Promise.allSettled(processed.map(async (variant) => {
       const storagePath = `${slotPrefix(slot)}/${versionId}/${variant.width}.webp`;
       // Pass an exact ArrayBuffer instead of a Node Buffer. Some serverless fetch
       // adapters can coerce Buffer bodies to UTF-8 text, replacing binary bytes
@@ -175,7 +172,7 @@ export async function uploadSiteMediaVariants(
       uploaded.push(storagePath);
       await verifyStoredSiteMediaObject(storagePath, variant.buffer);
       const { data } = storage.getPublicUrl(storagePath);
-      variants.push({
+      return {
         width: variant.width,
         pixelWidth: variant.pixelWidth,
         pixelHeight: variant.pixelHeight,
@@ -183,13 +180,16 @@ export async function uploadSiteMediaVariants(
         mimeType: variant.mimeType,
         url: data.publicUrl,
         storagePath,
-      });
-    }
-    return variants;
-  } catch (error) {
+      } satisfies SiteMediaVariant;
+  }));
+  const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+  if (failure) {
     if (uploaded.length) {
       await storage.remove(uploaded).catch(() => undefined);
     }
-    throw error;
+    throw failure.reason;
   }
+  return results
+    .map((result) => (result as PromiseFulfilledResult<SiteMediaVariant>).value)
+    .sort((left, right) => left.width - right.width);
 }

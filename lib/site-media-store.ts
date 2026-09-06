@@ -51,6 +51,7 @@ const databaseUrl = process.env.IHEAR_FORCE_FILE_STORE === "1"
   ? ""
   : process.env.POSTGRES_URL || process.env.DATABASE_URL || "";
 const isHostedProduction = process.env.NODE_ENV === "production" && Boolean(process.env.VERCEL || process.env.NETLIFY || process.env.CONTEXT);
+const shouldBootstrapSchema = !isHostedProduction || process.env.IHEAR_AUTO_BOOTSTRAP_DB === "1";
 const filePath = path.join(process.cwd(), "data", "site-media.json");
 const globalForSiteMedia = globalThis as typeof globalThis & {
   ihearSiteMediaSql?: ReturnType<typeof postgres>;
@@ -77,6 +78,10 @@ function assertPersistence() {
 async function ensureSchema() {
   const sql = sqlClient();
   if (!sql) return;
+  // Hosted environments are migrated before deployment. Re-running DDL on every
+  // cold start adds several database round trips to image uploads and can push a
+  // request past the serverless timeout.
+  if (!shouldBootstrapSchema) return;
   if (!globalForSiteMedia.ihearSiteMediaSchemaReady) {
     globalForSiteMedia.ihearSiteMediaSchemaReady = (async () => {
       await sql`

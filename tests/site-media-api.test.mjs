@@ -59,7 +59,7 @@ vi.mock("../lib/site-media-storage", () => {
 import { revalidatePath } from "next/cache";
 import { auth } from "../auth.js";
 import { GET as getSiteMedia } from "../app/api/site-media/route";
-import { DELETE as deleteSiteMedia, PATCH as patchSiteMedia, POST as postSiteMedia } from "../app/api/site-media/[slot]/route";
+import { DELETE as deleteSiteMedia, maxDuration as siteMediaMaxDuration, PATCH as patchSiteMedia, POST as postSiteMedia } from "../app/api/site-media/[slot]/route";
 import { GET as getSiteMediaSource } from "../app/api/site-media/[slot]/source/route";
 import * as liveRevisions from "../lib/live-revisions";
 import { enforceRateLimit } from "../lib/rate-limit";
@@ -129,6 +129,10 @@ beforeEach(() => {
 });
 
 describe("site media API", () => {
+  test("allows enough serverless time for image processing and durable storage", () => {
+    expect(siteMediaMaxDuration).toBeGreaterThanOrEqual(60);
+  });
+
   test("GET is public, briefly cached, and never exposes storage paths or administrators", async () => {
     auth.mockResolvedValue(null);
     const response = await getSiteMedia();
