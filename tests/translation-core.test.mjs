@@ -28,6 +28,7 @@ const googleEnvironmentNames = [
   "GOOGLE_CLOUD_SERVICE_ACCOUNT_EMAIL",
   "GOOGLE_CLOUD_WORKLOAD_IDENTITY_POOL_ID",
   "GOOGLE_CLOUD_WORKLOAD_IDENTITY_PROVIDER_ID",
+  "GOOGLE_CLOUD_LOCAL_ADC",
   "GOOGLE_CLOUD_CLIENT_EMAIL",
   "GOOGLE_CLOUD_PRIVATE_KEY",
 ];
@@ -71,17 +72,30 @@ describe("Google translation authentication", () => {
     expect(isGoogleTranslationConfigured()).toBe(false);
   });
 
-  it("keeps the existing service-account key flow for localhost", () => {
+  it("uses explicit short-lived ADC for localhost", () => {
     delete process.env.VERCEL;
     delete process.env.VERCEL_ENV;
     process.env.GOOGLE_CLOUD_PROJECT_ID = "project-id";
-    process.env.GOOGLE_CLOUD_CLIENT_EMAIL = "translation@project-id.iam.gserviceaccount.com";
-    process.env.GOOGLE_CLOUD_PRIVATE_KEY = "line-one\\nline-two";
+    process.env.GOOGLE_CLOUD_LOCAL_ADC = "true";
+    delete process.env.GOOGLE_CLOUD_CLIENT_EMAIL;
+    delete process.env.GOOGLE_CLOUD_PRIVATE_KEY;
     delete process.env.GOOGLE_CLOUD_PROJECT_NUMBER;
     delete process.env.GOOGLE_CLOUD_SERVICE_ACCOUNT_EMAIL;
     delete process.env.GOOGLE_CLOUD_WORKLOAD_IDENTITY_POOL_ID;
     delete process.env.GOOGLE_CLOUD_WORKLOAD_IDENTITY_PROVIDER_ID;
-    expect(googleTranslationAuthConfiguration()).toMatchObject({ mode: "service-account-key", privateKey: "line-one\nline-two" });
+    expect(googleTranslationAuthConfiguration()).toEqual({ mode: "local-adc", projectId: "project-id" });
+    expect(isGoogleTranslationConfigured()).toBe(true);
+  });
+
+  it("rejects long-lived service-account keys on localhost", () => {
+    delete process.env.VERCEL;
+    delete process.env.VERCEL_ENV;
+    process.env.GOOGLE_CLOUD_PROJECT_ID = "project-id";
+    process.env.GOOGLE_CLOUD_LOCAL_ADC = "true";
+    process.env.GOOGLE_CLOUD_CLIENT_EMAIL = "translation@project-id.iam.gserviceaccount.com";
+    process.env.GOOGLE_CLOUD_PRIVATE_KEY = "private-key";
+    expect(() => googleTranslationAuthConfiguration()).toThrow("Long-lived");
+    expect(isGoogleTranslationConfigured()).toBe(false);
   });
 
   it("fails closed when only part of the OIDC configuration exists", () => {
@@ -155,16 +169,43 @@ describe("translation glossary and placeholders", () => {
     expect(() => finishProtectedTranslation(protectedValue, `${protectedValue.source} ⟦IH_AAAAAAAAAA_9999⟧`)).toThrow(TranslationIntegrityError);
   });
 
-  it("wraps protected tokens with their original terms as non-translatable HTML", () => {
+  it("keeps protected tokens out of visible text while retaining fail-closed HTML markers", () => {
     const protectedValue = protectTranslationText("iHear tutors use A & B < C");
     const html = prepareGoogleTranslationHtml(protectedValue.source, protectedValue);
     expect(html).toContain('<span translate="no" data-ihear-placeholder="⟦IH_');
-    expect(html).toContain("iHear</span>");
-    expect(html).toContain("tutors</span>");
+    expect(html).toContain(">iHear</span>");
+    expect(html).toContain(">tutors</span>");
+    expect(html).not.toMatch(/>⟦IH_[^⟧]+⟧(?:iHear|tutors)<\/span>/u);
     expect(html).toContain("A &amp; B &lt; C");
     const restored = finishGoogleTranslationHtml(html);
     expect(restored).toBe(protectedValue.source);
     expect(() => finishProtectedTranslation(protectedValue, restored)).not.toThrow();
+  });
+
+  it("restores attribute markers after Google reorders natural protected terms without losing prose", () => {
+    const protectedValue = protectTranslationText(
+      "Local Translation Test helps iHear tutors support tutees in the USA.",
+      ["Local Translation Test"],
+    );
+    const [name, ihear, tutors, tutees] = protectedValue.placeholders;
+    const translatedHtml = [
+      `<span translate="no" data-ihear-placeholder="${name.token}">${name.source}</span>幫助`,
+      `<span translate="no" data-ihear-placeholder="${ihear.token}">${ihear.source}</span> `,
+      `<span translate="no" data-ihear-placeholder="${tutors.token}">${tutors.source}</span>為美國的`,
+      `<span translate="no" data-ihear-placeholder="${tutees.token}">${tutees.source}</span>提供支援。`,
+    ].join("");
+    const restoredTokens = finishGoogleTranslationHtml(translatedHtml);
+    const result = finishProtectedTranslation(protectedValue, restoredTokens);
+    expect(result.zhHant).toBe("Local Translation Test幫助iHear 小老師為美國的受輔導學生提供支援。");
+    expect(result.zhHans).toBe("Local Translation Test帮助iHear 小老师为美国的受辅导学生提供支持。");
+  });
+
+  it("fails closed when Google removes an attribute marker", () => {
+    const protectedValue = protectTranslationText("iHear tutors");
+    const html = prepareGoogleTranslationHtml(protectedValue.source, protectedValue)
+      .replace(/\sdata-ihear-placeholder="[^"]+"/u, "");
+    const restored = finishGoogleTranslationHtml(html);
+    expect(() => finishProtectedTranslation(protectedValue, restored)).toThrow(TranslationIntegrityError);
   });
 
   it("splits long bios into sentence-bound requests while preserving paragraphs", () => {

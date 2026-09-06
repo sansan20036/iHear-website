@@ -51,9 +51,9 @@ deployment before they are active.
 - `google-auth-library` exchanges it with Google STS and impersonates the translation account.
 - The Vercel token requests the HTTPS provider audience shown above; the Google external-account
   credential uses the same resource with the required `//iam.googleapis.com/...` prefix.
-- Localhost may continue using the Git-ignored `.env.local` service-account key.
+- Localhost uses short-lived, impersonated Application Default Credentials created by `gcloud`.
 - Any partial OIDC configuration fails closed.
-- A Vercel runtime never falls back to `GOOGLE_CLOUD_PRIVATE_KEY`, even if one is accidentally set.
+- The application rejects long-lived `GOOGLE_CLOUD_PRIVATE_KEY` credentials in every environment.
 
 ## Verification
 
@@ -65,3 +65,4 @@ After deployment:
 4. Confirm a Preview deployment receives `TRANSLATION_NOT_CONFIGURED` or an IAM denial.
 5. Review Google IAM audit logs for service-account impersonation by the exact Production subject.
 6. After the OIDC path is verified, disable and delete the old downloaded service-account key.
+7. For localhost, run `npm run translation:configure -- --login --account=owner@example.com`; never create a replacement JSON key.

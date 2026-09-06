@@ -836,6 +836,7 @@ test("Hero image editor compresses before upload and restores the repository fal
   expect(mocked.getMediaUploadCount()).toBe(1);
   await expect(hero).toHaveAttribute("data-site-media-custom", "true");
   await expect(hero.locator("img")).toHaveAttribute("src", "/assets/images/volunteers-1200.webp");
+  await expect(page.locator(".site-toast.is-error")).toHaveCount(0);
 
   await hero.hover();
   await hero.locator(".site-media-edit").click();
@@ -844,6 +845,7 @@ test("Hero image editor compresses before upload and restores the repository fal
   await expect(dialog).not.toBeVisible();
   await expect(hero).not.toHaveAttribute("data-site-media-custom", "true");
   await expect(hero.locator("img")).toHaveAttribute("src", /hero-classroom\.jpg$/);
+  await expect(page.locator(".site-toast.is-error")).toHaveCount(0);
   expect(mocked.requests.some((request) => request.startsWith("POST "))).toBe(true);
   expect(mocked.requests.some((request) => request.startsWith("DELETE "))).toBe(true);
 });

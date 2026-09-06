@@ -191,4 +191,18 @@ describe("production operations configuration", () => {
     expect(restore).toContain("INSERT INTO localized_translation_states");
     expect(audit).toContain('"localized_translation_states"');
   });
+
+  it("uses short-lived local ADC and never configures a service-account private key", async () => {
+    const core = await read("lib/translation-core.ts");
+    const configure = await read("scripts/configure-google-translation.mjs");
+    const example = await read(".env.example");
+    expect(core).toContain('mode: "local-adc"');
+    expect(core).toContain("Long-lived Google service-account keys are not supported");
+    expect(configure).toContain("--impersonate-service-account=");
+    expect(configure).toContain("--account=");
+    expect(configure).toContain("GOOGLE_CLOUD_LOCAL_ADC");
+    expect(configure).not.toContain("credential.private_key");
+    expect(example).toContain("GOOGLE_CLOUD_LOCAL_ADC=");
+    expect(example).not.toContain("GOOGLE_CLOUD_PRIVATE_KEY=");
+  });
 });

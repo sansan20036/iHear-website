@@ -101,4 +101,73 @@ describe("site media image processing", () => {
       await rm(localRoot, { recursive: true, force: true });
     }
   });
+
+  test("uploads exact binary ArrayBuffers and rejects a corrupted storage readback", async () => {
+    const stored = new Map();
+    const uploadedBodies = [];
+    let corruptUploads = false;
+    const remove = vi.fn(async (paths) => {
+      paths.forEach((storagePath) => stored.delete(storagePath));
+      return { data: null, error: null };
+    });
+    const bucket = {
+      upload: vi.fn(async (storagePath, body) => {
+        uploadedBodies.push(body);
+        const bytes = Buffer.from(body);
+        if (corruptUploads) bytes[4] = bytes[4] ^ 0xff;
+        stored.set(storagePath, bytes);
+        return { data: { path: storagePath }, error: null };
+      }),
+      download: vi.fn(async (storagePath) => ({
+        data: new Blob([stored.get(storagePath)], { type: "image/webp" }),
+        error: null,
+      })),
+      getPublicUrl: vi.fn((storagePath) => ({
+        data: { publicUrl: `https://project.supabase.co/${storagePath}` },
+      })),
+      remove,
+    };
+
+    vi.stubEnv("IHEAR_FORCE_FILE_STORE", "0");
+    vi.stubEnv("SUPABASE_URL", "https://project.supabase.co");
+    vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "test-service-role-key");
+    vi.doMock("@supabase/supabase-js", () => ({
+      createClient: () => ({ storage: { from: () => bucket } }),
+    }));
+
+    try {
+      vi.resetModules();
+      const storage = await import("../lib/site-media-storage");
+      const sourceBytes = Buffer.from([
+        0x52, 0x49, 0x46, 0x46, 0xa7, 0x2a, 0x00, 0x00,
+        0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x20,
+      ]);
+      const processed = [480, 800].map((width) => ({
+        width,
+        pixelWidth: width,
+        pixelHeight: width,
+        byteSize: sourceBytes.byteLength,
+        mimeType: "image/webp",
+        buffer: sourceBytes,
+      }));
+
+      const variants = await storage.uploadSiteMediaVariants("team.binary-test.avatar", processed);
+      expect(variants).toHaveLength(2);
+      expect(uploadedBodies.every((body) => body instanceof ArrayBuffer)).toBe(true);
+      expect(Buffer.from(uploadedBodies[0])).toEqual(sourceBytes);
+      expect(Buffer.from(uploadedBodies[0])).not.toContain(0xef);
+
+      corruptUploads = true;
+      await expect(storage.uploadSiteMediaVariants("team.corrupt-test.avatar", processed))
+        .rejects.toMatchObject({
+          name: "SiteMediaStorageError",
+          message: "The stored image bytes did not match the generated image",
+        });
+      expect(remove).toHaveBeenCalled();
+    } finally {
+      vi.doUnmock("@supabase/supabase-js");
+      vi.resetModules();
+      vi.unstubAllEnvs();
+    }
+  });
 });

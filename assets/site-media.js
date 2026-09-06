@@ -660,9 +660,9 @@
         return;
       }
       syncSlot(slot, data.item);
+      closeDialog();
       window.iHearLiveContent?.announce("content", data.revision);
       window.iHearToast?.(labels().saved);
-      closeDialog();
     });
     xhr.addEventListener("error", () => {
       activeRequest = null;
@@ -688,9 +688,9 @@
       const data = await response.json().catch(() => null);
       if (!response.ok) throw new Error(requestError(response.status, data));
       syncSlot(slot, null);
+      closeDialog();
       window.iHearLiveContent?.announce("content", data.revision);
       window.iHearToast?.(labels().restored);
-      closeDialog();
     } catch (error) {
       const message = error?.message || labels().failed;
       setStatus(message, { error: true });
@@ -782,6 +782,7 @@
   window.iHearLiveContent?.register("content", {
     refresh: refreshAll,
     isDirty: () => controllers.some((controller) => controller.isDirty()),
+    shouldBlock: ({ external }) => external,
     onBlocked: () => controllers.find((controller) => controller.isDirty())?.onBlocked(),
   });
 

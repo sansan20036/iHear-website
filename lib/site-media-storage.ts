@@ -44,6 +44,19 @@ function slotPrefix(slot: SiteMediaSlot) {
   return slot.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "");
 }
 
+function exactArrayBuffer(buffer: Buffer) {
+  const bytes = new Uint8Array(buffer.byteLength);
+  bytes.set(buffer);
+  return bytes.buffer;
+}
+
+async function verifyStoredSiteMediaObject(storagePath: string, expected: Buffer) {
+  const stored = await readSiteMediaObject(storagePath);
+  if (stored.byteLength !== expected.byteLength || !stored.equals(expected)) {
+    throw new SiteMediaStorageError("The stored image bytes did not match the generated image");
+  }
+}
+
 export function expectedSiteMediaWidths(slot: SiteMediaSlot) {
   return slot.startsWith("team.") && slot.endsWith(".avatar")
     ? [480, 800]
@@ -150,13 +163,17 @@ export async function uploadSiteMediaVariants(
   try {
     for (const variant of processed) {
       const storagePath = `${slotPrefix(slot)}/${versionId}/${variant.width}.webp`;
-      const { error } = await storage.upload(storagePath, variant.buffer, {
+      // Pass an exact ArrayBuffer instead of a Node Buffer. Some serverless fetch
+      // adapters can coerce Buffer bodies to UTF-8 text, replacing binary bytes
+      // with EF BF BD and leaving a 200 response that browsers cannot decode.
+      const { error } = await storage.upload(storagePath, exactArrayBuffer(variant.buffer), {
         contentType: variant.mimeType,
         cacheControl: "31536000",
         upsert: false,
       });
       if (error) throw new SiteMediaStorageError(error.message);
       uploaded.push(storagePath);
+      await verifyStoredSiteMediaObject(storagePath, variant.buffer);
       const { data } = storage.getPublicUrl(storagePath);
       variants.push({
         width: variant.width,

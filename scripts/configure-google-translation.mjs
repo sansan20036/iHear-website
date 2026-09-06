@@ -1,48 +1,40 @@
+import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 
-const TRANSLATION_KEYS = [
+import { GoogleAuth } from "google-auth-library";
+
+const PROJECT_ID = "ihear-website-502118";
+const SERVICE_ACCOUNT_EMAIL = "ihear-translation@ihear-website-502118.iam.gserviceaccount.com";
+const CONFIG_KEYS = [
   "GOOGLE_CLOUD_PROJECT_ID",
-  "GOOGLE_CLOUD_CLIENT_EMAIL",
-  "GOOGLE_CLOUD_PRIVATE_KEY",
+  "GOOGLE_CLOUD_LOCAL_ADC",
   "TRANSLATION_RECEIPT_SECRET",
 ];
+const LEGACY_KEY_NAMES = new Set([
+  "GOOGLE_CLOUD_CLIENT_EMAIL",
+  "GOOGLE_CLOUD_PRIVATE_KEY",
+]);
 
 function usage() {
   console.error(
-    "Usage: npm run translation:configure -- <service-account.json> [--check]",
+    "Usage: npm run translation:configure -- --login [--account=owner@example.com] | --check",
   );
 }
 
-function isInside(parent, candidate) {
-  const relative = path.relative(parent, candidate);
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
-}
-
-function validateCredential(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("The selected file is not a Google service-account JSON file.");
-  }
-  if (value.type !== "service_account") {
-    throw new Error("The selected Google credential is not a service account.");
-  }
-  if (typeof value.project_id !== "string" || !value.project_id.trim()) {
-    throw new Error("The service-account JSON is missing project_id.");
-  }
-  if (
-    typeof value.client_email !== "string"
-    || !/^[^\s@]+@[^\s@]+\.iam\.gserviceaccount\.com$/i.test(value.client_email)
-  ) {
-    throw new Error("The service-account JSON has an invalid client_email.");
-  }
-  if (
-    typeof value.private_key !== "string"
-    || !value.private_key.includes("-----BEGIN PRIVATE KEY-----")
-    || !value.private_key.includes("-----END PRIVATE KEY-----")
-  ) {
-    throw new Error("The service-account JSON is missing a valid private_key.");
+function envValue(source, key) {
+  const line = source
+    .split(/\r?\n/)
+    .find((item) => new RegExp(`^\\s*${key}\\s*=`).test(item));
+  if (!line) return "";
+  const raw = line.split("=").slice(1).join("=").trim();
+  if (!raw) return "";
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return raw;
   }
 }
 
@@ -50,79 +42,127 @@ function serializeEnvValue(value) {
   return JSON.stringify(String(value).replace(/\r\n?/g, "\n"));
 }
 
-function updateEnv(source, values) {
+function updateEnv(source) {
   const newline = source.includes("\r\n") ? "\r\n" : "\n";
-  const lines = source ? source.split(/\r?\n/) : [];
+  const values = {
+    GOOGLE_CLOUD_PROJECT_ID: PROJECT_ID,
+    GOOGLE_CLOUD_LOCAL_ADC: "1",
+    TRANSLATION_RECEIPT_SECRET:
+      envValue(source, "TRANSLATION_RECEIPT_SECRET")
+      || randomBytes(48).toString("base64url"),
+  };
   const written = new Set();
-  const updated = lines.map((line) => {
-    const match = line.match(/^\s*(?:export\s+)?([A-Z][A-Z0-9_]*)\s*=/);
-    const key = match?.[1];
-    if (!key || !TRANSLATION_KEYS.includes(key)) return line;
-    written.add(key);
-    return `${key}=${serializeEnvValue(values[key])}`;
-  });
+  const lines = [];
 
-  if (updated.length && updated.at(-1) !== "") updated.push("");
-  if (!TRANSLATION_KEYS.every((key) => written.has(key))) {
-    updated.push("# Server-only Google Cloud Translation credentials.");
-    for (const key of TRANSLATION_KEYS) {
-      if (!written.has(key)) updated.push(`${key}=${serializeEnvValue(values[key])}`);
+  for (const line of source.split(/\r?\n/)) {
+    const key = line.match(/^\s*(?:export\s+)?([A-Z][A-Z0-9_]*)\s*=/)?.[1];
+    if (key && LEGACY_KEY_NAMES.has(key)) continue;
+    if (key && CONFIG_KEYS.includes(key)) {
+      if (!written.has(key)) lines.push(`${key}=${serializeEnvValue(values[key])}`);
+      written.add(key);
+      continue;
+    }
+    lines.push(line);
+  }
+
+  if (lines.length && lines.at(-1) !== "") lines.push("");
+  if (!CONFIG_KEYS.every((key) => written.has(key))) {
+    lines.push("# Server-only Google Cloud Translation local ADC settings.");
+    for (const key of CONFIG_KEYS) {
+      if (!written.has(key)) lines.push(`${key}=${serializeEnvValue(values[key])}`);
     }
   }
-  if (updated.at(-1) !== "") updated.push("");
-  return updated.join(newline);
+  if (lines.at(-1) !== "") lines.push("");
+  return lines.join(newline);
+}
+
+function runGcloud(args) {
+  const windows = process.platform === "win32";
+  const executable = windows ? (process.env.ComSpec || "cmd.exe") : "gcloud";
+  const childArgs = windows ? ["/d", "/s", "/c", "gcloud.cmd", ...args] : args;
+  return new Promise((resolve, reject) => {
+    const child = spawn(executable, childArgs, {
+      stdio: "inherit",
+      windowsHide: false,
+    });
+    child.once("error", (error) => {
+      reject(new Error(
+        error.code === "ENOENT"
+          ? "Google Cloud CLI is not installed or is not available in PATH."
+          : `Could not start gcloud: ${error.message}`,
+      ));
+    });
+    child.once("exit", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`gcloud exited with code ${code}`));
+    });
+  });
+}
+
+async function verifyAdc() {
+  const auth = new GoogleAuth({
+    projectId: PROJECT_ID,
+    scopes: ["https://www.googleapis.com/auth/cloud-platform"],
+  });
+  const client = await auth.getClient();
+  if (client.targetPrincipal !== SERVICE_ACCOUNT_EMAIL) {
+    throw new Error(
+      `Google ADC is not impersonating the required service account (${SERVICE_ACCOUNT_EMAIL}).`,
+    );
+  }
+  const token = await client.getAccessToken();
+  if (!token.token) throw new Error("Google ADC did not return an access token.");
 }
 
 async function main() {
   const args = process.argv.slice(2);
-  const checkOnly = args.includes("--check");
-  const credentialArgument = args.find((argument) => argument !== "--check");
-  if (!credentialArgument) {
+  const login = args.includes("--login");
+  const check = args.includes("--check");
+  const accountArguments = args.filter((argument) => argument.startsWith("--account="));
+  const account = accountArguments[0]?.slice("--account=".length).trim() || "";
+  if (
+    login === check
+    || accountArguments.length > 1
+    || (account && !/^[^\s@]+@[^\s@]+$/.test(account))
+    || (check && account)
+    || args.some((argument) => (
+      argument !== "--login"
+      && argument !== "--check"
+      && !argument.startsWith("--account=")
+    ))
+  ) {
     usage();
     process.exitCode = 1;
     return;
   }
 
-  const workspace = process.cwd();
-  const credentialPath = path.resolve(credentialArgument);
-  if (isInside(workspace, credentialPath)) {
-    throw new Error(
-      "For safety, keep the downloaded service-account JSON outside the website folder (for example, in Downloads).",
-    );
+  if (login) {
+    await runGcloud([
+      "auth",
+      "application-default",
+      "login",
+      ...(account ? [`--account=${account}`] : []),
+      `--impersonate-service-account=${SERVICE_ACCOUNT_EMAIL}`,
+      `--project=${PROJECT_ID}`,
+    ]);
   }
+  await verifyAdc();
 
-  let credential;
-  try {
-    credential = JSON.parse(await readFile(credentialPath, "utf8"));
-  } catch (error) {
-    throw new Error(`Could not read the service-account JSON: ${error.message}`);
-  }
-  validateCredential(credential);
-
-  if (checkOnly) {
-    console.log("Google service-account JSON is valid. No files were changed.");
+  if (check) {
+    console.log("Short-lived Google ADC is valid. No project files were changed.");
     return;
   }
 
-  const envPath = path.join(workspace, ".env.local");
+  const envPath = path.join(process.cwd(), ".env.local");
   let current = "";
   try {
     current = await readFile(envPath, "utf8");
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
   }
-
-  const values = {
-    GOOGLE_CLOUD_PROJECT_ID: credential.project_id.trim(),
-    GOOGLE_CLOUD_CLIENT_EMAIL: credential.client_email.trim(),
-    GOOGLE_CLOUD_PRIVATE_KEY: credential.private_key,
-    TRANSLATION_RECEIPT_SECRET: randomBytes(48).toString("base64url"),
-  };
-  await writeFile(envPath, updateEnv(current, values), { encoding: "utf8", mode: 0o600 });
-
-  console.log("Google Cloud Translation was configured in .env.local.");
-  console.log("The private key and receipt secret were not printed.");
-  console.log("Restart the local development server before testing translation.");
+  await writeFile(envPath, updateEnv(current), { encoding: "utf8", mode: 0o600 });
+  console.log("Short-lived Google ADC was verified and enabled for local translation.");
+  console.log("Restart npm run dev:local before testing translation.");
 }
 
 main().catch((error) => {

@@ -316,18 +316,20 @@ corrected Chinese remains locked unless the administrator explicitly requests a 
 Drafts may contain incomplete languages,
 while publishing requires all three descriptions and, for journey events, all three titles.
 
-To enable automatic translation locally, first enable Cloud Translation in a billing-enabled
-Google Cloud project and download a JSON key for a dedicated service account. Keep that JSON
-outside this repository, then import it without copying secrets into the terminal:
+To enable automatic translation locally, install the Google Cloud CLI and use short-lived
+Application Default Credentials that impersonate the dedicated translation service account:
 
 ```powershell
-npm run translation:configure -- "C:\Users\you\Downloads\service-account.json"
+npm run translation:configure -- --login --account=owner@example.com
 ```
 
-The command validates the credential, writes the project ID, service-account email and private
-key to the Git-ignored `.env.local`, and generates a new receipt-signing secret. It never prints
-either secret. Restart `npm run dev` after configuration. Do not commit or share the downloaded
-JSON key.
+The command opens Google sign-in through `gcloud`, verifies the resulting impersonated ADC, removes
+any legacy private-key settings, and enables `GOOGLE_CLOUD_LOCAL_ADC` in the Git-ignored
+`.env.local`. It never creates or stores a service-account JSON key. The signed-in Google account
+must have `roles/iam.serviceAccountTokenCreator` on the translation service account. Specify the
+same account explicitly to avoid selecting the wrong identity in a multi-account browser. Run
+`npm run translation:configure -- --check` to verify the short-lived login, and restart
+`npm run dev:local` after configuration.
 
 Hosted Vercel deployments use OIDC federation instead of a service-account private key. Configure
 the Vercel project for Team issuer mode, create a Google Workload Identity Pool/provider restricted
@@ -335,8 +337,8 @@ to this project's `production` subject, and set the non-secret `GOOGLE_CLOUD_PRO
 `GOOGLE_CLOUD_PROJECT_NUMBER`, `GOOGLE_CLOUD_SERVICE_ACCOUNT_EMAIL`,
 `GOOGLE_CLOUD_WORKLOAD_IDENTITY_POOL_ID`, and `GOOGLE_CLOUD_WORKLOAD_IDENTITY_PROVIDER_ID`
 environment variables. Set a separate sensitive `TRANSLATION_RECEIPT_SECRET` for Production.
-Never set `GOOGLE_CLOUD_PRIVATE_KEY` on Vercel. The application fails closed on Vercel if the OIDC
-configuration is missing and will not fall back to a long-lived key. See
+The application rejects `GOOGLE_CLOUD_PRIVATE_KEY` in every environment. It fails closed on Vercel
+if the OIDC configuration is missing and will not fall back to local ADC. See
 [`docs/vercel-google-oidc.md`](docs/vercel-google-oidc.md) for the exact trust boundary and checks.
 
 For isolated admin testing, use `npm run dev:local`. This pins the local site to

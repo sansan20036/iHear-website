@@ -18,6 +18,7 @@ export const TERM_PATTERN = /(?<![\p{L}\p{N}_])(?:(tutee|tutor)(s(?:['’])?|['�
 const TUTOR_TITLE_PATTERN = /(?<![\p{L}\p{N}_])(?:(senior\s+lead|lead)\s+tutor)(s(?:['’])?|['’]s)?(?![\p{L}\p{N}_])/giu;
 
 const PLACEHOLDER_PATTERN = /⟦IH_([A-Z0-9]{10})_(\d{4})⟧/g;
+const PLACEHOLDER_TOKEN_PATTERN = /^⟦IH_[A-Z0-9]{10}_\d{4}⟧$/;
 const simplifiedConverter = OpenCC.Converter({ from: "twp", to: "cn" });
 
 export function convertZhHantToZhHans(value: string) {
@@ -291,10 +292,8 @@ type GoogleTranslationAuth =
       tokenAudience: string;
     }
   | {
-      mode: "service-account-key";
+      mode: "local-adc";
       projectId: string;
-      clientEmail: string;
-      privateKey: string;
     };
 
 function isVercelRuntime() {
@@ -335,21 +334,25 @@ function oidcCredentials() {
   } as const;
 }
 
-function localServiceAccountCredentials() {
+function localAdcCredentials() {
   const projectId = process.env.GOOGLE_CLOUD_PROJECT_ID?.trim();
-  const clientEmail = process.env.GOOGLE_CLOUD_CLIENT_EMAIL?.trim();
-  const privateKey = process.env.GOOGLE_CLOUD_PRIVATE_KEY?.replace(/\\n/g, "\n").trim();
-  if (!projectId || !clientEmail || !privateKey) throw new TranslationConfigurationError("Automatic translation is not configured");
-  return { mode: "service-account-key", projectId, clientEmail, privateKey } as const;
+  const localAdc = process.env.GOOGLE_CLOUD_LOCAL_ADC?.trim().toLowerCase();
+  if (process.env.GOOGLE_CLOUD_CLIENT_EMAIL?.trim() || process.env.GOOGLE_CLOUD_PRIVATE_KEY?.trim()) {
+    throw new TranslationConfigurationError("Long-lived Google service-account keys are not supported");
+  }
+  if (!projectId || (localAdc !== "1" && localAdc !== "true")) {
+    throw new TranslationConfigurationError("Automatic translation is not configured");
+  }
+  return { mode: "local-adc", projectId } as const;
 }
 
 export function googleTranslationAuthConfiguration(): GoogleTranslationAuth {
-  const oidc = oidcCredentials();
-  if (oidc) return oidc;
-  // Hosted Vercel functions must never fall back to a persisted service-account
-  // private key. Local development keeps the key flow for offline-safe testing.
-  if (isVercelRuntime()) throw new TranslationConfigurationError("Vercel OIDC translation authentication is not configured");
-  return localServiceAccountCredentials();
+  if (isVercelRuntime()) {
+    const oidc = oidcCredentials();
+    if (oidc) return oidc;
+    throw new TranslationConfigurationError("Vercel OIDC translation authentication is not configured");
+  }
+  return localAdcCredentials();
 }
 
 export function isGoogleTranslationConfigured() {
@@ -368,24 +371,38 @@ export function prepareGoogleTranslationHtml(value: string, protectedValue?: Pro
   return escapeTranslationHtml(value).replace(PLACEHOLDER_PATTERN, (token) => {
     const original = originals.get(token);
     if (!original) return `<span translate="no">${token}</span>`;
-    // Keeping the original term visible inside translate=no gives Google the
-    // grammatical context it needs. The token remains as a fail-closed marker.
-    return `<span translate="no" data-ihear-placeholder="${token}">${token}${escapeTranslationHtml(original)}</span>`;
+    // Google needs the natural term—not a visible sentinel—to preserve the
+    // surrounding sentence. Keep the fail-closed token in an HTML attribute;
+    // Translation Advanced preserves the element while translate=no protects
+    // its text. finishGoogleTranslationHtml restores the token before the
+    // existing exact-once integrity validation runs.
+    return `<span translate="no" data-ihear-placeholder="${token}">${escapeTranslationHtml(original)}</span>`;
+  });
+}
+
+function decodeTranslationHtmlEntities(value: string) {
+  return value.replace(/&#x([0-9a-f]+);|&#([0-9]+);|&(amp|lt|gt|quot|#39);/giu, (entity, hexadecimal, decimal, named) => {
+    if (hexadecimal) return String.fromCodePoint(Number.parseInt(hexadecimal, 16));
+    if (decimal) return String.fromCodePoint(Number.parseInt(decimal, 10));
+    return ({ amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'" } as Record<string, string>)[String(named).toLowerCase()] || entity;
   });
 }
 
 export function finishGoogleTranslationHtml(value: string) {
   return value
-    .replace(/<span\b[^>]*>([\s\S]*?)<\/span>/giu, (span, contents: string) => {
-      const token = contents.match(PLACEHOLDER_PATTERN)?.[0];
-      return token || span;
+    .replace(/<span\b([^>]*)>([\s\S]*?)<\/span>/giu, (span, attributes: string, contents: string) => {
+      const attributeMatch = attributes.match(/\bdata-ihear-placeholder\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/iu);
+      const attributeToken = decodeTranslationHtmlEntities(
+        attributeMatch?.[1] || attributeMatch?.[2] || attributeMatch?.[3] || "",
+      );
+      if (PLACEHOLDER_TOKEN_PATTERN.test(attributeToken)) return attributeToken;
+      // Accept the previous visible-token response shape only for compatibility
+      // with an already-running request during a rolling deployment.
+      const legacyToken = decodeTranslationHtmlEntities(contents).match(PLACEHOLDER_PATTERN)?.[0];
+      return legacyToken || span;
     })
     .replace(/<\/?span\b[^>]*>/giu, "")
-    .replace(/&#x([0-9a-f]+);|&#([0-9]+);|&(amp|lt|gt|quot|#39);/giu, (entity, hexadecimal, decimal, named) => {
-      if (hexadecimal) return String.fromCodePoint(Number.parseInt(hexadecimal, 16));
-      if (decimal) return String.fromCodePoint(Number.parseInt(decimal, 10));
-      return ({ amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'" } as Record<string, string>)[String(named).toLowerCase()] || entity;
-    });
+    .replace(/&#x([0-9a-f]+);|&#([0-9]+);|&(amp|lt|gt|quot|#39);/giu, (entity) => decodeTranslationHtmlEntities(entity));
 }
 
 export async function googleTranslateToZhHant(contents: string[], protectedValues?: ProtectedValue[]) {
@@ -407,10 +424,9 @@ export async function googleTranslateToZhHant(contents: string[], protectedValue
     if (!authClient) throw new TranslationConfigurationError("Could not initialize Google Cloud OIDC authentication");
     client = new TranslationServiceClient({ projectId: credentials.projectId, authClient });
   } else {
-    client = new TranslationServiceClient({
-      projectId: credentials.projectId,
-      credentials: { client_email: credentials.clientEmail, private_key: credentials.privateKey },
-    });
+    // Google Cloud client libraries discover the short-lived, impersonated
+    // Application Default Credentials created by gcloud for local development.
+    client = new TranslationServiceClient({ projectId: credentials.projectId });
   }
   const [response] = await client.translateText({
     parent: `projects/${credentials.projectId}/locations/global`,
