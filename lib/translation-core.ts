@@ -26,7 +26,12 @@ export function convertZhHantToZhHans(value: string) {
 
 type ProtectedValue = {
   source: string;
-  placeholders: Array<{ token: string; zhHant: string; zhHans: string }>;
+  placeholders: Array<{ token: string; source: string; zhHant: string; zhHans: string }>;
+};
+
+type TranslationUnit = {
+  text: string;
+  separator: string;
 };
 
 type ReceiptField = {
@@ -170,10 +175,47 @@ export function protectTranslationText(input: string, contextTerms: string[] = [
     const token = `⟦IH_${nonce}_${String(index).padStart(4, "0")}⟧`;
     source += text.slice(cursor, candidate.start) + token;
     cursor = candidate.end;
-    placeholders.push({ token, zhHant: candidate.zhHant, zhHans: candidate.zhHans });
+    placeholders.push({
+      token,
+      source: text.slice(candidate.start, candidate.end),
+      zhHant: candidate.zhHant,
+      zhHans: candidate.zhHans,
+    });
   });
   source += text.slice(cursor);
   return { source, placeholders };
+}
+
+const sentenceSegmenter = new Intl.Segmenter("en", { granularity: "sentence" });
+
+export function splitTranslationUnits(input: string): TranslationUnit[] {
+  const value = input.normalize("NFC").replace(/\r\n?/g, "\n");
+  if (!value) return [];
+  const units: TranslationUnit[] = [];
+  const appendSeparator = (separator: string) => {
+    if (!separator) return;
+    if (units.length) units[units.length - 1].separator += separator;
+  };
+  for (const part of value.split(/(\n{2,})/u)) {
+    if (!part) continue;
+    if (/^\n{2,}$/u.test(part)) {
+      appendSeparator(part);
+      continue;
+    }
+    for (const entry of sentenceSegmenter.segment(part)) {
+      let sentence = entry.segment;
+      const leading = sentence.match(/^\s+/u)?.[0] || "";
+      if (leading) {
+        appendSeparator(leading);
+        sentence = sentence.slice(leading.length);
+      }
+      const trailing = sentence.match(/\s+$/u)?.[0] || "";
+      if (trailing) sentence = sentence.slice(0, -trailing.length);
+      if (sentence) units.push({ text: sentence, separator: trailing });
+      else appendSeparator(trailing);
+    }
+  }
+  return units.length ? units : [{ text: value, separator: "" }];
 }
 
 function assertPlaceholderIntegrity(value: string, protectedValue: ProtectedValue) {
@@ -204,6 +246,22 @@ export function finishProtectedTranslation(protectedValue: ProtectedValue, trans
     zhHant: restorePlaceholders(translatedZhHant, protectedValue, "zhHant"),
     zhHans: restorePlaceholders(translatedZhHans, protectedValue, "zhHans"),
   };
+}
+
+export function machineTranslationQualityIssues(value: string) {
+  const checks: Array<[string, RegExp]> = [
+    ["duplicated-project-term", /(?:專案專案|项目项目)/u],
+    ["misplaced-ihear-possessive", /iHear\s*的\s*(?:為|为|和|與|与)(?=[\p{Script=Han}])/u],
+    ["misplaced-person-and-ihear", /\b[A-Z][A-Za-z.'’\-]*(?:\s+[A-Z][A-Za-z.'’\-]*)?\s+iHear\s*的\s*(?:支援|支持)/u],
+    ["glued-tutor-title", /(?:小老師組長|小老师组长)\s*(?:活動負責人|活动负责人)/u],
+  ];
+  return checks.filter(([, pattern]) => pattern.test(value)).map(([code]) => code);
+}
+
+function assertMachineTranslationQuality(value: string) {
+  if (machineTranslationQualityIssues(value).length) {
+    throw new TranslationIntegrityError("The translation preview contains suspicious term placement");
+  }
 }
 
 type GoogleTranslationAuth =
@@ -283,18 +341,31 @@ export function isGoogleTranslationConfigured() {
   try { googleTranslationAuthConfiguration(); return true; } catch { return false; }
 }
 
-export function prepareGoogleTranslationHtml(value: string) {
+function escapeTranslationHtml(value: string) {
   return value
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(PLACEHOLDER_PATTERN, (token) => `<span translate="no">${token}</span>`);
+    .replace(/>/g, "&gt;");
+}
+
+export function prepareGoogleTranslationHtml(value: string, protectedValue?: ProtectedValue) {
+  const originals = new Map(protectedValue?.placeholders.map((item) => [item.token, item.source]) || []);
+  return escapeTranslationHtml(value).replace(PLACEHOLDER_PATTERN, (token) => {
+    const original = originals.get(token);
+    if (!original) return `<span translate="no">${token}</span>`;
+    // Keeping the original term visible inside translate=no gives Google the
+    // grammatical context it needs. The token remains as a fail-closed marker.
+    return `<span translate="no" data-ihear-placeholder="${token}">${token}${escapeTranslationHtml(original)}</span>`;
+  });
 }
 
 export function finishGoogleTranslationHtml(value: string) {
   return value
-    .replace(/<span\s+translate=(?:"no"|'no'|no)\s*>/giu, "")
-    .replace(/<\/span>/giu, "")
+    .replace(/<span\b[^>]*>([\s\S]*?)<\/span>/giu, (span, contents: string) => {
+      const token = contents.match(PLACEHOLDER_PATTERN)?.[0];
+      return token || span;
+    })
+    .replace(/<\/?span\b[^>]*>/giu, "")
     .replace(/&#x([0-9a-f]+);|&#([0-9]+);|&(amp|lt|gt|quot|#39);/giu, (entity, hexadecimal, decimal, named) => {
       if (hexadecimal) return String.fromCodePoint(Number.parseInt(hexadecimal, 16));
       if (decimal) return String.fromCodePoint(Number.parseInt(decimal, 10));
@@ -302,7 +373,7 @@ export function finishGoogleTranslationHtml(value: string) {
     });
 }
 
-export async function googleTranslateToZhHant(contents: string[]) {
+export async function googleTranslateToZhHant(contents: string[], protectedValues?: ProtectedValue[]) {
   if (!contents.length) return [];
   const credentials = googleTranslationAuthConfiguration();
   let client: TranslationServiceClient;
@@ -328,7 +399,7 @@ export async function googleTranslateToZhHant(contents: string[]) {
   }
   const [response] = await client.translateText({
     parent: `projects/${credentials.projectId}/locations/global`,
-    contents: contents.map(prepareGoogleTranslationHtml),
+    contents: contents.map((content, index) => prepareGoogleTranslationHtml(content, protectedValues?.[index])),
     mimeType: "text/html",
     sourceLanguageCode: "en",
     targetLanguageCode: "zh-TW",
@@ -438,7 +509,10 @@ export async function buildTranslationPreview(params: {
 }) {
   const stateMap = new Map(params.states.map((state) => [`${state.field}:${state.locale}`, state]));
   const results: Record<string, { value: LocalizedTranslationField; zhHantOrigin: TranslationOrigin; zhHansOrigin: TranslationOrigin; zhHantStatus: string; zhHansStatus: string }> = {};
-  const pending: Array<{ field: string; protectedValue: ProtectedValue }> = [];
+  const pending: Array<{
+    field: string;
+    units: Array<{ protectedValue: ProtectedValue; separator: string }>;
+  }> = [];
   const autoTranslate = params.autoTranslate !== false;
 
   const isLockedTranslation = (translatedValue: string, state: TranslationState | undefined) => Boolean(
@@ -468,13 +542,46 @@ export async function buildTranslationPreview(params: {
       zhHantStatus: shouldTranslateHant ? "pending" : hantLocked ? "protected" : "current",
       zhHansStatus: hansLocked && !force.has("zhHans") ? "protected" : "pending",
     };
-    if (shouldTranslateHant) pending.push({ field, protectedValue: protectTranslationText(value.en, params.contextTerms || []) });
+    if (shouldTranslateHant) {
+      pending.push({
+        field,
+        units: splitTranslationUnits(value.en).map((unit) => ({
+          protectedValue: protectTranslationText(unit.text, params.contextTerms || []),
+          separator: unit.separator,
+        })),
+      });
+    }
   }
 
   if (pending.length) {
-    const translated = await (params.translate || googleTranslateToZhHant)(pending.map((item) => item.protectedValue.source));
-    pending.forEach((item, index) => {
-      const finished = finishProtectedTranslation(item.protectedValue, translated[index]);
+    // Each sentence is a separate Translation API content item. Google can
+    // reorder terms within a sentence, but cannot move a protected term into
+    // another sentence or paragraph.
+    const requests = pending.flatMap((item) => item.units.map((unit) => ({ field: item.field, ...unit })));
+    const sources = requests.map((item) => item.protectedValue.source);
+    const protectedValues = requests.map((item) => item.protectedValue);
+    const translated = params.translate
+      ? await params.translate(sources)
+      : await googleTranslateToZhHant(sources, protectedValues);
+    if (translated.length !== requests.length) {
+      throw new TranslationIntegrityError("The translation service returned an incomplete response");
+    }
+    let translatedIndex = 0;
+    pending.forEach((item) => {
+      const finishedUnits = item.units.map((unit) => {
+        const finished = finishProtectedTranslation(unit.protectedValue, translated[translatedIndex]);
+        translatedIndex += 1;
+        return {
+          zhHant: `${finished.zhHant}${unit.separator}`,
+          zhHans: `${finished.zhHans}${unit.separator}`,
+        };
+      });
+      const finished = {
+        zhHant: finishedUnits.map((unit) => unit.zhHant).join("").trim(),
+        zhHans: finishedUnits.map((unit) => unit.zhHans).join("").trim(),
+      };
+      assertMachineTranslationQuality(finished.zhHant);
+      assertMachineTranslationQuality(finished.zhHans);
       const result = results[item.field];
       result.value.zhHant = finished.zhHant;
       result.zhHantOrigin = "machine";

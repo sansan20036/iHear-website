@@ -7,9 +7,11 @@ import {
   finishGoogleTranslationHtml,
   googleTranslationAuthConfiguration,
   isGoogleTranslationConfigured,
+  machineTranslationQualityIssues,
   prepareGoogleTranslationHtml,
   protectTranslationText,
   sha256,
+  splitTranslationUnits,
   TERM_PATTERN,
   TranslationIntegrityError,
   TranslationReceiptError,
@@ -139,14 +141,41 @@ describe("translation glossary and placeholders", () => {
     expect(() => finishProtectedTranslation(protectedValue, `${protectedValue.source} ⟦IH_AAAAAAAAAA_9999⟧`)).toThrow(TranslationIntegrityError);
   });
 
-  it("wraps protected tokens as non-translatable HTML and restores escaped text", () => {
+  it("wraps protected tokens with their original terms as non-translatable HTML", () => {
     const protectedValue = protectTranslationText("iHear tutors use A & B < C");
-    const html = prepareGoogleTranslationHtml(protectedValue.source);
-    expect(html).toContain('<span translate="no">⟦IH_');
+    const html = prepareGoogleTranslationHtml(protectedValue.source, protectedValue);
+    expect(html).toContain('<span translate="no" data-ihear-placeholder="⟦IH_');
+    expect(html).toContain("iHear</span>");
+    expect(html).toContain("tutors</span>");
     expect(html).toContain("A &amp; B &lt; C");
     const restored = finishGoogleTranslationHtml(html);
     expect(restored).toBe(protectedValue.source);
     expect(() => finishProtectedTranslation(protectedValue, restored)).not.toThrow();
+  });
+
+  it("splits long bios into sentence-bound requests while preserving paragraphs", () => {
+    const input = "Yi supports iHear’s community events. She coordinates volunteers.\n\nAs a Senior Lead Tutor, Yi teaches students.";
+    const units = splitTranslationUnits(input);
+    expect(units).toHaveLength(3);
+    expect(units.map((unit) => unit.text)).toEqual([
+      "Yi supports iHear’s community events.",
+      "She coordinates volunteers.",
+      "As a Senior Lead Tutor, Yi teaches students.",
+    ]);
+    expect(units.map((unit) => `${unit.text}${unit.separator}`).join("")).toBe(input);
+  });
+
+  it("flags the real Yi and Karen placeholder-displacement regressions", () => {
+    const yi = "Yi iHear 的支援社區活動。身為資深小老師組長活動負責人，Yi 擁有教學經驗。";
+    const karen = "Karen 為課程、教學資源和專案專案的開發提供支援，致力於改進 iHear 的和計畫資源。";
+    expect(machineTranslationQualityIssues(yi)).toEqual(expect.arrayContaining([
+      "misplaced-person-and-ihear",
+      "glued-tutor-title",
+    ]));
+    expect(machineTranslationQualityIssues(karen)).toEqual(expect.arrayContaining([
+      "duplicated-project-term",
+      "misplaced-ihear-possessive",
+    ]));
   });
 });
 
@@ -201,6 +230,25 @@ describe("translation preview and signed receipt", () => {
     expect(result.fields.bio.value.zhHant).toContain("小老師組長");
     expect(result.fields.bio.zhHantOrigin).toBe("machine");
     expect(result.fields.bio.zhHansOrigin).toBe("machine");
+  });
+
+  it("translates each sentence independently and restores the original paragraph breaks", async () => {
+    const english = "iHear supports tutors. Lead Tutors guide the team.\n\nStudents learn confidently.";
+    let received = [];
+    const result = await buildTranslationPreview({
+      email: "admin@example.org",
+      resource,
+      fields: { bio: { en: english, zhHant: "", zhHans: "" } },
+      states: [],
+      translate: async (values) => {
+        received = values;
+        return values.map((value) => `翻譯：${value}`);
+      },
+    });
+    expect(received).toHaveLength(3);
+    expect(received.every((value) => !value.includes("\n"))).toBe(true);
+    expect(result.fields.bio.value.zhHant).toContain("\n\n");
+    expect(result.fields.bio.value.zhHant).toContain("小老師組長");
   });
 
   it("keeps manually corrected Chinese unless force is explicit", async () => {

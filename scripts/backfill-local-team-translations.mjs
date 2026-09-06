@@ -134,7 +134,10 @@ async function main() {
   }
 
   for (const batch of chunks(googleJobs)) {
-    const translated = await googleTranslateToZhHant(batch.map((job) => job.protectedValue.source));
+    const translated = await googleTranslateToZhHant(
+      batch.map((job) => job.protectedValue.source),
+      batch.map((job) => job.protectedValue),
+    );
     batch.forEach((job, index) => {
       try {
         job.generated = finishProtectedTranslation(job.protectedValue, translated[index]);
