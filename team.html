@@ -103,9 +103,16 @@
           <a class="btn btn-primary" href="#roster" data-i18n="team_cta" data-editable-content="team.team.cta" data-editable-mode="singleline" data-editable-maxlength="120" data-layout-link="team.team.cta.href">View Full Tutor Profiles</a>
         </div>
         <div class="roster" id="roster" data-animate>
-          <h2 data-i18n="roster_h" data-editable-content="team.roster.title" data-editable-mode="singleline" data-editable-maxlength="200">Our Tutors</h2>
-          <p class="roster-sub" data-i18n="roster_sub" data-editable-content="team.roster.subtitle" data-editable-mode="multiline" data-editable-maxlength="5000">Every iHear tutor, with their full profile. Tap a name to read their story.</p>
-          <div class="roster-grid" data-team-tutors data-site-media-dynamic data-no-inline-edit>
+          <div class="roster-heading">
+            <div class="roster-heading-copy">
+              <h2 data-i18n="roster_h" data-editable-content="team.roster.title" data-editable-mode="singleline" data-editable-maxlength="200">Our Tutors</h2>
+              <p class="roster-sub" data-i18n="roster_sub" data-editable-content="team.roster.subtitle" data-editable-mode="multiline" data-editable-maxlength="5000">Every iHear tutor, with their full profile. Tap a name to read their story.</p>
+            </div>
+            <button type="button" class="btn btn-ghost roster-expand-toggle" data-team-expand-toggle aria-controls="team-tutor-roster" aria-expanded="false" hidden>
+              <span data-team-expand-label>Expand all</span>
+            </button>
+          </div>
+          <div class="roster-grid" id="team-tutor-roster" data-team-tutors data-site-media-dynamic data-no-inline-edit>
             <p class="team-directory-message">Loading team profiles…</p>
           </div>
           <p class="roster-cta"><span data-i18n="roster_bio_p" data-editable-content="team.roster.bio.body" data-editable-mode="multiline" data-editable-maxlength="5000">Are you an iHear tutor without a profile yet?</span> <a href="/submit-bio#bio-form" data-i18n="roster_bio_cta" data-editable-content="team.roster.bio.cta" data-editable-mode="singleline" data-editable-maxlength="120">Submit your bio</a></p>

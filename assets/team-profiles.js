@@ -2,6 +2,7 @@
   "use strict";
   const leaderMount = document.querySelector("[data-team-leaders]");
   const tutorMount = document.querySelector("[data-team-tutors]");
+  const tutorToggle = document.querySelector("[data-team-expand-toggle]");
   if (!leaderMount || !tutorMount) return;
 
   const textFields = ["role", "schoolDisplay", "languages", "strengths", "summary", "bio", "hobbies"];
@@ -12,9 +13,9 @@
     zhHant:{manager:"團隊資料管理",hint:"拖曳卡片上的排序把手，或使用上移／下移按鈕；放開後會自動儲存。",editMode:"管理團隊檔案",done:"完成",add:"新增檔案",edit:"編輯",drag:"拖曳排序",up:"上移",down:"下移",draft:"草稿",loading:"正在載入團隊資料…",empty:"目前沒有已發布的團隊檔案。",failed:"目前無法載入團隊資料。",newTitle:"新增團隊檔案",editTitle:"編輯團隊檔案",name:"姓名",initials:"姓名縮寫",section:"顯示區塊",leader:"領導團隊",tutor:"導師",existing:"既有人物",newPerson:"建立新人物",school:"學校",grade:"年級",showSchool:"公開顯示學校",showGrade:"公開顯示年級",consent:"我確認已取得適用的公開同意。",shared:"修改姓名或縮寫會同步套用到此人物的所有版位。",role:"角色／職稱",schoolDisplay:"本語言的學校名稱",languages:"使用語言",strengths:"教學專長",summary:"簡短介紹",bio:"完整介紹",hobbies:"興趣",saveDraft:"儲存草稿",publish:"發布",cancel:"取消",delete:"永久刪除",deleteConfirm:"確定要永久刪除此公開版位嗎？刪除後無法復原。",conflict:"另一位管理員已修改資料，請重新載入後再試。",saved:"團隊檔案已儲存。",orderSaved:"團隊順序已儲存。",reorderFailed:"無法儲存新順序，請稍後再試。",deleted:"團隊檔案已刪除。",validation:"請檢查表單內容。",copy:"複製英文",close:"關閉編輯器",unsaved:"要放棄尚未儲存的團隊檔案修改嗎？",retry:"重試",moved:(name,position,total)=>`${name} 已移到第 ${position} 位，共 ${total} 位。`},
     zhHans:{manager:"团队数据管理",hint:"拖动卡片上的排序把手，或使用上移／下移按钮；放开后会自动保存。",editMode:"管理团队档案",done:"完成",add:"新增档案",edit:"编辑",drag:"拖动排序",up:"上移",down:"下移",draft:"草稿",loading:"正在加载团队数据…",empty:"目前没有已发布的团队档案。",failed:"目前无法加载团队数据。",newTitle:"新增团队档案",editTitle:"编辑团队档案",name:"姓名",initials:"姓名缩写",section:"显示区块",leader:"领导团队",tutor:"导师",existing:"现有人物",newPerson:"建立新人物",school:"学校",grade:"年级",showSchool:"公开显示学校",showGrade:"公开显示年级",consent:"我确认已取得适用的公开同意。",shared:"修改姓名或缩写会同步套用到此人物的所有版位。",role:"角色／职称",schoolDisplay:"本语言的学校名称",languages:"使用语言",strengths:"教学专长",summary:"简短介绍",bio:"完整介绍",hobbies:"兴趣",saveDraft:"保存草稿",publish:"发布",cancel:"取消",delete:"永久删除",deleteConfirm:"确定要永久删除此公开版位吗？删除后无法恢复。",conflict:"另一位管理员已修改数据，请重新加载后再试。",saved:"团队档案已保存。",orderSaved:"团队顺序已保存。",reorderFailed:"无法保存新顺序，请稍后再试。",deleted:"团队档案已删除。",validation:"请检查表单内容。",copy:"复制英文",close:"关闭编辑器",unsaved:"要放弃尚未保存的团队档案修改吗？",retry:"重试",moved:(name,position,total)=>`${name} 已移到第 ${position} 位，共 ${total} 位。`}
   };
-  Object.assign(labels.en,{delete:"Move to trash",deleteConfirm:"Move this profile to trash? You can restore it in the admin dashboard.",deleted:"Team profile moved to trash."});
-  Object.assign(labels.zhHant,{delete:"移至回收區",deleteConfirm:"確定移至回收區？之後可在管理後台復原。",deleted:"團隊檔案已移至回收區。"});
-  Object.assign(labels.zhHans,{delete:"移至回收区",deleteConfirm:"确定移至回收区？之后可在管理后台恢复。",deleted:"团队档案已移至回收区。"});
+  Object.assign(labels.en,{delete:"Move to trash",deleteConfirm:"Move this profile to trash? You can restore it in the admin dashboard.",deleted:"Team profile moved to trash.",expandAll:"Expand all",collapseAll:"Collapse all"});
+  Object.assign(labels.zhHant,{delete:"移至回收區",deleteConfirm:"確定移至回收區？之後可在管理後台復原。",deleted:"團隊檔案已移至回收區。",expandAll:"全部展開",collapseAll:"全部收起"});
+  Object.assign(labels.zhHans,{delete:"移至回收区",deleteConfirm:"确定移至回收区？之后可在管理后台恢复。",deleted:"团队档案已移至回收区。",expandAll:"全部展开",collapseAll:"全部收起"});
   const state={leaders:[],tutors:[],people:[],admin:false,editMode:false,busy:false,reordering:false,deleteConfirming:false,draft:null,originalDraft:"",activeLocale:"en",translationReceipt:"",translationReady:false,englishGuardAccepted:false};
   const adminBar=document.createElement("div"),dialog=document.createElement("dialog"),toast=document.createElement("div");
   adminBar.className="team-directory-admin";adminBar.hidden=true;adminBar.setAttribute("data-no-inline-edit","");
@@ -25,6 +26,20 @@
 
   function locale(){const lang=(document.documentElement.lang||"en").toLowerCase();return lang.includes("hans")?"zhHans":lang.startsWith("zh")?"zhHant":"en"}
   function l(){return labels[locale()]}
+  function tutorDetails(){return Array.from(tutorMount.querySelectorAll(":scope > .team-profile-tutor-shell > details.tutor-prof"))}
+  function updateTutorToggle(){
+    if(!tutorToggle)return;
+    const details=tutorDetails(),allOpen=details.length>0&&details.every(item=>item.open);
+    tutorToggle.hidden=!details.length;
+    tutorToggle.setAttribute("aria-expanded",String(allOpen));
+    const label=tutorToggle.querySelector("[data-team-expand-label]");if(label)label.textContent=allOpen?l().collapseAll:l().expandAll
+  }
+  function toggleTutorDetails(){
+    const details=tutorDetails();if(!details.length)return;
+    const shouldOpen=details.some(item=>!item.open);
+    details.forEach(item=>{item.open=shouldOpen});
+    updateTutorToggle()
+  }
   function esc(value){return String(value||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;")}
   function pick(value){const key=locale();return value&&String(value[key]||value.en||"").trim()||""}
   function showToast(message,error){clearTimeout(toastTimer);toast.textContent=message;toast.dataset.error=String(Boolean(error));toast.hidden=false;toastTimer=setTimeout(()=>toast.hidden=true,3500)}
@@ -117,6 +132,7 @@
       ${state.editMode?`<button class="team-admin-button accent" data-team-add>${l().add}</button>`:""}
       <button class="team-admin-button primary" data-team-toggle>${state.editMode?l().done:l().editMode}</button></div>`;
     openTutorIds.forEach(id=>{const item=tutorMount.querySelector(`[data-profile-id="${CSS.escape(id)}"] > details`);if(item)item.open=true});
+    updateTutorToggle();
     if(openTutorIds.size)window.requestAnimationFrame(()=>window.scrollTo(window.scrollX,scrollY));
     window.dispatchEvent(new CustomEvent("ihear:media-slots-changed"));
   }
@@ -304,6 +320,7 @@
   document.addEventListener("click",event=>{
     const button=event.target.closest("button");if(!button)return;
     if(button.matches("[data-team-drag]")){event.preventDefault();event.stopPropagation()}
+    else if(button.matches("[data-team-expand-toggle]"))toggleTutorDetails();
     else if(button.matches("[data-team-toggle]")){state.editMode=!state.editMode;render()}
     else if(button.matches("[data-team-add]"))openEditor(null);
     else if(button.dataset.edit)openEditor([...state.leaders,...state.tutors].find(item=>item.id===button.dataset.edit));
@@ -317,6 +334,7 @@
     else if(button.dataset.locale){syncDraft();state.activeLocale=button.dataset.locale;buildEditor()}
     else if(button.matches("[data-copy-en]")){syncDraft();textFields.forEach(field=>state.draft[field][state.activeLocale]=state.draft[field].en);buildEditor()}
   });
+  tutorMount.addEventListener("toggle",event=>{if(event.target.matches("details.tutor-prof"))updateTutorToggle()},true);
   dialog.addEventListener("input",event=>{if(event.target.name){syncDraft();if(event.target.name.endsWith(".en")){state.translationReceipt="";state.translationReady=false;state.englishGuardAccepted=false}void renderLanguageGuards();event.target.removeAttribute("aria-invalid");const marker=dialog.querySelector(`[data-error="${CSS.escape(event.target.name)}"]`);if(marker)marker.textContent=""}});
   dialog.addEventListener("cancel",event=>{event.preventDefault();if(!state.busy)closeEditor()});
   dialog.addEventListener("keydown",event=>{
