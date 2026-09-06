@@ -103,6 +103,13 @@ describe("translation glossary and placeholders", () => {
     expect(protectedValue.source).toContain("tutorial");
   });
 
+  it("protects complete tutor titles before the generic tutor term", () => {
+    const protectedValue = protectTranslationText("Senior Lead Tutor, Lead Tutors, and tutor tutorials");
+    const result = finishProtectedTranslation(protectedValue, protectedValue.source);
+    expect(result.zhHant).toBe("資深小老師組長, 小老師組長, and 小老師 tutorials");
+    expect(result.zhHans).toBe("资深小老师组长, 小老师组长, and 小老师 tutorials");
+  });
+
   it("protects dynamic names, schools, URLs, email and numbers", () => {
     const protectedValue = protectTranslationText(
       "Ryan studies at Taipei School. Email ryan@example.org for 1,200+ sessions at https://ihear.example/path.",
@@ -146,7 +153,7 @@ describe("translation glossary and placeholders", () => {
 describe("translation preview and signed receipt", () => {
   const resource = { type: "team", scope: "", id: "profile-1", version: 3 };
 
-  it("updates protected legacy Chinese when English changes", async () => {
+  it("keeps protected legacy Chinese when English changes", async () => {
     let calls = 0;
     const existing = { en: "Updated tutor bio", zhHant: "既有繁中", zhHans: "既有简中" };
     const legacyStates = [
@@ -157,8 +164,41 @@ describe("translation preview and signed receipt", () => {
       email: "admin@example.org", resource, fields: { bio: existing }, states: legacyStates,
       translate: async (values) => { calls += 1; return values.map((value) => `翻譯 ${value}`); },
     });
+    expect(calls).toBe(0);
+    expect(result.fields.bio.value).toEqual(existing);
+    expect(result.fields.bio.zhHantOrigin).toBe("protected_legacy");
+    expect(result.fields.bio.zhHansOrigin).toBe("protected_legacy");
+    expect(result.fields.bio.zhHantStatus).toBe("protected");
+    expect(result.fields.bio.zhHansStatus).toBe("protected");
+  });
+
+  it("fails safe when existing Chinese has no translation-state rows", async () => {
+    let calls = 0;
+    const existing = { en: "Updated tutor bio", zhHant: "既有繁中", zhHans: "既有简中" };
+    const result = await buildTranslationPreview({
+      email: "admin@example.org", resource, fields: { bio: existing }, states: [],
+      translate: async (values) => { calls += 1; return values; },
+    });
+    expect(calls).toBe(0);
+    expect(result.fields.bio.value).toEqual(existing);
+    expect(result.fields.bio.zhHantOrigin).toBe("protected_legacy");
+    expect(result.fields.bio.zhHansOrigin).toBe("protected_legacy");
+  });
+
+  it("retranslates protected legacy Chinese only when force is explicit", async () => {
+    let calls = 0;
+    const existing = { en: "Updated Lead Tutor bio", zhHant: "既有繁中", zhHans: "既有简中" };
+    const legacyStates = [
+      { resourceType: "team", resourceScope: "", resourceId: "profile-1", field: "bio", locale: "zhHant", sourceHash: sha256("Original tutor bio"), origin: "protected_legacy", glossaryVersion: "ihear-2026-08-v1", updatedBy: null, updatedAt: "" },
+      { resourceType: "team", resourceScope: "", resourceId: "profile-1", field: "bio", locale: "zhHans", sourceHash: sha256("既有繁中"), origin: "protected_legacy", glossaryVersion: "ihear-2026-08-v1", updatedBy: null, updatedAt: "" },
+    ];
+    const result = await buildTranslationPreview({
+      email: "admin@example.org", resource, fields: { bio: existing }, states: legacyStates,
+      force: { bio: ["zhHant", "zhHans"] },
+      translate: async (values) => { calls += 1; return values.map((value) => `翻譯 ${value}`); },
+    });
     expect(calls).toBe(1);
-    expect(result.fields.bio.value.zhHant).toContain("小老師");
+    expect(result.fields.bio.value.zhHant).toContain("小老師組長");
     expect(result.fields.bio.zhHantOrigin).toBe("machine");
     expect(result.fields.bio.zhHansOrigin).toBe("machine");
   });

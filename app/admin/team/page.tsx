@@ -37,9 +37,9 @@ const cropCopy={
  zhHans:{cropExisting:"裁切目前照片",cropDraft:"裁切后的照片已准备好，请保存人员资料以发布。",cropUnavailable:"裁切工具仍在加载，请稍后再试。",photoHelp:"可选择多人合照或个人照，再移动、缩放圆框圈选单一人物；只会上传最后的方形裁切结果。"},
 };
 const translationCopy={
- en:{auto:"Automatically update Chinese translations",replace:"Also overwrite manually edited Chinese",prepare:"Generate translation preview",preparing:"Translating…",ready:"Chinese preview ready. Review it, then save or publish.",manual:"Edit Chinese manually"},
- zhHant:{auto:"自動更新中文翻譯",replace:"同時覆蓋人工修改過的中文",prepare:"產生翻譯預覽",preparing:"翻譯中…",ready:"中文預覽已完成，請檢查後再儲存或發布。",manual:"自行編輯中文"},
- zhHans:{auto:"自动更新中文翻译",replace:"同时覆盖人工修改过的中文",prepare:"生成翻译预览",preparing:"翻译中…",ready:"中文预览已完成，请检查后再保存或发布。",manual:"自行编辑中文"},
+ en:{auto:"Automatically update Chinese translations",replace:"Also overwrite existing or manually edited Chinese",prepare:"Generate translation preview",preparing:"Translating…",ready:"Chinese preview ready. Review it, then save or publish.",manual:"Edit Chinese manually"},
+ zhHant:{auto:"自動更新中文翻譯",replace:"同時覆蓋既有或人工修改過的中文",prepare:"產生翻譯預覽",preparing:"翻譯中…",ready:"中文預覽已完成，請檢查後再儲存或發布。",manual:"自行編輯中文"},
+ zhHans:{auto:"自动更新中文翻译",replace:"同时覆盖现有或人工修改过的中文",prepare:"生成翻译预览",preparing:"翻译中…",ready:"中文预览已完成，请检查后再保存或发布。",manual:"自行编辑中文"},
 };
 type ValidationItem={key:string;label:string};
 function languageLabel(key:string,text:any){return key==="en"?text.english:key==="zhHant"?text.hant:text.hans}

@@ -13,8 +13,9 @@ import type {
   TranslationStateWrite,
 } from "./translation-types";
 
-export const TRANSLATION_GLOSSARY_VERSION = "ihear-2026-08-v1";
+export const TRANSLATION_GLOSSARY_VERSION = "ihear-2026-09-v2";
 export const TERM_PATTERN = /(?<![\p{L}\p{N}_])(?:(tutee|tutor)(s(?:['’])?|['’]s)?|(ihear)(['’]s)?)(?![\p{L}\p{N}_])/giu;
+const TUTOR_TITLE_PATTERN = /(?<![\p{L}\p{N}_])(?:(senior\s+lead|lead)\s+tutor)(s(?:['’])?|['’]s)?(?![\p{L}\p{N}_])/giu;
 
 const PLACEHOLDER_PATTERN = /⟦IH_([A-Z0-9]{10})_(\d{4})⟧/g;
 const simplifiedConverter = OpenCC.Converter({ from: "twp", to: "cn" });
@@ -77,6 +78,26 @@ function possessive(value: string | undefined) {
   return Boolean(value && /['’]/.test(value));
 }
 
+function tutorTitleCandidates(text: string) {
+  const candidates: Candidate[] = [];
+  TUTOR_TITLE_PATTERN.lastIndex = 0;
+  for (const match of text.matchAll(TUTOR_TITLE_PATTERN)) {
+    const value = match[0];
+    const title = match[1].toLowerCase().replace(/\s+/g, " ");
+    const suffix = match[2];
+    const traditionalTitle = title === "senior lead" ? "資深小老師組長" : "小老師組長";
+    const simplifiedTitle = title === "senior lead" ? "资深小老师组长" : "小老师组长";
+    candidates.push({
+      start: match.index!,
+      end: match.index! + value.length,
+      zhHant: `${traditionalTitle}${possessive(suffix) ? "的" : ""}`,
+      zhHans: `${simplifiedTitle}${possessive(suffix) ? "的" : ""}`,
+      priority: 130,
+    });
+  }
+  return candidates;
+}
+
 function glossaryCandidates(text: string) {
   const candidates: Candidate[] = [];
   TERM_PATTERN.lastIndex = 0;
@@ -137,7 +158,11 @@ function chooseCandidates(candidates: Candidate[]) {
 export function protectTranslationText(input: string, contextTerms: string[] = []): ProtectedValue {
   const text = input.normalize("NFC").replace(/\r\n?/g, "\n");
   const nonce = randomBytes(8).toString("hex").slice(0, 10).toUpperCase();
-  const candidates = chooseCandidates([...glossaryCandidates(text), ...invariantCandidates(text, contextTerms)]);
+  const candidates = chooseCandidates([
+    ...tutorTitleCandidates(text),
+    ...glossaryCandidates(text),
+    ...invariantCandidates(text, contextTerms),
+  ]);
   const placeholders: ProtectedValue["placeholders"] = [];
   let cursor = 0;
   let source = "";
@@ -416,16 +441,21 @@ export async function buildTranslationPreview(params: {
   const pending: Array<{ field: string; protectedValue: ProtectedValue }> = [];
   const autoTranslate = params.autoTranslate !== false;
 
+  const isLockedTranslation = (translatedValue: string, state: TranslationState | undefined) => Boolean(
+    translatedValue && (!state || state.origin === "manual" || state.origin === "protected_legacy"),
+  );
+
   for (const [field, raw] of Object.entries(params.fields)) {
     const value = { en: raw.en.trim(), zhHant: raw.zhHant.trim(), zhHans: raw.zhHans.trim() };
     const hantState = stateMap.get(`${field}:zhHant`);
     const hansState = stateMap.get(`${field}:zhHans`);
     const force = new Set(params.force?.[field] || []);
     const englishHash = sha256(value.en);
-    // Only an explicit human correction is locked. Legacy translations are a
-    // safe baseline, but should follow the English source once it changes.
-    const hantLocked = Boolean(value.zhHant && hantState?.origin === "manual");
-    const hansLocked = Boolean(value.zhHans && hansState?.origin === "manual");
+    // Existing legacy Chinese is treated as human-owned content too. Neither
+    // it nor an explicit manual correction may be replaced unless an admin
+    // deliberately selects the matching force option.
+    const hantLocked = isLockedTranslation(value.zhHant, hantState);
+    const hansLocked = isLockedTranslation(value.zhHans, hansState);
     const shouldTranslateHant = Boolean(value.en && autoTranslate && (
       force.has("zhHant")
       || !value.zhHant
@@ -451,7 +481,7 @@ export async function buildTranslationPreview(params: {
       result.zhHantStatus = "translated";
       const hansState = stateMap.get(`${item.field}:zhHans`);
       const forceHans = new Set(params.force?.[item.field] || []).has("zhHans");
-      const hansLocked = Boolean(result.value.zhHans && hansState?.origin === "manual");
+      const hansLocked = isLockedTranslation(result.value.zhHans, hansState);
       if (!hansLocked || forceHans) {
         result.value.zhHans = finished.zhHans;
         result.zhHansOrigin = "machine";
@@ -463,7 +493,7 @@ export async function buildTranslationPreview(params: {
   for (const [field, result] of Object.entries(results)) {
     const forceHans = new Set(params.force?.[field] || []).has("zhHans");
     const hansState = stateMap.get(`${field}:zhHans`);
-    const hansLocked = Boolean(result.value.zhHans && hansState?.origin === "manual");
+    const hansLocked = isLockedTranslation(result.value.zhHans, hansState);
     const traditionalHash = sha256(result.value.zhHant);
     if (result.value.zhHant && autoTranslate && (
       !result.value.zhHans

@@ -56,7 +56,7 @@ const copy = {
     dialog: "Edit website text", hint: "All three languages are published together.", english: "English", hant: "Traditional Chinese", hans: "Simplified Chinese",
     cancel: "Cancel", save: "Publish text", saving: "Publishing…", saved: "Text published.", required: "Complete all three languages before publishing.",
     conflict: "Another administrator changed this text. Your draft is still here; reload the latest version before publishing.", singleline: "Short text", multiline: "Paragraph text",
-    autoTranslate: "Automatically update Chinese translations", replaceExisting: "Also overwrite manually edited Chinese", translations: "Chinese translation preview", prepare: "Generate translation preview", preparing: "Translating…", review: "Translation preview is ready. Review it, then publish all three languages.", protected: "Existing human translation kept", translated: "Automatically translated", manualHelp: "You can edit either Chinese field; your correction will be protected from future automatic replacement.", manualMode: "Enter all three languages manually",
+    autoTranslate: "Automatically update Chinese translations", replaceExisting: "Also overwrite existing or manually edited Chinese", translations: "Chinese translation preview", prepare: "Generate translation preview", preparing: "Translating…", review: "Translation preview is ready. Review it, then publish all three languages.", protected: "Existing human translation kept", translated: "Automatically translated", manualHelp: "You can edit either Chinese field; your correction will be protected from future automatic replacement.", manualMode: "Enter all three languages manually",
   },
   zhHant: {
     title: "網站內容", intro: "集中修改全站公開標題、段落、按鈕名稱與表單說明，並一次發布完整三語內容。",
@@ -65,7 +65,7 @@ const copy = {
     dialog: "編輯網站文字", hint: "英文、繁中與簡中會一起發布。", english: "英文", hant: "繁體中文", hans: "簡體中文",
     cancel: "取消", save: "發布文字", saving: "發布中…", saved: "文字已發布。", required: "發布前請完成三種語言。",
     conflict: "另一位管理員已修改這段文字。你的草稿仍保留，請重新載入最新內容後再發布。", singleline: "短文字", multiline: "段落文字",
-    autoTranslate: "自動更新中文翻譯", replaceExisting: "同時覆蓋人工修改過的中文", translations: "中文翻譯預覽", prepare: "產生翻譯預覽", preparing: "翻譯中…", review: "翻譯預覽已完成；請檢查後再發布完整三語。", protected: "沿用既有人工中文", translated: "已自動翻譯", manualHelp: "你可以修改任一中文欄位；人工修正後，未來不會被自動覆蓋。", manualMode: "自行輸入完整三語",
+    autoTranslate: "自動更新中文翻譯", replaceExisting: "同時覆蓋既有或人工修改過的中文", translations: "中文翻譯預覽", prepare: "產生翻譯預覽", preparing: "翻譯中…", review: "翻譯預覽已完成；請檢查後再發布完整三語。", protected: "沿用既有人工中文", translated: "已自動翻譯", manualHelp: "你可以修改任一中文欄位；人工修正後，未來不會被自動覆蓋。", manualMode: "自行輸入完整三語",
   },
   zhHans: {
     title: "网站内容", intro: "集中修改全站公开标题、段落、按钮名称与表单说明，并一次发布完整三语内容。",
@@ -74,7 +74,7 @@ const copy = {
     dialog: "编辑网站文字", hint: "英文、繁中与简中会一起发布。", english: "英文", hant: "繁体中文", hans: "简体中文",
     cancel: "取消", save: "发布文字", saving: "发布中…", saved: "文字已发布。", required: "发布前请完成三种语言。",
     conflict: "另一位管理员已修改这段文字。你的草稿仍保留，请重新加载最新内容后再发布。", singleline: "短文字", multiline: "段落文字",
-    autoTranslate: "自动更新中文翻译", replaceExisting: "同时覆盖人工修改过的中文", translations: "中文翻译预览", prepare: "生成翻译预览", preparing: "翻译中…", review: "翻译预览已完成；请检查后再发布完整三语。", protected: "沿用现有人工中文", translated: "已自动翻译", manualHelp: "你可以修改任一中文字段；人工修正后，未来不会被自动覆盖。", manualMode: "自行输入完整三语",
+    autoTranslate: "自动更新中文翻译", replaceExisting: "同时覆盖现有或人工修改过的中文", translations: "中文翻译预览", prepare: "生成翻译预览", preparing: "翻译中…", review: "翻译预览已完成；请检查后再发布完整三语。", protected: "沿用现有人工中文", translated: "已自动翻译", manualHelp: "你可以修改任一中文字段；人工修正后，未来不会被自动覆盖。", manualMode: "自行输入完整三语",
   },
 };
 

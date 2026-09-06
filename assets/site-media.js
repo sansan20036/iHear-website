@@ -26,7 +26,7 @@
       editAvatar: "Change avatar", titleAvatar: "Change avatar", introAvatar: "Upload or paste a portrait, then crop the person you want to show.",
       restoreAvatar: "Delete photo", restoredAvatar: "Photo deleted", confirmRestoreAvatar: "Delete this profile photo? The name initials will be shown instead.",
       cropCurrent: "Crop current photo", cropReady: "Square crop ready. Save when it looks right.", cropUnavailable: "The crop editor is still loading. Please try again.",
-      autoTranslate: "Automatically update Chinese descriptions", replaceTranslation: "Also overwrite manually edited Chinese descriptions", preparingTranslation: "Translating…", translationReady: "Chinese descriptions are ready. Review them, then save.",
+      autoTranslate: "Automatically update Chinese descriptions", replaceTranslation: "Also overwrite existing or manually edited Chinese descriptions", preparingTranslation: "Translating…", translationReady: "Chinese descriptions are ready. Review them, then save.",
       positions: ["Top left", "Top center", "Top right", "Center left", "Center", "Center right", "Bottom left", "Bottom center", "Bottom right"],
     },
     zhHant: {
@@ -45,7 +45,7 @@
       editAvatar: "更換頭像", titleAvatar: "更換頭像", introAvatar: "上傳或貼上人物照片，再裁切要顯示的單一人物。",
       restoreAvatar: "刪除照片", restoredAvatar: "照片已刪除", confirmRestoreAvatar: "確定要刪除這張頭像照片嗎？刪除後將改為顯示姓名縮寫。",
       cropCurrent: "裁切目前照片", cropReady: "方形裁切已準備好，確認效果後即可儲存。", cropUnavailable: "裁切工具仍在載入，請稍後再試。",
-      autoTranslate: "自動更新中文圖片描述", replaceTranslation: "同時覆蓋人工修改過的中文圖片描述", preparingTranslation: "翻譯中…", translationReady: "中文圖片描述已完成，請檢查後再儲存。",
+      autoTranslate: "自動更新中文圖片描述", replaceTranslation: "同時覆蓋既有或人工修改過的中文圖片描述", preparingTranslation: "翻譯中…", translationReady: "中文圖片描述已完成，請檢查後再儲存。",
       positions: ["左上", "中上", "右上", "左中", "正中", "右中", "左下", "中下", "右下"],
     },
     zhHans: {
@@ -64,7 +64,7 @@
       editAvatar: "更换头像", titleAvatar: "更换头像", introAvatar: "上传或粘贴人物照片，再裁切要显示的单一人物。",
       restoreAvatar: "删除照片", restoredAvatar: "照片已删除", confirmRestoreAvatar: "确定要删除这张头像照片吗？删除后将改为显示姓名缩写。",
       cropCurrent: "裁切目前照片", cropReady: "方形裁切已准备好，确认效果后即可保存。", cropUnavailable: "裁切工具仍在加载，请稍后再试。",
-      autoTranslate: "自动更新中文图片描述", replaceTranslation: "同时覆盖人工修改过的中文图片描述", preparingTranslation: "翻译中…", translationReady: "中文图片描述已完成，请检查后再保存。",
+      autoTranslate: "自动更新中文图片描述", replaceTranslation: "同时覆盖现有或人工修改过的中文图片描述", preparingTranslation: "翻译中…", translationReady: "中文图片描述已完成，请检查后再保存。",
       positions: ["左上", "中上", "右上", "左中", "正中", "右中", "左下", "中下", "右下"],
     },
   };
