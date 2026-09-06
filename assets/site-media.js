@@ -803,7 +803,7 @@
     const previousItem = currentItem;
     setBusy(true);
     setStatus(labels().restoring, { progress: true });
-    const operation = beginOptimisticSlot(slot, null, "");
+    const operation = beginOptimisticSlot(slot, null, "", previousItem);
     hideDialogForPending();
     window.iHearToast?.(labels().removingPreview);
     try {
@@ -867,6 +867,8 @@
   let lastMediaData = null;
   let optimisticSequence = 0;
   const pendingSlots = new Map();
+  const recentCommittedSlots = new Map();
+  const RECENT_COMMIT_TTL = 60_000;
 
   function releaseOptimisticUrl(url, delay = 15_000) {
     if (!url) return;
@@ -877,8 +879,13 @@
     return new Promise((resolve) => { window.setTimeout(resolve, delay); });
   }
 
-  function beginOptimisticSlot(slot, item, url) {
-    const operation = { id: ++optimisticSequence, item, url };
+  function beginOptimisticSlot(slot, item, url, previousItem = null) {
+    const operation = {
+      id: ++optimisticSequence,
+      item,
+      url,
+      previousVersion: Number(previousItem?.recordVersion || 0),
+    };
     pendingSlots.set(slot, operation);
     controllers.filter((controller) => controller.slot === slot).forEach((controller) => {
       controller.setPending(true);
@@ -908,6 +915,19 @@
         releaseOptimisticUrl(operation.url, 5 * 60_000);
         return false;
       }
+    }
+    if (item) {
+      recentCommittedSlots.set(slot, {
+        item,
+        expiresAt: Date.now() + RECENT_COMMIT_TTL,
+      });
+    } else {
+      recentCommittedSlots.set(slot, {
+        item: null,
+        deletedVersion: operation.previousVersion,
+        committedAt: Date.now(),
+        expiresAt: Date.now() + RECENT_COMMIT_TTL,
+      });
     }
     pendingSlots.delete(slot);
     syncSlot(slot, item);
@@ -979,10 +999,45 @@
     controllers.filter((controller) => controller.slot === slot).forEach((controller) => controller.applyRemoteItem(item));
   }
 
+  function preserveRecentCommits(data) {
+    if (!data?.items || !recentCommittedSlots.size) return data;
+    const now = Date.now();
+    recentCommittedSlots.forEach((commit, slot) => {
+      if (commit.expiresAt <= now) {
+        recentCommittedSlots.delete(slot);
+        return;
+      }
+      const fetched = data.items[slot];
+      const fetchedVersion = Number(fetched?.recordVersion || 0);
+      if (!commit.item) {
+        if (!fetched) return;
+        const fetchedUpdatedAt = Date.parse(String(fetched.updatedAt || ""));
+        const isNewerUpload = fetchedVersion > Number(commit.deletedVersion || 0)
+          || (Number.isFinite(fetchedUpdatedAt) && fetchedUpdatedAt > commit.committedAt);
+        if (isNewerUpload) {
+          recentCommittedSlots.delete(slot);
+          return;
+        }
+        delete data.items[slot];
+        return;
+      }
+      const committedVersion = Number(commit.item?.recordVersion || 0);
+      const exactCommit = fetched
+        && fetchedVersion === committedVersion
+        && String(fetched.updatedAt || "") === String(commit.item.updatedAt || "");
+      if (fetchedVersion > committedVersion || exactCommit) {
+        recentCommittedSlots.delete(slot);
+        return;
+      }
+      data.items[slot] = commit.item;
+    });
+    return data;
+  }
+
   async function refreshAll() {
     const response = await fetch("/api/site-media", { credentials: "same-origin", cache: "no-store" });
     if (!response.ok) throw new Error("site media unavailable");
-    const data = await response.json();
+    const data = preserveRecentCommits(await response.json());
     lastMediaData = data;
     reconcileControllers();
     controllers.forEach((controller) => {

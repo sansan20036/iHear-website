@@ -133,13 +133,14 @@ describe("site media API", () => {
     expect(siteMediaMaxDuration).toBeGreaterThanOrEqual(60);
   });
 
-  test("GET is public, briefly cached, and never exposes storage paths or administrators", async () => {
+  test("GET is never served stale and never exposes storage paths or administrators", async () => {
     auth.mockResolvedValue(null);
     const response = await getSiteMedia();
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(response.headers.get("Vercel-CDN-Cache-Control")).toContain("s-maxage=1");
+    expect(response.headers.get("Cache-Control")).toContain("no-store");
+    expect(response.headers.get("Vercel-CDN-Cache-Control")).toBe("no-store");
     expect(body.items["home.hero"].updatedBy).toBeUndefined();
     expect(body.items["home.hero"].variants[0].storagePath).toBeUndefined();
     expect(body.items["home.hero"].srcSet).toContain("480w");

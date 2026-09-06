@@ -157,6 +157,8 @@ async function mockApplication(page, { admin = true, duplicateAvatar = false } =
   let mediaMutationDelay = 0;
   let mediaMutationFailure = false;
   let mediaCommitThenFailure = false;
+  let mediaStaleReads = 0;
+  let mediaStaleItems = null;
   let themeSetting = { theme: "warm", recordVersion: 1, updatedAt: "2026-08-17T00:00:00.000Z" };
   let themeReadOverride = null;
   let themeGetCount = 0;
@@ -288,10 +290,14 @@ async function mockApplication(page, { admin = true, duplicateAvatar = false } =
       });
     }
     if (method === "GET") {
+      const responseItems = mediaStaleReads > 0 && mediaStaleItems
+        ? mediaStaleItems
+        : mediaItems;
+      if (mediaStaleReads > 0) mediaStaleReads -= 1;
       return route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ version: 1, items: mediaItems }),
+        body: JSON.stringify({ version: 1, items: responseItems }),
       });
     }
     const slot = decodeURIComponent(requestUrl.pathname.split("/").pop());
@@ -484,6 +490,10 @@ async function mockApplication(page, { admin = true, duplicateAvatar = false } =
     setMediaMutationDelay: (value) => { mediaMutationDelay = value; },
     setMediaMutationFailure: (value) => { mediaMutationFailure = value; },
     setMediaCommitThenFailure: (value) => { mediaCommitThenFailure = value; },
+    setMediaStaleReads: (value) => {
+      mediaStaleItems = structuredClone(mediaItems);
+      mediaStaleReads = value;
+    },
     getTheme: () => themeSetting,
     getThemeGetCount: () => themeGetCount,
     getLayoutPostCount: () => layoutPostCount,
@@ -852,9 +862,15 @@ test("Hero image editor compresses before upload and restores the repository fal
   await dialog.locator("[data-media-file]").setInputFiles("assets/images/hero-classroom.jpg");
   await expect(dialog.locator("[data-media-save]")).toBeEnabled({ timeout: 20_000 });
   await dialog.locator('[data-media-focal-grid] button[data-x="100"][data-y="0"]').click();
+  // Simulate the production CDN returning the pre-upload image list once when
+  // the live-revision refresh fires immediately after a successful mutation.
+  mocked.setMediaStaleReads(1);
   await previewAndSaveMedia(dialog);
   await expect(dialog).not.toBeVisible({ timeout: 20_000 });
   expect(mocked.getMediaUploadCount()).toBe(1);
+  await expect(hero).toHaveAttribute("data-site-media-custom", "true");
+  await expect(hero.locator("img")).toHaveAttribute("src", "/assets/images/volunteers-1200.webp");
+  await page.waitForTimeout(1_200);
   await expect(hero).toHaveAttribute("data-site-media-custom", "true");
   await expect(hero.locator("img")).toHaveAttribute("src", "/assets/images/volunteers-1200.webp");
   await expect(page.locator(".site-toast.is-error")).toHaveCount(0);
@@ -1143,10 +1159,12 @@ test("team avatars crop one person into a square WebP, recrop, and delete the ph
   await expect(avatar.locator("picture")).toBeVisible();
 
   mocked.setMediaMutationFailure(false);
+  mocked.setMediaStaleReads(1);
   page.once("dialog", (nativeDialog) => nativeDialog.accept());
   await dialog.locator("[data-media-restore]").click();
   await expect(dialog).not.toBeVisible({ timeout: 500 });
   await expect(avatar).not.toHaveAttribute("data-site-media-custom", "true", { timeout: 500 });
+  await page.waitForTimeout(1_200);
   await expect(page.locator('[data-site-media-slot="team.zoe-lu.avatar"][data-site-media-custom="true"]')).toHaveCount(0);
   await expect(avatar.locator("picture")).toBeHidden();
   await expect(initials).toBeVisible();

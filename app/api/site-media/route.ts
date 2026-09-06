@@ -17,8 +17,11 @@ export async function GET() {
       },
       {
         headers: {
-          "Cache-Control": "public, max-age=0, must-revalidate",
-          "Vercel-CDN-Cache-Control": "public, s-maxage=1, stale-while-revalidate=59",
+          // This endpoint is the source of truth immediately after an upload or
+          // delete. A stale CDN response can otherwise undo a successful
+          // optimistic update in the browser.
+          "Cache-Control": "private, no-store, max-age=0",
+          "Vercel-CDN-Cache-Control": "no-store",
         },
       },
     );
