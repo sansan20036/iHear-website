@@ -18,6 +18,8 @@
       focal: "Choose the crop focus", cancel: "Cancel", save: "Save image", restore: "Restore default image",
       restoring: "Restoring…", optimizing: "Optimizing image…", uploading: "Uploading…", processing: "Server is preparing responsive images…",
       ready: "Image ready to upload", saved: "Image updated", restored: "Default image restored",
+      savingPreview: "The new image is visible now. Saving in the background…", removingPreview: "The image is hidden now. Removing it in the background…",
+      saveRollback: "The previous image has been restored.", removeRollback: "The deleted image has been restored.",
       invalidType: "Choose a PNG, JPEG, or WebP image.", tooLarge: "The original image must be 20MB or smaller.",
       compressionFailed: "The image could not be optimized. No file was uploaded.", invalidOutput: "The optimized image is invalid or larger than 0.95MB.",
       altRequired: "Complete all three image descriptions using 2–300 characters.", failed: "The image could not be updated.",
@@ -37,6 +39,8 @@
       focal: "選擇裁切焦點", cancel: "取消", save: "確認儲存", restore: "恢復預設圖片",
       restoring: "正在恢復…", optimizing: "正在最佳化圖片…", uploading: "正在上傳…", processing: "伺服器正在產生響應式圖片…",
       ready: "圖片已準備好上傳", saved: "圖片已更新", restored: "已恢復預設圖片",
+      savingPreview: "新圖片已立即顯示，正在背景儲存…", removingPreview: "圖片已立即隱藏，正在背景刪除…",
+      saveRollback: "已恢復原本的圖片。", removeRollback: "已恢復剛才刪除的圖片。",
       invalidType: "請選擇 PNG、JPEG 或 WebP 圖片。", tooLarge: "原始圖片不可超過 20MB。",
       compressionFailed: "無法最佳化圖片，未送出任何檔案。", invalidOutput: "最佳化結果無效或超過 0.95MB。",
       altRequired: "三種語言的圖片描述都必須填寫 2–300 個字元。", failed: "無法更新圖片。",
@@ -56,6 +60,8 @@
       focal: "选择裁切焦点", cancel: "取消", save: "确认保存", restore: "恢复默认图片",
       restoring: "正在恢复…", optimizing: "正在优化图片…", uploading: "正在上传…", processing: "服务器正在生成响应式图片…",
       ready: "图片已准备好上传", saved: "图片已更新", restored: "已恢复默认图片",
+      savingPreview: "新图片已立即显示，正在后台保存…", removingPreview: "图片已立即隐藏，正在后台删除…",
+      saveRollback: "已恢复原来的图片。", removeRollback: "已恢复刚才删除的图片。",
       invalidType: "请选择 PNG、JPEG 或 WebP 图片。", tooLarge: "原始图片不可超过 20MB。",
       compressionFailed: "无法优化图片，未发送任何文件。", invalidOutput: "优化结果无效或超过 0.95MB。",
       altRequired: "三种语言的图片描述都必须填写 2–300 个字符。", failed: "无法更新图片。",
@@ -120,6 +126,7 @@
   let translationReceipt = "";
   let englishGuardAccepted = false;
   let applyToken = 0;
+  let pending = false;
 
   function locale() {
     const language = (document.documentElement.lang || "en").toLowerCase();
@@ -247,6 +254,19 @@
     editButton.title = text;
     editButton.setAttribute("aria-label", text);
     editButton.querySelector("[data-site-media-edit-label]").textContent = text;
+    editButton.disabled = pending;
+  }
+
+  function setPending(value) {
+    pending = Boolean(value);
+    host.toggleAttribute("data-site-media-pending", pending);
+    if (pending) host.setAttribute("aria-busy", "true");
+    else host.removeAttribute("aria-busy");
+    if (editButton) editButton.disabled = pending;
+  }
+
+  function previewItem(item) {
+    applyItem(item);
   }
 
   function releasePreview() {
@@ -497,6 +517,59 @@
     editButton?.focus();
   }
 
+  function hideDialogForPending() {
+    dirty = false;
+    dialog?.close();
+    editButton?.focus();
+  }
+
+  function finishPendingDialog() {
+    releasePreview();
+    compressedFile = null;
+    translationReceipt = "";
+    englishGuardAccepted = false;
+    dirty = false;
+    setBusy(false);
+    dialog?.close();
+    editButton?.focus();
+  }
+
+  function reopenPendingDialog(message) {
+    dirty = true;
+    setBusy(false);
+    setStatus(message, { error: true });
+    if (!dialog?.open) dialog?.showModal();
+    dialog?.querySelector("[data-media-save]")?.focus();
+  }
+
+  function createOptimisticItem(file, alt) {
+    const url = URL.createObjectURL(file);
+    const preview = dialog.querySelector("[data-media-preview]");
+    const width = preview.naturalWidth || (isAvatar ? 800 : 1600);
+    const height = preview.naturalHeight || (isAvatar ? 800 : Math.max(1, Math.round(width * 0.75)));
+    return {
+      url,
+      item: {
+        slot,
+        alt,
+        focalX: Number(dialog.dataset.focalX || 50),
+        focalY: Number(dialog.dataset.focalY || 50),
+        zoom: 100,
+        recordVersion: currentItem?.recordVersion || 0,
+        src: url,
+        srcSet: url,
+        variants: [{
+          width,
+          pixelWidth: width,
+          pixelHeight: height,
+          byteSize: file.size,
+          mimeType: "image/webp",
+          url,
+        }],
+      },
+    };
+  }
+
   async function selectFile(file) {
     if (!file) return;
     if (isAvatar) {
@@ -643,6 +716,11 @@
     activeRequest = xhr;
     xhr.open("POST", API_URL);
     xhr.withCredentials = true;
+    const previousItem = currentItem;
+    const optimistic = createOptimisticItem(compressedFile, alt);
+    const operation = beginOptimisticSlot(slot, optimistic.item, optimistic.url);
+    hideDialogForPending();
+    window.iHearToast?.(labels().savingPreview);
     xhr.upload.addEventListener("progress", (event) => {
       if (!event.lengthComputable) return setStatus(labels().uploading, { progress: true });
       const value = Math.round((event.loaded / event.total) * 100);
@@ -654,30 +732,47 @@
       try { data = JSON.parse(xhr.responseText || "null"); } catch { data = null; }
       if (xhr.status < 200 || xhr.status >= 300) {
         const message = requestError(xhr.status, data);
-        setStatus(message, { error: true });
-        window.iHearToast?.(message, { error: true });
-        setBusy(false);
+        rollbackOptimisticSlot(slot, operation, previousItem);
+        const rollbackMessage = `${message} ${labels().saveRollback}`;
+        reopenPendingDialog(rollbackMessage);
+        window.iHearToast?.(rollbackMessage, { error: true });
         return;
       }
-      syncSlot(slot, data.item);
-      closeDialog();
+      completeOptimisticSlot(slot, operation, data.item);
+      finishPendingDialog();
       window.iHearLiveContent?.announce("content", data.revision);
       window.iHearToast?.(labels().saved);
     });
     xhr.addEventListener("error", () => {
       activeRequest = null;
-      setStatus(labels().failed, { error: true });
-      window.iHearToast?.(labels().failed, { error: true });
-      setBusy(false);
+      rollbackOptimisticSlot(slot, operation, previousItem);
+      const message = `${labels().failed} ${labels().saveRollback}`;
+      reopenPendingDialog(message);
+      window.iHearToast?.(message, { error: true });
     });
-    xhr.addEventListener("abort", () => { activeRequest = null; });
-    xhr.send(form);
+    xhr.addEventListener("abort", () => {
+      activeRequest = null;
+      rollbackOptimisticSlot(slot, operation, previousItem);
+    });
+    try {
+      xhr.send(form);
+    } catch {
+      activeRequest = null;
+      rollbackOptimisticSlot(slot, operation, previousItem);
+      const message = `${labels().failed} ${labels().saveRollback}`;
+      reopenPendingDialog(message);
+      window.iHearToast?.(message, { error: true });
+    }
   }
 
   async function restoreImage() {
     if (!currentItem || !window.confirm(labels().confirmRestore)) return;
+    const previousItem = currentItem;
     setBusy(true);
     setStatus(labels().restoring, { progress: true });
+    const operation = beginOptimisticSlot(slot, null, "");
+    hideDialogForPending();
+    window.iHearToast?.(labels().removingPreview);
     try {
       const response = await fetch(API_URL, {
         method: "DELETE",
@@ -687,15 +782,15 @@
       });
       const data = await response.json().catch(() => null);
       if (!response.ok) throw new Error(requestError(response.status, data));
-      syncSlot(slot, null);
-      closeDialog();
+      completeOptimisticSlot(slot, operation, null);
+      finishPendingDialog();
       window.iHearLiveContent?.announce("content", data.revision);
       window.iHearToast?.(labels().restored);
     } catch (error) {
-      const message = error?.message || labels().failed;
-      setStatus(message, { error: true });
+      rollbackOptimisticSlot(slot, operation, previousItem);
+      const message = `${error?.message || labels().failed} ${labels().removeRollback}`;
+      reopenPendingDialog(message);
       window.iHearToast?.(message, { error: true });
-      setBusy(false);
     }
   }
 
@@ -719,9 +814,11 @@
     slot,
     refresh,
     restoreDefault,
+    previewItem,
+    setPending,
     renderAdminControl,
     languageChanged,
-    isDirty: () => Boolean(dialog?.open && dirty),
+    isDirty: () => pending || Boolean(dialog?.open && dirty),
     onBlocked: () => window.iHearToast?.(labels().liveBlocked, { error: true }),
     destroy,
     applyRemoteItem(item) {
@@ -734,6 +831,41 @@
 
   let controllers = [];
   let lastMediaData = null;
+  let optimisticSequence = 0;
+  const pendingSlots = new Map();
+
+  function releaseOptimisticUrl(url) {
+    if (!url) return;
+    window.setTimeout(() => URL.revokeObjectURL(url), 15_000);
+  }
+
+  function beginOptimisticSlot(slot, item, url) {
+    const operation = { id: ++optimisticSequence, item, url };
+    pendingSlots.set(slot, operation);
+    controllers.filter((controller) => controller.slot === slot).forEach((controller) => {
+      controller.setPending(true);
+      controller.previewItem(item);
+    });
+    return operation;
+  }
+
+  function completeOptimisticSlot(slot, operation, item) {
+    if (pendingSlots.get(slot)?.id !== operation.id) return false;
+    pendingSlots.delete(slot);
+    syncSlot(slot, item);
+    controllers.filter((controller) => controller.slot === slot).forEach((controller) => controller.setPending(false));
+    releaseOptimisticUrl(operation.url);
+    return true;
+  }
+
+  function rollbackOptimisticSlot(slot, operation, previousItem) {
+    if (pendingSlots.get(slot)?.id !== operation.id) return false;
+    pendingSlots.delete(slot);
+    syncSlot(slot, previousItem);
+    controllers.filter((controller) => controller.slot === slot).forEach((controller) => controller.setPending(false));
+    releaseOptimisticUrl(operation.url);
+    return true;
+  }
 
   function reconcileControllers() {
     const activeHosts = new Set(document.querySelectorAll("[data-site-media-slot]"));
@@ -750,6 +882,11 @@
       controllers.push(controller);
       controller.renderAdminControl();
       if (lastMediaData) controller.refresh(lastMediaData);
+      const pendingOperation = pendingSlots.get(controller.slot);
+      if (pendingOperation) {
+        controller.setPending(true);
+        controller.previewItem(pendingOperation.item);
+      }
     });
   }
 
@@ -767,7 +904,14 @@
     const data = await response.json();
     lastMediaData = data;
     reconcileControllers();
-    controllers.forEach((controller) => controller.refresh(data));
+    controllers.forEach((controller) => {
+      controller.refresh(data);
+      const pendingOperation = pendingSlots.get(controller.slot);
+      if (pendingOperation) {
+        controller.setPending(true);
+        controller.previewItem(pendingOperation.item);
+      }
+    });
   }
 
   window.addEventListener("ihear:auth", (event) => {
@@ -778,6 +922,11 @@
     controllers.forEach((controller) => controller.languageChanged());
   });
   window.addEventListener("ihear:media-slots-changed", reconcileControllers);
+  window.addEventListener("beforeunload", (event) => {
+    if (!pendingSlots.size) return;
+    event.preventDefault();
+    event.returnValue = "";
+  });
 
   window.iHearLiveContent?.register("content", {
     refresh: refreshAll,

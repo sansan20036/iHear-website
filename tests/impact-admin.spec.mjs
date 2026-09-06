@@ -154,6 +154,8 @@ async function mockApplication(page, { admin = true, duplicateAvatar = false } =
   let translationPreviewCount = 0;
   const mediaItems = {};
   let mediaUploadCount = 0;
+  let mediaMutationDelay = 0;
+  let mediaMutationFailure = false;
   let themeSetting = { theme: "warm", recordVersion: 1, updatedAt: "2026-08-17T00:00:00.000Z" };
   let themeReadOverride = null;
   let themeGetCount = 0;
@@ -293,6 +295,14 @@ async function mockApplication(page, { admin = true, duplicateAvatar = false } =
     }
     const slot = decodeURIComponent(requestUrl.pathname.split("/").pop());
     requests.push(`${method} ${request.url()}`);
+    if (mediaMutationDelay > 0) await new Promise((resolve) => { setTimeout(resolve, mediaMutationDelay); });
+    if (mediaMutationFailure) {
+      return route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "simulated media failure" }),
+      });
+    }
     if (method === "DELETE") {
       delete mediaItems[slot];
       return route.fulfill({
@@ -463,6 +473,8 @@ async function mockApplication(page, { admin = true, duplicateAvatar = false } =
     getTranslationPreviewCount: () => translationPreviewCount,
     getMediaItem: (slot = "home.hero") => mediaItems[slot] || null,
     getMediaUploadCount: () => mediaUploadCount,
+    setMediaMutationDelay: (value) => { mediaMutationDelay = value; },
+    setMediaMutationFailure: (value) => { mediaMutationFailure = value; },
     getTheme: () => themeSetting,
     getThemeGetCount: () => themeGetCount,
     getLayoutPostCount: () => layoutPostCount,
@@ -1057,8 +1069,14 @@ test("team avatars crop one person into a square WebP, recrop, and delete the ph
   expect(cropResult.center[0]).toBeGreaterThan(200);
   expect(cropResult.center[1]).toBeGreaterThan(150);
   expect(cropResult.center[2]).toBeLessThan(80);
+  mocked.setMediaMutationDelay(1_500);
   await dialog.locator("[data-media-save]").click();
-  await expect(dialog).not.toBeVisible({ timeout: 20_000 });
+  await expect(dialog).not.toBeVisible({ timeout: 500 });
+  await expect(avatar).toHaveAttribute("data-site-media-custom", "true", { timeout: 1_000 });
+  await expect(avatar.locator("img")).toHaveAttribute("src", /^blob:/, { timeout: 1_000 });
+  await expect(avatar.locator(".site-media-edit")).toBeDisabled();
+  await expect.poll(() => mocked.getMediaItem("team.zoe-lu.avatar"), { timeout: 5_000 }).not.toBeNull();
+  mocked.setMediaMutationDelay(0);
 
   await expect(avatar).toHaveAttribute("data-site-media-custom", "true");
   await expect(page.locator('[data-site-media-slot="team.zoe-lu.avatar"][data-site-media-custom="true"]')).toHaveCount(2);
@@ -1082,13 +1100,28 @@ test("team avatars crop one person into a square WebP, recrop, and delete the ph
   await expect(recropper.getByRole("heading", { name: "裁切單一人物" })).toBeVisible();
   await recropper.locator("[data-avatar-crop-cancel]").last().click();
   await expect(recropper).not.toBeVisible();
+
+  mocked.setMediaMutationDelay(1_500);
+  mocked.setMediaMutationFailure(true);
   page.once("dialog", (nativeDialog) => nativeDialog.accept());
   await dialog.locator("[data-media-restore]").click();
+  await expect(dialog).not.toBeVisible({ timeout: 500 });
+  await expect(avatar).not.toHaveAttribute("data-site-media-custom", "true", { timeout: 500 });
+  await expect(initials).toBeVisible();
+  await expect(dialog).toBeVisible({ timeout: 5_000 });
+  await expect(dialog.locator("[data-media-status]")).toContainText(/restored|恢復|恢复/);
+  await expect(avatar).toHaveAttribute("data-site-media-custom", "true");
+  await expect(avatar.locator("picture")).toBeVisible();
 
-  await expect(avatar).not.toHaveAttribute("data-site-media-custom", "true");
+  mocked.setMediaMutationFailure(false);
+  page.once("dialog", (nativeDialog) => nativeDialog.accept());
+  await dialog.locator("[data-media-restore]").click();
+  await expect(dialog).not.toBeVisible({ timeout: 500 });
+  await expect(avatar).not.toHaveAttribute("data-site-media-custom", "true", { timeout: 500 });
   await expect(page.locator('[data-site-media-slot="team.zoe-lu.avatar"][data-site-media-custom="true"]')).toHaveCount(0);
   await expect(avatar.locator("picture")).toBeHidden();
   await expect(initials).toBeVisible();
+  await expect.poll(() => mocked.getMediaItem("team.zoe-lu.avatar"), { timeout: 5_000 }).toBeNull();
   expect(mocked.requests.some((request) => request.includes("/api/site-media/team.zoe-lu.avatar"))).toBe(true);
 });
 
