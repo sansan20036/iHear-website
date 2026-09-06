@@ -1120,10 +1120,15 @@ test("team avatars crop one person into a square WebP, recrop, and delete the ph
   await expect(dialog).not.toBeVisible({ timeout: 500 });
   await expect(avatar).toHaveAttribute("data-site-media-custom", "true", { timeout: 1_000 });
   await expect(avatar.locator("img")).toHaveAttribute("src", /^blob:/, { timeout: 1_000 });
+  await expect(avatar).toHaveAttribute("data-site-media-operation", "upload");
   await expect(avatar.locator(".site-media-edit")).toBeDisabled();
+  await expect(avatar.locator(".site-media-edit")).toHaveAttribute("aria-label", "Uploading…");
+  await expect(avatar.locator(".site-media-edit-spinner")).toBeVisible();
   await expect.poll(() => mocked.getMediaItem("team.zoe-lu.avatar"), { timeout: 5_000 }).not.toBeNull();
   mocked.setMediaMutationDelay(0);
 
+  await expect(avatar).not.toHaveAttribute("data-site-media-operation");
+  await expect(avatar.locator(".site-media-edit")).toBeEnabled();
   await expect(avatar).toHaveAttribute("data-site-media-custom", "true");
   await expect(page.locator('[data-site-media-slot="team.zoe-lu.avatar"][data-site-media-custom="true"]')).toHaveCount(2);
   await expect(initials).toBeHidden();
@@ -1154,6 +1159,9 @@ test("team avatars crop one person into a square WebP, recrop, and delete the ph
   await expect(dialog).not.toBeVisible({ timeout: 500 });
   await expect(avatar).not.toHaveAttribute("data-site-media-custom", "true", { timeout: 500 });
   await expect(initials).toBeVisible();
+  await expect(avatar).toHaveAttribute("data-site-media-operation", "delete");
+  await expect(avatar.locator(".site-media-edit")).toHaveAttribute("aria-label", "正在刪除…");
+  await expect(avatar.locator(".site-media-edit-spinner")).toBeVisible();
   await expect(dialog).toBeVisible({ timeout: 5_000 });
   await expect(dialog.locator("[data-media-status]")).toContainText(/restored|恢復|恢复/);
   await expect(avatar).toHaveAttribute("data-site-media-custom", "true");

@@ -746,6 +746,20 @@ body.home .stats-band{ padding-bottom:28px; }
   font:800 .86rem/1 var(--font-b); cursor:pointer; opacity:0; visibility:hidden; transform:translateY(-5px);
   pointer-events:none; transition:opacity var(--speed-1),transform var(--speed-1),visibility var(--speed-1),background var(--speed-1);
 }
+.site-media-edit-spinner{
+  display:none; width:18px; height:18px; flex:none; border:2px solid rgba(38,57,116,.24);
+  border-top-color:currentColor; border-radius:50%; animation:ihear-media-spin .8s linear infinite;
+}
+.site-media-edit.is-pending .site-media-edit-icon{ display:none; }
+.site-media-edit.is-pending .site-media-edit-spinner{ display:inline-block; }
+.site-media-edit.is-pending:disabled{ cursor:wait; opacity:1; }
+[data-site-media-pending] .site-media-edit{
+  opacity:1; visibility:visible; transform:none; pointer-events:auto; background:rgba(255,255,255,.94);
+}
+[data-site-media-pending]:not(.team-avatar-slot) picture,
+[data-site-media-pending].team-avatar-slot .team-avatar-visual{ opacity:.58; transition:opacity var(--speed-1); }
+@keyframes ihear-media-spin{ to{ transform:rotate(360deg); } }
+@media (prefers-reduced-motion:reduce){ .site-media-edit-spinner{ animation:none; } }
 [data-site-media-slot]:hover .site-media-edit,
 [data-site-media-slot]:focus-within .site-media-edit{
   opacity:1; visibility:visible; transform:none; pointer-events:auto;

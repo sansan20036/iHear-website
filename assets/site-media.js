@@ -16,7 +16,7 @@
       clipboardEmpty: "The clipboard does not contain an image. Copy one image and try again.", multipleImages: "Please add one image at a time.",
       altEn: "English image description", altZhHant: "Traditional Chinese image description", altZhHans: "Simplified Chinese image description",
       focal: "Choose the crop focus", cancel: "Cancel", save: "Save image", restore: "Restore default image",
-      restoring: "Restoring…", optimizing: "Optimizing image…", uploading: "Uploading…", processing: "Server is preparing responsive images…",
+      restoring: "Restoring…", deleting: "Deleting…", optimizing: "Optimizing image…", uploading: "Uploading…", processing: "Server is preparing responsive images…",
       ready: "Image ready to upload", saved: "Image updated", restored: "Default image restored",
       savingPreview: "The new image is visible now. Saving in the background…", removingPreview: "The image is hidden now. Removing it in the background…",
       savedPending: "The image was saved. Its final copy is still being prepared, so this preview will remain visible.",
@@ -38,7 +38,7 @@
       clipboardEmpty: "剪貼簿中沒有可使用的圖片，請先複製一張圖片再試一次。", multipleImages: "一次只能加入一張圖片。",
       altEn: "英文圖片描述", altZhHant: "繁體中文圖片描述", altZhHans: "簡體中文圖片描述",
       focal: "選擇裁切焦點", cancel: "取消", save: "確認儲存", restore: "恢復預設圖片",
-      restoring: "正在恢復…", optimizing: "正在最佳化圖片…", uploading: "正在上傳…", processing: "伺服器正在產生響應式圖片…",
+      restoring: "正在恢復…", deleting: "正在刪除…", optimizing: "正在最佳化圖片…", uploading: "正在上傳…", processing: "伺服器正在產生響應式圖片…",
       ready: "圖片已準備好上傳", saved: "圖片已更新", restored: "已恢復預設圖片",
       savingPreview: "新圖片已立即顯示，正在背景儲存…", removingPreview: "圖片已立即隱藏，正在背景刪除…",
       savedPending: "圖片已儲存，正式圖片仍在完成處理；目前會繼續顯示這張預覽。",
@@ -60,7 +60,7 @@
       clipboardEmpty: "剪贴板中没有可使用的图片，请先复制一张图片再试一次。", multipleImages: "一次只能添加一张图片。",
       altEn: "英文图片描述", altZhHant: "繁体中文图片描述", altZhHans: "简体中文图片描述",
       focal: "选择裁切焦点", cancel: "取消", save: "确认保存", restore: "恢复默认图片",
-      restoring: "正在恢复…", optimizing: "正在优化图片…", uploading: "正在上传…", processing: "服务器正在生成响应式图片…",
+      restoring: "正在恢复…", deleting: "正在删除…", optimizing: "正在优化图片…", uploading: "正在上传…", processing: "服务器正在生成响应式图片…",
       ready: "图片已准备好上传", saved: "图片已更新", restored: "已恢复默认图片",
       savingPreview: "新图片已立即显示，正在后台保存…", removingPreview: "图片已立即隐藏，正在后台删除…",
       savedPending: "图片已保存，正式图片仍在完成处理；目前会继续显示这张预览。",
@@ -149,6 +149,7 @@
   let englishGuardAccepted = false;
   let applyToken = 0;
   let pending = false;
+  let pendingAction = "";
 
   function locale() {
     const language = (document.documentElement.lang || "en").toLowerCase();
@@ -234,7 +235,7 @@
       item.src,
       ...(Array.isArray(item.variants) ? item.variants.map((variant) => variant.url) : []),
     ].filter(Boolean))];
-    Promise.all(urls.map((url) => new Promise((resolve, reject) => {
+    return Promise.all(urls.map((url) => new Promise((resolve, reject) => {
       const preload = new Image();
       preload.onload = resolve;
       preload.onerror = reject;
@@ -254,7 +255,8 @@
 
   function refresh(data) {
     currentItem = data?.items?.[slot] || null;
-    applyItem(currentItem);
+    const recentCommit = recentCommittedSlots.get(slot);
+    applyItem(currentItem, { keepCurrentOnFailure: Boolean(recentCommit?.item) });
     renderAdminControl();
     if (dialog?.open && !dirty) populateDialog();
   }
@@ -271,7 +273,7 @@
       editButton.className = "site-media-edit";
       if (isAvatar) editButton.classList.add("site-media-avatar-edit");
       if (controlHost !== host) editButton.classList.add("site-media-external-edit");
-      editButton.innerHTML = '<span aria-hidden="true">📷</span><span data-site-media-edit-label></span>';
+      editButton.innerHTML = '<span class="site-media-edit-icon" aria-hidden="true">📷</span><span class="site-media-edit-spinner" aria-hidden="true"></span><span data-site-media-edit-label></span>';
       editButton.addEventListener("click", openDialog);
       controlHost.appendChild(editButton);
     }
@@ -279,19 +281,26 @@
       editButton.style.left = `${host.offsetLeft + host.offsetWidth - 14}px`;
       editButton.style.top = `${host.offsetTop + host.offsetHeight - 14}px`;
     }
-    const text = labels().edit;
+    const text = pending ? (pendingAction === "delete" ? labels().deleting : labels().uploading) : labels().edit;
     editButton.title = text;
     editButton.setAttribute("aria-label", text);
     editButton.querySelector("[data-site-media-edit-label]").textContent = text;
+    editButton.classList.toggle("is-pending", pending);
     editButton.disabled = pending;
   }
 
-  function setPending(value) {
+  function setPending(value, action = "") {
     pending = Boolean(value);
+    pendingAction = pending ? action : "";
     host.toggleAttribute("data-site-media-pending", pending);
-    if (pending) host.setAttribute("aria-busy", "true");
-    else host.removeAttribute("aria-busy");
-    if (editButton) editButton.disabled = pending;
+    if (pending) {
+      host.setAttribute("aria-busy", "true");
+      host.setAttribute("data-site-media-operation", pendingAction);
+    } else {
+      host.removeAttribute("aria-busy");
+      host.removeAttribute("data-site-media-operation");
+    }
+    renderAdminControl();
   }
 
   function previewItem(item) {
@@ -884,55 +893,62 @@
       id: ++optimisticSequence,
       item,
       url,
+      action: item ? "upload" : "delete",
       previousVersion: Number(previousItem?.recordVersion || 0),
     };
     pendingSlots.set(slot, operation);
     controllers.filter((controller) => controller.slot === slot).forEach((controller) => {
-      controller.setPending(true);
+      controller.setPending(true, operation.action);
       controller.previewItem(item);
     });
     return operation;
   }
 
+  async function settleCommittedMedia(slot, operation, item, initialSwaps) {
+    let ready = initialSwaps.length > 0 && (await Promise.all(initialSwaps)).every(Boolean);
+    const delays = [250, 750, 1_500, 3_000];
+    for (let attempt = 0; attempt < delays.length && !ready; attempt += 1) {
+      await wait(delays[attempt]);
+      const activeCommit = recentCommittedSlots.get(slot);
+      const newerOperation = pendingSlots.get(slot);
+      if (activeCommit?.operationId !== operation.id || (newerOperation && newerOperation.id !== operation.id)) {
+        releaseOptimisticUrl(operation.url, 5 * 60_000);
+        return;
+      }
+      const marker = `${item.recordVersion || "new"}-${attempt}-${Date.now()}`;
+      if (!(await probeMediaItem(item, marker))) continue;
+      ready = (await Promise.all(syncSlot(slot, item, {
+        cacheBust: marker,
+        keepCurrentOnFailure: true,
+      }))).every(Boolean);
+    }
+    // Keep the local Blob alive until every visible copy has switched to the
+    // persisted URL. A slow CDN must never make the photo disappear again.
+    releaseOptimisticUrl(operation.url, ready ? 15_000 : 5 * 60_000);
+  }
+
   async function completeOptimisticSlot(slot, operation, item) {
     if (pendingSlots.get(slot)?.id !== operation.id) return false;
     if (item) {
-      const matching = controllers.filter((controller) => controller.slot === slot);
-      const delays = [0, 250, 750, 1_500, 3_000];
-      let ready = false;
-      for (let attempt = 0; attempt < delays.length && !ready; attempt += 1) {
-        if (delays[attempt]) await wait(delays[attempt]);
-        if (pendingSlots.get(slot)?.id !== operation.id) return false;
-        const marker = `${item.recordVersion || "new"}-${attempt}-${Date.now()}`;
-        ready = await probeMediaItem(item, attempt ? marker : "");
-      }
-      if (!ready) {
-        if (lastMediaData) lastMediaData.items[slot] = item;
-        pendingSlots.delete(slot);
-        matching.forEach((controller) => controller.setPending(false));
-        // The database accepted the image, so do not replace the administrator's
-        // valid local preview with initials just because the public CDN is late.
-        releaseOptimisticUrl(operation.url, 5 * 60_000);
-        return false;
-      }
-    }
-    if (item) {
       recentCommittedSlots.set(slot, {
         item,
+        operationId: operation.id,
         expiresAt: Date.now() + RECENT_COMMIT_TTL,
       });
     } else {
       recentCommittedSlots.set(slot, {
         item: null,
+        operationId: operation.id,
         deletedVersion: operation.previousVersion,
         committedAt: Date.now(),
         expiresAt: Date.now() + RECENT_COMMIT_TTL,
       });
     }
     pendingSlots.delete(slot);
-    syncSlot(slot, item);
+    const swaps = syncSlot(slot, item, item ? { keepCurrentOnFailure: true } : {});
     controllers.filter((controller) => controller.slot === slot).forEach((controller) => controller.setPending(false));
-    releaseOptimisticUrl(operation.url);
+    if (item) void settleCommittedMedia(slot, operation, item, swaps);
+    else releaseOptimisticUrl(operation.url);
     return true;
   }
 
@@ -985,18 +1001,20 @@
       if (lastMediaData) controller.refresh(lastMediaData);
       const pendingOperation = pendingSlots.get(controller.slot);
       if (pendingOperation) {
-        controller.setPending(true);
+        controller.setPending(true, pendingOperation.action);
         controller.previewItem(pendingOperation.item);
       }
     });
   }
 
-  function syncSlot(slot, item) {
+  function syncSlot(slot, item, options = {}) {
     if (lastMediaData) {
       if (item) lastMediaData.items[slot] = item;
       else delete lastMediaData.items[slot];
     }
-    controllers.filter((controller) => controller.slot === slot).forEach((controller) => controller.applyRemoteItem(item));
+    return controllers
+      .filter((controller) => controller.slot === slot)
+      .map((controller) => controller.applyRemoteItem(item, options));
   }
 
   function preserveRecentCommits(data) {
@@ -1022,13 +1040,18 @@
         return;
       }
       const committedVersion = Number(commit.item?.recordVersion || 0);
+      const fetchedUpdatedAt = Date.parse(String(fetched?.updatedAt || ""));
+      const committedUpdatedAt = Date.parse(String(commit.item?.updatedAt || ""));
       const exactCommit = fetched
         && fetchedVersion === committedVersion
         && String(fetched.updatedAt || "") === String(commit.item.updatedAt || "");
-      if (fetchedVersion > committedVersion || exactCommit) {
+      const newerCommit = fetchedVersion > committedVersion
+        || (Number.isFinite(fetchedUpdatedAt) && Number.isFinite(committedUpdatedAt) && fetchedUpdatedAt > committedUpdatedAt);
+      if (newerCommit) {
         recentCommittedSlots.delete(slot);
         return;
       }
+      if (exactCommit) return;
       data.items[slot] = commit.item;
     });
     return data;
@@ -1044,7 +1067,7 @@
       controller.refresh(data);
       const pendingOperation = pendingSlots.get(controller.slot);
       if (pendingOperation) {
-        controller.setPending(true);
+        controller.setPending(true, pendingOperation.action);
         controller.previewItem(pendingOperation.item);
       }
     });
