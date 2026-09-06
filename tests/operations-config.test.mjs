@@ -129,6 +129,7 @@ describe("production operations configuration", () => {
     expect(build).toContain("Prepared ${htmlFiles.length} HTML pages");
     expect(layout).toContain('data-theme="warm"');
     expect(layout).toContain('src="/api/site-theme/bootstrap"');
+    expect(headers).toContain("form-action 'self' https://accounts.google.com;");
     expect(headers).toContain("script-src 'self' 'unsafe-inline' blob:");
   });
 
