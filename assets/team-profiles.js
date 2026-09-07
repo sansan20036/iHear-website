@@ -7,20 +7,22 @@
 
   const textFields = ["role", "schoolDisplay", "languages", "strengths", "summary", "bio", "hobbies"];
   const locales = ["en", "zhHant", "zhHans"];
+  const nameCollator=new Intl.Collator("en",{usage:"sort",sensitivity:"base",numeric:true,ignorePunctuation:true});
   const languageGuardPromise=import("/assets/text-language-guard.js").catch(()=>null);
   const labels = {
     en:{manager:"Team directory manager",hint:"Drag a handle to reorder profiles, or use the Move buttons. Changes are saved automatically.",editMode:"Manage profiles",done:"Done",add:"Add profile",edit:"Edit",drag:"Drag to reorder",up:"Move up",down:"Move down",draft:"Draft",loading:"Loading team profiles…",empty:"No published profiles yet.",failed:"Team profiles are temporarily unavailable.",newTitle:"Add team profile",editTitle:"Edit team profile",name:"Name",initials:"Initials",section:"Section",leader:"Leadership",tutor:"Tutor",existing:"Existing person",newPerson:"Create a new person",school:"School",grade:"Grade",showSchool:"Show school publicly",showGrade:"Show grade publicly",consent:"I confirm that applicable publication consent has been obtained.",shared:"Changing the name or initials updates this person everywhere.",role:"Role / title",schoolDisplay:"Localized school name",languages:"Languages",strengths:"Teaching strengths",summary:"Short introduction",bio:"Full bio",hobbies:"Hobbies",saveDraft:"Save draft",publish:"Publish",cancel:"Cancel",delete:"Permanently delete",deleteConfirm:"Permanently delete this profile placement? This cannot be undone.",conflict:"Someone else changed this data. Reload and try again.",saved:"Team profile saved.",orderSaved:"Team order saved.",reorderFailed:"Unable to save the new order. Please try again.",deleted:"Team profile deleted.",validation:"Please review the form.",copy:"Copy English",close:"Close editor",unsaved:"Discard your unsaved team-profile changes?",retry:"Retry",moved:(name,position,total)=>`${name} moved to position ${position} of ${total}.`},
     zhHant:{manager:"團隊資料管理",hint:"拖曳卡片上的排序把手，或使用上移／下移按鈕；放開後會自動儲存。",editMode:"管理團隊檔案",done:"完成",add:"新增檔案",edit:"編輯",drag:"拖曳排序",up:"上移",down:"下移",draft:"草稿",loading:"正在載入團隊資料…",empty:"目前沒有已發布的團隊檔案。",failed:"目前無法載入團隊資料。",newTitle:"新增團隊檔案",editTitle:"編輯團隊檔案",name:"姓名",initials:"姓名縮寫",section:"顯示區塊",leader:"領導團隊",tutor:"導師",existing:"既有人物",newPerson:"建立新人物",school:"學校",grade:"年級",showSchool:"公開顯示學校",showGrade:"公開顯示年級",consent:"我確認已取得適用的公開同意。",shared:"修改姓名或縮寫會同步套用到此人物的所有版位。",role:"角色／職稱",schoolDisplay:"本語言的學校名稱",languages:"使用語言",strengths:"教學專長",summary:"簡短介紹",bio:"完整介紹",hobbies:"興趣",saveDraft:"儲存草稿",publish:"發布",cancel:"取消",delete:"永久刪除",deleteConfirm:"確定要永久刪除此公開版位嗎？刪除後無法復原。",conflict:"另一位管理員已修改資料，請重新載入後再試。",saved:"團隊檔案已儲存。",orderSaved:"團隊順序已儲存。",reorderFailed:"無法儲存新順序，請稍後再試。",deleted:"團隊檔案已刪除。",validation:"請檢查表單內容。",copy:"複製英文",close:"關閉編輯器",unsaved:"要放棄尚未儲存的團隊檔案修改嗎？",retry:"重試",moved:(name,position,total)=>`${name} 已移到第 ${position} 位，共 ${total} 位。`},
     zhHans:{manager:"团队数据管理",hint:"拖动卡片上的排序把手，或使用上移／下移按钮；放开后会自动保存。",editMode:"管理团队档案",done:"完成",add:"新增档案",edit:"编辑",drag:"拖动排序",up:"上移",down:"下移",draft:"草稿",loading:"正在加载团队数据…",empty:"目前没有已发布的团队档案。",failed:"目前无法加载团队数据。",newTitle:"新增团队档案",editTitle:"编辑团队档案",name:"姓名",initials:"姓名缩写",section:"显示区块",leader:"领导团队",tutor:"导师",existing:"现有人物",newPerson:"建立新人物",school:"学校",grade:"年级",showSchool:"公开显示学校",showGrade:"公开显示年级",consent:"我确认已取得适用的公开同意。",shared:"修改姓名或缩写会同步套用到此人物的所有版位。",role:"角色／职称",schoolDisplay:"本语言的学校名称",languages:"使用语言",strengths:"教学专长",summary:"简短介绍",bio:"完整介绍",hobbies:"兴趣",saveDraft:"保存草稿",publish:"发布",cancel:"取消",delete:"永久删除",deleteConfirm:"确定要永久删除此公开版位吗？删除后无法恢复。",conflict:"另一位管理员已修改数据，请重新加载后再试。",saved:"团队档案已保存。",orderSaved:"团队顺序已保存。",reorderFailed:"无法保存新顺序，请稍后再试。",deleted:"团队档案已删除。",validation:"请检查表单内容。",copy:"复制英文",close:"关闭编辑器",unsaved:"要放弃尚未保存的团队档案修改吗？",retry:"重试",moved:(name,position,total)=>`${name} 已移到第 ${position} 位，共 ${total} 位。`}
   };
-  Object.assign(labels.en,{delete:"Move to trash",deleteConfirm:"Move this profile to trash? You can restore it in the admin dashboard.",deleted:"Team profile moved to trash.",expandAll:"Expand all",collapseAll:"Collapse all"});
-  Object.assign(labels.zhHant,{delete:"移至回收區",deleteConfirm:"確定移至回收區？之後可在管理後台復原。",deleted:"團隊檔案已移至回收區。",expandAll:"全部展開",collapseAll:"全部收起"});
-  Object.assign(labels.zhHans,{delete:"移至回收区",deleteConfirm:"确定移至回收区？之后可在管理后台恢复。",deleted:"团队档案已移至回收区。",expandAll:"全部展开",collapseAll:"全部收起"});
-  const state={leaders:[],tutors:[],people:[],admin:false,editMode:false,busy:false,reordering:false,deleteConfirming:false,draft:null,originalDraft:"",activeLocale:"en",translationReceipt:"",translationReady:false,englishGuardAccepted:false};
-  const adminBar=document.createElement("div"),dialog=document.createElement("dialog"),toast=document.createElement("div");
+  Object.assign(labels.en,{delete:"Move to trash",deleteConfirm:"Move this profile to trash? You can restore it in the admin dashboard.",deleted:"Team profile moved to trash.",expandAll:"Expand all",collapseAll:"Collapse all",sortAlphabetically:"Sort tutors A–Z",sortTitle:"Review A–Z tutor order",sortBody:count=>`${count} tutors will be sorted by their English first name. Draft and published tutors are included.`,sortHint:"Review the complete order below. Leadership remains unchanged.",sortCancel:"Cancel",sortConfirm:"Confirm and save",sortSaving:"Saving order…",sortAlready:"Tutors are already sorted A–Z by first name."});
+  Object.assign(labels.zhHant,{delete:"移至回收區",deleteConfirm:"確定移至回收區？之後可在管理後台復原。",deleted:"團隊檔案已移至回收區。",expandAll:"全部展開",collapseAll:"全部收起",sortAlphabetically:"小老師依名字 A–Z 排序",sortTitle:"確認小老師 A–Z 順序",sortBody:count=>`將 ${count} 位小老師依英文名字排序，包含草稿與已發布人員。`,sortHint:"請檢查下方完整順序；核心團隊順序不會改變。",sortCancel:"取消",sortConfirm:"確認並儲存",sortSaving:"正在儲存順序…",sortAlready:"小老師目前已經是名字 A–Z 順序。"});
+  Object.assign(labels.zhHans,{delete:"移至回收区",deleteConfirm:"确定移至回收区？之后可在管理后台恢复。",deleted:"团队档案已移至回收区。",expandAll:"全部展开",collapseAll:"全部收起",sortAlphabetically:"小老师依名字 A–Z 排序",sortTitle:"确认小老师 A–Z 顺序",sortBody:count=>`将 ${count} 位小老师依英文名字排序，包含草稿与已发布人员。`,sortHint:"请检查下方完整顺序；核心团队顺序不会改变。",sortCancel:"取消",sortConfirm:"确认并保存",sortSaving:"正在保存顺序…",sortAlready:"小老师目前已经是名字 A–Z 顺序。"});
+  const state={leaders:[],tutors:[],people:[],admin:false,editMode:false,busy:false,reordering:false,deleteConfirming:false,draft:null,sortPreview:null,originalDraft:"",activeLocale:"en",translationReceipt:"",translationReady:false,englishGuardAccepted:false};
+  const adminBar=document.createElement("div"),dialog=document.createElement("dialog"),sortDialog=document.createElement("dialog"),toast=document.createElement("div");
   adminBar.className="team-directory-admin";adminBar.hidden=true;adminBar.setAttribute("data-no-inline-edit","");
   leaderMount.parentElement.insertBefore(adminBar,leaderMount);
   dialog.className="team-profile-editor";dialog.setAttribute("data-no-inline-edit","");dialog.setAttribute("aria-modal","true");dialog.setAttribute("aria-labelledby","team-editor-title");document.body.appendChild(dialog);
+  sortDialog.className="team-sort-dialog";sortDialog.setAttribute("data-no-inline-edit","");sortDialog.setAttribute("aria-modal","true");sortDialog.setAttribute("aria-labelledby","team-sort-title");document.body.appendChild(sortDialog);
   toast.className="team-profile-toast";toast.hidden=true;toast.setAttribute("role","status");toast.setAttribute("aria-live","polite");document.body.appendChild(toast);
   let toastTimer;
 
@@ -129,7 +131,7 @@
     [["leader",leaderMount,leaderCard],["tutor",tutorMount,tutorCard]].forEach(([section,mount,card])=>reconcile(mount,card,visible(all(section))));
     adminBar.hidden=!state.admin;
     if(state.admin)adminBar.innerHTML=`<div><strong>${l().manager}</strong><span>${l().hint}</span></div><div class="team-admin-actions">
-      ${state.editMode?`<button class="team-admin-button accent" data-team-add>${l().add}</button>`:""}
+      ${state.editMode?`<button class="team-admin-button" data-team-sort-az ${state.reordering||state.tutors.length<2?"disabled":""}>${l().sortAlphabetically} (${state.tutors.length})</button><button class="team-admin-button accent" data-team-add>${l().add}</button>`:""}
       <button class="team-admin-button primary" data-team-toggle>${state.editMode?l().done:l().editMode}</button></div>`;
     openTutorIds.forEach(id=>{const item=tutorMount.querySelector(`[data-profile-id="${CSS.escape(id)}"] > details`);if(item)item.open=true});
     updateTutorToggle();
@@ -145,7 +147,7 @@
     state.draft=item?JSON.parse(JSON.stringify({...item,consentConfirmed:Boolean(item.publicationConsentAt)})):newDraft();
     state.originalDraft=JSON.stringify(state.draft);state.activeLocale="en";state.translationReceipt="";state.translationReady=false;state.englishGuardAccepted=false;state.deleteConfirming=false;buildEditor();dialog.showModal();document.body.classList.add("team-profile-modal-open");dialog.querySelector("input,select,textarea,button")?.focus()
   }
-  function isDirty(){if(!state.draft)return false;syncDraft();return JSON.stringify(state.draft)!==state.originalDraft}
+  function isDirty(){if(state.sortPreview)return true;if(!state.draft)return false;syncDraft();return JSON.stringify(state.draft)!==state.originalDraft}
   function closeEditor(force){if(!dialog.open)return true;if(!force&&isDirty()&&!confirm(l().unsaved))return false;dialog.close();return true}
   function field(name,label,textarea){
     const value=state.draft[name]||"";
@@ -246,8 +248,33 @@
       state.originalDraft=JSON.stringify(state.draft);closeEditor(true);await load(true,{revision:data.revision&&data.revision.revision});showToast(l().deleted,false);if(window.iHearLiveContent)window.iHearLiveContent.announce("team",data.revision)
     }catch(error){setBusy(false);showIssues(error);showToast(error.status===409?l().conflict:error.message||l().validation,true)}
   }
+  function firstName(name){return String(name||"").trim().split(/\s+/u)[0]||""}
+  function alphabeticalTutors(){
+    return state.tutors.map((profile,index)=>({profile,index})).sort((left,right)=>{
+      const leftFirst=firstName(left.profile.name),rightFirst=firstName(right.profile.name);
+      if(!leftFirst||!rightFirst){if(leftFirst)return-1;if(rightFirst)return 1;return left.index-right.index}
+      return nameCollator.compare(leftFirst,rightFirst)||nameCollator.compare(String(left.profile.name||"").trim(),String(right.profile.name||"").trim())||left.index-right.index
+    }).map(item=>item.profile)
+  }
+  function buildSortDialog(){
+    if(!state.sortPreview)return;
+    const ordered=state.sortPreview;
+    sortDialog.innerHTML=`<div class="team-sort-shell"><h3 id="team-sort-title">${esc(l().sortTitle)}</h3><p>${esc(l().sortBody(ordered.length))}</p><p class="team-sort-hint">${esc(l().sortHint)}</p><ol class="team-sort-list">${ordered.map((profile,index)=>`<li><span class="team-sort-position" aria-hidden="true">${index+1}</span><span>${esc(profile.name)}</span>${profile.status==="draft"?`<span class="team-profile-status">${esc(l().draft)}</span>`:""}</li>`).join("")}</ol><div class="team-editor-actions"><button type="button" class="team-admin-button" data-sort-cancel ${state.reordering?"disabled":""}>${esc(l().sortCancel)}</button><button type="button" class="team-admin-button primary" data-sort-confirm ${state.reordering?"disabled":""}>${esc(state.reordering?l().sortSaving:l().sortConfirm)}</button></div></div>`
+  }
+  function requestAlphabeticalSort(){
+    if(state.reordering||state.sortPreview)return;
+    const ordered=alphabeticalTutors();
+    if(ordered.length<2||ordered.every((profile,index)=>profile.id===state.tutors[index]?.id)){showToast(l().sortAlready,false);return}
+    state.sortPreview=ordered;buildSortDialog();sortDialog.showModal();document.body.classList.add("team-profile-modal-open");requestAnimationFrame(()=>sortDialog.querySelector("[data-sort-cancel]")?.focus())
+  }
+  function cancelAlphabeticalSort(){if(state.reordering)return;state.sortPreview=null;if(sortDialog.open)sortDialog.close()}
+  async function confirmAlphabeticalSort(){
+    if(state.reordering||!state.sortPreview)return;
+    const ordered=state.sortPreview,saving=persistOrder("tutor",ordered);buildSortDialog();
+    await saving;state.sortPreview=null;if(sortDialog.open)sortDialog.close();requestAnimationFrame(()=>document.querySelector("[data-team-sort-az]")?.focus())
+  }
   async function persistOrder(section,nextItems,focusId){
-    if(state.reordering)return;
+    if(state.reordering)return false;
     const key=section==="leader"?"leaders":"tutors",previous=[...state[key]];
     state[key]=nextItems;state.reordering=true;
     const mount=section==="leader"?leaderMount:tutorMount;
@@ -259,10 +286,10 @@
       const data=await response.json().catch(()=>null);if(!response.ok)throw errorFrom(response,data);
       state.reordering=false;await load(true,{revision:data.revision&&data.revision.revision});
       if(focusId){const moved=nextItems.find(profile=>profile.id===focusId),position=nextItems.findIndex(profile=>profile.id===focusId)+1;requestAnimationFrame(()=>document.querySelector(`[data-drag-id="${CSS.escape(focusId)}"]`)?.focus());showToast(`${l().orderSaved} ${l().moved(moved&&moved.name||"",position,nextItems.length)}`,false)}else showToast(l().orderSaved,false);
-      if(window.iHearLiveContent)window.iHearLiveContent.announce("team",data.revision)
+      if(window.iHearLiveContent)window.iHearLiveContent.announce("team",data.revision);return true
     }catch(error){
       state.reordering=false;state[key]=previous;render();showToast(error.status===409?l().conflict:l().reorderFailed,true);
-      await load(true).catch(()=>{state[key]=previous;render()})
+      await load(true).catch(()=>{state[key]=previous;render()});return false
     }
   }
   function move(id,direction){
@@ -322,6 +349,9 @@
     if(button.matches("[data-team-drag]")){event.preventDefault();event.stopPropagation()}
     else if(button.matches("[data-team-expand-toggle]"))toggleTutorDetails();
     else if(button.matches("[data-team-toggle]")){state.editMode=!state.editMode;render()}
+    else if(button.matches("[data-team-sort-az]"))requestAlphabeticalSort();
+    else if(button.matches("[data-sort-cancel]"))cancelAlphabeticalSort();
+    else if(button.matches("[data-sort-confirm]"))confirmAlphabeticalSort();
     else if(button.matches("[data-team-add]"))openEditor(null);
     else if(button.dataset.edit)openEditor([...state.leaders,...state.tutors].find(item=>item.id===button.dataset.edit));
     else if(button.dataset.move)move(button.dataset.move,Number(button.dataset.direction));
@@ -337,6 +367,7 @@
   tutorMount.addEventListener("toggle",event=>{if(event.target.matches("details.tutor-prof"))updateTutorToggle()},true);
   dialog.addEventListener("input",event=>{if(event.target.name){syncDraft();if(event.target.name.endsWith(".en")){state.translationReceipt="";state.translationReady=false;state.englishGuardAccepted=false}void renderLanguageGuards();event.target.removeAttribute("aria-invalid");const marker=dialog.querySelector(`[data-error="${CSS.escape(event.target.name)}"]`);if(marker)marker.textContent=""}});
   dialog.addEventListener("cancel",event=>{event.preventDefault();if(!state.busy)closeEditor()});
+  sortDialog.addEventListener("cancel",event=>{event.preventDefault();cancelAlphabeticalSort()});
   dialog.addEventListener("keydown",event=>{
     const tab=event.target.closest('[role="tab"][data-locale]');if(!tab)return;
     const tabs=Array.from(dialog.querySelectorAll('[role="tab"][data-locale]'));let index=tabs.indexOf(tab);
@@ -357,8 +388,9 @@
     }
   });
   dialog.addEventListener("close",()=>{document.body.classList.remove("team-profile-modal-open");state.draft=null;state.originalDraft="";state.busy=false;state.deleteConfirming=false;state.translationReceipt="";state.translationReady=false;state.englishGuardAccepted=false;if(window.iHearLiveContent)window.iHearLiveContent.checkNow({force:true})});
+  sortDialog.addEventListener("close",()=>{if(!dialog.open)document.body.classList.remove("team-profile-modal-open");if(window.iHearLiveContent)window.iHearLiveContent.checkNow({force:true})});
   window.addEventListener("ihear:before-language",event=>{if(dialog.open&&isDirty()){if(!confirm(l().unsaved))event.preventDefault();else closeEditor(true)}});
-  window.addEventListener("ihear:language",()=>{render();if(dialog.open){syncDraft();buildEditor()}});
+  window.addEventListener("ihear:language",()=>{render();if(dialog.open){syncDraft();buildEditor()}if(sortDialog.open)buildSortDialog()});
   window.addEventListener("beforeunload",event=>{if(!isDirty())return;event.preventDefault();event.returnValue=""});
   window.addEventListener("ihear:auth",event=>{const session=event.detail&&event.detail.session;if(session&&session.user&&session.user.isAdmin){state.admin=true;load(true)}else{state.admin=false;state.editMode=false;load(false)}});
   window.iHearTeamProfiles={refresh:context=>load(state.admin,context),isDirty};

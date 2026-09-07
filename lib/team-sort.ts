@@ -15,9 +15,22 @@ function firstName(name: string) {
 }
 
 export function sortTeamProfilesByFirstName<T extends NamedTeamProfile>(profiles: readonly T[]): T[] {
-  return [...profiles].sort((left, right) =>
-    englishNameCollator.compare(firstName(left.name), firstName(right.name))
-    || englishNameCollator.compare(String(left.name || "").trim(), String(right.name || "").trim())
-    || englishNameCollator.compare(left.id, right.id),
-  );
+  return profiles
+    .map((profile, index) => ({ profile, index }))
+    .sort((left, right) => {
+      const leftFirstName = firstName(left.profile.name);
+      const rightFirstName = firstName(right.profile.name);
+      if (!leftFirstName || !rightFirstName) {
+        if (leftFirstName) return -1;
+        if (rightFirstName) return 1;
+        return left.index - right.index;
+      }
+      return englishNameCollator.compare(leftFirstName, rightFirstName)
+        || englishNameCollator.compare(
+          String(left.profile.name || "").trim(),
+          String(right.profile.name || "").trim(),
+        )
+        || left.index - right.index;
+    })
+    .map(({ profile }) => profile);
 }

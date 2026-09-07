@@ -1,5 +1,6 @@
 .team-directory-admin[hidden],
 .team-profile-editor:not([open]),
+.team-sort-dialog:not([open]),
 .team-profile-toast[hidden] { display:none!important; }
 .team-directory-admin{
   margin:0 auto 24px;padding:14px 16px;border:1.5px solid rgba(38,57,116,.18);
@@ -50,6 +51,18 @@ body.team-profile-reordering,body.team-profile-reordering *{cursor:grabbing!impo
   border:0;border-radius:22px;box-shadow:0 24px 80px rgba(20,35,80,.25);overflow:hidden
 }
 .team-profile-editor::backdrop{background:rgba(18,29,66,.56)}
+.team-sort-dialog{
+  width:min(540px,calc(100vw - 24px));max-height:calc(100dvh - 24px);padding:0;
+  border:0;border-radius:20px;background:var(--bg-surface);box-shadow:0 24px 80px rgba(20,35,80,.25);overflow:hidden
+}
+.team-sort-dialog::backdrop{background:rgba(18,29,66,.56)}
+.team-sort-shell{display:flex;max-height:calc(100dvh - 24px);flex-direction:column;gap:12px;padding:22px;color:var(--ink)}
+.team-sort-shell h3,.team-sort-shell p{margin:0}.team-sort-shell h3{color:var(--navy)}
+.team-sort-hint{color:var(--ink-soft);font-size:.9rem}
+.team-sort-list{min-height:0;margin:2px 0;padding:8px;overflow-y:auto;border:1px solid var(--line);border-radius:13px;background:var(--bg-subtle);list-style:none;counter-reset:none}
+.team-sort-list li{display:grid;grid-template-columns:32px minmax(0,1fr) auto;align-items:center;gap:8px;min-height:44px;padding:6px 8px;border-radius:9px;background:var(--bg-surface);font-weight:800}
+.team-sort-list li+li{margin-top:6px}.team-sort-position{color:var(--ink-soft);font-variant-numeric:tabular-nums;text-align:center}
+.team-sort-dialog .team-editor-actions{justify-content:flex-end}
 .team-editor-shell{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--bg-surface);overflow:hidden}
 .team-editor-shell>[data-team-form]{display:flex;flex:1 1 auto;flex-direction:column;min-height:0;overflow:hidden}
 .team-editor-head,.team-editor-footer{padding:18px 22px;border-bottom:1px solid var(--line)}
@@ -112,6 +125,7 @@ body.team-profile-modal-open{overflow:hidden}
   .team-profile-drag-text{display:none}
   .team-profile-drag-handle{padding:7px;flex:0 0 44px}
   .tutor-prof summary{gap:9px}
+  .team-sort-shell{padding:16px}.team-sort-dialog .team-editor-actions,.team-sort-dialog .team-admin-button{width:100%;justify-content:center}
 }
 @media(max-width:390px){
   .team-locale-tabs{grid-template-columns:1fr}
