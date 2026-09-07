@@ -562,13 +562,15 @@ export async function buildTranslationPreview(params: {
     const force = new Set(params.force?.[field] || []);
     const refreshLegacy = new Set(params.refreshLegacy?.[field] || []);
     const englishHash = sha256(value.en);
+    const refreshHant = refreshLegacy.has("zhHant") && hantState?.origin !== "manual";
     // Existing legacy Chinese stays protected unless the editor confirms that
     // this field's English source changed. Explicit manual corrections remain
     // locked unless an administrator deliberately selects force replacement.
-    const hantLocked = isLockedTranslation(value.zhHant, hantState, refreshLegacy.has("zhHant"));
+    const hantLocked = isLockedTranslation(value.zhHant, hantState, refreshHant);
     const hansLocked = isLockedTranslation(value.zhHans, hansState, refreshLegacy.has("zhHans"));
     const shouldTranslateHant = Boolean(value.en && autoTranslate && (
       force.has("zhHant")
+      || refreshHant
       || !value.zhHant
       || (!hantLocked && (!hantState || hantState.sourceHash !== englishHash))
     ));
@@ -625,9 +627,9 @@ export async function buildTranslationPreview(params: {
       result.zhHantStatus = "translated";
       const hansState = stateMap.get(`${item.field}:zhHans`);
       const forceHans = new Set(params.force?.[item.field] || []).has("zhHans");
-      const refreshLegacyHans = new Set(params.refreshLegacy?.[item.field] || []).has("zhHans");
+      const refreshLegacyHans = new Set(params.refreshLegacy?.[item.field] || []).has("zhHans") && hansState?.origin !== "manual";
       const hansLocked = isLockedTranslation(result.value.zhHans, hansState, refreshLegacyHans);
-      if (!hansLocked || forceHans) {
+      if (!hansLocked || forceHans || refreshLegacyHans) {
         result.value.zhHans = finished.zhHans;
         result.zhHansOrigin = "machine";
         result.zhHansStatus = "translated";
@@ -637,13 +639,14 @@ export async function buildTranslationPreview(params: {
 
   for (const [field, result] of Object.entries(results)) {
     const forceHans = new Set(params.force?.[field] || []).has("zhHans");
-    const refreshLegacyHans = new Set(params.refreshLegacy?.[field] || []).has("zhHans");
     const hansState = stateMap.get(`${field}:zhHans`);
+    const refreshLegacyHans = new Set(params.refreshLegacy?.[field] || []).has("zhHans") && hansState?.origin !== "manual";
     const hansLocked = isLockedTranslation(result.value.zhHans, hansState, refreshLegacyHans);
     const traditionalHash = sha256(result.value.zhHant);
     if (result.value.zhHant && autoTranslate && (
       !result.value.zhHans
       || forceHans
+      || refreshLegacyHans
       || (!hansLocked && (!hansState || hansState.sourceHash !== traditionalHash))
     )) {
       result.value.zhHans = convertZhHantToZhHans(result.value.zhHant);

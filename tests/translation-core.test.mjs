@@ -291,8 +291,8 @@ describe("translation preview and signed receipt", () => {
     let calls = 0;
     const existing = { en: "World", zhHant: "服務國家", zhHans: "服务国家" };
     const legacyStates = [
-      { resourceType: "content", resourceScope: "/", resourceId: "impact-country-label", field: "value", locale: "zhHant", sourceHash: null, origin: "protected_legacy", glossaryVersion: "ihear-2026-08-v1", updatedBy: null, updatedAt: "" },
-      { resourceType: "content", resourceScope: "/", resourceId: "impact-country-label", field: "value", locale: "zhHans", sourceHash: null, origin: "protected_legacy", glossaryVersion: "ihear-2026-08-v1", updatedBy: null, updatedAt: "" },
+      { resourceType: "content", resourceScope: "/", resourceId: "impact-country-label", field: "value", locale: "zhHant", sourceHash: sha256(existing.en), origin: "protected_legacy", glossaryVersion: "ihear-2026-08-v1", updatedBy: null, updatedAt: "" },
+      { resourceType: "content", resourceScope: "/", resourceId: "impact-country-label", field: "value", locale: "zhHans", sourceHash: sha256(existing.zhHant), origin: "protected_legacy", glossaryVersion: "ihear-2026-08-v1", updatedBy: null, updatedAt: "" },
     ];
     const result = await buildTranslationPreview({
       email: "admin@example.org",
