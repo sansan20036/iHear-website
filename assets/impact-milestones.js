@@ -470,6 +470,16 @@
     return Boolean(state.draft) && JSON.stringify(state.draft) !== state.originalDraft;
   }
 
+  function legacyRefreshFor(fields) {
+    let initial = {};
+    try { initial = JSON.parse(state.originalDraft || "{}"); } catch {}
+    return Object.fromEntries(Object.keys(fields).map((field) => {
+      if (String(fields[field]?.en || "").trim() === String(initial[field]?.en || "").trim()) return null;
+      const locales = ["zhHant", "zhHans"].filter((language) => String(fields[field]?.[language] || "").trim() === String(initial[field]?.[language] || "").trim());
+      return locales.length ? [field, locales] : null;
+    }).filter(Boolean));
+  }
+
   function closeEditor(force) {
     if (!force && isDirty() && !window.confirm(labels().unsaved)) return;
     state.busy = false;
@@ -979,7 +989,7 @@
       if (Object.keys(fields).length) {
         setBusy(true);
         try {
-          const response = await fetch("/api/admin/translations/preview", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ resource: { type: "impact", scope: "", id: state.draft.id || "__new__", version: state.draft.id ? state.draft.version : undefined }, fields, allowCjkEnglish: state.englishGuardAccepted }) });
+          const response = await fetch("/api/admin/translations/preview", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ resource: { type: "impact", scope: "", id: state.draft.id || "__new__", version: state.draft.id ? state.draft.version : undefined }, fields, allowCjkEnglish: state.englishGuardAccepted, refreshLegacy: legacyRefreshFor(fields) }) });
           const data = await response.json().catch(() => null);
           if (!response.ok) { const error = new Error((data && data.error) || labels().saveFailed); error.status = response.status; throw error; }
           Object.entries(data.fields).forEach(([field, result]) => { state.draft[field] = result.value; });

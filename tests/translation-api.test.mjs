@@ -40,11 +40,17 @@ describe("translation preview API", () => {
   });
 
   it("loads provenance and returns a private signed preview", async () => {
-    const response = await previewTranslation(request({ resource: { type: "team", scope: "", id: "profile-1", version: 2 }, fields: { bio: { en: "Tutor", zhHant: "人工中文", zhHans: "人工中文" } }, personNames: ["Yi Yi"], contextTerms: ["Taipei School"] }));
+    const response = await previewTranslation(request({ resource: { type: "team", scope: "", id: "profile-1", version: 2 }, fields: { bio: { en: "Tutor", zhHant: "人工中文", zhHans: "人工中文" } }, refreshLegacy: { bio: ["zhHant", "zhHans"] }, personNames: ["Yi Yi"], contextTerms: ["Taipei School"] }));
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toContain("no-store");
     expect(readTranslationStates).toHaveBeenCalledWith({ type: "team", scope: "", id: "profile-1", version: 2 });
-    expect(buildTranslationPreview).toHaveBeenCalledWith(expect.objectContaining({ email: "admin@example.org", states: [], contextTerms: ["Taipei School", "Yi Yi", "Yi"] }));
+    expect(buildTranslationPreview).toHaveBeenCalledWith(expect.objectContaining({ email: "admin@example.org", states: [], refreshLegacy: { bio: ["zhHant", "zhHans"] }, contextTerms: ["Taipei School", "Yi Yi", "Yi"] }));
+  });
+
+  it("rejects invalid legacy-refresh fields", async () => {
+    const body = { resource: { type: "media", scope: "", id: "slot", version: 1 }, fields: { alt: { en: "A photo" } }, refreshLegacy: { unknown: ["zhHant"] } };
+    expect((await previewTranslation(request(body))).status).toBe(400);
+    expect(buildTranslationPreview).not.toHaveBeenCalled();
   });
 
   it("rejects protected person names outside Team or with invalid values", async () => {

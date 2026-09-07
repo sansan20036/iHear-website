@@ -534,6 +534,7 @@ export async function buildTranslationPreview(params: {
   fields: Record<string, LocalizedTranslationField>;
   states: TranslationState[];
   force?: Record<string, Array<"zhHant" | "zhHans">>;
+  refreshLegacy?: Record<string, Array<"zhHant" | "zhHans">>;
   autoTranslate?: boolean;
   contextTerms?: string[];
   translate?: (contents: string[]) => Promise<string[]>;
@@ -546,8 +547,12 @@ export async function buildTranslationPreview(params: {
   }> = [];
   const autoTranslate = params.autoTranslate !== false;
 
-  const isLockedTranslation = (translatedValue: string, state: TranslationState | undefined) => Boolean(
-    translatedValue && (!state || state.origin === "manual" || state.origin === "protected_legacy"),
+  const isLockedTranslation = (translatedValue: string, state: TranslationState | undefined, refreshLegacy = false) => Boolean(
+    translatedValue && (
+      !state
+      || state.origin === "manual"
+      || (state.origin === "protected_legacy" && !refreshLegacy)
+    ),
   );
 
   for (const [field, raw] of Object.entries(params.fields)) {
@@ -555,12 +560,13 @@ export async function buildTranslationPreview(params: {
     const hantState = stateMap.get(`${field}:zhHant`);
     const hansState = stateMap.get(`${field}:zhHans`);
     const force = new Set(params.force?.[field] || []);
+    const refreshLegacy = new Set(params.refreshLegacy?.[field] || []);
     const englishHash = sha256(value.en);
-    // Existing legacy Chinese is treated as human-owned content too. Neither
-    // it nor an explicit manual correction may be replaced unless an admin
-    // deliberately selects the matching force option.
-    const hantLocked = isLockedTranslation(value.zhHant, hantState);
-    const hansLocked = isLockedTranslation(value.zhHans, hansState);
+    // Existing legacy Chinese stays protected unless the editor confirms that
+    // this field's English source changed. Explicit manual corrections remain
+    // locked unless an administrator deliberately selects force replacement.
+    const hantLocked = isLockedTranslation(value.zhHant, hantState, refreshLegacy.has("zhHant"));
+    const hansLocked = isLockedTranslation(value.zhHans, hansState, refreshLegacy.has("zhHans"));
     const shouldTranslateHant = Boolean(value.en && autoTranslate && (
       force.has("zhHant")
       || !value.zhHant
@@ -619,7 +625,8 @@ export async function buildTranslationPreview(params: {
       result.zhHantStatus = "translated";
       const hansState = stateMap.get(`${item.field}:zhHans`);
       const forceHans = new Set(params.force?.[item.field] || []).has("zhHans");
-      const hansLocked = isLockedTranslation(result.value.zhHans, hansState);
+      const refreshLegacyHans = new Set(params.refreshLegacy?.[item.field] || []).has("zhHans");
+      const hansLocked = isLockedTranslation(result.value.zhHans, hansState, refreshLegacyHans);
       if (!hansLocked || forceHans) {
         result.value.zhHans = finished.zhHans;
         result.zhHansOrigin = "machine";
@@ -630,8 +637,9 @@ export async function buildTranslationPreview(params: {
 
   for (const [field, result] of Object.entries(results)) {
     const forceHans = new Set(params.force?.[field] || []).has("zhHans");
+    const refreshLegacyHans = new Set(params.refreshLegacy?.[field] || []).has("zhHans");
     const hansState = stateMap.get(`${field}:zhHans`);
-    const hansLocked = isLockedTranslation(result.value.zhHans, hansState);
+    const hansLocked = isLockedTranslation(result.value.zhHans, hansState, refreshLegacyHans);
     const traditionalHash = sha256(result.value.zhHant);
     if (result.value.zhHant && autoTranslate && (
       !result.value.zhHans

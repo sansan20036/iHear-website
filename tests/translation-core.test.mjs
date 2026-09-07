@@ -287,6 +287,27 @@ describe("translation preview and signed receipt", () => {
     expect(result.fields.bio.zhHansOrigin).toBe("machine");
   });
 
+  it("refreshes protected legacy Chinese when the editor confirms that English changed", async () => {
+    let calls = 0;
+    const existing = { en: "World", zhHant: "服務國家", zhHans: "服务国家" };
+    const legacyStates = [
+      { resourceType: "content", resourceScope: "/", resourceId: "impact-country-label", field: "value", locale: "zhHant", sourceHash: null, origin: "protected_legacy", glossaryVersion: "ihear-2026-08-v1", updatedBy: null, updatedAt: "" },
+      { resourceType: "content", resourceScope: "/", resourceId: "impact-country-label", field: "value", locale: "zhHans", sourceHash: null, origin: "protected_legacy", glossaryVersion: "ihear-2026-08-v1", updatedBy: null, updatedAt: "" },
+    ];
+    const result = await buildTranslationPreview({
+      email: "admin@example.org",
+      resource: { type: "content", scope: "/", id: "impact-country-label", version: "v1" },
+      fields: { value: existing },
+      states: legacyStates,
+      refreshLegacy: { value: ["zhHant", "zhHans"] },
+      translate: async () => { calls += 1; return ["世界"]; },
+    });
+    expect(calls).toBe(1);
+    expect(result.fields.value.value).toEqual({ en: "World", zhHant: "世界", zhHans: "世界" });
+    expect(result.fields.value.zhHantOrigin).toBe("machine");
+    expect(result.fields.value.zhHansOrigin).toBe("machine");
+  });
+
   it("translates each sentence independently and restores the original paragraph breaks", async () => {
     const english = "iHear supports tutors. Lead Tutors guide the team.\n\nStudents learn confidently.";
     let received = [];
@@ -318,6 +339,13 @@ describe("translation preview and signed receipt", () => {
       translate: async (values) => { calls += 1; return values; },
     });
     expect(protectedResult.fields.bio.value).toEqual(existing);
+    expect(calls).toBe(0);
+    const legacyRefreshAttempt = await buildTranslationPreview({
+      email: "admin@example.org", resource, fields: { bio: existing }, states: manualStates,
+      refreshLegacy: { bio: ["zhHant", "zhHans"] },
+      translate: async (values) => { calls += 1; return values; },
+    });
+    expect(legacyRefreshAttempt.fields.bio.value).toEqual(existing);
     expect(calls).toBe(0);
     const forced = await buildTranslationPreview({
       email: "admin@example.org", resource, fields: { bio: existing }, states: manualStates, force: { bio: ["zhHant", "zhHans"] },

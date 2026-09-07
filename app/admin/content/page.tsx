@@ -175,6 +175,10 @@ export default function AdminContentPage() {
     setTranslating(true); setError("");
     try {
       const expectedEn = store?.locales?.en?.itemUpdatedAt?.[editing.page]?.[editing.key] || null;
+      const initialValues = JSON.parse(original.current || "{}") as Partial<Record<AdminLocale, string>>;
+      const refreshLegacyLocales = draft.en.trim() !== String(initialValues.en || "").trim()
+        ? (["zhHant", "zhHans"] as AdminLocale[]).filter((language) => draft[language].trim() === String(initialValues[language] || "").trim())
+        : [];
       const result = await adminFetch<TranslationPreview>("/api/admin/translations/preview", {
         method: "POST",
         body: JSON.stringify({
@@ -183,6 +187,7 @@ export default function AdminContentPage() {
           autoTranslate: true,
           allowCjkEnglish: englishGuardAccepted,
           force: replaceExisting ? { value: ["zhHant", "zhHans"] } : {},
+          refreshLegacy: refreshLegacyLocales.length ? { value: refreshLegacyLocales } : {},
         }),
       });
       setDraft(result.fields.value.value);

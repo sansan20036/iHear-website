@@ -152,6 +152,7 @@ async function mockApplication(page, { admin = true, duplicateAvatar = false, tu
   const requests = [];
   let publishedPayload = null;
   let translationPreviewCount = 0;
+  let translationPreviewPayload = null;
   const mediaItems = {};
   let mediaUploadCount = 0;
   let mediaMutationDelay = 0;
@@ -209,15 +210,22 @@ async function mockApplication(page, { admin = true, duplicateAvatar = false, tu
   await page.route("**/api/admin/translations/preview", (route) => {
     translationPreviewCount += 1;
     const submitted = route.request().postDataJSON();
-    const fields = Object.fromEntries(Object.entries(submitted.fields || {}).map(([field, value]) => [field, {
-      value: {
-        en: value.en || "",
-        zhHant: value.zhHant || `繁中 ${value.en || ""}`,
-        zhHans: value.zhHans || `简中 ${value.en || ""}`,
-      },
-      zhHantStatus: value.zhHant ? "protected" : "translated",
-      zhHansStatus: value.zhHans ? "protected" : "translated",
-    }]));
+    translationPreviewPayload = submitted;
+    const fields = Object.fromEntries(Object.entries(submitted.fields || {}).map(([field, value]) => {
+      const refreshed = new Set(submitted.refreshLegacy?.[field] || []);
+      const forced = new Set(submitted.force?.[field] || []);
+      const refreshHant = refreshed.has("zhHant") || forced.has("zhHant");
+      const refreshHans = refreshed.has("zhHans") || forced.has("zhHans");
+      return [field, {
+        value: {
+          en: value.en || "",
+          zhHant: refreshHant || !value.zhHant ? `繁中 ${value.en || ""}` : value.zhHant,
+          zhHans: refreshHans || !value.zhHans ? `简中 ${value.en || ""}` : value.zhHans,
+        },
+        zhHantStatus: refreshHant || !value.zhHant ? "translated" : "protected",
+        zhHansStatus: refreshHans || !value.zhHans ? "translated" : "protected",
+      }];
+    }));
     return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ receipt: "e2e-signed-receipt", fields }) });
   });
 
@@ -485,6 +493,7 @@ async function mockApplication(page, { admin = true, duplicateAvatar = false, tu
     requests,
     getPublishedPayload: () => publishedPayload,
     getTranslationPreviewCount: () => translationPreviewCount,
+    getTranslationPreviewPayload: () => translationPreviewPayload,
     getMediaItem: (slot = "home.hero") => mediaItems[slot] || null,
     getMediaUploadCount: () => mediaUploadCount,
     setMediaMutationDelay: (value) => { mediaMutationDelay = value; },
@@ -622,6 +631,19 @@ test("language safeguards pause a Chinese English source and preview Taiwan Trad
   await dialog.getByRole("button", { name: "Apply conversion" }).click();
   await expect(traditional).toHaveValue("開發伺服器和軟體");
   await dialog.getByRole("button", { name: "Cancel" }).click();
+});
+
+test("changing an English content field refreshes protected legacy Chinese", async ({ page }) => {
+  const mocked = await mockApplication(page);
+  await page.goto("/");
+  await page.locator('[data-editable-content="home.stat.countries"]').evaluate((element) => element.click());
+  const dialog = page.locator(".ihear-content-dialog");
+  await dialog.getByRole("textbox", { name: "English" }).fill("World");
+  await dialog.getByRole("button", { name: "Generate translation preview" }).click();
+  await expect.poll(() => mocked.getTranslationPreviewCount()).toBe(1);
+  expect(mocked.getTranslationPreviewPayload().refreshLegacy).toEqual({ value: ["zhHant", "zhHans"] });
+  await dialog.getByRole("tab", { name: "繁體中文" }).click();
+  await expect(dialog.getByRole("textbox", { name: "繁體中文" })).toHaveValue("繁中 World");
 });
 
 test("a media revision refreshes around a text draft without reporting a false content conflict", async ({ page }) => {

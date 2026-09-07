@@ -146,6 +146,7 @@
   let activeRequest = null;
   let dirty = false;
   let translationReceipt = "";
+  let originalAlt = { en: "", zhHant: "", zhHans: "" };
   let englishGuardAccepted = false;
   let applyToken = 0;
   let pending = false;
@@ -496,6 +497,7 @@
 
   function populateDialog() {
     const alt = currentItem?.alt || defaults.alt;
+    originalAlt = Object.fromEntries(["en", "zhHant", "zhHans"].map((language) => [language, String(alt[language] || "").trim()]));
     dialog.querySelector("[data-media-alt-en]").value = alt.en;
     dialog.querySelector("[data-media-alt-zht]").value = alt.zhHant;
     dialog.querySelector("[data-media-alt-zhs]").value = alt.zhHans;
@@ -726,7 +728,8 @@
       if (alt.en.length < 2 || alt.en.length > 300) { setStatus(labels().altRequired, { error: true }); return; }
       setBusy(true); setStatus(labels().preparingTranslation);
       try {
-        const response = await fetch("/api/admin/translations/preview", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ resource: { type: "media", scope: "", id: slot, version: currentItem?.recordVersion || 0 }, fields: { alt }, allowCjkEnglish: englishGuardAccepted, force: dialog.querySelector("[data-media-replace-translation]").checked ? { alt: ["zhHant", "zhHans"] } : {} }) });
+        const refreshLegacyLocales = alt.en !== originalAlt.en ? ["zhHant", "zhHans"].filter((language) => alt[language] === originalAlt[language]) : [];
+        const response = await fetch("/api/admin/translations/preview", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ resource: { type: "media", scope: "", id: slot, version: currentItem?.recordVersion || 0 }, fields: { alt }, allowCjkEnglish: englishGuardAccepted, force: dialog.querySelector("[data-media-replace-translation]").checked ? { alt: ["zhHant", "zhHans"] } : {}, refreshLegacy: refreshLegacyLocales.length ? { alt: refreshLegacyLocales } : {} }) });
         const data = await response.json().catch(() => null); if (!response.ok) throw new Error(data?.error || labels().failed);
         dialog.querySelector("[data-media-alt-zht]").value = data.fields.alt.value.zhHant; dialog.querySelector("[data-media-alt-zhs]").value = data.fields.alt.value.zhHans; translationReceipt = data.receipt; dirty = true; setStatus(labels().translationReady);
       } catch (error) { setStatus(error?.message || labels().failed, { error: true }); }

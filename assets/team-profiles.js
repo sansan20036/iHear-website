@@ -154,6 +154,7 @@
     state.originalDraft=JSON.stringify(state.draft);state.activeLocale="en";state.translationReceipt="";state.translationReady=false;state.englishGuardAccepted=false;state.deleteConfirming=false;buildEditor();dialog.showModal();document.body.classList.add("team-profile-modal-open");dialog.querySelector("input,select,textarea,button")?.focus()
   }
   function isDirty(){if(state.sortPreview)return true;if(!state.draft)return false;syncDraft();return JSON.stringify(state.draft)!==state.originalDraft}
+  function legacyRefreshFor(fields){let initial={};try{initial=JSON.parse(state.originalDraft||"{}")}catch{}return Object.fromEntries(Object.keys(fields).map(field=>{if(String(fields[field]?.en||"").trim()===String(initial[field]?.en||"").trim())return null;const locales=["zhHant","zhHans"].filter(language=>String(fields[field]?.[language]||"").trim()===String(initial[field]?.[language]||"").trim());return locales.length?[field,locales]:null}).filter(Boolean))}
   function closeEditor(force){if(!dialog.open)return true;if(!force&&isDirty()&&!confirm(l().unsaved))return false;dialog.close();return true}
   function field(name,label,textarea){
     const value=state.draft[name]||"";
@@ -226,7 +227,7 @@
       if(Object.keys(fields).length){
         setBusy(true);
         try{
-          const response=await fetch("/api/admin/translations/preview",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify({resource:{type:"team",scope:"",id:state.draft.id||"__new__",version:state.draft.id?state.draft.profileVersion:undefined},fields,allowCjkEnglish:state.englishGuardAccepted,personNames:[state.draft.name].filter(Boolean),contextTerms:[state.draft.school].filter(Boolean)})});
+          const response=await fetch("/api/admin/translations/preview",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify({resource:{type:"team",scope:"",id:state.draft.id||"__new__",version:state.draft.id?state.draft.profileVersion:undefined},fields,allowCjkEnglish:state.englishGuardAccepted,refreshLegacy:legacyRefreshFor(fields),personNames:[state.draft.name].filter(Boolean),contextTerms:[state.draft.school].filter(Boolean)})});
           const data=await response.json().catch(()=>null);if(!response.ok)throw errorFrom(response,data);
           Object.entries(data.fields).forEach(([field,result])=>{state.draft[field]=result.value});state.translationReceipt=data.receipt;state.translationReady=true;state.activeLocale="zhHant";buildEditor();showToast(locale()==="en"?"Chinese preview ready. Review it, then save.":locale()==="zhHans"?"中文预览已完成，请检查后再保存。":"中文預覽已完成，請檢查後再儲存。",false);setBusy(false);return
         }catch(error){setBusy(false);showIssues(error);return}
