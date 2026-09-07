@@ -93,9 +93,12 @@ describe("production operations configuration", () => {
     expect(migration).toContain("ENABLE ROW LEVEL SECURITY");
     expect(migration).toContain("site_media_assets_live_revision");
     expect(publicBuild).toContain('"browser-image-compression.js"');
+    expect(publicBuild).toContain('"selfie_segmentation.tflite"');
+    expect(publicBuild).toContain("avatar-background-removal.js");
     expect(ci).toContain("Verify sharp on Linux");
     expect(ci).toContain(".webp().toBuffer()");
     expect(ci).toContain("test -s public/assets/vendor/browser-image-compression.js");
+    expect(ci).toContain("test -s public/assets/vendor/avatar-segmentation/selfie_segmentation.tflite");
     expect(mediaApi).toContain('from "./site-media-errors"');
     expect(mediaApi).not.toContain('from "./site-media-image"');
     expect(nextConfig).toContain('"/api/site-media/[slot]": ["./node_modules/@img/**/*"]');
@@ -130,7 +133,7 @@ describe("production operations configuration", () => {
     expect(layout).toContain('data-theme="warm"');
     expect(layout).toContain('src="/api/site-theme/bootstrap"');
     expect(headers).toContain("form-action 'self' https://accounts.google.com;");
-    expect(headers).toContain("script-src 'self' 'unsafe-inline' blob:");
+    expect(headers).toContain("script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob:");
   });
 
   it("keeps semantic content and controlled layout configuration recoverable and flash-free", async () => {

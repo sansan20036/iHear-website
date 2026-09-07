@@ -1116,13 +1116,51 @@ test("team avatars crop one person into a square WebP, recrop, and delete the ph
   await expect(cropper.locator("[data-avatar-crop-quality]")).toContainText("400 × 400");
   await expect(cropper.locator("[data-crop-handle]")).toHaveCount(4);
   await expect(cropper.locator("[data-avatar-crop-preview]")).toBeVisible();
+  await expect(cropper.getByRole("group").getByRole("button", { name: "Keep original" })).toHaveAttribute("aria-pressed", "true");
+  await expect(cropper.getByRole("group").getByRole("button", { name: "Replace with white" })).toHaveAttribute("aria-pressed", "false");
   await expect(dialog.locator("[data-media-focal]")).toBeHidden();
+
+  await page.evaluate(() => {
+    window.iHearAvatarBackgroundRemoval.remove = async (source, options) => {
+      options?.onProgress?.("processing");
+      await new Promise((resolve) => {
+        setTimeout(resolve, 250);
+      });
+      const output = document.createElement("canvas");
+      output.width = source.width;
+      output.height = source.height;
+      const context = output.getContext("2d");
+      context.fillStyle = "#ffffff";
+      context.fillRect(0, 0, output.width, output.height);
+      context.fillStyle = "#28417f";
+      context.fillRect(output.width * 0.25, output.height * 0.25, output.width * 0.5, output.height * 0.5);
+      return output;
+    };
+  });
+  const whiteBackground = cropper.getByRole("group").getByRole("button", { name: "Replace with white" });
+  await whiteBackground.click();
+  await expect(cropper).toHaveAttribute("data-busy", "");
+  await expect(whiteBackground).toBeDisabled();
+  await expect(cropper.locator("[data-avatar-crop-background-status]")).toContainText("Removing the background");
+  await expect(whiteBackground).toHaveAttribute("aria-pressed", "true", { timeout: 5_000 });
+  await expect(cropper.locator("[data-avatar-crop-background-status]")).toContainText("White background is ready");
+  const backgroundPreview = await cropper.locator("[data-avatar-crop-preview]").evaluate((canvas) => {
+    const context = canvas.getContext("2d");
+    return {
+      corner: [...context.getImageData(4, 4, 1, 1).data],
+      center: [...context.getImageData(canvas.width / 2, canvas.height / 2, 1, 1).data],
+    };
+  });
+  expect(backgroundPreview.corner.slice(0, 3)).toEqual([255, 255, 255]);
+  expect(backgroundPreview.center[2]).toBeGreaterThan(backgroundPreview.center[0]);
 
   const zoom = cropper.locator("[data-avatar-crop-zoom]");
   await zoom.evaluate((input) => {
     input.value = "400";
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
+  await expect(cropper.getByRole("group").getByRole("button", { name: "Keep original" })).toHaveAttribute("aria-pressed", "true");
+  await expect(cropper.locator("[data-avatar-crop-background-status]")).toContainText("crop changed");
   const selection = cropper.locator("[data-avatar-crop-selection]");
   await selection.focus();
   for (let index = 0; index < 10; index += 1) await selection.press("Shift+ArrowRight");

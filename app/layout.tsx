@@ -15,7 +15,7 @@ export default function RootLayout({ children }: Readonly<{ children: ReactNode 
         {/* This must remain parser-blocking so the published theme wins before first paint. */}
         <script src="/api/site-theme/bootstrap" data-site-theme-bootstrap="" />
         <link rel="stylesheet" href="/assets/theme.css?v=20260823-content-layout-v1" />
-        <link rel="stylesheet" href="/assets/site.css?v=20260827-admin-avatar-menu-v1" />
+        <link rel="stylesheet" href="/assets/site.css?v=20260907-avatar-background-v1" />
       </head>
       <body style={{ margin: 0 }}>
         {children}
@@ -25,7 +25,8 @@ export default function RootLayout({ children }: Readonly<{ children: ReactNode 
         <script src="/assets/site-theme.js?v=20260823-content-layout-v1" defer />
         <script src="/assets/site-layout.js?v=20260823-content-layout-v1" defer />
         <script src="/assets/inline-edit.js?v=20260823-content-layout-v1" defer />
-        <script src="/assets/avatar-cropper.js?v=20260825-avatar-crop-v1" defer />
+        <script src="/assets/avatar-background-removal.js?v=20260907-avatar-background-v1" defer />
+        <script src="/assets/avatar-cropper.js?v=20260907-avatar-background-v1" defer />
       </body>
     </html>
   );

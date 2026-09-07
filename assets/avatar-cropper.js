@@ -23,6 +23,15 @@
       cancel: "Cancel",
       confirm: "Confirm crop",
       processing: "Preparing the cropped photo…",
+      backgroundTitle: "Background",
+      backgroundOriginal: "Keep original",
+      backgroundWhite: "Replace with white",
+      backgroundHelp: "White background removal runs only in this browser. Review hair, glasses, hearing aids, and cochlear implants before saving.",
+      backgroundLoading: "Loading the on-device background tool…",
+      backgroundProcessing: "Removing the background…",
+      backgroundReady: "White background is ready. Review the preview before confirming.",
+      backgroundReset: "The crop changed, so the original background has been restored. Choose white background again when ready.",
+      backgroundFailed: "The background could not be removed. The original photo is unchanged; please try again.",
       warning: "This crop uses fewer than 480 source pixels and may look blurry.",
       quality: "Crop source: {pixels} × {pixels}px",
       move: "Crop circle. Use arrow keys to move; hold Shift for larger steps.",
@@ -51,6 +60,15 @@
       cancel: "取消",
       confirm: "確認裁切",
       processing: "正在準備裁切後的照片…",
+      backgroundTitle: "背景處理",
+      backgroundOriginal: "保留原背景",
+      backgroundWhite: "換成白色背景",
+      backgroundHelp: "白底去背只在此瀏覽器內處理。儲存前請檢查頭髮、眼鏡、助聽器與人工耳蝸邊緣。",
+      backgroundLoading: "正在載入本機去背工具…",
+      backgroundProcessing: "正在移除背景…",
+      backgroundReady: "白色背景已完成，請確認預覽後再裁切。",
+      backgroundReset: "裁切範圍已變更，已恢復原背景。調整完後可再選擇白色背景。",
+      backgroundFailed: "無法移除背景，原照片並未變更，請再試一次。",
       warning: "此範圍少於 480 個原始像素，公開頭像可能較模糊。",
       quality: "裁切來源：{pixels} × {pixels}px",
       move: "圓形裁切框。使用方向鍵移動，按住 Shift 可加大移動幅度。",
@@ -79,6 +97,15 @@
       cancel: "取消",
       confirm: "确认裁切",
       processing: "正在准备裁切后的照片…",
+      backgroundTitle: "背景处理",
+      backgroundOriginal: "保留原背景",
+      backgroundWhite: "换成白色背景",
+      backgroundHelp: "白底去背只在此浏览器内处理。保存前请检查头发、眼镜、助听器与人工耳蜗边缘。",
+      backgroundLoading: "正在加载本机去背工具…",
+      backgroundProcessing: "正在移除背景…",
+      backgroundReady: "白色背景已完成，请确认预览后再裁切。",
+      backgroundReset: "裁切范围已更改，已恢复原背景。调整完后可再选择白色背景。",
+      backgroundFailed: "无法移除背景，原照片并未更改，请再试一次。",
       warning: "此范围少于 480 个原始像素，公开头像可能较模糊。",
       quality: "裁切来源：{pixels} × {pixels}px",
       move: "圆形裁切框。使用方向键移动，按住 Shift 可加大移动幅度。",
@@ -111,6 +138,8 @@
   let pointer = null;
   let renderFrame = 0;
   let busy = false;
+  let backgroundMode = "original";
+  let backgroundCanvas = null;
 
   function locale(value) {
     if (value === "zhHans" || value === "zhHant" || value === "en") return value;
@@ -162,6 +191,15 @@
           <aside class="ihear-avatar-crop-preview-panel">
             <h3 data-avatar-crop-preview-label></h3>
             <canvas width="320" height="320" data-avatar-crop-preview></canvas>
+            <fieldset class="ihear-avatar-crop-background">
+              <legend data-avatar-crop-background-title></legend>
+              <div class="ihear-avatar-crop-background-options" role="group">
+                <button type="button" data-avatar-crop-background="original" aria-pressed="true"></button>
+                <button type="button" data-avatar-crop-background="white" aria-pressed="false"></button>
+              </div>
+              <p data-avatar-crop-background-help></p>
+              <p data-avatar-crop-background-status role="status" aria-live="polite"></p>
+            </fieldset>
             <p class="ihear-avatar-crop-quality" data-avatar-crop-quality></p>
             <p class="ihear-avatar-crop-warning" data-avatar-crop-warning role="status" hidden></p>
             <div class="ihear-avatar-crop-secondary-actions">
@@ -191,6 +229,12 @@
     node.querySelectorAll("[data-avatar-crop-cancel]").forEach((button) => button.addEventListener("click", cancel));
     node.querySelector("[data-avatar-crop-confirm]").addEventListener("click", confirm);
     node.querySelector("[data-avatar-crop-reset]").addEventListener("click", resetCrop);
+    node.querySelectorAll("[data-avatar-crop-background]").forEach((button) => {
+      button.addEventListener("click", () => {
+        if (button.dataset.avatarCropBackground === "white") void applyWhiteBackground();
+        else restoreOriginalBackground();
+      });
+    });
     fileInput.addEventListener("change", (event) => {
       const selected = event.target.files?.[0];
       event.target.value = "";
@@ -243,6 +287,10 @@
       "[data-avatar-crop-choose-label]": text.choose,
       "[data-avatar-crop-intake-hint]": text.replaceHint,
       "[data-avatar-crop-confirm]": text.confirm,
+      "[data-avatar-crop-background-title]": text.backgroundTitle,
+      "[data-avatar-crop-background='original']": text.backgroundOriginal,
+      "[data-avatar-crop-background='white']": text.backgroundWhite,
+      "[data-avatar-crop-background-help]": text.backgroundHelp,
     };
     Object.entries(values).forEach(([selector, value]) => {
       dialog.querySelector(selector).textContent = value;
@@ -267,6 +315,80 @@
 
   function setError(message) {
     status.textContent = message || "";
+  }
+
+  function setBackgroundStatus(message, state) {
+    const node = dialog.querySelector("[data-avatar-crop-background-status]");
+    node.textContent = message || "";
+    if (state) node.dataset.state = state;
+    else delete node.dataset.state;
+  }
+
+  function syncBackgroundControls() {
+    dialog.querySelectorAll("[data-avatar-crop-background]").forEach((button) => {
+      button.setAttribute("aria-pressed", String(button.dataset.avatarCropBackground === backgroundMode));
+    });
+  }
+
+  function restoreOriginalBackground(options) {
+    backgroundMode = "original";
+    backgroundCanvas = null;
+    syncBackgroundControls();
+    setBackgroundStatus(options?.changed ? labels().backgroundReset : "", options?.changed ? "notice" : "");
+    scheduleRender();
+  }
+
+  function invalidateWhiteBackground() {
+    if (backgroundMode === "white" || backgroundCanvas) restoreOriginalBackground({ changed: true });
+  }
+
+  function croppedCanvas() {
+    const canvas = document.createElement("canvas");
+    canvas.width = OUTPUT_SIZE;
+    canvas.height = OUTPUT_SIZE;
+    const context = canvas.getContext("2d", { alpha: false });
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, OUTPUT_SIZE, OUTPUT_SIZE);
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = "high";
+    context.drawImage(image, crop.x, crop.y, crop.size, crop.size, 0, 0, OUTPUT_SIZE, OUTPUT_SIZE);
+    return canvas;
+  }
+
+  async function applyWhiteBackground() {
+    if (busy || !naturalWidth) return;
+    const remover = window.iHearAvatarBackgroundRemoval;
+    if (!remover?.remove) {
+      setError(labels().backgroundFailed);
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setBackgroundStatus(labels().backgroundLoading, "processing");
+    await new Promise((resolve) => {
+      requestAnimationFrame(resolve);
+    });
+    try {
+      const result = await remover.remove(croppedCanvas(), {
+        onProgress: (step) => setBackgroundStatus(
+          step === "loading" ? labels().backgroundLoading : labels().backgroundProcessing,
+          "processing",
+        ),
+      });
+      backgroundCanvas = result;
+      backgroundMode = "white";
+      syncBackgroundControls();
+      setBackgroundStatus(labels().backgroundReady, "success");
+      scheduleRender();
+    } catch (_) {
+      backgroundCanvas = null;
+      backgroundMode = "original";
+      syncBackgroundControls();
+      setBackgroundStatus("", "");
+      setError(labels().backgroundFailed);
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function receiveTransferredImage(transfer, fromClipboard) {
@@ -313,6 +435,7 @@
       naturalHeight = image.naturalHeight;
       if (!naturalWidth || !naturalHeight) throw new Error(labels().loadFailed);
       active.source = source;
+      restoreOriginalBackground();
       resetCrop();
       overlay.focus();
     } catch (error) {
@@ -322,6 +445,7 @@
 
   function resetCrop() {
     if (!naturalWidth || !naturalHeight) return;
+    invalidateWhiteBackground();
     const minimum = Math.min(naturalWidth, naturalHeight);
     const size = minimum * 0.5;
     crop = { x: (naturalWidth - size) / 2, y: (naturalHeight - size) / 2, size };
@@ -368,7 +492,11 @@
     overlay.style.height = `${crop.size * rect.scale}px`;
     const context = preview.getContext("2d");
     context.clearRect(0, 0, preview.width, preview.height);
-    context.drawImage(image, crop.x, crop.y, crop.size, crop.size, 0, 0, preview.width, preview.height);
+    if (backgroundMode === "white" && backgroundCanvas) {
+      context.drawImage(backgroundCanvas, 0, 0, preview.width, preview.height);
+    } else {
+      context.drawImage(image, crop.x, crop.y, crop.size, crop.size, 0, 0, preview.width, preview.height);
+    }
     const pixels = Math.round(crop.size);
     const warning = pixels < 480;
     dialog.querySelector("[data-avatar-crop-quality]").textContent = interpolate(labels().quality, { pixels });
@@ -388,6 +516,7 @@
 
   function resizeFromZoom() {
     if (!naturalWidth || !naturalHeight) return;
+    invalidateWhiteBackground();
     const centerX = crop.x + crop.size / 2;
     const centerY = crop.y + crop.size / 2;
     const size = Math.min(naturalWidth, naturalHeight) * 100 / Number(zoomInput.value);
@@ -405,6 +534,7 @@
 
   function pointerMove(event) {
     if (!pointer || pointer.id !== event.pointerId) return;
+    invalidateWhiteBackground();
     const rect = imageDisplayRect();
     const dx = (event.clientX - pointer.x) / rect.scale;
     const dy = (event.clientY - pointer.y) / rect.scale;
@@ -438,6 +568,7 @@
 
   function keyMove(event) {
     if (!naturalWidth || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+    invalidateWhiteBackground();
     const step = Math.min(naturalWidth, naturalHeight) * (event.shiftKey ? 0.05 : 0.01);
     const dx = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
     const dy = event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
@@ -453,15 +584,7 @@
   }
 
   async function createOutput() {
-    const canvas = document.createElement("canvas");
-    canvas.width = OUTPUT_SIZE;
-    canvas.height = OUTPUT_SIZE;
-    const context = canvas.getContext("2d", { alpha: false });
-    context.fillStyle = "#ffffff";
-    context.fillRect(0, 0, OUTPUT_SIZE, OUTPUT_SIZE);
-    context.imageSmoothingEnabled = true;
-    context.imageSmoothingQuality = "high";
-    context.drawImage(image, crop.x, crop.y, crop.size, crop.size, 0, 0, OUTPUT_SIZE, OUTPUT_SIZE);
+    const canvas = backgroundMode === "white" && backgroundCanvas ? backgroundCanvas : croppedCanvas();
     for (const quality of [0.9, 0.84, 0.78, 0.72, 0.66, 0.6, 0.54, 0.48]) {
       const blob = await canvasBlob(canvas, quality);
       if (blob?.type === "image/webp" && blob.size > 0 && blob.size <= MAX_OUTPUT_BYTES) {
@@ -483,6 +606,7 @@
         sourceHeight: naturalHeight,
         cropPixels: Math.round(crop.size),
         warning: crop.size < 480,
+        background: backgroundMode,
       };
       finish(result);
     } catch (error) {
@@ -502,6 +626,8 @@
     setBusy(false);
     setError("");
     image.removeAttribute("src");
+    backgroundCanvas = null;
+    backgroundMode = "original";
     revokeObjectUrl();
     dialog.close();
     resolver?.(result);
@@ -516,6 +642,10 @@
       naturalWidth = 0;
       naturalHeight = 0;
       preview.getContext("2d").clearRect(0, 0, preview.width, preview.height);
+      backgroundCanvas = null;
+      backgroundMode = "original";
+      syncBackgroundControls();
+      setBackgroundStatus("", "");
       setError("");
       dialog.showModal();
       loadSource(options?.source);

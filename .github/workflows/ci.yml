@@ -37,4 +37,9 @@ jobs:
         run: npm run check
 
       - name: Verify self-hosted compression library
-        run: test -s public/assets/vendor/browser-image-compression.js
+        run: |
+          test -s public/assets/vendor/browser-image-compression.js
+          test -s public/assets/avatar-background-removal.js
+          test -s public/assets/vendor/avatar-segmentation/selfie_segmentation.js
+          test -s public/assets/vendor/avatar-segmentation/selfie_segmentation.tflite
+          test -s public/assets/vendor/avatar-segmentation/selfie_segmentation_solution_simd_wasm_bin.wasm

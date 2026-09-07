@@ -22,7 +22,7 @@ const htmlFiles = [
 
 const passthroughFiles = ["robots.txt", "sitemap.xml", "CNAME", "favicon.ico"];
 const dynamicI18nKeys = new Set(["latest_label", "latest_period", "latest_headline", "latest_description", "latest_link", "stat_asof", "stat_countries_sub"]);
-const clientAssetVersion = "20260827-admin-avatar-menu-v1";
+const clientAssetVersion = "20260907-avatar-background-v1";
 const themeInitScript = `<script data-site-theme-init>(function(){var a={warm:1,ocean:1,sage:1,lavender:1,slate:1},t="warm";try{var s=localStorage.getItem("ihear:site-theme");if(a[s])t=s}catch(e){}document.documentElement.setAttribute("data-theme",t)})()</script>`;
 const themeBootstrapScript = `<script src="/api/site-theme/bootstrap" data-site-theme-bootstrap></script>`;
 function layoutBootstrapScript(file) {
@@ -55,7 +55,7 @@ function withClientScripts(html, file) {
     "\n"
   );
   const withoutExisting = withoutCloudflareBeacon.replace(
-    /\s*<script\s+src=["']\/?assets\/(?:site|auth|live-content|site-theme|site-layout|inline-edit|impact-milestones|site-metrics|site-media|team-profiles|avatar-cropper|vendor\/browser-image-compression)\.js(?:\?[^"']*)?["']\s+defer><\/script>\s*/g,
+    /\s*<script\s+src=["']\/?assets\/(?:site|auth|live-content|site-theme|site-layout|inline-edit|impact-milestones|site-metrics|site-media|team-profiles|avatar-background-removal|avatar-cropper|vendor\/browser-image-compression)\.js(?:\?[^"']*)?["']\s+defer><\/script>\s*/g,
     "\n"
   );
   const withoutThemeHead = withoutExisting
@@ -97,6 +97,7 @@ function withClientScripts(html, file) {
   ];
   if (html.includes("data-site-media-slot") || html.includes("data-site-media-dynamic")) {
     scripts.push(`  <script src="/assets/vendor/browser-image-compression.js?v=${clientAssetVersion}" defer></script>`);
+    scripts.push(`  <script src="/assets/avatar-background-removal.js?v=${clientAssetVersion}" defer></script>`);
     scripts.push(`  <script src="/assets/avatar-cropper.js?v=${clientAssetVersion}" defer></script>`);
     scripts.push(`  <script src="/assets/site-media.js?v=${clientAssetVersion}" defer></script>`);
   }
@@ -144,6 +145,21 @@ function verifyThemeBuild(html, file) {
   }
 }
 
+function verifyMediaBuild(html, file) {
+  const hasMedia = html.includes("data-site-media-slot") || html.includes("data-site-media-dynamic");
+  const markers = [
+    '<script src="/assets/avatar-background-removal.js',
+    '<script src="/assets/avatar-cropper.js',
+    '<script src="/assets/site-media.js',
+  ];
+  for (const marker of markers) {
+    const expected = hasMedia ? 1 : 0;
+    if (occurrences(html, marker) !== expected) {
+      throw new Error(`${file} must contain exactly ${expected} ${marker}`);
+    }
+  }
+}
+
 function verifyContentBuild(html, file, identities) {
   const page = file === "index.html" ? "/" : `/${file.replace(/\.html$/, "")}`;
   const pattern = /<[^>]+\bdata-i18n=["']([^"']+)["'][^>]*>/gi;
@@ -170,6 +186,22 @@ await copyFile(
   path.join(root, "node_modules", "browser-image-compression", "dist", "browser-image-compression.js"),
   path.join(publicDir, "assets", "vendor", "browser-image-compression.js"),
 );
+const avatarSegmentationDir = path.join(publicDir, "assets", "vendor", "avatar-segmentation");
+await mkdir(avatarSegmentationDir, { recursive: true });
+for (const file of [
+  "selfie_segmentation.js",
+  "selfie_segmentation.binarypb",
+  "selfie_segmentation.tflite",
+  "selfie_segmentation_solution_simd_wasm_bin.js",
+  "selfie_segmentation_solution_simd_wasm_bin.wasm",
+  "selfie_segmentation_solution_wasm_bin.js",
+  "selfie_segmentation_solution_wasm_bin.wasm",
+]) {
+  await copyFile(
+    path.join(root, "node_modules", "@mediapipe", "selfie_segmentation", file),
+    path.join(avatarSegmentationDir, file),
+  );
+}
 const contentCatalog = JSON.parse(await readFile(path.join(root, "data", "content-slots.json"), "utf8"));
 const catalogIdentities = new Set();
 for (const slot of contentCatalog.slots || []) {
@@ -229,7 +261,9 @@ for (const file of htmlFiles) {
 }
 
 for (const file of htmlFiles) {
-  verifyThemeBuild(await readFile(path.join(publicDir, file), "utf8"), file);
+  const html = await readFile(path.join(publicDir, file), "utf8");
+  verifyThemeBuild(html, file);
+  verifyMediaBuild(html, file);
 }
 
 for (const file of passthroughFiles) {
