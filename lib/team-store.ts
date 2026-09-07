@@ -624,8 +624,11 @@ export async function reorderTeamProfiles(
           UPDATE team_profiles AS profile
           SET sort_order = ordering.sort_order, version = profile.version + 1,
               updated_at = NOW(), updated_by = ${email}
-          FROM ${tx(nextOrder, "id", "sort_order")} AS ordering
+          FROM jsonb_to_recordset(${tx.json(nextOrder)}::jsonb)
+            AS ordering(id TEXT, sort_order INTEGER)
           WHERE profile.id = ordering.id
+            AND profile.section = ${section}
+            AND profile.deleted_at IS NULL
         `;
       }
       return true;
