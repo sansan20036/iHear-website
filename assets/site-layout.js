@@ -19,8 +19,6 @@
   let dialog = null;
   let trigger = null;
   let previewBar = null;
-  let quickToolbar = null;
-  let quickListener = null;
   let drafts = null;
   let originals = null;
   let baseOrders = new Map();
@@ -487,7 +485,7 @@
     if (returnFocus) trigger?.focus();
   }
 
-  function removeControls() { trigger?.remove(); trigger = null; quickToolbar?.remove(); quickToolbar = null; if (quickListener) document.removeEventListener("mouseover", quickListener); quickListener = null; }
+  function removeControls() { trigger?.remove(); trigger = null; }
   function controls() {
     removeControls();
     if (!session?.user?.isAdmin || !document.querySelector("[data-layout-section],[data-layout-group],[data-layout-link]")) return;
@@ -495,25 +493,7 @@
     const triggerIcon = element("span", "ihear-layout-trigger-icon", "⚙"); triggerIcon.setAttribute("aria-hidden", "true");
     const triggerLabel = element("span", "", words().trigger); triggerLabel.dataset.layoutTriggerLabel = ""; trigger.append(triggerIcon, triggerLabel);
     trigger.setAttribute("aria-label", words().trigger); trigger.addEventListener("click", () => openDrawer()); document.body.appendChild(trigger);
-    installQuickToolbar(); loadMetadata().catch(() => {});
-  }
-  function installQuickToolbar() {
-    quickToolbar = element("div", "ihear-layout-quick"); quickToolbar.hidden = true; document.body.appendChild(quickToolbar); let hideTimer;
-    const hide = () => { hideTimer = setTimeout(() => { if (quickToolbar) quickToolbar.hidden = true; }, 180); };
-    quickToolbar.addEventListener("mouseenter", () => clearTimeout(hideTimer)); quickToolbar.addEventListener("mouseleave", hide);
-    quickListener = async (event) => {
-      if (!quickToolbar || dialog || event.target.closest(".ihear-layout-quick,.ihear-layout-trigger")) return;
-      const target = event.target.closest("[data-layout-section],[data-layout-group]"); if (!target || !session?.user?.isAdmin) return;
-      try { await loadMetadata(); } catch { return; }
-      const kind = target.hasAttribute("data-layout-section") ? "sections" : "groups";
-      const key = target.dataset[kind === "sections" ? "layoutSection" : "layoutGroup"], scope = scopeFor(target);
-      const entry = metadata[kind].find((item) => item.key === key && item.page === scope); if (!entry) return;
-      clearTimeout(hideTimer); quickToolbar.replaceChildren(); quickToolbar.appendChild(element("strong", "", local(entry.label)));
-      const configure = button(kind === "sections" ? words().configure : words().reorder); configure.addEventListener("click", () => { quickToolbar.hidden = true; openDrawer(kind, key); }); quickToolbar.appendChild(configure);
-      if (kind === "sections") { const hideButton = button(words().hide); hideButton.addEventListener("click", async () => { quickToolbar.hidden = true; await openDrawer("sections", key); setSection(entry, false); }); quickToolbar.appendChild(hideButton); }
-      const rect = target.getBoundingClientRect(); quickToolbar.hidden = false; quickToolbar.style.top = `${Math.max(8, Math.min(innerHeight - 60, rect.top + 8))}px`; quickToolbar.style.left = `${Math.max(8, Math.min(innerWidth - quickToolbar.offsetWidth - 8, rect.left + 8))}px`;
-    };
-    document.addEventListener("mouseover", quickListener);
+    loadMetadata().catch(() => {});
   }
 
   document.querySelectorAll("[data-layout-link]").forEach((link) => linkDefaults.set(link, { href: link.getAttribute("href") || "", target: link.getAttribute("target"), rel: link.getAttribute("rel") }));

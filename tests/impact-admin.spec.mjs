@@ -653,6 +653,14 @@ test("static card reordering preserves the exact DOM nodes", async ({ page }) =>
   expect(result).toEqual({ sameFirst: true, sameSecond: true, order: ["outreach", "tutoring"] });
 });
 
+test("layout settings use the page control without a hover toolbar", async ({ page }) => {
+  await mockApplication(page);
+  await page.goto("/resources");
+  await page.locator('[data-layout-group="resources.guides"]').hover();
+  await expect(page.locator(".ihear-layout-quick")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Adjust this page layout" })).toBeVisible();
+});
+
 test("visual layout drawer publishes one atomic batch and preserves keyed card nodes", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 720 });
   const mocked = await mockApplication(page);
