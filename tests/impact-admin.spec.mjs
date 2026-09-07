@@ -1324,6 +1324,7 @@ test("team directory renders API data, switches language, and excludes generic p
   expect(await avatarBeforeOpen.evaluate((node, after) => node === after, avatarAfterOpen)).toBe(true);
   await expect(page.locator("[data-team-tutors] .ihear-inline-edit-button")).toHaveCount(0);
   await expect(page.locator("[data-team-toggle]")).toHaveCount(0);
+  await expect(page.locator(".roster-heading-actions [data-team-sort-az]")).toBeHidden();
   await expect(page.locator("[data-team-add],[data-edit],[data-delete]")).toHaveCount(0);
 
   await page.locator('#langSwitch button[data-lang="zhTW"]').click();
@@ -1391,6 +1392,80 @@ test("collapsed tutor summary keeps a long name, avatar, and chevron safe at sup
     expect(geometry.summaryRight).toBeLessThanOrEqual(geometry.viewportWidth + 1);
     expect(geometry.horizontalOverflow).toBe(false);
   }
+});
+
+test("signed-in administrator saves the public tutor A-Z order across reloads", async ({ page }) => {
+  await mockApplication(page);
+  await page.unroute("**/api/team-profiles**");
+
+  const makeProfile = (id, name, sortOrder) => ({
+    id,
+    personId: `person-${id}`,
+    section: "tutor",
+    status: "published",
+    sortOrder,
+    name,
+    initials: name.split(" ").map((part) => part[0]).join(""),
+    school: "",
+    grade: "",
+    showSchool: false,
+    showGrade: false,
+    role: { en: "Tutor", zhHant: "導師", zhHans: "导师" },
+    schoolDisplay: { en: "", zhHant: "", zhHans: "" },
+    languages: { en: "English", zhHant: "英文", zhHans: "英文" },
+    strengths: { en: "Support", zhHant: "支持", zhHans: "支持" },
+    summary: { en: "Summary", zhHant: "簡介", zhHans: "简介" },
+    bio: { en: "Biography", zhHant: "介紹", zhHans: "介绍" },
+    hobbies: { en: "", zhHant: "", zhHans: "" },
+    publicationConsentAt: "2026-07-31T00:00:00.000Z",
+    profileVersion: 1,
+    personVersion: 1,
+    updatedAt: "2026-07-31T00:00:00.000Z",
+  });
+  let tutors = [makeProfile("tutor-tristan", "Tristan Young", 10), makeProfile("tutor-amy", "Amy Chen", 20)];
+  const reorderRequests = [];
+
+  await page.route("**/api/team-profiles**", async (route) => {
+    const request = route.request();
+    if (request.method() === "PATCH" && request.url().includes("/reorder")) {
+      const payload = request.postDataJSON();
+      reorderRequests.push(payload);
+      const byId = new Map(tutors.map((profile) => [profile.id, profile]));
+      tutors = payload.ordered.map((entry, index) => ({
+        ...byId.get(entry.id),
+        sortOrder: (index + 1) * 10,
+        profileVersion: byId.get(entry.id).profileVersion + 1,
+      }));
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true, revision: { revision: "2" } }),
+      });
+    }
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ leaders: [], tutors, people: [], admin: request.url().includes("includeDrafts=true") }),
+    });
+  });
+
+  await page.goto("/team");
+  const saveSort = page.getByRole("button", { name: "Save A–Z order" });
+  await expect(saveSort).toBeVisible();
+  await saveSort.click();
+  const sortDialog = page.locator(".team-sort-dialog[open]");
+  await expect(sortDialog).toBeVisible();
+  await expect(sortDialog.locator(".team-sort-list li").nth(0)).toContainText("Amy Chen");
+  await expect(sortDialog.locator(".team-sort-list li").nth(1)).toContainText("Tristan Young");
+  await sortDialog.locator("[data-sort-confirm]").click();
+
+  await expect.poll(() => reorderRequests.length).toBe(1);
+  expect(reorderRequests[0].ordered.map((entry) => entry.id)).toEqual(["tutor-amy", "tutor-tristan"]);
+  await expect(page.locator("[data-team-tutors] > [data-profile-id]").nth(0)).toHaveAttribute("data-profile-id", "tutor-amy");
+
+  await page.reload();
+  await expect(page.locator("[data-team-tutors] > [data-profile-id]").nth(0)).toHaveAttribute("data-profile-id", "tutor-amy");
+  expect(reorderRequests).toHaveLength(1);
 });
 
 test("team manager is mobile-safe and exposes structured editing controls", async ({ page }) => {
