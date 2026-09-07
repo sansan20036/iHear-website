@@ -3,9 +3,11 @@ import { describe, expect, test } from "vitest";
 import {
   clientIp,
   hashRateLimitIdentifier,
+  RATE_LIMIT_POLICIES,
   rateLimitExceededResponse,
   withRateLimitHeaders,
 } from "../lib/rate-limit";
+import { displayError } from "../app/admin/admin-api";
 
 describe("rate-limit privacy and responses", () => {
   test("uses Vercel's trusted forwarding header before generic proxy headers", () => {
@@ -47,6 +49,15 @@ describe("rate-limit privacy and responses", () => {
     expect(response.headers.get("ratelimit-limit")).toBe("10");
     expect(response.headers.get("ratelimit-remaining")).toBe("0");
     expect(await response.json()).toMatchObject({ code: "RATE_LIMITED", retryAfter: 42 });
+  });
+
+  test("keeps a practical authenticated translation ceiling and explains when to retry", () => {
+    expect(RATE_LIMIT_POLICIES.translation).toEqual({ scope: "translation", limit: 15, windowSeconds: 60 });
+    const error = Object.assign(new Error("Too many requests"), { status: 429, retryAfter: 17 });
+
+    expect(displayError(error, "en")).toBe("Too many requests. Try again in 17 seconds.");
+    expect(displayError(error, "zhHant")).toBe("操作較頻繁，請等待 17 秒後再試。");
+    expect(displayError(error, "zhHans")).toBe("操作较频繁，请等待 17 秒后再试。");
   });
 
   test("adds quota metadata to an allowed response", () => {

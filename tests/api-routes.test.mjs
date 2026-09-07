@@ -85,7 +85,7 @@ vi.mock("../lib/rate-limit", () => ({
   RATE_LIMIT_POLICIES: {
     auth: { scope: "auth", limit: 10, windowSeconds: 60 },
     adminMutation: { scope: "admin-mutation", limit: 30, windowSeconds: 60 },
-    translation: { scope: "translation", limit: 5, windowSeconds: 60 },
+    translation: { scope: "translation", limit: 15, windowSeconds: 60 },
   },
 }));
 
@@ -569,7 +569,7 @@ describe("authorized mutations", () => {
     expect(revalidateTag).not.toHaveBeenCalled();
     expect(enforceRateLimit).toHaveBeenCalledWith(
       expect.any(Request),
-      { scope: "translation", limit: 5, windowSeconds: 60, identifier: adminEmail },
+      { scope: "translation", limit: 15, windowSeconds: 60, identifier: adminEmail },
     );
   });
 

@@ -108,7 +108,7 @@ export default function AdminContentPage() {
   const [englishGuardAccepted, setEnglishGuardAccepted] = useState(false);
   const original = useRef("");
   const externalChange = useRef(false);
-  const autoTranslationAttempt = useRef("");
+  const translationRequestActive = useRef(false);
 
   const load = async () => {
     const next = await adminFetch<ContentStore>("/api/content/get");
@@ -134,16 +134,6 @@ export default function AdminContentPage() {
     }, 200);
     return () => window.clearTimeout(timer);
   }, [editing]);
-  useEffect(() => {
-    const english = draft.en.trim();
-    if (!editing || !autoTranslate || submitting || translating || translationReceipt || !english || (inspectEnglishSource(english).warning && !englishGuardAccepted) || english === autoTranslationAttempt.current) return;
-    const timer = window.setTimeout(() => {
-      autoTranslationAttempt.current = english;
-      void prepareTranslation();
-    }, 800);
-    return () => window.clearTimeout(timer);
-  }, [autoTranslate, draft.en, editing, englishGuardAccepted, replaceExisting, submitting, translating, translationReceipt]);
-
   const pages = useMemo(() => Array.from(new Set(slots.map((slot) => slot.page))).sort((left, right) => pageName(left, locale).localeCompare(pageName(right, locale))), [locale]);
   const filtered = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
@@ -163,7 +153,7 @@ export default function AdminContentPage() {
       };
       setEditing(slot); setDraft(values); setError(""); setNotice("");
       setAutoTranslate(true); setReplaceExisting(false); setTranslationReceipt(""); setTranslationStatus({}); setEnglishGuardAccepted(false);
-      original.current = JSON.stringify(values); autoTranslationAttempt.current = values.en.trim(); externalChange.current = false;
+      original.current = JSON.stringify(values); externalChange.current = false;
     };
     if (editing && JSON.stringify(draft) !== original.current) confirmAction(action); else action();
   }
@@ -180,8 +170,8 @@ export default function AdminContentPage() {
   }
 
   async function prepareTranslation() {
-    if (!editing || submitting || translating || !draft.en.trim() || (inspectEnglishSource(draft.en).warning && !englishGuardAccepted)) return;
-    autoTranslationAttempt.current = draft.en.trim();
+    if (!editing || submitting || translating || translationRequestActive.current || !draft.en.trim() || (inspectEnglishSource(draft.en).warning && !englishGuardAccepted)) return;
+    translationRequestActive.current = true;
     setTranslating(true); setError("");
     try {
       const expectedEn = store?.locales?.en?.itemUpdatedAt?.[editing.page]?.[editing.key] || null;
@@ -200,7 +190,7 @@ export default function AdminContentPage() {
       setTranslationStatus({ zhHant: result.fields.value.zhHantStatus, zhHans: result.fields.value.zhHansStatus });
       setNotice(text.review);
     } catch (reason) { setError(displayError(reason, locale)); }
-    finally { setTranslating(false); }
+    finally { translationRequestActive.current = false; setTranslating(false); }
   }
 
   async function save() {
@@ -252,9 +242,9 @@ export default function AdminContentPage() {
       {error && <p className="admin-alert" role="alert">{error}</p>}
       <div className="admin-form">
         <label className="admin-field"><span>{text.english} <small>{draft.en.length}/{editing.maxLength}</small></span>{editing.mode === "multiline" ? <textarea value={draft.en} maxLength={editing.maxLength} disabled={submitting || translating} onChange={(event) => updateDraft("en", event.target.value)} /> : <input value={draft.en} maxLength={editing.maxLength} disabled={submitting || translating} onChange={(event) => updateDraft("en", event.target.value)} />}</label>
-        <LanguageGuardNotice locale={locale} language="en" value={draft.en} disabled={submitting || translating} englishAccepted={englishGuardAccepted} onAcceptEnglish={() => { setEnglishGuardAccepted(true); autoTranslationAttempt.current = ""; }} />
-        <label className="admin-checkbox"><input type="checkbox" checked={autoTranslate} disabled={submitting || translating} onChange={(event) => { setAutoTranslate(event.target.checked); setTranslationReceipt(""); setTranslationStatus({}); autoTranslationAttempt.current = event.target.checked ? "" : draft.en.trim(); }} />{text.autoTranslate}</label>
-        {autoTranslate && <label className="admin-checkbox"><input type="checkbox" checked={replaceExisting} disabled={submitting || translating} onChange={(event) => { setReplaceExisting(event.target.checked); setTranslationReceipt(""); setTranslationStatus({}); autoTranslationAttempt.current = ""; }} />{text.replaceExisting}</label>}
+        <LanguageGuardNotice locale={locale} language="en" value={draft.en} disabled={submitting || translating} englishAccepted={englishGuardAccepted} onAcceptEnglish={() => setEnglishGuardAccepted(true)} />
+        <label className="admin-checkbox"><input type="checkbox" checked={autoTranslate} disabled={submitting || translating} onChange={(event) => { setAutoTranslate(event.target.checked); setTranslationReceipt(""); setTranslationStatus({}); }} />{text.autoTranslate}</label>
+        {autoTranslate && <label className="admin-checkbox"><input type="checkbox" checked={replaceExisting} disabled={submitting || translating} onChange={(event) => { setReplaceExisting(event.target.checked); setTranslationReceipt(""); setTranslationStatus({}); }} />{text.replaceExisting}</label>}
         <details className="admin-translation-preview" open={Boolean(translationReceipt) || !autoTranslate}>
           <summary>{text.translations}</summary>
           <p className="admin-muted">{text.manualHelp}</p>

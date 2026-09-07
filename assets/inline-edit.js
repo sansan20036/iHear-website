@@ -4,9 +4,9 @@
   const LOCALES = ["en", "zhHant", "zhHans"];
   const localeLabels = { en: "English", zhHant: "繁體中文", zhHans: "简体中文" };
   const ui = {
-    en: { edit: "Edit content", title: "Edit website text", save: "Publish", cancel: "Cancel", empty: "All languages are required.", conflict: "This content changed elsewhere. Reload and try again.", failed: "Could not save this content.", saved: "Content published.", auto: "Automatically update Chinese translations", replace: "Also overwrite existing or manually edited Chinese", prepare: "Generate translation preview", preparing: "Translating…", waiting: "Confirm English source", ready: "Chinese preview ready. Review it, then publish.", englishWarning: "⚠️ Chinese content was detected. English is the source for automatic translation; enter English here for the most accurate result.", translateAnyway: "Translate this content anyway", missingHan: "⚠️ This Chinese field contains no Chinese characters. Check whether English was pasted here by mistake.", simplified: "Simplified Chinese may be present in the Traditional Chinese field.", convert: "Convert to Taiwan Traditional Chinese", conversionPreview: "Conversion preview", apply: "Apply conversion" },
-    zhHant: { edit: "編輯內容", title: "編輯網站文字", save: "發布", cancel: "取消", empty: "三種語言都必須填寫。", conflict: "內容已由其他管理員更新，請重新載入後再試。", failed: "無法儲存內容。", saved: "內容已發布。", auto: "自動更新中文翻譯", replace: "同時覆蓋既有或人工修改過的中文", prepare: "產生翻譯預覽", preparing: "翻譯中…", waiting: "請先確認英文來源", ready: "中文預覽已完成，請檢查後再發布。", englishWarning: "⚠️ 偵測到中文內容：系統以英文為自動翻譯來源，建議在此輸入英文以確保翻譯準確。", translateAnyway: "仍以此內容翻譯", missingHan: "⚠️ 此欄位未包含中文字元，請確認是否誤貼英文。", simplified: "偵測到繁中欄位可能含有簡體字或中國大陸用語。", convert: "一鍵轉為台灣繁中", conversionPreview: "轉換預覽", apply: "套用轉換" },
-    zhHans: { edit: "编辑内容", title: "编辑网站文字", save: "发布", cancel: "取消", empty: "三种语言都必须填写。", conflict: "内容已由其他管理员更新，请重新加载后重试。", failed: "无法保存内容。", saved: "内容已发布。", auto: "自动更新中文翻译", replace: "同时覆盖现有或人工修改过的中文", prepare: "生成翻译预览", preparing: "翻译中…", waiting: "请先确认英文来源", ready: "中文预览已完成，请检查后再发布。", englishWarning: "⚠️ 检测到中文内容：系统以英文为自动翻译来源，建议在此输入英文以确保翻译准确。", translateAnyway: "仍以此内容翻译", missingHan: "⚠️ 此字段未包含中文字符，请确认是否误贴英文。", simplified: "检测到繁体中文字段可能含有简体字或中国大陆用语。", convert: "一键转为台湾繁体中文", conversionPreview: "转换预览", apply: "应用转换" },
+    en: { edit: "Edit content", title: "Edit website text", save: "Publish", cancel: "Cancel", empty: "All languages are required.", conflict: "This content changed elsewhere. Reload and try again.", failed: "Could not save this content.", saved: "Content published.", rateLimited: "Too many requests. Try again in {seconds} seconds.", auto: "Automatically update Chinese translations", replace: "Also overwrite existing or manually edited Chinese", prepare: "Generate translation preview", preparing: "Translating…", waiting: "Confirm English source", ready: "Chinese preview ready. Review it, then publish.", englishWarning: "⚠️ Chinese content was detected. English is the source for automatic translation; enter English here for the most accurate result.", translateAnyway: "Translate this content anyway", missingHan: "⚠️ This Chinese field contains no Chinese characters. Check whether English was pasted here by mistake.", simplified: "Simplified Chinese may be present in the Traditional Chinese field.", convert: "Convert to Taiwan Traditional Chinese", conversionPreview: "Conversion preview", apply: "Apply conversion" },
+    zhHant: { edit: "編輯內容", title: "編輯網站文字", save: "發布", cancel: "取消", empty: "三種語言都必須填寫。", conflict: "內容已由其他管理員更新，請重新載入後再試。", failed: "無法儲存內容。", saved: "內容已發布。", rateLimited: "操作較頻繁，請等待 {seconds} 秒後再試。", auto: "自動更新中文翻譯", replace: "同時覆蓋既有或人工修改過的中文", prepare: "產生翻譯預覽", preparing: "翻譯中…", waiting: "請先確認英文來源", ready: "中文預覽已完成，請檢查後再發布。", englishWarning: "⚠️ 偵測到中文內容：系統以英文為自動翻譯來源，建議在此輸入英文以確保翻譯準確。", translateAnyway: "仍以此內容翻譯", missingHan: "⚠️ 此欄位未包含中文字元，請確認是否誤貼英文。", simplified: "偵測到繁中欄位可能含有簡體字或中國大陸用語。", convert: "一鍵轉為台灣繁中", conversionPreview: "轉換預覽", apply: "套用轉換" },
+    zhHans: { edit: "编辑内容", title: "编辑网站文字", save: "发布", cancel: "取消", empty: "三种语言都必须填写。", conflict: "内容已由其他管理员更新，请重新加载后重试。", failed: "无法保存内容。", saved: "内容已发布。", rateLimited: "操作较频繁，请等待 {seconds} 秒后再试。", auto: "自动更新中文翻译", replace: "同时覆盖现有或人工修改过的中文", prepare: "生成翻译预览", preparing: "翻译中…", waiting: "请先确认英文来源", ready: "中文预览已完成，请检查后再发布。", englishWarning: "⚠️ 检测到中文内容：系统以英文为自动翻译来源，建议在此输入英文以确保翻译准确。", translateAnyway: "仍以此内容翻译", missingHan: "⚠️ 此字段未包含中文字符，请确认是否误贴英文。", simplified: "检测到繁体中文字段可能含有简体字或中国大陆用语。", convert: "一键转为台湾繁体中文", conversionPreview: "转换预览", apply: "应用转换" },
   };
 
   const pageKey = normalizePage(location.pathname);
@@ -33,6 +33,14 @@
   }
   function locale() { return window.iHearLanguage?.locale?.() || (/hans/i.test(document.documentElement.lang) ? "zhHans" : /^zh/i.test(document.documentElement.lang) ? "zhHant" : "en"); }
   function labels() { return ui[locale()] || ui.en; }
+  function responseError(response, data, fallback) {
+    if (response.status === 429) {
+      const raw = Number(data?.retryAfter || response.headers.get("Retry-After"));
+      const seconds = Number.isFinite(raw) && raw > 0 ? Math.ceil(raw) : 60;
+      return new Error(labels().rateLimited.replace("{seconds}", String(seconds)));
+    }
+    return new Error(data?.error || fallback);
+  }
   function slots() { return Array.from(document.querySelectorAll("[data-editable-content]")); }
   function identity(element) { return `${targetPage(element)}\u0000${element.dataset.editableContent}`; }
   function targetPage(element) { return element.dataset.editablePage || pageKey; }
@@ -114,12 +122,12 @@
     const values = Object.fromEntries(LOCALES.map((key) => [key, valueFor(element, key)]));
     const baseUpdatedAtByLocale = Object.fromEntries(LOCALES.map((sourceLocale) => [sourceLocale, localeMetadata(sourceLocale, targetPage(element))[element.dataset.editableContent] || null]));
     const originalVisible = editableText(element);
-    let activeLocale = "en", translationReceipt = "", translating = false, translationTimer = 0, translationSequence = 0, englishGuardAccepted = false, conversionProposal = "";
+    let activeLocale = "en", translationReceipt = "", translating = false, translationSequence = 0, englishGuardAccepted = false, conversionProposal = "";
     const fields = {};
     for (const key of LOCALES) {
       const tab = document.createElement("button"); tab.type = "button"; tab.textContent = localeLabels[key]; tab.setAttribute("role", "tab"); tab.dataset.locale = key; tabs.appendChild(tab);
       const label = document.createElement("label"), input = document.createElement(element.dataset.editableMode === "multiline" ? "textarea" : "input"); label.textContent = localeLabels[key]; input.maxLength = Number(element.dataset.editableMaxlength || definition(element)?.maxLength || 5000); input.value = values[key]; input.dataset.locale = key; label.appendChild(input); fields[key] = { label, input };
-      input.addEventListener("input", () => { values[key] = input.value; error.hidden = true; conversionProposal = ""; if (key === "en") { englishGuardAccepted = false; translationReceipt = ""; scheduleTranslation(); } renderLanguageGuard(); refreshPrimaryAction(); if (activeLocale === key) setValue(element, input.value); });
+      input.addEventListener("input", () => { values[key] = input.value; error.hidden = true; conversionProposal = ""; if (key === "en") { englishGuardAccepted = false; translationReceipt = ""; translationSequence += 1; } renderLanguageGuard(); refreshPrimaryAction(); if (activeLocale === key) setValue(element, input.value); });
       tab.addEventListener("click", () => select(key));
     }
     function select(key) { activeLocale = key; conversionProposal = ""; for (const tab of tabs.children) tab.setAttribute("aria-selected", String(tab.dataset.locale === key)); panel.replaceChildren(fields[key].label); setValue(element, values[key]); renderLanguageGuard(); fields[key].input.focus(); }
@@ -130,7 +138,7 @@
       if (!textGuard) return;
       const value = values[activeLocale] || "", text = labels();
       if (activeLocale === "en" && textGuard.inspectEnglishSource(value).warning && !englishGuardAccepted) {
-        addGuardText(text.englishWarning); addGuardButton(text.translateAnyway, () => { englishGuardAccepted = true; renderLanguageGuard(); scheduleTranslation(); });
+        addGuardText(text.englishWarning); addGuardButton(text.translateAnyway, () => { englishGuardAccepted = true; renderLanguageGuard(); refreshPrimaryAction(); });
       } else if (activeLocale !== "en") {
         const result = textGuard.inspectChineseField(value);
         if (result.missingHan) addGuardText(text.missingHan);
@@ -150,7 +158,7 @@
     async function previewTraditionalConversion() {
       try {
         const response = await fetch("/api/admin/translations/traditionalize", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value: values.zhHant }) });
-        const data = await response.json().catch(() => null); if (!response.ok) throw new Error(data?.error || labels().failed); conversionProposal = data.value; renderLanguageGuard();
+        const data = await response.json().catch(() => null); if (!response.ok) throw responseError(response, data, labels().failed); conversionProposal = data.value; renderLanguageGuard();
       } catch (reason) { error.textContent = reason?.message || labels().failed; error.hidden = false; }
     }
     select(activeLocale);
@@ -159,30 +167,19 @@
       const blocked = Boolean(textGuard?.inspectEnglishSource(values.en).warning && !englishGuardAccepted);
       save.textContent = translating ? labels().preparing : (!auto.checked || translationReceipt ? labels().save : blocked ? labels().waiting : labels().prepare);
     }
-    function close(restore) { window.clearTimeout(translationTimer); translationSequence += 1; if (restore) setValue(element, originalVisible); active = null; dialog.close(); dialog.remove(); renderAdminControls(); }
+    function close(restore) { translationSequence += 1; if (restore) setValue(element, originalVisible); active = null; dialog.close(); dialog.remove(); renderAdminControls(); }
     cancel.addEventListener("click", () => close(true));
     dialog.addEventListener("cancel", (event) => { event.preventDefault(); close(true); });
-    function scheduleTranslation() {
-      window.clearTimeout(translationTimer); translationSequence += 1;
-      if (!textGuard) { void textGuardPromise.then((module) => { if (module) { renderLanguageGuard(); refreshPrimaryAction(); scheduleTranslation(); } }); return; }
-      if (!auto.checked || !values.en.trim() || (textGuard?.inspectEnglishSource(values.en).warning && !englishGuardAccepted)) { renderLanguageGuard(); refreshPrimaryAction(); return; }
-      refreshPrimaryAction();
-      const expectedEnglish = values.en;
-      translationTimer = window.setTimeout(() => {
-        if (values.en === expectedEnglish && !translationReceipt) prepareTranslation(false);
-      }, 800);
-    }
     async function prepareTranslation(selectPreview) {
       if (!textGuard) textGuard = await textGuardPromise;
       if (translating || !auto.checked || !values.en.trim() || (textGuard?.inspectEnglishSource(values.en).warning && !englishGuardAccepted)) { renderLanguageGuard(); refreshPrimaryAction(); return false; }
-      window.clearTimeout(translationTimer);
       const requestId = ++translationSequence, requestedEnglish = values.en;
       translating = true; save.disabled = cancel.disabled = true; save.textContent = labels().preparing;
       try {
         const normalized = Object.fromEntries(LOCALES.map((key) => [key, values[key].trim()]));
         const page = targetPage(element), key = element.dataset.editableContent;
         const preview = await fetch("/api/admin/translations/preview", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ resource: { type: "content", scope: page, id: key, version: baseUpdatedAtByLocale.en }, fields: { value: normalized }, allowCjkEnglish: englishGuardAccepted, force: replace.checked ? { value: ["zhHant", "zhHans"] } : {} }) });
-        const data = await preview.json().catch(() => null); if (!preview.ok) throw new Error(data?.error || labels().failed);
+        const data = await preview.json().catch(() => null); if (!preview.ok) throw responseError(preview, data, labels().failed);
         if (requestId !== translationSequence || values.en !== requestedEnglish) return false;
         Object.assign(values, data.fields.value.value); LOCALES.forEach((language) => { fields[language].input.value = values[language]; }); translationReceipt = data.receipt;
         if (selectPreview) select("zhHant"); else if (activeLocale !== "en") setValue(element, values[activeLocale]);
@@ -192,11 +189,10 @@
         return false;
       } finally {
         translating = false; save.disabled = cancel.disabled = false; refreshPrimaryAction();
-        if (requestId !== translationSequence && auto.checked && !translationReceipt) scheduleTranslation();
       }
     }
-    auto.addEventListener("change", () => { translationReceipt = ""; if (auto.checked) scheduleTranslation(); else { window.clearTimeout(translationTimer); translationSequence += 1; } refreshPrimaryAction(); });
-    replace.addEventListener("change", () => { translationReceipt = ""; scheduleTranslation(); refreshPrimaryAction(); });
+    auto.addEventListener("change", () => { translationReceipt = ""; translationSequence += 1; refreshPrimaryAction(); });
+    replace.addEventListener("change", () => { translationReceipt = ""; translationSequence += 1; refreshPrimaryAction(); });
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       const normalized = Object.fromEntries(LOCALES.map((key) => [key, values[key].trim()]));

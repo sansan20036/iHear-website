@@ -605,6 +605,10 @@ test("language safeguards pause a Chinese English source and preview Taiwan Trad
   expect(mocked.getTranslationPreviewCount()).toBe(0);
 
   await dialog.getByRole("button", { name: "Translate this content anyway" }).click();
+  await page.waitForTimeout(1_000);
+  expect(mocked.getTranslationPreviewCount()).toBe(0);
+
+  await dialog.getByRole("button", { name: "Generate translation preview" }).click();
   await expect.poll(() => mocked.getTranslationPreviewCount()).toBe(1);
   await expect(dialog.getByText(/Chinese preview ready/)).toBeVisible();
 
