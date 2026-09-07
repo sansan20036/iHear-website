@@ -17,7 +17,7 @@
   Object.assign(labels.en,{delete:"Move to trash",deleteConfirm:"Move this profile to trash? You can restore it in the admin dashboard.",deleted:"Team profile moved to trash.",expandAll:"Expand all",collapseAll:"Collapse all",sortAndSaveAlphabetically:"Save A–Z order",sortAlphabetically:"Sort tutors A–Z",sortTitle:"Review A–Z tutor order",sortBody:count=>`${count} tutors will be sorted by their English first name. Draft and published tutors are included.`,sortHint:"Review the complete order below. Leadership remains unchanged.",sortCancel:"Cancel",sortConfirm:"Confirm and save",sortSaving:"Saving order…",sortAlready:"Tutors are already sorted A–Z by first name."});
   Object.assign(labels.zhHant,{delete:"移至回收區",deleteConfirm:"確定移至回收區？之後可在管理後台復原。",deleted:"團隊檔案已移至回收區。",expandAll:"全部展開",collapseAll:"全部收起",sortAndSaveAlphabetically:"儲存 A–Z 排序",sortAlphabetically:"小老師依名字 A–Z 排序",sortTitle:"確認小老師 A–Z 順序",sortBody:count=>`將 ${count} 位小老師依英文名字排序，包含草稿與已發布人員。`,sortHint:"請檢查下方完整順序；核心團隊順序不會改變。",sortCancel:"取消",sortConfirm:"確認並儲存",sortSaving:"正在儲存順序…",sortAlready:"小老師目前已經是名字 A–Z 順序。"});
   Object.assign(labels.zhHans,{delete:"移至回收区",deleteConfirm:"确定移至回收区？之后可在管理后台恢复。",deleted:"团队档案已移至回收区。",expandAll:"全部展开",collapseAll:"全部收起",sortAndSaveAlphabetically:"保存 A–Z 排序",sortAlphabetically:"小老师依名字 A–Z 排序",sortTitle:"确认小老师 A–Z 顺序",sortBody:count=>`将 ${count} 位小老师依英文名字排序，包含草稿与已发布人员。`,sortHint:"请检查下方完整顺序；核心团队顺序不会改变。",sortCancel:"取消",sortConfirm:"确认并保存",sortSaving:"正在保存顺序…",sortAlready:"小老师目前已经是名字 A–Z 顺序。"});
-  const state={leaders:[],tutors:[],people:[],admin:false,editMode:false,busy:false,reordering:false,deleteConfirming:false,draft:null,sortPreview:null,originalDraft:"",activeLocale:"en",translationReceipt:"",translationReady:false,englishGuardAccepted:false};
+  const state={leaders:[],tutors:[],people:[],admin:false,editMode:false,busy:false,reordering:false,deleteConfirming:false,draft:null,sortPreview:null,originalDraft:"",activeLocale:"en",translationReceipt:"",translationReady:false,englishGuardAccepted:false,translationEdits:{}};
   const adminBar=document.createElement("div"),dialog=document.createElement("dialog"),sortDialog=document.createElement("dialog"),toast=document.createElement("div");
   adminBar.className="team-directory-admin";adminBar.hidden=true;adminBar.setAttribute("data-no-inline-edit","");
   leaderMount.parentElement.insertBefore(adminBar,leaderMount);
@@ -149,12 +149,13 @@
     const draft={personId:"",name:"",initials:"",section:"tutor",status:"draft",sortOrder:0,school:"",grade:"",showSchool:false,showGrade:false,consentConfirmed:false};
     textFields.forEach(field=>draft[field]=emptyLocalized());return draft
   }
+  function resetTranslationEdits(){state.translationEdits=Object.fromEntries(textFields.map(field=>[field,{en:false,zhHant:false,zhHans:false}]))}
   function openEditor(item){
     state.draft=item?JSON.parse(JSON.stringify({...item,consentConfirmed:Boolean(item.publicationConsentAt)})):newDraft();
-    state.originalDraft=JSON.stringify(state.draft);state.activeLocale="en";state.translationReceipt="";state.translationReady=false;state.englishGuardAccepted=false;state.deleteConfirming=false;buildEditor();dialog.showModal();document.body.classList.add("team-profile-modal-open");dialog.querySelector("input,select,textarea,button")?.focus()
+    resetTranslationEdits();state.originalDraft=JSON.stringify(state.draft);state.activeLocale="en";state.translationReceipt="";state.translationReady=false;state.englishGuardAccepted=false;state.deleteConfirming=false;buildEditor();dialog.showModal();document.body.classList.add("team-profile-modal-open");dialog.querySelector("input,select,textarea,button")?.focus()
   }
   function isDirty(){if(state.sortPreview)return true;if(!state.draft)return false;syncDraft();return JSON.stringify(state.draft)!==state.originalDraft}
-  function legacyRefreshFor(fields){let initial={};try{initial=JSON.parse(state.originalDraft||"{}")}catch{}return Object.fromEntries(Object.keys(fields).map(field=>{if(String(fields[field]?.en||"").trim()===String(initial[field]?.en||"").trim())return null;const locales=["zhHant","zhHans"].filter(language=>String(fields[field]?.[language]||"").trim()===String(initial[field]?.[language]||"").trim());return locales.length?[field,locales]:null}).filter(Boolean))}
+  function legacyRefreshFor(fields){return Object.fromEntries(Object.keys(fields).map(field=>{const edits=state.translationEdits[field];if(!edits?.en)return null;const locales=["zhHant","zhHans"].filter(language=>!edits[language]);return locales.length?[field,locales]:null}).filter(Boolean))}
   function closeEditor(force){if(!dialog.open)return true;if(!force&&isDirty()&&!confirm(l().unsaved))return false;dialog.close();return true}
   function field(name,label,textarea){
     const value=state.draft[name]||"";
@@ -190,7 +191,7 @@
   }
   async function renderLanguageGuards(){
     if(!state.draft||!dialog.open&&!dialog.isConnected)return;const guard=await languageGuardPromise;if(!guard)return;
-    textFields.forEach(field=>guard.renderLanguageGuard(dialog.querySelector(`[data-team-language-guard="${field}"]`),{language:state.activeLocale,value:String(state.draft[field]?.[state.activeLocale]||""),uiLocale:locale(),englishAccepted:state.englishGuardAccepted,disabled:state.busy,onAcceptEnglish:()=>{state.englishGuardAccepted=true;void renderLanguageGuards()},onChange:value=>{state.draft[field][state.activeLocale]=value;const input=dialog.querySelector(`[name="${CSS.escape(`${field}.${state.activeLocale}`)}"]`);if(input)input.value=value;state.translationReceipt="";void renderLanguageGuards()}}));
+    textFields.forEach(field=>guard.renderLanguageGuard(dialog.querySelector(`[data-team-language-guard="${field}"]`),{language:state.activeLocale,value:String(state.draft[field]?.[state.activeLocale]||""),uiLocale:locale(),englishAccepted:state.englishGuardAccepted,disabled:state.busy,onAcceptEnglish:()=>{state.englishGuardAccepted=true;void renderLanguageGuards()},onChange:value=>{state.draft[field][state.activeLocale]=value;state.translationEdits[field][state.activeLocale]=true;const input=dialog.querySelector(`[name="${CSS.escape(`${field}.${state.activeLocale}`)}"]`);if(input)input.value=value;state.translationReceipt="";void renderLanguageGuards()}}));
   }
   function syncDraft(){
     const form=dialog.querySelector("[data-team-form]");if(!form)return;
@@ -229,7 +230,7 @@
         try{
           const response=await fetch("/api/admin/translations/preview",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify({resource:{type:"team",scope:"",id:state.draft.id||"__new__",version:state.draft.id?state.draft.profileVersion:undefined},fields,allowCjkEnglish:state.englishGuardAccepted,refreshLegacy:legacyRefreshFor(fields),personNames:[state.draft.name].filter(Boolean),contextTerms:[state.draft.school].filter(Boolean)})});
           const data=await response.json().catch(()=>null);if(!response.ok)throw errorFrom(response,data);
-          Object.entries(data.fields).forEach(([field,result])=>{state.draft[field]=result.value});state.translationReceipt=data.receipt;state.translationReady=true;state.activeLocale="zhHant";buildEditor();showToast(locale()==="en"?"Chinese preview ready. Review it, then save.":locale()==="zhHans"?"中文预览已完成，请检查后再保存。":"中文預覽已完成，請檢查後再儲存。",false);setBusy(false);return
+          Object.entries(data.fields).forEach(([field,result])=>{state.draft[field]=result.value;const edits=state.translationEdits[field];if(edits){edits.en=false;if(result.zhHantStatus==="translated")edits.zhHant=false;if(result.zhHansStatus==="translated")edits.zhHans=false}});state.translationReceipt=data.receipt;state.translationReady=true;state.activeLocale="zhHant";buildEditor();showToast(locale()==="en"?"Chinese preview ready. Review it, then save.":locale()==="zhHans"?"中文预览已完成，请检查后再保存。":"中文預覽已完成，請檢查後再儲存。",false);setBusy(false);return
         }catch(error){setBusy(false);showIssues(error);return}
       }
       state.translationReady=true;body=payload(status);
@@ -370,10 +371,10 @@
     else if(button.matches("[data-delete-cancel]"))cancelRemove();
     else if(button.matches("[data-delete-confirm]"))remove();
     else if(button.dataset.locale){syncDraft();state.activeLocale=button.dataset.locale;buildEditor()}
-    else if(button.matches("[data-copy-en]")){syncDraft();textFields.forEach(field=>state.draft[field][state.activeLocale]=state.draft[field].en);buildEditor()}
+    else if(button.matches("[data-copy-en]")){syncDraft();textFields.forEach(field=>{state.draft[field][state.activeLocale]=state.draft[field].en;state.translationEdits[field][state.activeLocale]=true});buildEditor()}
   });
   tutorMount.addEventListener("toggle",event=>{if(event.target.matches("details.tutor-prof"))updateTutorToggle()},true);
-  dialog.addEventListener("input",event=>{if(event.target.name){syncDraft();if(event.target.name.endsWith(".en")){state.translationReceipt="";state.translationReady=false;state.englishGuardAccepted=false}void renderLanguageGuards();event.target.removeAttribute("aria-invalid");const marker=dialog.querySelector(`[data-error="${CSS.escape(event.target.name)}"]`);if(marker)marker.textContent=""}});
+  dialog.addEventListener("input",event=>{if(event.target.name){syncDraft();const [field,fieldLocale]=event.target.name.split(".");if(textFields.includes(field)&&locales.includes(fieldLocale)){state.translationEdits[field][fieldLocale]=true;if(fieldLocale==="en"){state.translationReceipt="";state.translationReady=false;state.englishGuardAccepted=false}}void renderLanguageGuards();event.target.removeAttribute("aria-invalid");const marker=dialog.querySelector(`[data-error="${CSS.escape(event.target.name)}"]`);if(marker)marker.textContent=""}});
   dialog.addEventListener("cancel",event=>{event.preventDefault();if(!state.busy)closeEditor()});
   sortDialog.addEventListener("cancel",event=>{event.preventDefault();cancelAlphabeticalSort()});
   dialog.addEventListener("keydown",event=>{

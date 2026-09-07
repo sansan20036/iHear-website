@@ -120,15 +120,16 @@
     dialog.className = "ihear-content-dialog"; dialog.setAttribute("aria-labelledby", "ihear-content-dialog-title"); form.className = "ihear-content-form"; heading.className = "ihear-content-heading"; title.id = "ihear-content-dialog-title"; tabs.className = "ihear-content-tabs"; tabs.setAttribute("role", "tablist"); panel.className = "ihear-content-panel"; guard.className = "ihear-content-guard"; guard.hidden = true; guard.setAttribute("role", "status"); guard.setAttribute("aria-live", "polite"); error.className = "ihear-content-error"; error.hidden = true; error.setAttribute("role", "alert"); actions.className = "ihear-content-actions";
     title.textContent = labels().title; heading.appendChild(title); translation.className = "ihear-content-translation"; auto.type = "checkbox"; auto.checked = true; replace.type = "checkbox"; autoLabel.append(auto, document.createTextNode(labels().auto)); replaceLabel.append(replace, document.createTextNode(labels().replace)); translation.append(autoLabel, replaceLabel); cancel.type = "button"; cancel.textContent = labels().cancel; save.type = "submit"; save.textContent = labels().prepare; actions.append(cancel, save); form.append(heading, translation, tabs, panel, guard, error, actions); dialog.appendChild(form); document.body.appendChild(dialog);
     const values = Object.fromEntries(LOCALES.map((key) => [key, valueFor(element, key)]));
-    const originalValues = Object.fromEntries(LOCALES.map((key) => [key, values[key].trim()]));
     const baseUpdatedAtByLocale = Object.fromEntries(LOCALES.map((sourceLocale) => [sourceLocale, localeMetadata(sourceLocale, targetPage(element))[element.dataset.editableContent] || null]));
     const originalVisible = editableText(element);
     let activeLocale = "en", translationReceipt = "", translating = false, translationSequence = 0, englishGuardAccepted = false, conversionProposal = "";
+    let englishEdited = false;
+    const manuallyEditedChinese = { zhHant: false, zhHans: false };
     const fields = {};
     for (const key of LOCALES) {
       const tab = document.createElement("button"); tab.type = "button"; tab.textContent = localeLabels[key]; tab.setAttribute("role", "tab"); tab.dataset.locale = key; tabs.appendChild(tab);
       const label = document.createElement("label"), input = document.createElement(element.dataset.editableMode === "multiline" ? "textarea" : "input"); label.textContent = localeLabels[key]; input.maxLength = Number(element.dataset.editableMaxlength || definition(element)?.maxLength || 5000); input.value = values[key]; input.dataset.locale = key; label.appendChild(input); fields[key] = { label, input };
-      input.addEventListener("input", () => { values[key] = input.value; error.hidden = true; conversionProposal = ""; if (key === "en") { englishGuardAccepted = false; translationReceipt = ""; translationSequence += 1; } renderLanguageGuard(); refreshPrimaryAction(); if (activeLocale === key) setValue(element, input.value); });
+      input.addEventListener("input", () => { values[key] = input.value; error.hidden = true; conversionProposal = ""; if (key === "en") { englishEdited = true; englishGuardAccepted = false; translationReceipt = ""; translationSequence += 1; } else { manuallyEditedChinese[key] = true; } renderLanguageGuard(); refreshPrimaryAction(); if (activeLocale === key) setValue(element, input.value); });
       tab.addEventListener("click", () => select(key));
     }
     function select(key) { activeLocale = key; conversionProposal = ""; for (const tab of tabs.children) tab.setAttribute("aria-selected", String(tab.dataset.locale === key)); panel.replaceChildren(fields[key].label); setValue(element, values[key]); renderLanguageGuard(); fields[key].input.focus(); }
@@ -151,7 +152,7 @@
       if (conversionProposal && conversionProposal !== value) {
         addGuardText(labels().conversionPreview);
         const before = document.createElement("del"), after = document.createElement("ins"); before.textContent = value; after.textContent = conversionProposal; guard.append(before, after);
-        addGuardButton(labels().apply, () => { values.zhHant = conversionProposal; fields.zhHant.input.value = conversionProposal; conversionProposal = ""; setValue(element, values.zhHant); renderLanguageGuard(); });
+        addGuardButton(labels().apply, () => { values.zhHant = conversionProposal; manuallyEditedChinese.zhHant = true; fields.zhHant.input.value = conversionProposal; conversionProposal = ""; setValue(element, values.zhHant); renderLanguageGuard(); });
         addGuardButton(labels().cancel, () => { conversionProposal = ""; renderLanguageGuard(); });
       }
       guard.hidden = !guard.childNodes.length;
@@ -179,11 +180,15 @@
       try {
         const normalized = Object.fromEntries(LOCALES.map((key) => [key, values[key].trim()]));
         const page = targetPage(element), key = element.dataset.editableContent;
-        const refreshLegacyLocales = normalized.en !== originalValues.en ? ["zhHant", "zhHans"].filter((language) => normalized[language] === originalValues[language]) : [];
+        const refreshLegacyLocales = englishEdited ? ["zhHant", "zhHans"].filter((language) => !manuallyEditedChinese[language]) : [];
         const preview = await fetch("/api/admin/translations/preview", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ resource: { type: "content", scope: page, id: key, version: baseUpdatedAtByLocale.en }, fields: { value: normalized }, allowCjkEnglish: englishGuardAccepted, force: replace.checked ? { value: ["zhHant", "zhHans"] } : {}, refreshLegacy: refreshLegacyLocales.length ? { value: refreshLegacyLocales } : {} }) });
         const data = await preview.json().catch(() => null); if (!preview.ok) throw responseError(preview, data, labels().failed);
         if (requestId !== translationSequence || values.en !== requestedEnglish) return false;
-        Object.assign(values, data.fields.value.value); LOCALES.forEach((language) => { fields[language].input.value = values[language]; }); translationReceipt = data.receipt;
+        Object.assign(values, data.fields.value.value); LOCALES.forEach((language) => { fields[language].input.value = values[language]; });
+        englishEdited = false;
+        if (data.fields.value.zhHantStatus === "translated") manuallyEditedChinese.zhHant = false;
+        if (data.fields.value.zhHansStatus === "translated") manuallyEditedChinese.zhHans = false;
+        translationReceipt = data.receipt;
         if (selectPreview) select("zhHant"); else if (activeLocale !== "en") setValue(element, values[activeLocale]);
         error.textContent = labels().ready; error.hidden = false; save.textContent = labels().save; return true;
       } catch (reason) {

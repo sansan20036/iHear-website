@@ -146,7 +146,7 @@
   let activeRequest = null;
   let dirty = false;
   let translationReceipt = "";
-  let originalAlt = { en: "", zhHant: "", zhHans: "" };
+  let altTranslationEdits = { en: false, zhHant: false, zhHans: false };
   let englishGuardAccepted = false;
   let applyToken = 0;
   let pending = false;
@@ -419,7 +419,7 @@
       if (node.hasAttribute("data-busy")) event.preventDefault();
       else { event.preventDefault(); closeDialog(); }
     });
-    node.querySelectorAll("input[type=text]").forEach((input) => input.addEventListener("input", () => { dirty = true; if (input.matches("[data-media-alt-en]")) { translationReceipt = ""; englishGuardAccepted = false; } void renderLanguageGuards(); }));
+    node.querySelectorAll("input[type=text]").forEach((input) => input.addEventListener("input", () => { const language = input.matches("[data-media-alt-en]") ? "en" : input.matches("[data-media-alt-zht]") ? "zhHant" : "zhHans"; altTranslationEdits[language] = true; dirty = true; if (language === "en") { translationReceipt = ""; englishGuardAccepted = false; } void renderLanguageGuards(); }));
     node.querySelectorAll("[data-media-auto-translate],[data-media-replace-translation]").forEach((input) => input.addEventListener("change", () => { translationReceipt = ""; dirty = true; }));
     return node;
   }
@@ -497,7 +497,7 @@
 
   function populateDialog() {
     const alt = currentItem?.alt || defaults.alt;
-    originalAlt = Object.fromEntries(["en", "zhHant", "zhHans"].map((language) => [language, String(alt[language] || "").trim()]));
+    altTranslationEdits = { en: false, zhHant: false, zhHans: false };
     dialog.querySelector("[data-media-alt-en]").value = alt.en;
     dialog.querySelector("[data-media-alt-zht]").value = alt.zhHant;
     dialog.querySelector("[data-media-alt-zhs]").value = alt.zhHans;
@@ -532,7 +532,7 @@
       guard.renderLanguageGuard(dialog.querySelector(`[data-media-guard="${language}"]`), {
         language, value: values[language], uiLocale: locale(), englishAccepted: englishGuardAccepted, disabled: dialog.hasAttribute("data-busy"),
         onAcceptEnglish: () => { englishGuardAccepted = true; void renderLanguageGuards(); },
-        onChange: (value) => { dialog.querySelector(inputs[language]).value = value; dirty = true; translationReceipt = ""; void renderLanguageGuards(); },
+        onChange: (value) => { dialog.querySelector(inputs[language]).value = value; altTranslationEdits[language] = true; dirty = true; translationReceipt = ""; void renderLanguageGuards(); },
       });
     });
   }
@@ -728,10 +728,10 @@
       if (alt.en.length < 2 || alt.en.length > 300) { setStatus(labels().altRequired, { error: true }); return; }
       setBusy(true); setStatus(labels().preparingTranslation);
       try {
-        const refreshLegacyLocales = alt.en !== originalAlt.en ? ["zhHant", "zhHans"].filter((language) => alt[language] === originalAlt[language]) : [];
+        const refreshLegacyLocales = altTranslationEdits.en ? ["zhHant", "zhHans"].filter((language) => !altTranslationEdits[language]) : [];
         const response = await fetch("/api/admin/translations/preview", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ resource: { type: "media", scope: "", id: slot, version: currentItem?.recordVersion || 0 }, fields: { alt }, allowCjkEnglish: englishGuardAccepted, force: dialog.querySelector("[data-media-replace-translation]").checked ? { alt: ["zhHant", "zhHans"] } : {}, refreshLegacy: refreshLegacyLocales.length ? { alt: refreshLegacyLocales } : {} }) });
         const data = await response.json().catch(() => null); if (!response.ok) throw new Error(data?.error || labels().failed);
-        dialog.querySelector("[data-media-alt-zht]").value = data.fields.alt.value.zhHant; dialog.querySelector("[data-media-alt-zhs]").value = data.fields.alt.value.zhHans; translationReceipt = data.receipt; dirty = true; setStatus(labels().translationReady);
+        dialog.querySelector("[data-media-alt-zht]").value = data.fields.alt.value.zhHant; dialog.querySelector("[data-media-alt-zhs]").value = data.fields.alt.value.zhHans; altTranslationEdits.en = false; if (data.fields.alt.zhHantStatus === "translated") altTranslationEdits.zhHant = false; if (data.fields.alt.zhHansStatus === "translated") altTranslationEdits.zhHans = false; translationReceipt = data.receipt; dirty = true; setStatus(labels().translationReady);
       } catch (error) { setStatus(error?.message || labels().failed, { error: true }); }
       finally { setBusy(false); }
       return;

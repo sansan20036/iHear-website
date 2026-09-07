@@ -633,7 +633,7 @@ test("language safeguards pause a Chinese English source and preview Taiwan Trad
   await dialog.getByRole("button", { name: "Cancel" }).click();
 });
 
-test("changing an English content field refreshes protected legacy Chinese", async ({ page }) => {
+test("each English edit refreshes machine-preview Chinese without overwriting manual Chinese", async ({ page }) => {
   const mocked = await mockApplication(page);
   await page.goto("/");
   await page.locator('[data-editable-content="home.stat.countries"]').evaluate((element) => element.click());
@@ -644,6 +644,21 @@ test("changing an English content field refreshes protected legacy Chinese", asy
   expect(mocked.getTranslationPreviewPayload().refreshLegacy).toEqual({ value: ["zhHant", "zhHans"] });
   await dialog.getByRole("tab", { name: "繁體中文" }).click();
   await expect(dialog.getByRole("textbox", { name: "繁體中文" })).toHaveValue("繁中 World");
+
+  await dialog.getByRole("tab", { name: "English" }).click();
+  await dialog.getByRole("textbox", { name: "English" }).fill("Hello");
+  await dialog.getByRole("button", { name: "Generate translation preview" }).click();
+  await expect.poll(() => mocked.getTranslationPreviewCount()).toBe(2);
+  expect(mocked.getTranslationPreviewPayload().refreshLegacy).toEqual({ value: ["zhHant", "zhHans"] });
+  await expect(dialog.getByRole("textbox", { name: "繁體中文" })).toHaveValue("繁中 Hello");
+
+  await dialog.getByRole("textbox", { name: "繁體中文" }).fill("人工調整");
+  await dialog.getByRole("tab", { name: "English" }).click();
+  await dialog.getByRole("textbox", { name: "English" }).fill("Goodbye");
+  await dialog.getByRole("button", { name: "Generate translation preview" }).click();
+  await expect.poll(() => mocked.getTranslationPreviewCount()).toBe(3);
+  expect(mocked.getTranslationPreviewPayload().refreshLegacy).toEqual({ value: ["zhHans"] });
+  await expect(dialog.getByRole("textbox", { name: "繁體中文" })).toHaveValue("人工調整");
 });
 
 test("a media revision refreshes around a text draft without reporting a false content conflict", async ({ page }) => {

@@ -109,6 +109,7 @@ export default function AdminContentPage() {
   const original = useRef("");
   const externalChange = useRef(false);
   const translationRequestActive = useRef(false);
+  const translationEdits = useRef({ en: false, zhHant: false, zhHans: false });
 
   const load = async () => {
     const next = await adminFetch<ContentStore>("/api/content/get");
@@ -153,6 +154,7 @@ export default function AdminContentPage() {
       };
       setEditing(slot); setDraft(values); setError(""); setNotice("");
       setAutoTranslate(true); setReplaceExisting(false); setTranslationReceipt(""); setTranslationStatus({}); setEnglishGuardAccepted(false);
+      translationEdits.current = { en: false, zhHant: false, zhHans: false };
       original.current = JSON.stringify(values); externalChange.current = false;
     };
     if (editing && JSON.stringify(draft) !== original.current) confirmAction(action); else action();
@@ -166,7 +168,8 @@ export default function AdminContentPage() {
 
   function updateDraft(language: AdminLocale, value: string) {
     setDraft((current) => ({ ...current, [language]: value }));
-    if (language === "en") { setTranslationReceipt(""); setTranslationStatus({}); setEnglishGuardAccepted(false); }
+    if (language === "en") { translationEdits.current.en = true; setTranslationReceipt(""); setTranslationStatus({}); setEnglishGuardAccepted(false); }
+    else translationEdits.current[language] = true;
   }
 
   async function prepareTranslation() {
@@ -175,9 +178,8 @@ export default function AdminContentPage() {
     setTranslating(true); setError("");
     try {
       const expectedEn = store?.locales?.en?.itemUpdatedAt?.[editing.page]?.[editing.key] || null;
-      const initialValues = JSON.parse(original.current || "{}") as Partial<Record<AdminLocale, string>>;
-      const refreshLegacyLocales = draft.en.trim() !== String(initialValues.en || "").trim()
-        ? (["zhHant", "zhHans"] as AdminLocale[]).filter((language) => draft[language].trim() === String(initialValues[language] || "").trim())
+      const refreshLegacyLocales = translationEdits.current.en
+        ? (["zhHant", "zhHans"] as AdminLocale[]).filter((language) => !translationEdits.current[language])
         : [];
       const result = await adminFetch<TranslationPreview>("/api/admin/translations/preview", {
         method: "POST",
@@ -191,6 +193,9 @@ export default function AdminContentPage() {
         }),
       });
       setDraft(result.fields.value.value);
+      translationEdits.current.en = false;
+      if (result.fields.value.zhHantStatus === "translated") translationEdits.current.zhHant = false;
+      if (result.fields.value.zhHansStatus === "translated") translationEdits.current.zhHans = false;
       setTranslationReceipt(result.receipt);
       setTranslationStatus({ zhHant: result.fields.value.zhHantStatus, zhHans: result.fields.value.zhHansStatus });
       setNotice(text.review);

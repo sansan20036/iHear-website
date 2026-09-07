@@ -217,6 +217,7 @@
     translationReceipt: "",
     translationReady: false,
     englishGuardAccepted: false,
+    translationEdits: {},
   };
 
   const fallbackHtml = mount.innerHTML;
@@ -452,6 +453,7 @@
 
   function openEditor(item) {
     state.draft = copyDraft(item);
+    state.translationEdits = Object.fromEntries(["title", "countryNames", "description"].map((field) => [field, { en: false, zhHant: false, zhHans: false }]));
     state.originalDraft = JSON.stringify(state.draft);
     state.activeLocale = "en";
     state.previewLocale = state.activeLocale;
@@ -471,11 +473,10 @@
   }
 
   function legacyRefreshFor(fields) {
-    let initial = {};
-    try { initial = JSON.parse(state.originalDraft || "{}"); } catch {}
     return Object.fromEntries(Object.keys(fields).map((field) => {
-      if (String(fields[field]?.en || "").trim() === String(initial[field]?.en || "").trim()) return null;
-      const locales = ["zhHant", "zhHans"].filter((language) => String(fields[field]?.[language] || "").trim() === String(initial[field]?.[language] || "").trim());
+      const edits = state.translationEdits[field];
+      if (!edits?.en) return null;
+      const locales = ["zhHant", "zhHans"].filter((language) => !edits[language]);
       return locales.length ? [field, locales] : null;
     }).filter(Boolean));
   }
@@ -730,6 +731,8 @@
       }
     }
     if (sourceLocale) {
+      const field = target.name.split(".")[0];
+      state.translationEdits[field][sourceLocale] = true;
       state.activeLocale = sourceLocale;
       state.manualStatus = "";
       if (sourceLocale === "en") { state.translationReceipt = ""; state.translationReady = false; state.englishGuardAccepted = false; }
@@ -756,6 +759,7 @@
     state.draft.title[targetLocale] = state.draft.title[sourceLocale] || "";
     state.draft.countryNames[targetLocale] = state.draft.countryNames[sourceLocale] || "";
     state.draft.description[targetLocale] = state.draft.description[sourceLocale] || "";
+    ["title", "countryNames", "description"].forEach((field) => { state.translationEdits[field][targetLocale] = true; });
 
     const titleInput = dialog.querySelector(`[name="title.${targetLocale}"]`);
     const countryNamesInput = dialog.querySelector(`[name="countryNames.${targetLocale}"]`);
@@ -859,7 +863,7 @@
       const container = dialog.querySelector(`[data-impact-language-guard="${field}.${language}"]`);
       guard.renderLanguageGuard(container, { language, value: String(state.draft[field]?.[language] || ""), uiLocale: locale(), englishAccepted: state.englishGuardAccepted, disabled: state.busy,
         onAcceptEnglish: () => { state.englishGuardAccepted = true; void renderLanguageGuards(); },
-        onChange: (value) => { state.draft[field][language] = value; const input = dialog.querySelector(`[name="${CSS.escape(`${field}.${language}`)}"]`); if (input) input.value = value; state.translationReceipt = ""; updateEditor(); },
+        onChange: (value) => { state.draft[field][language] = value; state.translationEdits[field][language] = true; const input = dialog.querySelector(`[name="${CSS.escape(`${field}.${language}`)}"]`); if (input) input.value = value; state.translationReceipt = ""; updateEditor(); },
       });
     }));
   }
@@ -992,7 +996,7 @@
           const response = await fetch("/api/admin/translations/preview", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ resource: { type: "impact", scope: "", id: state.draft.id || "__new__", version: state.draft.id ? state.draft.version : undefined }, fields, allowCjkEnglish: state.englishGuardAccepted, refreshLegacy: legacyRefreshFor(fields) }) });
           const data = await response.json().catch(() => null);
           if (!response.ok) { const error = new Error((data && data.error) || labels().saveFailed); error.status = response.status; throw error; }
-          Object.entries(data.fields).forEach(([field, result]) => { state.draft[field] = result.value; });
+          Object.entries(data.fields).forEach(([field, result]) => { state.draft[field] = result.value; const edits = state.translationEdits[field]; if (edits) { edits.en = false; if (result.zhHantStatus === "translated") edits.zhHant = false; if (result.zhHansStatus === "translated") edits.zhHans = false; } });
           state.translationReceipt = data.receipt; state.translationReady = true; state.activeLocale = "zhHant"; state.previewLocale = "zhHant"; state.manualStatus = locale() === "en" ? "Chinese preview ready. Review it, then save." : locale() === "zhHans" ? "中文预览已完成，请检查后再保存。" : "中文預覽已完成，請檢查後再儲存。";
           buildEditor(); setBusy(false); return;
         } catch (error) { setBusy(false); showToast(error.message || labels().saveFailed, true); return; }
