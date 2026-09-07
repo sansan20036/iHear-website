@@ -96,9 +96,11 @@ body:has(.admin-app) > :is(.site-theme-trigger,.ihear-layout-trigger,.ihear-inli
 .admin-avatar-tools>.admin-avatar-actions:last-child button:empty { display:none; }
 .admin-reorder { display:flex; gap:5px; }.admin-reorder button { width:38px; height:38px; border:1px solid var(--admin-line); background:#fff; border-radius:8px; cursor:pointer; }.admin-reorder button:disabled { opacity:.4; }
 .admin-confirm { position:fixed; inset:0; width:100%; height:100%; max-width:none; max-height:none; border:0; padding:20px; background:#15203a77; z-index:100; }.admin-confirm-card { max-width:430px; margin:20vh auto 0; background:#fff; border-radius:16px; padding:24px; box-shadow:0 24px 70px #101a33aa; }.admin-confirm-card h2 { color:var(--admin-navy); margin-top:0; }.admin-actions { display:flex; justify-content:flex-end; gap:9px; flex-wrap:wrap; }
-.admin-sort-preview-card { display:flex; flex-direction:column; max-width:520px; max-height:calc(100dvh - 40px); margin:max(20px,8vh) auto 0; }
+.admin-confirm.admin-sort-preview { display:flex; align-items:center; justify-content:center; box-sizing:border-box; overflow:hidden; }
+.admin-sort-preview-card { display:flex; flex-direction:column; width:min(520px,100%); max-width:520px; max-height:min(90dvh,calc(100dvh - 40px)); margin:0; box-sizing:border-box; overflow:hidden; }
+.admin-sort-preview-card>h2,.admin-sort-preview-card>p,.admin-sort-preview-card>.admin-actions { flex:0 0 auto; }
 .admin-sort-preview-card>p { margin:0 0 10px; }
-.admin-sort-preview-list { min-height:0; margin:4px 0 18px; padding:8px; overflow-y:auto; border:1px solid var(--admin-line); border-radius:12px; background:var(--admin-bg); list-style:none; }
+.admin-sort-preview-list { flex:1 1 auto; min-height:0; margin:4px 0 18px; padding:8px; overflow-y:auto; overscroll-behavior:contain; border:1px solid var(--admin-line); border-radius:12px; background:var(--admin-bg); list-style:none; }
 .admin-sort-preview-list li { display:grid; grid-template-columns:32px minmax(0,1fr) auto; align-items:center; gap:8px; min-height:44px; padding:6px 8px; border-radius:9px; background:#fff; font-weight:800; }
 .admin-sort-preview-list li+li { margin-top:6px; }.admin-sort-position { color:var(--admin-muted); text-align:center; font-variant-numeric:tabular-nums; }
 .admin-table { width:100%; border-collapse:collapse; background:#fff; border-radius:14px; overflow:hidden; }.admin-table th,.admin-table td { padding:13px; border-bottom:1px solid var(--admin-line); text-align:left; vertical-align:top; }.admin-table th { color:var(--admin-muted); font-size:13px; }

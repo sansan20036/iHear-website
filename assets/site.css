@@ -321,8 +321,10 @@
     .roster-heading-copy{ grid-column:2; min-width:0; }
     .roster .roster-heading h2{ text-align:center; }
     .roster .roster-heading .roster-sub{ max-width:60ch; margin:6px auto 0; text-align:center; }
-    .roster-expand-toggle{ grid-column:3; justify-self:end; min-width:126px; white-space:nowrap; }
+    .roster-heading-actions{ grid-column:3; justify-self:end; display:flex; align-items:center; justify-content:flex-end; gap:8px; white-space:nowrap; }
+    .roster-expand-toggle,.roster-view-sort{ min-width:126px; white-space:nowrap; }
     .roster-expand-toggle[hidden]{ display:none; }
+    .roster-view-sort[hidden]{ display:none; }
     .roster-grid{ display:grid; grid-template-columns:1fr 1fr; gap:14px; align-items:start; }
     .tutor-prof{ background:var(--bg-surface); border:1.5px solid var(--line); border-radius:18px; overflow:hidden; }
     .tutor-prof summary{
@@ -361,12 +363,17 @@
     .roster-cta a{ font-weight:800; }
     @media (max-width: 780px){
       .roster-grid{ grid-template-columns:1fr; }
+      .roster-heading-actions{ align-items:stretch; flex-direction:column; }
     }
     @media (max-width: 640px){
       .roster-heading{ display:flex; align-items:stretch; flex-direction:column; gap:14px; }
-      .roster-expand-toggle{ width:100%; }
+      .roster-heading-actions{ display:grid; grid-template-columns:1fr 1fr; width:100%; }
+      .roster-heading-actions .roster-expand-toggle,.roster-heading-actions .roster-view-sort{ width:100%; min-width:0; }
       .tutor-prof summary{ min-height:88px; padding:12px 14px; gap:12px; }
       .avatar.av-roster{ width:64px; height:64px; flex-basis:64px; font-size:1.1rem; }
+    }
+    @media (max-width: 390px){
+      .roster-heading-actions{ grid-template-columns:1fr; }
     }
 
     /* ---------- bio form ---------- */
