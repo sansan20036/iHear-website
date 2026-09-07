@@ -446,6 +446,16 @@
     .donate-card p{ font-size:.95rem; opacity:.8; }
     .donate-cta{ text-align:center; }
     .donate-cta .line{ font-size:1.1rem; font-weight:700; margin-bottom:22px; opacity:.92; }
+    body.subpage .donate{ background:var(--bg-page); color:var(--text-main); transition:background-color 160ms ease; }
+    body.subpage .donate .sec-head h1{ color:var(--navy); }
+    body.subpage .donate .sec-head p{ color:var(--ink-soft); }
+    body.subpage .donate .eyebrow{ color:var(--navy); background:var(--bg-surface); border-color:var(--line); }
+    body.subpage .donate-card{ color:var(--text-main); background:var(--bg-surface); border-color:var(--line); box-shadow:var(--shadow); }
+    body.subpage .donate-card .icon{ color:var(--orange-text); background:var(--orange-soft); }
+    body.subpage .donate-card h2,body.subpage .donate-card h3{ color:var(--navy); }
+    body.subpage .donate-card p{ color:var(--ink-soft); opacity:1; }
+    body.subpage .donate-cta .line{ color:var(--navy); opacity:1; }
+    body.subpage .donor-note{ color:var(--ink-soft); opacity:1; }
 
     /* ---------- resources ---------- */
     .res-chips{ display:flex; flex-wrap:wrap; gap:12px; justify-content:center; max-width:900px; margin:0 auto; }

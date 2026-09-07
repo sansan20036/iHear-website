@@ -809,6 +809,25 @@ test("administrator previews, cancels, publishes, and restores the global theme"
   expect(mocked.getTheme().theme).toBe("warm");
 });
 
+test("donate page follows the active site theme palette", async ({ page }) => {
+  await mockApplication(page);
+  await page.goto("/donate");
+  const section = page.locator("body.subpage .donate");
+  const heading = page.getByRole("heading", { level: 1, name: "Every contribution creates opportunity" });
+  const card = page.locator(".donate-card").first();
+
+  await expect(section).toHaveCSS("background-color", "rgb(250, 247, 242)");
+  await expect(heading).toHaveCSS("color", "rgb(38, 57, 116)");
+  await expect(card).toHaveCSS("background-color", "rgb(255, 255, 255)");
+
+  await page.getByRole("button", { name: "Change theme" }).click();
+  await page.getByLabel("Sage Green").check();
+  await expect(section).toHaveCSS("background-color", "rgb(241, 245, 242)");
+  await expect(heading).toHaveCSS("color", "rgb(38, 57, 116)");
+  await expect(card).toHaveCSS("background-color", "rgb(255, 255, 255)");
+  await page.getByRole("dialog", { name: "Site background theme" }).locator("[data-site-theme-cancel]").click();
+});
+
 test("published theme cannot be downgraded by a stale live-refresh response", async ({ page }) => {
   const mocked = await mockApplication(page);
   await page.goto("/about");
