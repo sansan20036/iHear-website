@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "../../../lib/response-headers";
 
 import { authorizeAdminRequest } from "../../../lib/admin-auth";
 import { appendAdminActivity } from "../../../lib/admin-store";
@@ -65,8 +66,7 @@ export async function GET(request: Request) {
     const profiles = (await listPublishedTeamProfiles()).map(publicTeamProfile);
     return NextResponse.json(grouped(profiles), {
       headers: {
-        "Cache-Control": "public, max-age=0, must-revalidate",
-        "Vercel-CDN-Cache-Control": "public, s-maxage=1",
+        ...NO_STORE_HEADERS,
       },
     });
   } catch (error) {

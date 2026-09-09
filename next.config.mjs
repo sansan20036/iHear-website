@@ -2,7 +2,6 @@ const htmlRoutes = [
   ["about", "about.html"],
   ["programs", "programs.html"],
   ["impact", "impact.html"],
-  ["team", "team.html"],
   ["submit-bio", "submit-bio.html"],
   ["stories", "stories.html"],
   ["get-involved", "get-involved.html"],
@@ -22,6 +21,7 @@ const nextConfig = {
   // installed @img runtime files in media API functions so Vercel's output
   // tracing cannot omit the Linux shared library.
   outputFileTracingIncludes: {
+    "/team": ["./.private/team.html"],
     "/api/site-media/[slot]": ["./node_modules/@img/**/*"],
   },
   async rewrites() {

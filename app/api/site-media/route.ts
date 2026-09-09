@@ -7,7 +7,7 @@ import { publicSiteMediaAsset } from "../../../lib/site-media-types";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-export async function GET() {
+export async function GET(_request?: Request) {
   try {
     const assets = await listSiteMediaAssets();
     return NextResponse.json(

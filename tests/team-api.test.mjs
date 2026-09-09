@@ -135,12 +135,17 @@ beforeEach(() => {
 });
 
 describe("team profile API", () => {
-  test("public listing is cached for one second and excludes private consent metadata", async () => {
+  test("anonymous visitors can read published profiles but cannot create them", async () => {
+    auth.mockResolvedValue(null);
+    expect((await GET(new Request("http://localhost/api/team-profiles"))).status).toBe(200);
+    expect((await POST(json("http://localhost/api/team-profiles", "POST", payload))).status).toBe(403);
+    expect(store.createTeamProfile).not.toHaveBeenCalled();
+  });
+  test("public listing excludes consent and editor metadata", async () => {
     auth.mockResolvedValue(null);
     const response = await GET(new Request("http://localhost/api/team-profiles"));
     const body = await response.json();
     expect(response.status).toBe(200);
-    expect(response.headers.get("vercel-cdn-cache-control")).toBe("public, s-maxage=1");
     expect(body.tutors).toHaveLength(1);
     expect(body.tutors[0].status).toBe("published");
     expect(body.tutors[0]).not.toHaveProperty("publicationConsentAt");

@@ -11,7 +11,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit --incremental false",
     "test": "npm run test:api && npm run test:operations && npm run test:e2e",
-    "test:api": "vitest run tests/image-intake.test.mjs tests/text-language-guard.test.mjs tests/translation-core.test.mjs tests/translation-api.test.mjs tests/api-routes.test.mjs tests/team-api.test.mjs tests/team-sort.test.mjs tests/team-store-postgres.test.mjs tests/admin-console-api.test.mjs tests/rate-limit.test.mjs tests/site-media-api.test.mjs tests/site-media-image.test.mjs tests/site-theme-api.test.mjs tests/site-layout-api.test.mjs",
+    "test:api": "vitest run tests/team-public.test.mjs tests/image-intake.test.mjs tests/text-language-guard.test.mjs tests/translation-core.test.mjs tests/translation-api.test.mjs tests/api-routes.test.mjs tests/team-api.test.mjs tests/team-sort.test.mjs tests/team-store-postgres.test.mjs tests/admin-console-api.test.mjs tests/rate-limit.test.mjs tests/site-media-api.test.mjs tests/site-media-image.test.mjs tests/site-theme-api.test.mjs tests/site-layout-api.test.mjs",
     "test:operations": "vitest run tests/operations-config.test.mjs",
     "test:e2e": "node scripts/prepare-public.mjs && playwright test",
     "check": "npm run lint && npm run typecheck && npm test && npm run build",

@@ -202,6 +202,30 @@ async function mutateFile<T>(callback: (store: SiteMediaFileStore) => T | Promis
   return operation as Promise<T>;
 }
 
+// Image requests arrive in bursts. Keep their single lookup independent of the
+// shared editor pool and close it before streaming the stored image.
+export async function findSiteMediaImagePath(slot: SiteMediaSlot, width: number): Promise<string | null> {
+  assertPersistence();
+  if (!databaseUrl) {
+    const asset = (await listSiteMediaAssets()).find((item) => item.slot === slot);
+    return asset?.variants.find((item) => item.width === width)?.storagePath || null;
+  }
+  const imageSql = postgres(databaseUrl, {
+    max: 1, prepare: false, connect_timeout: 10,
+    ssl: process.env.POSTGRES_SSL === "disable" ? false : "require",
+    connection: { statement_timeout: 10000 },
+  });
+  try {
+    const rows = await imageSql<{ storage_path: string }[]>`
+      SELECT storage_path FROM public.site_media_variants
+      WHERE slot = ${slot} AND width = ${width}
+    `;
+    return rows[0]?.storage_path || null;
+  } finally {
+    await imageSql.end({ timeout: 1 });
+  }
+}
+
 export async function listSiteMediaAssets(): Promise<SiteMediaAsset[]> {
   assertPersistence();
   const sql = sqlClient();

@@ -12,6 +12,7 @@ node_modules/
 out/
 output/
 public/
+.private/
 .env
 .env.*
 !.env.example

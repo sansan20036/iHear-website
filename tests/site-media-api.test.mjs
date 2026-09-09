@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 vi.mock("../auth.js", () => ({ auth: vi.fn() }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("../lib/admins", () => ({
+  resolveAdminPrincipal: vi.fn(async email => email === "admin@example.com" ? { email, role: "editor" } : null),
   normalizeEmail: vi.fn((value) => String(value || "").trim().toLowerCase()),
   isAllowedAdmin: vi.fn((email) => email === "admin@example.com"),
 }));

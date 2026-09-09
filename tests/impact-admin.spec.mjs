@@ -44,7 +44,8 @@ test.beforeAll(async () => {
         return;
       }
 
-      const body = await readFile(filePath);
+      // This static editor fixture reads the same generated team HTML as the /team route.
+      const body = await readFile(relativePath === "team.html" ? path.resolve(".private/team.html") : filePath);
       response.writeHead(200, {
         "Content-Type": contentTypes[path.extname(filePath).toLowerCase()] || "application/octet-stream",
       });

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "../../../../lib/response-headers";
 
 import { publicContentStore, readContentStore } from "../../../../lib/content-store";
 
@@ -11,8 +12,7 @@ export async function GET(request: Request = new Request("http://localhost/api/c
 
   return NextResponse.json(content, {
     headers: {
-      "Cache-Control": "public, max-age=0, must-revalidate",
-      "Vercel-CDN-Cache-Control": "public, s-maxage=1",
+      ...NO_STORE_HEADERS,
     },
   });
 }

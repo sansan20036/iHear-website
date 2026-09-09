@@ -64,7 +64,12 @@ export function publicSiteMediaAsset(asset: SiteMediaAsset): PublicSiteMediaAsse
   const variants = asset.variants
     .slice()
     .sort((left, right) => left.width - right.width)
-    .map(({ storagePath: _storagePath, ...variant }) => variant);
+    .map(({ storagePath, ...variant }) => ({
+      ...variant,
+      // Uploads use unique object paths, including after a slot is deleted and
+      // recreated. Bind long-lived caches to that exact image, not only a row version.
+      url: `/api/site-media/${encodeURIComponent(asset.slot)}/image?width=${variant.width}&v=${asset.recordVersion}&asset=${encodeURIComponent(storagePath)}`,
+    }));
   const largest = variants.at(-1);
   return {
     slot: asset.slot,

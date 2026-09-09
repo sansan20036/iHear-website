@@ -17,7 +17,7 @@ const supabase = createClient(supabaseUrl, serviceRoleKey, {
   auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
 });
 const configuration = {
-  public: true,
+  public: false,
   fileSizeLimit: 1024 * 1024,
   allowedMimeTypes: ["image/webp"],
 };
@@ -27,14 +27,14 @@ try {
   if (listError) throw listError;
   const existing = buckets.find((candidate) => candidate.id === bucket);
   const result = existing
-    ? await supabase.storage.updateBucket(bucket, configuration)
+    ? await supabase.storage.updateBucket(bucket, { public: false })
     : await supabase.storage.createBucket(bucket, configuration);
   if (result.error) throw result.error;
   console.log(JSON.stringify({
     configured: true,
     bucket,
     created: !existing,
-    public: true,
+    public: false,
     fileSizeLimit: configuration.fileSizeLimit,
     allowedMimeTypes: configuration.allowedMimeTypes,
   }));

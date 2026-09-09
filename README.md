@@ -1,5 +1,7 @@
 # iHear Website
 
+The `/team` page and published profiles and photos are public. Editing and draft access still require administrator sign-in. See [team access notes](docs/team-password-gate.md).
+
 Static iHear pages served by Next.js, with Auth.js / NextAuth.js Google sign-in.
 
 ## Local Preview

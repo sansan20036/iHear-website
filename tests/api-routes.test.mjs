@@ -324,12 +324,12 @@ describe("public API caching", () => {
     expect((await response.json()).milestones).toHaveLength(1);
   });
 
-  test("content overrides use shared one-second edge caching", async () => {
+  test("content overrides stay fresh and never enter shared caches", async () => {
     const response = await getContent();
 
     expect(response.status).toBe(200);
-    expect(response.headers.get("cache-control")).toBe("public, max-age=0, must-revalidate");
-    expect(response.headers.get("vercel-cdn-cache-control")).toBe("public, s-maxage=1");
+    expect(response.headers.get("cache-control")).toBe("private, no-store, max-age=0");
+    expect(response.headers.get("vercel-cdn-cache-control")).toBe("no-store");
     const body = await response.json();
     expect(body.updatedBy).toBeUndefined();
     expect(body.version).toBe(3);
