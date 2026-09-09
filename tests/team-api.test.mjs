@@ -53,6 +53,7 @@ import * as store from "../lib/team-store";
 import { revisionAfterMutation } from "../lib/live-revisions";
 import { enforceRateLimit } from "../lib/rate-limit";
 import * as adminStore from "../lib/admin-store";
+import { TranslationReceiptError } from "../lib/translation-core";
 
 const email = "sansan20036@gmail.com";
 const nonAdminEmail = "signed-in-visitor@example.com";
@@ -135,6 +136,25 @@ beforeEach(() => {
 });
 
 describe("team profile API", () => {
+  test("updates without a receipt defer provenance to the persisted-row comparison", async () => {
+    const response = await PATCH(json("http://localhost/api/team-profiles/tutor-test", "PATCH", {
+      ...payload, profileVersion: 1, personVersion: 1,
+    }), context);
+    expect(response.status).toBe(200);
+    expect(store.updateTeamProfile.mock.calls[0][3]).toBeUndefined();
+  });
+
+  test("returns a preview error without invalidation or activity logging for an unverified English change", async () => {
+    store.updateTeamProfile.mockRejectedValueOnce(new TranslationReceiptError("English changed; generate a translation preview before saving"));
+    const response = await PATCH(json("http://localhost/api/team-profiles/tutor-test", "PATCH", {
+      ...payload, profileVersion: 1, personVersion: 1,
+    }), context);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: "TRANSLATION_RECEIPT_INVALID" });
+    expect(revisionAfterMutation).not.toHaveBeenCalled();
+    expect(adminStore.appendAdminActivity).not.toHaveBeenCalled();
+  });
+
   test("anonymous visitors can read published profiles but cannot create them", async () => {
     auth.mockResolvedValue(null);
     expect((await GET(new Request("http://localhost/api/team-profiles"))).status).toBe(200);

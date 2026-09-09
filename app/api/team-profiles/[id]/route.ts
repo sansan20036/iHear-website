@@ -22,7 +22,6 @@ import {
   withRateLimitHeaders,
 } from "../../../../lib/rate-limit";
 import {
-  manualTranslationWrites,
   TranslationReceiptError,
   verifyTranslationReceipt,
 } from "../../../../lib/translation-core";
@@ -49,7 +48,7 @@ export async function PATCH(request: Request, context: Context) {
     const receipt = typeof body?.translationReceipt === "string" ? body.translationReceipt : "";
     const translationStates = receipt
       ? verifyTranslationReceipt({ receipt, email: access.principal.email, resource: { type: "team", scope: "", id, version: input.profileVersion }, fields })
-      : manualTranslationWrites(fields);
+      : undefined;
     const profile = await updateTeamProfile(id, input, access.principal.email, translationStates);
     const revision = await invalidateTeamProfiles();
     await appendAdminActivity({

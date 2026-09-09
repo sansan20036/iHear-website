@@ -90,6 +90,8 @@ export async function POST(request: Request) {
   if (!force) return respond(NextResponse.json({ error: "Invalid force-translation fields" }, { status: 400 }));
   const refreshLegacy = parseForce(fields, body.refreshLegacy);
   if (!refreshLegacy) return respond(NextResponse.json({ error: "Invalid legacy-refresh fields" }, { status: 400 }));
+  const manualEdits = parseForce(fields, body.manualEdits);
+  if (!manualEdits) return respond(NextResponse.json({ error: "Invalid manual-translation fields" }, { status: 400 }));
   const contextTerms = Array.isArray(body.contextTerms)
     ? body.contextTerms.filter((term): term is string => typeof term === "string").slice(0, 100)
     : [];
@@ -116,6 +118,7 @@ export async function POST(request: Request) {
       states,
       force,
       refreshLegacy,
+      manualEdits,
       autoTranslate: body.autoTranslate !== false,
       contextTerms: protectedTerms,
     });

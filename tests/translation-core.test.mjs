@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { manualTranslationEdits } from "../assets/team-translation-edits.js";
 
 import {
   buildTranslationPreview,
@@ -8,6 +9,7 @@ import {
   googleTranslationAuthConfiguration,
   isGoogleTranslationConfigured,
   machineTranslationQualityIssues,
+  manualTranslationUpdateWrites,
   personNameContextTerms,
   prepareGoogleTranslationHtml,
   protectTranslationText,
@@ -20,6 +22,102 @@ import {
 } from "../lib/translation-core.ts";
 
 const originalSecret = process.env.TRANSLATION_RECEIPT_SECRET;
+
+describe("manual edits across translation preview renewal", () => {
+  const resource = { type: "team", scope: "", id: "renewal-test", version: 1 };
+  const email = "admin@example.org";
+
+  it.each(["World", "Hello"])("retains manual Chinese and provenance after receipt expiry (stored English: %s)", async originalEnglish => {
+    const states = [
+      { field: "role", locale: "zhHant", origin: "machine", sourceHash: sha256(originalEnglish), glossaryVersion: "test" },
+      { field: "role", locale: "zhHans", origin: "machine", sourceHash: sha256(originalEnglish === "World" ? "世界" : "你好"), glossaryVersion: "test" },
+    ];
+    const translate = vi.fn(async () => ["你好"]);
+    const first = await buildTranslationPreview({ email, resource, states,
+      fields: { role: { en: "Hello", zhHant: "世界", zhHans: "世界" } },
+      refreshLegacy: { role: ["zhHant", "zhHans"] }, translate,
+    });
+    const baseline = { role: { ...first.fields.role.value } };
+    const fields = { role: { en: "Hello", zhHant: "您好（人工修訂）", zhHans: "您好（人工修订）" } };
+    const edits = { role: { en: false, zhHant: true, zhHans: true } };
+    const manualEdits = manualTranslationEdits(fields, baseline, edits);
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 16 * 60 * 1000);
+    try {
+      expect(() => verifyTranslationReceipt({ receipt: first.receipt, email, resource, fields })).toThrow(TranslationReceiptError);
+      translate.mockClear();
+      const renewed = await buildTranslationPreview({ email, resource, states, fields, manualEdits, translate });
+      expect(translate).not.toHaveBeenCalled();
+      expect(renewed.fields.role.value).toEqual(fields.role);
+      const writes = verifyTranslationReceipt({ receipt: renewed.receipt, email, resource, fields });
+      expect(writes).toHaveLength(2);
+      expect(writes.every(write => write.origin === "manual")).toBe(true);
+      const again = await buildTranslationPreview({ email, resource, states, fields, manualEdits, translate });
+      expect(again.fields.role.zhHantOrigin).toBe("manual");
+      expect(again.fields.role.zhHansOrigin).toBe("manual");
+    } finally { clock.mockRestore(); }
+  });
+
+  it("preserves manually edited simplified Chinese while translating changed English", async () => {
+    const result = await buildTranslationPreview({ email, resource,
+      fields: { role: { en: "Hello", zhHant: "世界", zhHans: "简体人工修订" } },
+      states: [{ field: "role", locale: "zhHant", origin: "machine", sourceHash: sha256("World"), glossaryVersion: "test" }],
+      manualEdits: { role: ["zhHans"] }, refreshLegacy: { role: ["zhHant", "zhHans"] },
+      translate: async () => ["你好"],
+    });
+    expect(result.fields.role.value).toEqual({ en: "Hello", zhHant: "你好", zhHans: "简体人工修订" });
+    expect(result.fields.role.zhHansOrigin).toBe("manual");
+  });
+
+  it("converts unedited simplified Chinese from the manual Traditional correction", async () => {
+    const result = await buildTranslationPreview({ email, resource,
+      fields: { role: { en: "Hello", zhHant: "人工修訂", zhHans: "旧简体" } },
+      states: [{ field: "role", locale: "zhHans", origin: "machine", sourceHash: sha256("舊繁體"), glossaryVersion: "test" }],
+      manualEdits: { role: ["zhHant"] }, translate: async () => { throw new Error("Should not call Google"); },
+    });
+    expect(result.fields.role.value.zhHant).toBe("人工修訂");
+    expect(result.fields.role.value.zhHans).toBe("人工修订");
+    expect(result.fields.role.zhHantOrigin).toBe("manual");
+    expect(result.fields.role.zhHansOrigin).toBe("machine");
+  });
+
+  it("does not lock reverted edits or untouched machine preview text", () => {
+    const baseline = { role: { en: "Hello", zhHant: "你好", zhHans: "你好" } };
+    expect(manualTranslationEdits(structuredClone(baseline), baseline, { role: { zhHant: true } })).toEqual({});
+    expect(manualTranslationEdits({ role: { ...baseline.role, zhHant: "您好" } }, baseline, {})).toEqual({});
+    expect(manualTranslationEdits({ role: { ...baseline.role, zhHant: "您好" } }, baseline, { role: { zhHant: true } })).toEqual({ role: ["zhHant"] });
+  });
+});
+
+describe("manual translation updates", () => {
+  const previous = { role: { en: "Hello", zhHant: "你好", zhHans: "你好" } };
+
+  it("leaves unchanged translations and their provenance untouched", () => {
+    expect(manualTranslationUpdateWrites(structuredClone(previous), previous)).toEqual([]);
+  });
+
+  it("marks only the Chinese locale that was actually edited", () => {
+    const fields = { role: { ...previous.role, zhHant: "您好" } };
+    expect(manualTranslationUpdateWrites(fields, previous)).toEqual([
+      expect.objectContaining({ field: "role", locale: "zhHant", origin: "manual", sourceHash: sha256("Hello") }),
+    ]);
+  });
+
+  it("rejects changed English with stale Chinese when no preview was supplied", () => {
+    expect(() => manualTranslationUpdateWrites({ role: { ...previous.role, en: "World" } }, previous))
+      .toThrow(TranslationReceiptError);
+  });
+
+  it("does not infer manual corrections when both English and Chinese changed without a preview", () => {
+    expect(() => manualTranslationUpdateWrites({ role: { en: "World", zhHant: "世界", zhHans: "世界" } }, previous))
+      .toThrow(TranslationReceiptError);
+  });
+
+  it("treats canonically equivalent Chinese as unchanged", () => {
+    const fields = { bio: { en: "Hello", zhHant: "第一行\r\n第二行", zhHans: "" } };
+    const before = { bio: { ...fields.bio, zhHant: "第一行\n第二行" } };
+    expect(manualTranslationUpdateWrites(fields, before)).toEqual([]);
+  });
+});
 const googleEnvironmentNames = [
   "VERCEL",
   "VERCEL_ENV",

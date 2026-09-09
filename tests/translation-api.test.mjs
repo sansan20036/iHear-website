@@ -28,6 +28,23 @@ beforeEach(() => {
 });
 
 describe("translation preview API", () => {
+  it("passes validated draft manual edits to the preview builder", async () => {
+    const manualEdits = { bio: ["zhHant", "zhHans"] };
+    const response = await previewTranslation(request({ resource: { type: "team", id: "profile-1", version: 2 },
+      fields: { bio: { en: "Hello", zhHant: "您好", zhHans: "您好" } }, manualEdits,
+    }));
+    expect(response.status).toBe(200);
+    expect(buildTranslationPreview).toHaveBeenCalledWith(expect.objectContaining({ manualEdits }));
+  });
+
+  it.each([{ unknown: ["zhHant"] }, { bio: ["en"] }, { bio: "zhHant" }])("rejects invalid manual edits: %j", async manualEdits => {
+    const response = await previewTranslation(request({ resource: { type: "team", id: "profile-1" },
+      fields: { bio: { en: "Hello" } }, manualEdits,
+    }));
+    expect(response.status).toBe(400);
+    expect(buildTranslationPreview).not.toHaveBeenCalled();
+  });
+
   it("returns the authorization response for unauthenticated or cross-origin requests", async () => {
     authorizeAdminRequest.mockResolvedValue({ response: new Response(JSON.stringify({ error: "Forbidden" }), { status: 403 }) });
     expect((await previewTranslation(request({}))).status).toBe(403);

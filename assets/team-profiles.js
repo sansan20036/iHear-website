@@ -9,6 +9,7 @@
   const locales = ["en", "zhHant", "zhHans"];
   const nameCollator=new Intl.Collator("en",{usage:"sort",sensitivity:"base",numeric:true,ignorePunctuation:true});
   const languageGuardPromise=import("/assets/text-language-guard.js").catch(()=>null);
+  const translationEditsPromise=import("/assets/team-translation-edits.js").catch(()=>null);
   const labels = {
     en:{manager:"Team directory manager",hint:"Drag a handle to reorder profiles, or use the Move buttons. Changes are saved automatically.",editMode:"Manage profiles",done:"Done",add:"Add profile",edit:"Edit",drag:"Drag to reorder",up:"Move up",down:"Move down",draft:"Draft",loading:"Loading team profiles…",empty:"No published profiles yet.",failed:"Team profiles are temporarily unavailable.",newTitle:"Add team profile",editTitle:"Edit team profile",name:"Name",initials:"Initials",section:"Section",leader:"Leadership",tutor:"Tutor",existing:"Existing person",newPerson:"Create a new person",school:"School",grade:"Grade",showSchool:"Show school publicly",showGrade:"Show grade publicly",consent:"I confirm that applicable publication consent has been obtained.",shared:"Changing the name or initials updates this person everywhere.",role:"Role / title",schoolDisplay:"Localized school name",languages:"Languages",strengths:"Teaching strengths",summary:"Short introduction",bio:"Full bio",hobbies:"Hobbies",saveDraft:"Save draft",publish:"Publish",cancel:"Cancel",delete:"Permanently delete",deleteConfirm:"Permanently delete this profile placement? This cannot be undone.",conflict:"Someone else changed this data. Reload and try again.",saved:"Team profile saved.",orderSaved:"Team order saved.",reorderFailed:"Unable to save the new order. Please try again.",deleted:"Team profile deleted.",validation:"Please review the form.",copy:"Copy English",close:"Close editor",unsaved:"Discard your unsaved team-profile changes?",retry:"Retry",moved:(name,position,total)=>`${name} moved to position ${position} of ${total}.`},
     zhHant:{manager:"團隊資料管理",hint:"拖曳卡片上的排序把手，或使用上移／下移按鈕；放開後會自動儲存。",editMode:"管理團隊檔案",done:"完成",add:"新增檔案",edit:"編輯",drag:"拖曳排序",up:"上移",down:"下移",draft:"草稿",loading:"正在載入團隊資料…",empty:"目前沒有已發布的團隊檔案。",failed:"目前無法載入團隊資料。",newTitle:"新增團隊檔案",editTitle:"編輯團隊檔案",name:"姓名",initials:"姓名縮寫",section:"顯示區塊",leader:"領導團隊",tutor:"導師",existing:"既有人物",newPerson:"建立新人物",school:"學校",grade:"年級",showSchool:"公開顯示學校",showGrade:"公開顯示年級",consent:"我確認已取得適用的公開同意。",shared:"修改姓名或縮寫會同步套用到此人物的所有版位。",role:"角色／職稱",schoolDisplay:"本語言的學校名稱",languages:"使用語言",strengths:"教學專長",summary:"簡短介紹",bio:"完整介紹",hobbies:"興趣",saveDraft:"儲存草稿",publish:"發布",cancel:"取消",delete:"永久刪除",deleteConfirm:"確定要永久刪除此公開版位嗎？刪除後無法復原。",conflict:"另一位管理員已修改資料，請重新載入後再試。",saved:"團隊檔案已儲存。",orderSaved:"團隊順序已儲存。",reorderFailed:"無法儲存新順序，請稍後再試。",deleted:"團隊檔案已刪除。",validation:"請檢查表單內容。",copy:"複製英文",close:"關閉編輯器",unsaved:"要放棄尚未儲存的團隊檔案修改嗎？",retry:"重試",moved:(name,position,total)=>`${name} 已移到第 ${position} 位，共 ${total} 位。`},
@@ -149,13 +150,13 @@
     const draft={personId:"",name:"",initials:"",section:"tutor",status:"draft",sortOrder:0,school:"",grade:"",showSchool:false,showGrade:false,consentConfirmed:false};
     textFields.forEach(field=>draft[field]=emptyLocalized());return draft
   }
-  function resetTranslationEdits(){state.translationEdits=Object.fromEntries(textFields.map(field=>[field,{en:false,zhHant:false,zhHans:false}]))}
+  function resetTranslationEdits(){state.translationEdits=Object.fromEntries(textFields.map(field=>[field,{en:false,zhHant:false,zhHans:false}]));state.translationBaseline=Object.fromEntries(textFields.map(field=>[field,{...state.draft[field]}]))}
   function openEditor(item){
     state.draft=item?JSON.parse(JSON.stringify({...item,consentConfirmed:Boolean(item.publicationConsentAt)})):newDraft();
     resetTranslationEdits();state.originalDraft=JSON.stringify(state.draft);state.activeLocale="en";state.translationReceipt="";state.translationReady=false;state.englishGuardAccepted=false;state.deleteConfirming=false;buildEditor();dialog.showModal();document.body.classList.add("team-profile-modal-open");dialog.querySelector("input,select,textarea,button")?.focus()
   }
   function isDirty(){if(state.sortPreview)return true;if(!state.draft)return false;syncDraft();return JSON.stringify(state.draft)!==state.originalDraft}
-  function legacyRefreshFor(fields){return Object.fromEntries(Object.keys(fields).map(field=>{const edits=state.translationEdits[field];if(!edits?.en)return null;const locales=["zhHant","zhHans"].filter(language=>!edits[language]);return locales.length?[field,locales]:null}).filter(Boolean))}
+  function legacyRefreshFor(fields,manualEdits){return Object.fromEntries(Object.keys(fields).map(field=>{const edits=state.translationEdits[field];if(!edits?.en)return null;const locales=["zhHant","zhHans"].filter(language=>!manualEdits[field]?.includes(language));return locales.length?[field,locales]:null}).filter(Boolean))}
   function closeEditor(force){if(!dialog.open)return true;if(!force&&isDirty()&&!confirm(l().unsaved))return false;dialog.close();return true}
   function field(name,label,textarea){
     const value=state.draft[name]||"";
@@ -201,7 +202,7 @@
   function payload(status){
     syncDraft();return{...state.draft,status,sortOrder:Number(state.draft.sortOrder||0),profileVersion:state.draft.profileVersion,personVersion:state.draft.personVersion,translationReceipt:state.translationReceipt||undefined}
   }
-  function errorFrom(response,data){const error=new Error(data&&data.error||l().validation);error.status=response.status;error.issues=data&&data.issues;return error}
+  function errorFrom(response,data){const error=new Error(data&&data.error||l().validation);error.status=response.status;error.code=data&&data.code;error.issues=data&&data.issues;return error}
   function setBusy(busy){state.busy=busy;const shell=dialog.querySelector(".team-editor-shell");if(shell)shell.setAttribute("aria-busy",String(busy));dialog.querySelectorAll("button,input,select,textarea").forEach(control=>control.disabled=busy)}
   function showIssues(error){
     const issues=error&&error.issues||{};
@@ -216,7 +217,7 @@
       if(marker)marker.textContent=value;
       if(field){field.setAttribute("aria-invalid","true");if(!first)first=field}
     });
-    box.hidden=false;box.textContent=error.status===409?l().conflict:(Object.values(issues).join(" · ")||error.message||l().validation);
+    box.hidden=false;box.textContent=error.code==="TRANSLATION_RECEIPT_INVALID"?(locale()==="en"?"Translation preview is missing or outdated. Review the English text and generate the preview again.":locale()==="zhHans"?"翻译预览缺失或已过期。请检查英文并重新产生预览。":"翻譯預覽缺失或已過期。請檢查英文並重新產生預覽。"):error.status===409?l().conflict:(Object.values(issues).join(" · ")||error.message||l().validation);
     (first||box).focus();
   }
   async function save(status){
@@ -228,9 +229,11 @@
       if(Object.keys(fields).length){
         setBusy(true);
         try{
-          const response=await fetch("/api/admin/translations/preview",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify({resource:{type:"team",scope:"",id:state.draft.id||"__new__",version:state.draft.id?state.draft.profileVersion:undefined},fields,allowCjkEnglish:state.englishGuardAccepted,refreshLegacy:legacyRefreshFor(fields),personNames:[state.draft.name].filter(Boolean),contextTerms:[state.draft.school].filter(Boolean)})});
+          const editTracking=await translationEditsPromise;if(!editTracking)throw new Error(l().failed);
+          const manualEdits=editTracking.manualTranslationEdits(fields,state.translationBaseline,state.translationEdits);
+          const response=await fetch("/api/admin/translations/preview",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify({resource:{type:"team",scope:"",id:state.draft.id||"__new__",version:state.draft.id?state.draft.profileVersion:undefined},fields,allowCjkEnglish:state.englishGuardAccepted,refreshLegacy:legacyRefreshFor(fields,manualEdits),manualEdits,personNames:[state.draft.name].filter(Boolean),contextTerms:[state.draft.school].filter(Boolean)})});
           const data=await response.json().catch(()=>null);if(!response.ok)throw errorFrom(response,data);
-          Object.entries(data.fields).forEach(([field,result])=>{state.draft[field]=result.value;const edits=state.translationEdits[field];if(edits){edits.en=false;if(result.zhHantStatus==="translated")edits.zhHant=false;if(result.zhHansStatus==="translated")edits.zhHans=false}});state.translationReceipt=data.receipt;state.translationReady=true;state.activeLocale="zhHant";buildEditor();showToast(locale()==="en"?"Chinese preview ready. Review it, then save.":locale()==="zhHans"?"中文预览已完成，请检查后再保存。":"中文預覽已完成，請檢查後再儲存。",false);setBusy(false);return
+          Object.entries(data.fields).forEach(([field,result])=>{state.draft[field]=result.value;const edits=state.translationEdits[field];if(edits){edits.en=false;["zhHant","zhHans"].forEach(language=>{if(result[`${language}Status`]==="translated"){edits[language]=false;state.translationBaseline[field][language]=result.value[language]}})}});state.translationReceipt=data.receipt;state.translationReady=true;state.activeLocale="zhHant";buildEditor();showToast(locale()==="en"?"Chinese preview ready. Review it, then save.":locale()==="zhHans"?"中文预览已完成，请检查后再保存。":"中文預覽已完成，請檢查後再儲存。",false);setBusy(false);return
         }catch(error){setBusy(false);showIssues(error);return}
       }
       state.translationReady=true;body=payload(status);
@@ -240,7 +243,7 @@
       const response=await fetch(state.draft.id?`/api/team-profiles/${encodeURIComponent(state.draft.id)}`:"/api/team-profiles",{method:state.draft.id?"PATCH":"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
       const data=await response.json().catch(()=>null);if(!response.ok)throw errorFrom(response,data);
       state.originalDraft=JSON.stringify(state.draft);closeEditor(true);await load(true,{revision:data.revision&&data.revision.revision});showToast(l().saved,false);if(window.iHearLiveContent)window.iHearLiveContent.announce("team",data.revision)
-    }catch(error){setBusy(false);showIssues(error)}
+    }catch(error){if(error.code==="TRANSLATION_RECEIPT_INVALID"){state.translationReady=false;state.translationReceipt=""}setBusy(false);showIssues(error)}
   }
   function requestRemove(){
     if(state.busy||!state.draft.id)return;syncDraft();state.deleteConfirming=true;buildEditor();requestAnimationFrame(()=>dialog.querySelector("[data-delete-confirm]")?.focus())

@@ -528,6 +528,29 @@ export function manualTranslationWrites(fields: Record<string, LocalizedTranslat
   return writes;
 }
 
+// An update without a preview receipt is not evidence that every supplied
+// Chinese field was edited. Compare with persisted text, never a client baseline.
+export function manualTranslationUpdateWrites(
+  fields: Record<string, LocalizedTranslationField>,
+  previous: Record<string, LocalizedTranslationField>,
+) {
+  const writes: TranslationStateWrite[] = [];
+  for (const [field, value] of Object.entries(fields)) {
+    const before = previous[field];
+    if (!before) throw new TranslationReceiptError("Reload the profile before saving");
+    if (sha256(value.en) !== sha256(before.en) && (value.zhHant || value.zhHans)) {
+      throw new TranslationReceiptError("English changed; generate a translation preview before saving");
+    }
+    if (value.zhHant && sha256(value.zhHant) !== sha256(before.zhHant)) {
+      writes.push({ field, locale: "zhHant", sourceHash: sha256(value.en), origin: "manual", glossaryVersion: TRANSLATION_GLOSSARY_VERSION });
+    }
+    if (value.zhHans && sha256(value.zhHans) !== sha256(before.zhHans)) {
+      writes.push({ field, locale: "zhHans", sourceHash: sha256(value.zhHant), origin: "manual", glossaryVersion: TRANSLATION_GLOSSARY_VERSION });
+    }
+  }
+  return writes;
+}
+
 export async function buildTranslationPreview(params: {
   email: string;
   resource: TranslationResource;
@@ -535,11 +558,26 @@ export async function buildTranslationPreview(params: {
   states: TranslationState[];
   force?: Record<string, Array<"zhHant" | "zhHans">>;
   refreshLegacy?: Record<string, Array<"zhHant" | "zhHans">>;
+  manualEdits?: Record<string, Array<"zhHant" | "zhHans">>;
   autoTranslate?: boolean;
   contextTerms?: string[];
   translate?: (contents: string[]) => Promise<string[]>;
 }) {
   const stateMap = new Map(params.states.map((state) => [`${state.field}:${state.locale}`, state]));
+  // Unsaved manual edits must survive repeated previews, including renewal of
+  // an expired receipt. Persisted provenance alone cannot describe this draft.
+  for (const [field, locales] of Object.entries(params.manualEdits || {})) {
+    const value = params.fields[field];
+    if (!value) continue;
+    for (const locale of locales) {
+      if (!value[locale].trim()) continue;
+      stateMap.set(`${field}:${locale}`, {
+        field, locale, origin: "manual",
+        sourceHash: sha256(locale === "zhHant" ? value.en : value.zhHant),
+        glossaryVersion: TRANSLATION_GLOSSARY_VERSION,
+      });
+    }
+  }
   const results: Record<string, { value: LocalizedTranslationField; zhHantOrigin: TranslationOrigin; zhHansOrigin: TranslationOrigin; zhHantStatus: string; zhHansStatus: string }> = {};
   const pending: Array<{
     field: string;

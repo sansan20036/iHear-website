@@ -5,6 +5,7 @@ import path from "node:path";
 import postgres from "postgres";
 
 import { saveTranslationStates, upsertTranslationStatesInTransaction } from "./translation-state";
+import { TEAM_LOCALIZED_FIELDS } from "./team-types";
 import type { TranslationStateWrite } from "./translation-types";
 
 import { TEAM_PEOPLE_SEED, TEAM_PROFILES_SEED } from "./team-seed";
@@ -401,13 +402,15 @@ async function insertProfile(
   `;
 }
 
-export async function updateTeamProfile(id: string, input: TeamProfileUpdateInput, email: string, translationStates: TranslationStateWrite[] = []) {
+export async function updateTeamProfile(id: string, input: TeamProfileUpdateInput, email: string, translationStates?: TranslationStateWrite[]) {
   assertPersistence();
+  const { manualTranslationUpdateWrites } = await import("./translation-core");
+  const fields = Object.fromEntries(TEAM_LOCALIZED_FIELDS.map((field) => [field, input[field]]));
   const sql = sqlClient();
   if (sql) {
     return sql.begin(async (tx) => {
       const [current] = await tx`
-        SELECT person_id FROM team_profiles
+        SELECT * FROM team_profiles
         WHERE id = ${id} AND version = ${input.profileVersion} AND deleted_at IS NULL
         FOR UPDATE
       `;
@@ -416,6 +419,10 @@ export async function updateTeamProfile(id: string, input: TeamProfileUpdateInpu
         if (!exists[0]) throw new TeamNotFoundError("Team profile not found");
         throw new TeamConflictError("Team profile changed");
       }
+      const previous = Object.fromEntries(TEAM_LOCALIZED_FIELDS.map((field) => [
+        field, locale(current as TeamRow, field === "schoolDisplay" ? "school_display" : field),
+      ]));
+      const writes = translationStates ?? manualTranslationUpdateWrites(fields, previous);
       const personRows = await tx`
         UPDATE team_people
         SET name = ${input.name}, initials = ${input.initials},
@@ -453,7 +460,7 @@ export async function updateTeamProfile(id: string, input: TeamProfileUpdateInpu
       await upsertTranslationStatesInTransaction(
         tx,
         { type: "team", scope: "", id },
-        translationStates,
+        writes,
         email,
       );
       const rows = await tx.unsafe<TeamRow[]>(
@@ -465,6 +472,7 @@ export async function updateTeamProfile(id: string, input: TeamProfileUpdateInpu
       return fromRow(rows[0]);
     });
   }
+  let writes = translationStates;
   const result = await mutateFile(async (store) => {
     const profile = store.profiles.find((item) => item.id === id);
     if (!profile) throw new TeamNotFoundError("Team profile not found");
@@ -472,6 +480,9 @@ export async function updateTeamProfile(id: string, input: TeamProfileUpdateInpu
     if (profile.version !== input.profileVersion || person.version !== input.personVersion) {
       throw new TeamConflictError("Team profile changed");
     }
+    writes ??= manualTranslationUpdateWrites(fields, Object.fromEntries(
+      TEAM_LOCALIZED_FIELDS.map((field) => [field, profile[field]]),
+    ));
     const now = new Date().toISOString();
     Object.assign(person, {
       name: input.name,
@@ -493,7 +504,7 @@ export async function updateTeamProfile(id: string, input: TeamProfileUpdateInpu
     });
     return fromFile(store).find((item) => item.id === id)!;
   });
-  await saveTranslationStates({ type: "team", scope: "", id }, translationStates, email);
+  await saveTranslationStates({ type: "team", scope: "", id }, writes || [], email);
   return result;
 }
 
