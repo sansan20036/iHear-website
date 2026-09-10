@@ -8,6 +8,13 @@ import { upsertTranslationStatesInTransaction } from './translation-state';
 export class GalleryError extends Error {
   constructor(message: string, public status = 400) { super(message); }
 }
+// A definite rejection, unlike a database timeout with an unknown commit outcome.
+export class GalleryNotCommittedError extends GalleryError {
+  constructor(readonly cause: unknown) {
+    super('Gallery could not be saved. Please retry.', 503);
+    this.name = 'GalleryNotCommittedError';
+  }
+}
 type Operation = { galleryId: GalleryId; actor: string; fingerprint: string };
 type Store = { galleries: Partial<Record<GalleryId, Gallery>>; assets: Record<string, GalleryAsset>; operations: Record<string, Operation> };
 const filePath = path.join(process.env.IHEAR_FORCE_FILE_STORE === '1' && process.env.IHEAR_TEST_DATA_DIR || path.join(process.cwd(), 'data'), 'media-galleries.json');
@@ -38,35 +45,44 @@ async function readStore(): Promise<Store> {
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { galleries: {}, assets: {}, operations: {} }; throw error; }
 }
 async function mutateFile<T>(fn: (store: Store) => T): Promise<T> {
-  await mkdir(path.dirname(filePath), { recursive: true });
   const lock = `${filePath}.lock`;
-  const deadline = Date.now() + 10_000;
-  for (;;) {
-    try { await mkdir(lock); break; }
-    catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-      if (Date.now() >= deadline) throw new GalleryError('Gallery is busy; retry shortly', 503);
-      await new Promise(resolve => setTimeout(resolve, 40));
-    }
-  }
   const temporary = `${filePath}.${randomUUID()}.tmp`;
+  let committed = false;
   try {
-    const store = await readStore();
-    const result = fn(store);
-    await writeFile(temporary, JSON.stringify(store), 'utf8');
-    // Windows readers, antivirus and OneDrive may briefly hold the destination.
-    // Retry the atomic rename while retaining our writer lock; never truncate it.
-    for (let attempt = 0; ; attempt++) {
-      try { await rename(temporary, filePath); break; }
+    await mkdir(path.dirname(filePath), { recursive: true });
+    const deadline = Date.now() + 10_000;
+    for (;;) {
+      try { await mkdir(lock); break; }
       catch (error) {
-        if (!['EPERM', 'EACCES', 'EBUSY'].includes((error as NodeJS.ErrnoException).code || '') || attempt >= 10) throw error;
-        await new Promise(resolve => setTimeout(resolve, Math.min(250, 30 * (attempt + 1))));
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+        if (Date.now() >= deadline) throw new GalleryError('Gallery is busy; retry shortly', 503);
+        await new Promise(resolve => setTimeout(resolve, 40));
       }
     }
-    return result;
-  } finally {
-    await unlink(temporary).catch(() => undefined);
-    await rmdir(lock);
+    try {
+      const store = await readStore();
+      const result = fn(store);
+      await writeFile(temporary, JSON.stringify(store), 'utf8');
+      // Windows readers, antivirus and OneDrive may briefly hold the destination.
+      // Retry the atomic rename while retaining our writer lock; never truncate it.
+      for (let attempt = 0; ; attempt++) {
+        try { await rename(temporary, filePath); break; }
+        catch (error) {
+          if (!['EPERM', 'EACCES', 'EBUSY'].includes((error as NodeJS.ErrnoException).code || '') || attempt >= 10) throw error;
+          await new Promise(resolve => setTimeout(resolve, Math.min(250, 30 * (attempt + 1))));
+        }
+      }
+      committed = true;
+      return result;
+    } finally {
+      await unlink(temporary).catch(() => undefined);
+      await rmdir(lock);
+    }
+  } catch (error) {
+    // Cleanup can fail after rename succeeded. Do not mark that saved operation
+    // as rejected: the route must retain its photos and allow status-based replay.
+    if (committed || error instanceof GalleryError) throw error;
+    throw new GalleryNotCommittedError(error);
   }
 }
 function fromRow(row: any): Gallery {

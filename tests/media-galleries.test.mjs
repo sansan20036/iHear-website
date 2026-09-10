@@ -1,11 +1,11 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest';
-import { mkdtemp, mkdir, readFile, readdir, rename } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rename, writeFile, rmdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import sharp from 'sharp';
 import { youtubeVideoId } from '../assets/youtube.js';
-vi.mock('node:fs/promises', async original => { const fs = await original(); return { ...fs, rename: vi.fn(fs.rename) }; });
+vi.mock('node:fs/promises', async original => { const fs = await original(); return { ...fs, rename: vi.fn(fs.rename), writeFile: vi.fn(fs.writeFile), mkdir: vi.fn(fs.mkdir), rmdir: vi.fn(fs.rmdir) }; });
 
 vi.mock('../lib/admin-auth', () => ({
   authorizeAdminRequest: vi.fn(async () => ({ principal: { email: 'gallery@example.com', role: 'editor' } })),
@@ -138,4 +138,87 @@ test('a temporary Windows destination lock is retried without losing saved data'
   expect(after.items.slice(0, before.items.length)).toEqual(before.items);
   expect(after.items).toHaveLength(before.items.length + 1);
   expect(rename.mock.calls.length).toBeGreaterThanOrEqual(2);
+});
+
+async function storedPhotoFiles() {
+  return (await readdir(path.join(root, 'public/uploads/site-media'), { recursive: true })).filter(file => file.endsWith('.webp')).sort();
+}
+
+test.each(['rename', 'temporary write', 'lock creation'])('failed local %s cleans new photos and retries the same operation safely', async stage => {
+  const fs = await vi.importActual('node:fs/promises');
+  const before = (await store.listGalleries()).find(g => g.id === 'home');
+  const filesBefore = await storedPhotoFiles();
+  const body = uploadBody(before.version);
+  const error = Object.assign(new Error('Injected local persistence failure'), { code: stage === 'lock creation' ? 'EACCES' : 'ENOSPC' });
+  if (stage === 'rename') rename.mockRejectedValueOnce(error);
+  if (stage === 'temporary write') writeFile.mockImplementation((file, ...args) => String(file).endsWith('.tmp') ? Promise.reject(error) : fs.writeFile(file, ...args));
+  if (stage === 'lock creation') mkdir.mockImplementation((file, ...args) => String(file).endsWith('.lock') ? Promise.reject(error) : fs.mkdir(file, ...args));
+  try {
+    expect((await post(uploadRequest('home', body), context('home'))).status).toBe(503);
+    expect(await storedPhotoFiles()).toEqual(filesBefore);
+    expect((await store.listGalleries()).find(g => g.id === 'home')).toEqual(before);
+    expect(await store.operationStatus(body.operationId, 'home', 'gallery@example.com')).toBeNull();
+    expect((await readdir(path.join(root, 'data'))).filter(f => f.endsWith('.tmp') || f.endsWith('.lock'))).toEqual([]);
+  } finally {
+    rename.mockImplementation(fs.rename); writeFile.mockImplementation(fs.writeFile); mkdir.mockImplementation(fs.mkdir);
+  }
+  const retry = await (await post(uploadRequest('home', body), context('home'))).json();
+  expect(retry.ok).toBe(true);
+  expect(retry.item.items.filter(item => item.id === body.operationId)).toHaveLength(1);
+  expect(await storedPhotoFiles()).toHaveLength(filesBefore.length + 3);
+});
+
+test('lock cleanup failure after a successful commit preserves photos and permits replay', async () => {
+  const fs = await vi.importActual('node:fs/promises');
+  const before = (await store.listGalleries()).find(g => g.id === 'home');
+  const filesBefore = await storedPhotoFiles();
+  const body = uploadBody(before.version);
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+  rmdir.mockRejectedValueOnce(Object.assign(new Error('Injected cleanup failure'), { code: 'EBUSY' }));
+  try {
+    expect((await post(uploadRequest('home', body), context('home'))).status).toBe(503);
+    expect(await store.operationStatus(body.operationId, 'home', 'gallery@example.com')).not.toBeNull();
+    const committedFiles = await storedPhotoFiles();
+    expect(committedFiles).toHaveLength(filesBefore.length + 3);
+    const replay = await (await post(uploadRequest('home', body), context('home'))).json();
+    expect(replay.replayed).toBe(true);
+    expect(replay.item.items.filter(item => item.id === body.operationId)).toHaveLength(1);
+    expect(await storedPhotoFiles()).toEqual(committedFiles);
+  } finally {
+    log.mockRestore();
+    await fs.rmdir(path.join(root, 'data/media-galleries.json.lock'));
+  }
+});
+
+test('an unknown commit outcome retains saved photos until operation replay confirms success', async () => {
+  const before = (await store.listGalleries()).find(g => g.id === 'home');
+  const filesBefore = await storedPhotoFiles();
+  const body = uploadBody(before.version);
+  const mutate = store.mutateGallery;
+  const spy = vi.spyOn(store, 'mutateGallery').mockImplementationOnce(async input => {
+    await mutate(input);
+    throw Object.assign(new Error('Response lost after commit'), { code: 'ETIMEDOUT' });
+  });
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    expect((await post(uploadRequest('home', body), context('home'))).status).toBe(503);
+    expect(await storedPhotoFiles()).toHaveLength(filesBefore.length + 3);
+    const replay = await (await post(uploadRequest('home', body), context('home'))).json();
+    expect(replay.replayed).toBe(true);
+    expect(replay.item.items.filter(item => item.id === body.operationId)).toHaveLength(1);
+    expect(await storedPhotoFiles()).toHaveLength(filesBefore.length + 3);
+  } finally { spy.mockRestore(); log.mockRestore(); }
+});
+
+test('a known database constraint rejection cleans only the rejected upload', async () => {
+  const before = (await store.listGalleries()).find(g => g.id === 'home');
+  const filesBefore = await storedPhotoFiles();
+  const body = uploadBody(before.version);
+  const spy = vi.spyOn(store, 'mutateGallery').mockRejectedValueOnce(Object.assign(new Error('Injected foreign-key failure'), { code: '23503' }));
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    expect((await post(uploadRequest('home', body), context('home'))).status).toBe(503);
+    expect(await storedPhotoFiles()).toEqual(filesBefore);
+    expect(await store.operationStatus(body.operationId, 'home', 'gallery@example.com')).toBeNull();
+  } finally { spy.mockRestore(); log.mockRestore(); }
 });

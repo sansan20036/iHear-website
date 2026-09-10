@@ -308,12 +308,11 @@ function oidcCredentials() {
   const providerId = process.env.GOOGLE_CLOUD_WORKLOAD_IDENTITY_PROVIDER_ID?.trim();
   const oidcSpecificValues = [projectNumber, serviceAccountEmail, poolId, providerId];
   if (!oidcSpecificValues.some(Boolean)) return null;
-  const values = [projectId, ...oidcSpecificValues];
-  if (!values.every(Boolean)) throw new TranslationConfigurationError("Google Cloud OIDC configuration is incomplete");
-  if (!/^\d{6,30}$/.test(projectNumber!) || !/^[a-z][a-z0-9-]{2,31}$/.test(poolId!) || !/^[a-z][a-z0-9-]{2,31}$/.test(providerId!)) {
+  if (!projectId || !projectNumber || !serviceAccountEmail || !poolId || !providerId) throw new TranslationConfigurationError("Google Cloud OIDC configuration is incomplete");
+  if (!/^\d{6,30}$/.test(projectNumber) || !/^[a-z][a-z0-9-]{2,31}$/.test(poolId) || !/^[a-z][a-z0-9-]{2,31}$/.test(providerId)) {
     throw new TranslationConfigurationError("Google Cloud OIDC configuration is invalid");
   }
-  if (!/^[a-z0-9][a-z0-9._-]*@[a-z0-9.-]+\.iam\.gserviceaccount\.com$/i.test(serviceAccountEmail!)) {
+  if (!/^[a-z0-9][a-z0-9._-]*@[a-z0-9.-]+\.iam\.gserviceaccount\.com$/i.test(serviceAccountEmail)) {
     throw new TranslationConfigurationError("Google Cloud OIDC service account is invalid");
   }
   const providerResource = `iam.googleapis.com/projects/${projectNumber}/locations/global/workloadIdentityPools/${poolId}/providers/${providerId}`;

@@ -41,7 +41,7 @@ function isValidKey(value: unknown) {
   return typeof value === "string" && value.trim().length > 0 && value.length <= 5000;
 }
 
-function isValidValue(value: unknown) {
+function isValidValue(value: unknown): value is string {
   return typeof value === "string" && value.length <= 5000;
 }
 
