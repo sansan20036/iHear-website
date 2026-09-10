@@ -1225,7 +1225,9 @@ test('portrait, landscape and video use a stable frame on narrow phones and desk
     const gallery = page.locator('[data-media-gallery="tutoring"]');
     const frame = gallery.locator('.gallery-frame');
     await expect(frame.locator('img')).toHaveCSS('object-fit', 'contain');
-    const first = await frame.boundingBox(); expect(first.height).toBeGreaterThanOrEqual(200);
+    await expect(frame).toHaveCSS('min-height', '200px');
+    // Chromium on Linux can report 199.999969px for a 200px CSS box.
+    const first = await frame.boundingBox(); expect(Math.round(first.height * 1000) / 1000).toBeGreaterThanOrEqual(200);
     await gallery.locator('.gallery-thumb').nth(1).click();
     await expect(frame.locator('img')).toHaveAttribute('src', /seminar/);
     expect((await frame.boundingBox()).height).toBeCloseTo(first.height, 1);
