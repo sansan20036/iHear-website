@@ -41,6 +41,11 @@ export function AdminProvider({ principal, children }: { principal: Principal; c
   const router = useRouter();
   const pathname = usePathname();
   const dirty = dirtyKeys.size > 0;
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const requested = params.get('locale');
+    if (params.get('embed') === '1' && window.parent !== window && ['en', 'zhHant', 'zhHans'].includes(requested || '')) setLocale(requested as AdminLocale);
+  }, []);
 
   const setDirty = useCallback((key: string, value: boolean) => {
     setDirtyKeys((current) => {

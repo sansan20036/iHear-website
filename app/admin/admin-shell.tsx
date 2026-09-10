@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { AdminProvider, useAdmin, type AdminLocale } from "./admin-context";
 
@@ -14,6 +14,10 @@ function ShellContent({ children }: { children: React.ReactNode }) {
   const { locale, principal, navigate, changeLocale, submitting } = useAdmin();
   const [open, setOpen] = useState(false);
   const pathname = usePathname();
+  const [embedded, setEmbedded] = useState(false);
+  useEffect(() => {
+    setEmbedded(pathname === '/admin/media' && window.parent !== window && new URLSearchParams(window.location.search).get('embed') === '1');
+  }, [pathname]);
   const text = copy[locale];
   const links = [
     ["/admin", text.overview, "⌂"], ["/admin/content", text.content, "✎"], ["/admin/team", text.team, "👥"],
@@ -22,7 +26,7 @@ function ShellContent({ children }: { children: React.ReactNode }) {
   ];
   const go = (href: string) => { setOpen(false); navigate(href); };
   return (
-    <div className="admin-app">
+    <div className={`admin-app${embedded ? ' admin-embedded' : ''}`}>
       <header className="admin-mobile-header">
         <button type="button" className="admin-icon-button" aria-label={text.menu} onClick={() => setOpen(true)}>☰</button>
         <strong>{text.title}</strong>

@@ -91,7 +91,82 @@ try {
   await page.screenshot({ path: 'output/playwright/gallery-admin-mobile.png', fullPage: true });
   published = await (await fetch(`${origin}/api/media-galleries`)).json();
   expect(published.items.find(g => g.id === 'impact').items).toHaveLength(2);
-  console.log('Media admin smoke passed: YouTube, multi-upload, lost response/retry, immutable image, hide/show, reorder/remove, mobile layout.');
+  // Exercise the public-page entry against the real authenticated editor and APIs.
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto(`${origin}/`);
+  await page.locator('[data-lang="zhTW"]').click();
+  const home = page.locator('[data-media-gallery="home"]');
+  await home.getByRole('button', { name: '管理照片／影片' }).click();
+  const editor = page.frameLocator('.gallery-editor-frame');
+  const closeEditor = page.getByRole('button', { name: '關閉編輯視窗', exact: true });
+  await expect(editor.getByRole('combobox')).toHaveValue('home');
+  await expect(editor.locator('.admin-sidebar')).toBeHidden();
+  await expect(editor.locator('.admin-media-item')).toHaveCount(1);
+  await editor.getByRole('button', { name: '新增 YouTube 影片', exact: true }).click();
+  await editor.getByLabel('YouTube URL').fill('https://youtu.be/LsQWwDBLKUc?si=inline');
+  await closeEditor.click();
+  await expect(editor.getByRole('heading', { name: '尚有未儲存資料' })).toBeVisible();
+  await editor.getByRole('button', { name: '繼續編輯', exact: true }).click();
+  await expect(editor.getByLabel('YouTube URL')).toHaveValue('https://youtu.be/LsQWwDBLKUc?si=inline');
+  await editor.getByRole('button', { name: '取消此草稿', exact: true }).click();
+
+  await editor.getByLabel('新增照片', { exact: true }).setInputFiles({ name: 'inline-portrait.png', mimeType: 'image/png', buffer: png });
+  const inlineFields = editor.locator('.admin-media-draft textarea');
+  await inlineFields.nth(0).fill('Inline volunteer photo'); await inlineFields.nth(1).fill('頁面新增志工照片'); await inlineFields.nth(2).fill('页面新增志工照片');
+  await inlineFields.nth(4).fill('直接在首頁新增');
+  let releaseSave;
+  const saveGate = new Promise(resolve => { releaseSave = resolve; });
+  await page.route('**/api/media-galleries/home', async route => { await saveGate; await route.continue(); });
+  await editor.getByRole('button', { name: '儲存／重試未完成項目', exact: true }).click();
+  await expect(closeEditor).toBeDisabled();
+  releaseSave();
+  await expect(editor.locator('.admin-media-item')).toHaveCount(2, { timeout: 30_000 });
+  await expect(home.locator('.gallery-thumb')).toHaveCount(2);
+  for (const width of [320, 390, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    expect(await editor.locator('html').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+    await page.screenshot({ path: `output/playwright/gallery-inline-${width}.png` });
+  }
+  await closeEditor.click();
+  await expect(page.locator('.gallery-editor')).toHaveCount(0);
+  await expect(home.getByRole('button', { name: '管理照片／影片' })).toBeFocused();
+  await home.locator('.gallery-thumb').last().click();
+  await expect(home.locator('.gallery-caption')).toHaveText('直接在首頁新增');
+  await home.getByRole('button', { name: '管理照片／影片' }).click();
+  await expect(editor.getByRole('combobox')).toHaveValue('home');
+  await editor.locator('.admin-media-item').last().getByRole('button', { name: '移除', exact: true }).click();
+  await editor.getByRole('dialog').getByRole('button', { name: '移除', exact: true }).click();
+  await expect(editor.locator('.admin-media-item')).toHaveCount(1);
+  await expect(home.locator('.gallery-thumb')).toHaveCount(1);
+  await editor.locator('h1').press('Escape');
+  await expect(page.locator('.gallery-editor')).toHaveCount(0);
+
+  for (const [route, ids] of [['/programs', ['tutoring', 'outreach']], ['/stories', ['stories']], ['/impact', ['impact']]]) {
+    await page.goto(`${origin}${route}`);
+    for (const id of ids) {
+      await page.locator(`[data-media-gallery="${id}"] .gallery-manage`).click();
+      await expect(editor.getByRole('combobox')).toHaveValue(id);
+      await expect(editor.locator('.admin-sidebar')).toBeHidden();
+      if (id === 'impact') {
+        for (let i = 0; i < 2; i++) {
+          await editor.getByRole('button', { name: '隱藏', exact: true }).first().click();
+          await expect(editor.getByRole('button', { name: '顯示', exact: true })).toHaveCount(i + 1);
+        }
+        await expect(page.locator('[data-media-gallery="impact"] .gallery-empty')).toBeVisible();
+      }
+      await closeEditor.click();
+      await expect(page.locator('.gallery-editor')).toHaveCount(0);
+    }
+  }
+  const visitor = await browser.newContext(); const visitorPage = await visitor.newPage();
+  for (const route of ['/', '/programs', '/stories', '/impact']) {
+    await visitorPage.goto(`${origin}${route}`);
+    await expect(visitorPage.locator('.gallery-manage:visible')).toHaveCount(0);
+    if (route === '/impact') await expect(visitorPage.locator('[data-gallery-section]')).toBeHidden();
+  }
+  await visitor.close();
+  console.log('Media admin smoke passed: upload/retry, gallery controls, inline editor for all five areas, unsaved guard, save lock, immediate refresh, removal, empty galleries, visitor access, 320/390/1280px layout.');
 } catch (error) {
   if (page) {
     console.error(await page.locator('body').innerText());

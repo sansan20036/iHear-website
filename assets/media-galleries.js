@@ -5,9 +5,59 @@
   const text = () => ({ en: { previous: 'Previous', next: 'Next', play: 'Play video', open: 'Watch on YouTube', retry: 'Could not load media. Retry', photo: 'Photo', video: 'Video' }, zhHant: { previous: '上一個', next: '下一個', play: '播放影片', open: '在 YouTube 開啟', retry: '無法載入媒體，點此重試', photo: '照片', video: '影片' }, zhHans: { previous: '上一个', next: '下一个', play: '播放视频', open: '在 YouTube 打开', retry: '无法加载媒体，点击重试', photo: '照片', video: '视频' } })[locale()];
   const localized = value => value?.[locale()] || value?.en || '';
   const node = (tag, cls, content) => { const el = document.createElement(tag); if (cls) el.className = cls; if (content) el.textContent = content; return el; };
+  let administrator = false, editor = null;
+  const editorText = () => ({
+    en: { manage: 'Manage photos / videos', close: 'Close editor', loading: 'Loading editor…', full: 'Open in admin', empty: 'No visible media. Add photos or videos here.' },
+    zhHant: { manage: '管理照片／影片', close: '關閉編輯視窗', loading: '正在載入編輯視窗…', full: '在後台開啟', empty: '目前沒有公開媒體，可在此新增照片或影片。' },
+    zhHans: { manage: '管理照片／视频', close: '关闭编辑窗口', loading: '正在加载编辑窗口…', full: '在后台打开', empty: '目前没有公开媒体，可在此新增照片或视频。' },
+  })[locale()];
+  function openEditor(id, trigger) {
+    if (!administrator || editor) return;
+    const copy = editorText();
+    const dialog = node('dialog', 'gallery-editor');
+    dialog.setAttribute('aria-label', copy.manage);
+    const toolbar = node('div', 'gallery-editor-toolbar');
+    const title = node('strong', '', copy.manage);
+    const full = node('a', '', copy.full);
+    full.href = `/admin/media?gallery=${encodeURIComponent(id)}`; full.target = '_blank'; full.rel = 'noopener';
+    const close = node('button', 'gallery-editor-close', copy.close); close.type = 'button';
+    const loading = node('p', 'gallery-editor-loading', copy.loading); loading.setAttribute('role', 'status');
+    const iframe = node('iframe', 'gallery-editor-frame'); iframe.title = copy.manage;
+    iframe.src = `/admin/media?gallery=${encodeURIComponent(id)}&embed=1&locale=${locale()}`;
+    toolbar.append(title, full, close); dialog.append(toolbar, loading, iframe);
+    let ready = false;
+    const overflow = document.body.style.overflow;
+    const dispose = () => {
+      window.removeEventListener('message', receive);
+      dialog.close(); dialog.remove(); document.body.style.overflow = overflow; editor = null;
+      trigger.focus(); void refresh();
+    };
+    const requestClose = () => {
+      if (!ready) dispose();
+      else iframe.contentWindow?.postMessage({ type: 'ihear:gallery-editor-close-request' }, location.origin);
+    };
+    function receive(event) {
+      if (event.origin !== location.origin || event.source !== iframe.contentWindow) return;
+      if (event.data?.type === 'ihear:gallery-editor-state') {
+        ready = true; loading.hidden = true; close.disabled = Boolean(event.data.busy);
+      } else if (event.data?.type === 'ihear:gallery-editor-close') dispose();
+      else if (event.data?.type === 'ihear:gallery-editor-saved') void refresh();
+    }
+    window.addEventListener('message', receive);
+    close.onclick = requestClose;
+    dialog.addEventListener('cancel', event => { event.preventDefault(); requestClose(); });
+    editor = { dispose };
+    document.body.append(dialog); document.body.style.overflow = 'hidden'; dialog.showModal(); close.focus();
+  }
   const controllers = roots.map(root => {
     let items = [], selected = '', generation = 0, signature = '', playing = false;
     const frame = node('div', 'gallery-frame');
+    const manage = node('button', 'gallery-manage'); manage.type = 'button'; manage.hidden = true;
+    manage.onclick = () => {
+      if (playing) { frame.replaceChildren(); playing = false; void select(selected, true); }
+      openEditor(root.dataset.mediaGallery, manage);
+    };
+    const empty = node('p', 'gallery-empty'); empty.hidden = true;
     const caption = node('p', 'gallery-caption');
     const controls = node('div', 'gallery-controls');
     const previous = node('button', 'gallery-arrow');
@@ -19,7 +69,7 @@
     const external = node('a', 'gallery-external');
     external.target = '_blank'; external.rel = 'noopener noreferrer'; external.hidden = true;
     controls.append(previous, counter, next);
-    root.replaceChildren(frame, caption, external, controls, thumbnails);
+    root.replaceChildren(manage, empty, frame, caption, external, controls, thumbnails);
     root.classList.add('media-gallery');
     const labels = () => {
       previous.textContent = '‹'; next.textContent = '›';
@@ -95,8 +145,15 @@
       signature = nextSignature; ++generation;
       items = gallery?.items || [];
       const section = root.closest('[data-gallery-section]');
-      if (section) section.hidden = !items.length; else root.hidden = !items.length;
-      if (!items.length) { frame.replaceChildren(); playing = false; selected = ''; return; }
+      if (section) section.hidden = !items.length && !administrator; else root.hidden = !items.length && !administrator;
+      manage.hidden = !administrator; manage.textContent = `✎ ${editorText().manage}`;
+      empty.textContent = editorText().empty; empty.hidden = !administrator || !!items.length;
+      frame.hidden = !items.length;
+      if (!items.length) {
+        frame.replaceChildren(); playing = false; selected = '';
+        caption.hidden = external.hidden = controls.hidden = thumbnails.hidden = true;
+        root.querySelector('.gallery-error')?.remove(); return;
+      }
       labels(); thumbnails.replaceChildren();
       items.forEach((item, index) => {
         const button = node('button', 'gallery-thumb'); button.type = 'button'; button.dataset.id = item.id;
@@ -119,9 +176,17 @@
       frame.replaceChildren(retry);
     } };
   });
-  let fetching = false, last = [];
+  let fetching = false, refreshPending = false, last = [];
+  window.addEventListener('ihear:auth', event => {
+    const next = Boolean(event.detail?.session?.user?.isAdmin) && !event.detail?.error;
+    if (administrator === next) return;
+    administrator = next;
+    if (!administrator) editor?.dispose();
+    controllers.forEach(c => c.update(last.find(g => g.id === c.id), true));
+  });
   async function refresh() {
-    if (fetching || document.hidden) return;
+    if (document.hidden) return;
+    if (fetching) { refreshPending = true; return; }
     fetching = true;
     try {
       const response = await fetch('/api/media-galleries', { cache: 'no-store' });
@@ -129,7 +194,7 @@
       const data = await response.json(); last = data.items;
       controllers.forEach(c => c.update(last.find(g => g.id === c.id)));
     } catch { controllers.forEach(c => c.error()); }
-    finally { fetching = false; }
+    finally { fetching = false; if (refreshPending) { refreshPending = false; void refresh(); } }
   }
   window.addEventListener('ihear:language', () => controllers.forEach(c => c.update(last.find(g => g.id === c.id))));
   window.addEventListener('focus', refresh);

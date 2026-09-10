@@ -20,10 +20,11 @@ function newDraft(kind: Draft['kind'], item?: PublicGalleryItem): Draft {
   return { resource: { id: item?.assetSlot || galleryAssetSlot(operationId), version: item?.image?.recordVersion || 0 }, originalAlt: item?.image?.alt, key: operationId, operationId, itemId: item?.id || operationId, kind, url: item?.videoId ? `https://www.youtube.com/watch?v=${item.videoId}` : '', alt: { ...item?.image?.alt || emptyCaption() }, caption: { ...item?.caption || emptyCaption() }, hidden: item?.hidden || false, preview: item?.image?.src, editAlt: !!item?.image?.recordVersion, receipt: '', manual: item?.image ? ['zhHant', 'zhHans'].filter(lang => item.altStates?.find(state => state.locale === lang)?.origin !== 'machine') : [], status: '', done: false, attempted: false };
 }
 export default function MediaPage() {
-  const { locale, setDirty, setSubmitting } = useAdmin();
+  const { locale, setDirty, setSubmitting, confirmAction } = useAdmin();
   const t = (en: string, hant: string, hans = hant) => locale === 'en' ? en : locale === 'zhHans' ? hans : hant;
   const [galleries, setGalleries] = useState<PublicGallery[]>([]);
   const [selected, setSelected] = useState<GalleryId>('tutoring');
+  const [embedded, setEmbedded] = useState(false);
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -40,9 +41,29 @@ export default function MediaPage() {
   useEffect(() => { setDirty('media', pending); return () => setDirty('media', false); }, [pending, setDirty]);
   useEffect(() => {
     alive.current = true;
+    const params = new URLSearchParams(window.location.search);
+    const requested = params.get('gallery');
+    if (requested && Object.hasOwn(names.en, requested)) setSelected(requested as GalleryId);
+    setEmbedded(window.parent !== window && params.get('embed') === '1');
     void load();
     return () => { alive.current = false; objectUrls.current.forEach(url => URL.revokeObjectURL(url)); };
   }, []);
+  useEffect(() => {
+    if (!embedded) return;
+    window.parent.postMessage({ type: 'ihear:gallery-editor-state', busy }, window.location.origin);
+    const requestClose = () => {
+      if (busy) return;
+      confirmAction(() => window.parent.postMessage({ type: 'ihear:gallery-editor-close' }, window.location.origin));
+    };
+    const receive = (event: MessageEvent) => {
+      if (event.origin === window.location.origin && event.source === window.parent && event.data?.type === 'ihear:gallery-editor-close-request') requestClose();
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !(event.target as Element)?.closest('dialog[open]')) { event.preventDefault(); requestClose(); }
+    };
+    window.addEventListener('message', receive); window.addEventListener('keydown', escape);
+    return () => { window.removeEventListener('message', receive); window.removeEventListener('keydown', escape); };
+  }, [embedded, busy, confirmAction]);
   useEffect(() => {
     const guard = (event: BeforeUnloadEvent) => { if (busy || pending) { event.preventDefault(); event.returnValue = ''; } };
     window.addEventListener('beforeunload', guard); return () => window.removeEventListener('beforeunload', guard);
@@ -53,6 +74,7 @@ export default function MediaPage() {
     setGalleries(list => list.map(g => g.id === item.id ? item : g));
     // The public controller also observes the database content revision.
     try { const channel = new BroadcastChannel('ihear-media-galleries'); channel.postMessage('updated'); channel.close(); } catch { /* polling remains available */ }
+    if (embedded) window.parent.postMessage({ type: 'ihear:gallery-editor-saved' }, window.location.origin);
   }
   async function load() {
     try {

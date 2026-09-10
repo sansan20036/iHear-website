@@ -20,3 +20,17 @@
 .media-gallery :focus-visible { outline:3px solid #e78d36; outline-offset:3px; }
 .media-gallery [hidden],[data-gallery-section][hidden],.media-gallery[hidden] { display:none!important; }
 .program-card > .media-gallery { align-self:start; }
+.gallery-manage { display:block; margin:10px 12px 10px auto; padding:10px 16px; min-height:44px; max-width:calc(100% - 24px); border:1px solid currentColor; border-radius:24px; color:var(--primary, #26396e); background:white; font:inherit; font-weight:700; cursor:pointer; }
+.gallery-empty { padding:24px; text-align:center; background:var(--bg-subtle, #e5eef8); border-radius:20px; }
+.gallery-editor { position:fixed; inset:0; width:min(1040px, calc(100vw - 24px)); height:calc(100dvh - 32px); max-width:none; max-height:none; margin:auto; padding:0; border:1px solid #cdd7e6; border-radius:16px; background:#f5f7fb; color:#26396e; overflow:hidden; }
+.gallery-editor[open] { display:flex; flex-direction:column; }
+.gallery-editor::backdrop { background:rgb(18 29 57 / 55%); }
+.gallery-editor-toolbar { display:flex; align-items:center; flex-wrap:wrap; gap:10px; padding:12px 16px; border-bottom:1px solid #dce3ee; background:white; }
+.gallery-editor-toolbar strong { margin-right:auto; }
+.gallery-editor-toolbar a { color:inherit; font-size:14px; }
+.gallery-editor-close { min-height:44px; padding:8px 12px; border:1px solid #26396e; border-radius:10px; background:white; color:inherit; font:inherit; cursor:pointer; }
+.gallery-editor-close:disabled { opacity:.5; cursor:wait; }
+.gallery-editor-loading { padding:12px 16px; }
+.gallery-editor-frame { display:block; flex:1; min-height:0; width:100%; border:0; background:#f5f7fb; }
+.gallery-editor :focus-visible { outline:3px solid #e78d36; outline-offset:2px; }
+@media (max-width:480px) { .gallery-editor { width:100%; height:100dvh; border:0; border-radius:0; } .gallery-editor-toolbar { padding:8px; gap:8px; } }
