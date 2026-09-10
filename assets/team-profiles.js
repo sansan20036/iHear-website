@@ -2,7 +2,7 @@
   "use strict";
   const leaderMount = document.querySelector("[data-team-leaders]");
   const tutorMount = document.querySelector("[data-team-tutors]");
-  const tutorToggle = document.querySelector("[data-team-expand-toggle]");
+  const tutorViews = document.querySelector("[data-team-views]");
   if (!leaderMount || !tutorMount) return;
 
   const textFields = ["role", "schoolDisplay", "languages", "strengths", "summary", "bio", "hobbies"];
@@ -18,7 +18,10 @@
   Object.assign(labels.en,{delete:"Move to trash",deleteConfirm:"Move this profile to trash? You can restore it in the admin dashboard.",deleted:"Team profile moved to trash.",expandAll:"Expand all",collapseAll:"Collapse all",sortAndSaveAlphabetically:"Save A–Z order",sortAlphabetically:"Sort tutors A–Z",sortTitle:"Review A–Z tutor order",sortBody:count=>`${count} tutors will be sorted by their English first name. Draft and published tutors are included.`,sortHint:"Review the complete order below. Leadership remains unchanged.",sortCancel:"Cancel",sortConfirm:"Confirm and save",sortSaving:"Saving order…",sortAlready:"Tutors are already sorted A–Z by first name."});
   Object.assign(labels.zhHant,{delete:"移至回收區",deleteConfirm:"確定移至回收區？之後可在管理後台復原。",deleted:"團隊檔案已移至回收區。",expandAll:"全部展開",collapseAll:"全部收起",sortAndSaveAlphabetically:"儲存 A–Z 排序",sortAlphabetically:"小老師依名字 A–Z 排序",sortTitle:"確認小老師 A–Z 順序",sortBody:count=>`將 ${count} 位小老師依英文名字排序，包含草稿與已發布人員。`,sortHint:"請檢查下方完整順序；核心團隊順序不會改變。",sortCancel:"取消",sortConfirm:"確認並儲存",sortSaving:"正在儲存順序…",sortAlready:"小老師目前已經是名字 A–Z 順序。"});
   Object.assign(labels.zhHans,{delete:"移至回收区",deleteConfirm:"确定移至回收区？之后可在管理后台恢复。",deleted:"团队档案已移至回收区。",expandAll:"全部展开",collapseAll:"全部收起",sortAndSaveAlphabetically:"保存 A–Z 排序",sortAlphabetically:"小老师依名字 A–Z 排序",sortTitle:"确认小老师 A–Z 顺序",sortBody:count=>`将 ${count} 位小老师依英文名字排序，包含草稿与已发布人员。`,sortHint:"请检查下方完整顺序；核心团队顺序不会改变。",sortCancel:"取消",sortConfirm:"确认并保存",sortSaving:"正在保存顺序…",sortAlready:"小老师目前已经是名字 A–Z 顺序。"});
-  const state={leaders:[],tutors:[],people:[],admin:false,editMode:false,busy:false,reordering:false,deleteConfirming:false,draft:null,sortPreview:null,originalDraft:"",activeLocale:"en",translationReceipt:"",translationReady:false,englishGuardAccepted:false,translationEdits:{}};
+  Object.assign(labels.en,{views:"Tutor profile display",collapsed:"Collapse all",summaryView:"Summary",full:"Expand all",readMore:"Read full introduction",readLess:"Show summary"});
+  Object.assign(labels.zhHant,{views:"小老師卡片顯示方式",collapsed:"全部收合",summaryView:"部分展開（摘要）",full:"全部展開",readMore:"查看完整介紹",readLess:"收合為摘要"});
+  Object.assign(labels.zhHans,{views:"小老师卡片显示方式",collapsed:"全部收合",summaryView:"部分展开（摘要）",full:"全部展开",readMore:"查看完整介绍",readLess:"收合为摘要"});
+  const state={leaders:[],tutors:[],people:[],tutorView:"summary",tutorOverrides:new Map(),admin:false,editMode:false,busy:false,reordering:false,deleteConfirming:false,draft:null,sortPreview:null,originalDraft:"",activeLocale:"en",translationReceipt:"",translationReady:false,englishGuardAccepted:false,translationEdits:{}};
   const adminBar=document.createElement("div"),dialog=document.createElement("dialog"),sortDialog=document.createElement("dialog"),toast=document.createElement("div");
   adminBar.className="team-directory-admin";adminBar.hidden=true;adminBar.setAttribute("data-no-inline-edit","");
   leaderMount.parentElement.insertBefore(adminBar,leaderMount);
@@ -26,27 +29,53 @@
   sortDialog.className="team-sort-dialog";sortDialog.setAttribute("data-no-inline-edit","");sortDialog.setAttribute("aria-modal","true");sortDialog.setAttribute("aria-labelledby","team-sort-title");document.body.appendChild(sortDialog);
   toast.className="team-profile-toast";toast.hidden=true;toast.setAttribute("role","status");toast.setAttribute("aria-live","polite");document.body.appendChild(toast);
   const tutorHeadingActions=document.createElement("div"),tutorSortSave=document.createElement("button");
-  if(tutorToggle){tutorHeadingActions.className="roster-heading-actions";tutorToggle.parentElement.insertBefore(tutorHeadingActions,tutorToggle);tutorSortSave.type="button";tutorSortSave.className="btn btn-ghost roster-view-sort";tutorSortSave.hidden=true;tutorSortSave.setAttribute("data-team-sort-az","");tutorSortSave.setAttribute("aria-controls",tutorMount.id||"team-tutor-roster");tutorHeadingActions.append(tutorSortSave,tutorToggle)}
+  if(tutorViews){tutorHeadingActions.className="roster-heading-actions";tutorViews.parentElement.insertBefore(tutorHeadingActions,tutorViews);tutorSortSave.type="button";tutorSortSave.className="btn btn-ghost roster-view-sort";tutorSortSave.hidden=true;tutorSortSave.setAttribute("data-team-sort-az","");tutorSortSave.setAttribute("aria-controls",tutorMount.id||"team-tutor-roster");tutorHeadingActions.append(tutorViews,tutorSortSave)}
   let toastTimer;
 
   function locale(){const lang=(document.documentElement.lang||"en").toLowerCase();return lang.includes("hans")?"zhHans":lang.startsWith("zh")?"zhHant":"en"}
   function l(){return labels[locale()]}
   function tutorDetails(){return Array.from(tutorMount.querySelectorAll(":scope > .team-profile-tutor-shell > details.tutor-prof"))}
+  function tutorView(details){return state.tutorOverrides.get(details.parentElement.dataset.profileId)||state.tutorView}
   function updateTutorToggle(){
-    if(!tutorToggle)return;
-    const details=tutorDetails(),allOpen=details.length>0&&details.every(item=>item.open);
-    tutorToggle.hidden=!details.length;
-    tutorToggle.setAttribute("aria-expanded",String(allOpen));
-    const label=tutorToggle.querySelector("[data-team-expand-label]");if(label)label.textContent=allOpen?l().collapseAll:l().expandAll;
+    if(!tutorViews)return;
+    tutorViews.hidden=!tutorDetails().length;
+    tutorViews.setAttribute("aria-label",l().views);
+    tutorViews.querySelectorAll("[data-team-view]").forEach(button=>{
+      const mode=button.dataset.teamView;
+      button.textContent=l()[mode==="summary"?"summaryView":mode];
+      button.setAttribute("aria-pressed",String(mode===state.tutorView));
+    });
     tutorSortSave.hidden=!state.admin||state.editMode||state.tutors.length<2;
     tutorSortSave.disabled=state.reordering;
     tutorSortSave.textContent=l().sortAndSaveAlphabetically
   }
-  function toggleTutorDetails(){
-    const details=tutorDetails();if(!details.length)return;
-    const shouldOpen=details.some(item=>!item.open);
-    details.forEach(item=>{item.open=shouldOpen});
-    updateTutorToggle()
+  function updateReadMore(details){
+    if(!details.open)return;
+    const preview=details.querySelector("[data-tutor-preview]"),button=details.querySelector("[data-tutor-more]");
+    // Measure rendered lines, not character counts: fonts, language and width all affect wrapping.
+    const overflow=preview.scrollHeight>parseFloat(getComputedStyle(preview).lineHeight)*4+1;
+    const hasMore=details.dataset.extra==="true"||overflow;
+    if(!hasMore&&button.contains(document.activeElement))details.querySelector("summary").focus({preventScroll:true});
+    button.hidden=!hasMore;
+    button.textContent=tutorView(details)==="full"?l().readLess:l().readMore;
+    button.setAttribute("aria-expanded",String(tutorView(details)==="full"));
+  }
+  function applyTutorView(details){
+    const mode=tutorView(details);
+    if(mode==="collapsed"&&details.querySelector(".tp-body").contains(document.activeElement))details.querySelector("summary").focus({preventScroll:true});
+    details.dataset.view=mode;
+    details.open=mode!=="collapsed";
+    details.querySelector("[data-tutor-extra]").hidden=mode!=="full";
+    updateReadMore(details);
+  }
+  function setTutorView(details,mode){
+    state.tutorOverrides.set(details.parentElement.dataset.profileId,mode);
+    applyTutorView(details);
+  }
+  function setAllTutorViews(mode){
+    if(!["collapsed","summary","full"].includes(mode))return;
+    state.tutorView=mode;state.tutorOverrides.clear();
+    tutorDetails().forEach(applyTutorView);updateTutorToggle();
   }
   function esc(value){return String(value||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;")}
   function pick(value){const key=locale();return value&&String(value[key]||value.en||"").trim()||""}
@@ -86,17 +115,23 @@
   function tutorCard(item,index,items){
     const meta=[item.showSchool?(pick(item.schoolDisplay)||item.school):"",item.showGrade?(locale()==="en"?`Grade ${item.grade}`:locale()==="zhHans"?`${item.grade} 年级`:`${item.grade} 年級`):""].filter(Boolean).join(" · ");
     const draft=item.status==="draft"?`<span class="team-profile-status">${l().draft}</span>`:"";
+    const introduction=pick(item.summary)||pick(item.bio);
+    const bio=pick(item.summary)&&pick(item.bio)!==introduction?pick(item.bio):"";
+    const extra=[meta,pick(item.languages),pick(item.strengths),bio,pick(item.hobbies)].some(Boolean);
     return `<article class="team-profile-tutor-shell team-profile-admin-card" data-profile-id="${esc(item.id)}" data-status="${esc(item.status)}">
-      ${dragHandle(item)}<details class="tutor-prof"><summary>
+      ${dragHandle(item)}<details class="tutor-prof" data-extra="${extra}"><summary>
       ${avatar(item,"av-roster")}
-      <span class="tp-id"><b>${esc(item.name)}${draft}</b></span>
+      <span class="tp-id"><b>${esc(item.name)}${draft}</b><span class="tp-role">${esc(pick(item.role))}</span></span>
       <svg class="chev" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7.4 8.6L12 13.2l4.6-4.6L18 10l-6 6-6-6z"/></svg></summary>
-      <div class="tp-body"><p class="tp-role">${esc(pick(item.role))}</p>${meta?`<p class="tp-meta">${esc(meta)}</p>`:""}
+      <div class="tp-body" id="tutor-intro-${esc(item.id)}">
+      <p class="tp-lead" data-tutor-preview>${esc(introduction)}</p>
+      <div class="tp-extra" data-tutor-extra hidden>${meta?`<p class="tp-meta">${esc(meta)}</p>`:""}
       ${pick(item.languages)?`<p class="tp-langs">${esc(pick(item.languages))}</p>`:""}
       ${pick(item.strengths)?`<p class="tp-tags">${esc(pick(item.strengths))}</p>`:""}
-      <p class="tp-lead">${esc(pick(item.summary))}</p><p>${esc(pick(item.bio))}</p>
+      ${bio?`<p>${esc(bio)}</p>`:""}
       ${pick(item.hobbies)?`<p class="tp-hob">${esc(pick(item.hobbies))}</p>`:""}</div>
-      ${actions(item,index,items)}</details></article>`;
+      <button type="button" class="tutor-read-more" data-tutor-more aria-controls="tutor-intro-${esc(item.id)}" aria-expanded="false" hidden>${esc(l().readMore)}</button>
+      </div></details>${actions(item,index,items)}</article>`;
   }
   function actions(item,index,items){
     if(!state.admin||!state.editMode)return"";
@@ -132,17 +167,17 @@
     existing.forEach((node,id)=>{if(!retained.has(id))node.remove()})
   }
   function render(){
-    const openTutorIds=new Set(Array.from(tutorMount.querySelectorAll(".team-profile-tutor-shell > details[open]")).map(item=>item.parentElement.dataset.profileId));
-    const scrollY=window.scrollY;
+    previewObserver?.disconnect();
     reconcile(leaderMount,leaderCard,visible(all("leader")));
     reconcile(tutorMount,tutorCard,visible(all("tutor")));
     adminBar.hidden=!state.admin;
     if(state.admin)adminBar.innerHTML=`<div><strong>${l().manager}</strong><span>${l().hint}</span></div><div class="team-admin-actions">
       ${state.editMode?`<button class="team-admin-button" data-team-sort-az ${state.reordering||state.tutors.length<2?"disabled":""}>${l().sortAlphabetically} (${state.tutors.length})</button><button class="team-admin-button accent" data-team-add>${l().add}</button>`:""}
       <button class="team-admin-button primary" data-team-toggle>${state.editMode?l().done:l().editMode}</button></div>`;
-    openTutorIds.forEach(id=>{const item=tutorMount.querySelector(`[data-profile-id="${CSS.escape(id)}"] > details`);if(item)item.open=true});
+    const retainedIds=new Set(state.tutors.map(item=>item.id));
+    state.tutorOverrides.forEach((_mode,id)=>{if(!retainedIds.has(id))state.tutorOverrides.delete(id)});
+    tutorDetails().forEach(details=>{applyTutorView(details);previewObserver?.observe(details.querySelector("[data-tutor-preview]"))});
     updateTutorToggle();
-    if(openTutorIds.size)window.requestAnimationFrame(()=>window.scrollTo(window.scrollX,scrollY));
     window.dispatchEvent(new CustomEvent("ihear:media-slots-changed"));
   }
   function emptyLocalized(){return{en:"",zhHant:"",zhHans:""}}
@@ -359,7 +394,8 @@
   document.addEventListener("click",event=>{
     const button=event.target.closest("button");if(!button)return;
     if(button.matches("[data-team-drag]")){event.preventDefault();event.stopPropagation()}
-    else if(button.matches("[data-team-expand-toggle]"))toggleTutorDetails();
+    else if(button.matches("[data-team-view]"))setAllTutorViews(button.dataset.teamView);
+    else if(button.matches("[data-tutor-more]")){const details=button.closest("details");setTutorView(details,tutorView(details)==="full"?"summary":"full")}
     else if(button.matches("[data-team-toggle]")){state.editMode=!state.editMode;render()}
     else if(button.matches("[data-team-sort-az]"))requestAlphabeticalSort();
     else if(button.matches("[data-sort-cancel]"))cancelAlphabeticalSort();
@@ -376,7 +412,14 @@
     else if(button.dataset.locale){syncDraft();state.activeLocale=button.dataset.locale;buildEditor()}
     else if(button.matches("[data-copy-en]")){syncDraft();textFields.forEach(field=>{state.draft[field][state.activeLocale]=state.draft[field].en;state.translationEdits[field][state.activeLocale]=true});buildEditor()}
   });
-  tutorMount.addEventListener("toggle",event=>{if(event.target.matches("details.tutor-prof"))updateTutorToggle()},true);
+  tutorMount.addEventListener("toggle",event=>{
+    const details=event.target;if(!details.matches("details.tutor-prof")||!details.isConnected)return;
+    // Ignore our own open-attribute changes; native summary clicks only affect this card.
+    if(details.open!==(tutorView(details)!=="collapsed"))setTutorView(details,details.open?"summary":"collapsed");
+  },true);
+  const previewObserver=typeof ResizeObserver!=="undefined"?new ResizeObserver(entries=>entries.forEach(entry=>updateReadMore(entry.target.closest("details")))):null;
+  window.addEventListener("resize",()=>tutorDetails().forEach(updateReadMore));
+  document.fonts?.ready.then(()=>tutorDetails().forEach(updateReadMore));
   dialog.addEventListener("input",event=>{if(event.target.name){syncDraft();const [field,fieldLocale]=event.target.name.split(".");if(textFields.includes(field)&&locales.includes(fieldLocale)){state.translationEdits[field][fieldLocale]=true;if(fieldLocale==="en"){state.translationReceipt="";state.translationReady=false;state.englishGuardAccepted=false}}void renderLanguageGuards();event.target.removeAttribute("aria-invalid");const marker=dialog.querySelector(`[data-error="${CSS.escape(event.target.name)}"]`);if(marker)marker.textContent=""}});
   dialog.addEventListener("cancel",event=>{event.preventDefault();if(!state.busy)closeEditor()});
   sortDialog.addEventListener("cancel",event=>{event.preventDefault();cancelAlphabeticalSort()});

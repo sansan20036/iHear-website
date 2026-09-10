@@ -149,7 +149,7 @@ const futureJourneyEvent = {
   sortOrder: 202801,
 };
 
-async function mockApplication(page, { admin = true, duplicateAvatar = false, tutorName = "Test Tutor" } = {}) {
+async function mockApplication(page, { admin = true, duplicateAvatar = false, tutorName = "Test Tutor", tutorFields = {} } = {}) {
   const requests = [];
   let publishedPayload = null;
   let translationPreviewCount = 0;
@@ -451,6 +451,7 @@ async function mockApplication(page, { admin = true, duplicateAvatar = false, tu
     section: "tutor",
     sortOrder: 20,
   };
+  Object.assign(teamProfile, tutorFields);
 
   await page.route("**/api/team-profiles**", (route) => route.fulfill({
     status: 200,
@@ -493,6 +494,7 @@ async function mockApplication(page, { admin = true, duplicateAvatar = false, tu
 
   return {
     requests,
+    updateTutor: (fields) => Object.assign(teamProfile, fields),
     getPublishedPayload: () => publishedPayload,
     getTranslationPreviewCount: () => translationPreviewCount,
     getTranslationPreviewPayload: () => translationPreviewPayload,
@@ -1362,7 +1364,9 @@ test("team avatars crop one person into a square WebP, recrop, and delete the ph
   const tutorAvatar = page.locator('[data-site-media-slot="team.test.avatar"]');
   await expect(tutorAvatar).toHaveCount(1);
   const tutorDetails = page.locator('[data-profile-id="tutor-test"] details');
+  await page.locator('[data-team-view="collapsed"]').click();
   await expect(tutorDetails).not.toHaveAttribute("open", "");
+  await tutorDetails.evaluate(node => node.scrollIntoView({ block: "center", behavior: "instant" }));
   await expect(tutorAvatar).toBeVisible();
   await tutorAvatar.hover();
   const tutorEdit = page.locator('[data-profile-id="tutor-test"] > .site-media-avatar-edit');
@@ -1609,16 +1613,17 @@ test("team directory renders API data, switches language, and excludes generic p
   const summary = details.locator("summary");
   const summaryAvatar = summary.locator(".team-avatar-slot");
   await expect(details).toHaveCount(1);
-  await expect(details).not.toHaveAttribute("open", "");
+  await expect(details).toHaveAttribute("data-view", "summary");
+  await expect(page.getByText("English summary", { exact: true })).toBeVisible();
   await expect(summaryAvatar).toHaveCount(1);
   await expect(summaryAvatar).toBeVisible();
   await expect(summaryAvatar.locator("img")).toHaveAttribute("alt", "");
   await expect(details.locator(".tp-body .team-avatar-slot")).toHaveCount(0);
   await expect(page.getByText("Test Tutor")).toBeVisible();
   await expect(page.getByText("English biography")).toBeHidden();
-  await expect(summary).not.toContainText("Lead Tutor");
+  await expect(summary).toContainText("Lead Tutor");
   const avatarBeforeOpen = await summaryAvatar.elementHandle();
-  await page.getByText("Test Tutor").click();
+  await details.getByRole("button", { name: "Read full introduction" }).click();
   await expect(page.getByText("English biography")).toBeVisible();
   const avatarAfterOpen = await summaryAvatar.elementHandle();
   expect(await avatarBeforeOpen.evaluate((node, after) => node === after, avatarAfterOpen)).toBe(true);
@@ -1631,6 +1636,126 @@ test("team directory renders API data, switches language, and excludes generic p
   await expect(page.getByText("繁中完整介紹")).toBeVisible();
   await page.locator('#langSwitch button[data-lang="zhCN"]').click();
   await expect(page.getByText("简中完整介绍")).toBeVisible();
+});
+
+test("tutor base mode stays selected through individual changes, refreshes and languages", async ({ page }) => {
+  const mocked = await mockApplication(page, { admin: false, duplicateAvatar: true });
+  await page.goto("/team");
+  const first = page.locator('[data-profile-id="tutor-test"] details');
+  const second = page.locator('[data-profile-id="tutor-zoe-lu"] details');
+  const base = page.locator('[data-team-view="summary"]');
+  await expect(first).toHaveAttribute("data-view", "summary");
+  const avatar = await first.locator(".team-avatar-slot").elementHandle();
+  await first.locator("[data-tutor-more]").click();
+  await expect(first).toHaveAttribute("data-view", "full");
+  await expect(second).toHaveAttribute("data-view", "summary");
+  await expect(base).toHaveAttribute("aria-pressed", "true");
+  await second.locator("summary").click();
+  await expect(second).toHaveAttribute("data-view", "collapsed");
+  await page.evaluate(() => window.iHearTeamProfiles.refresh());
+  expect(await avatar.evaluate(node => node.isConnected)).toBe(true);
+  await expect(first).toHaveAttribute("data-view", "full");
+  await expect(second).toHaveAttribute("data-view", "collapsed");
+  mocked.updateTutor({ bio: { en: "Updated biography", zhHant: "更新後的完整介紹", zhHans: "更新后的完整介绍" } });
+  await page.evaluate(() => window.iHearTeamProfiles.refresh());
+  await expect(first).toContainText("Updated biography");
+  for (const language of ["zhTW", "zhCN", "en"]) {
+    await page.locator(`#langSwitch button[data-lang="${language}"]`).click();
+    await expect(first).toHaveAttribute("data-view", "full");
+    await expect(second).toHaveAttribute("data-view", "collapsed");
+    await expect(base).toHaveAttribute("aria-pressed", "true");
+  }
+  const currentAvatar = await first.locator(".team-avatar-slot").elementHandle();
+  for (const mode of ["collapsed", "full", "summary"]) {
+    const control = page.locator(`[data-team-view="${mode}"]`);
+    await control.focus(); await page.keyboard.press("Enter");
+    await expect(first).toHaveAttribute("data-view", mode);
+    await expect(second).toHaveAttribute("data-view", mode);
+    await expect(control).toHaveAttribute("aria-pressed", "true");
+    expect(await currentAvatar.evaluate(node => node.isConnected)).toBe(true);
+    await expect(page.getByText("Leadership biography").first()).toBeVisible();
+  }
+  await page.locator('[data-team-view="full"]').click();
+  await page.reload();
+  await expect(first).toHaveAttribute("data-view", "summary");
+  await expect(base).toHaveAttribute("aria-pressed", "true");
+});
+
+test("short and empty tutor introductions have no ineffective read-more button", async ({ page }) => {
+  const empty = { en: "", zhHant: "", zhHans: "" };
+  const short = { en: "I enjoy teaching.", zhHant: "我喜歡教學。", zhHans: "我喜欢教学。" };
+  const mocked = await mockApplication(page, { admin: false, tutorFields: {
+    showSchool: false, showGrade: false, summary: short, bio: short, languages: empty, strengths: empty, hobbies: empty,
+  } });
+  await page.goto("/team");
+  const card = page.locator('[data-profile-id="tutor-test"] details');
+  const more = card.locator("[data-tutor-more]");
+  for (const language of ["en", "zhTW", "zhCN"]) {
+    await page.locator(`#langSwitch button[data-lang="${language}"]`).click();
+    await expect(card.locator("[data-tutor-preview]")).toBeVisible();
+    await expect(more).toBeHidden();
+    await page.locator('[data-team-view="full"]').click();
+    await expect(more).toBeHidden();
+    await expect(card).not.toContainText(/Test School|測試學校|测试学校|Grade 10/);
+    await page.locator('[data-team-view="summary"]').click();
+  }
+  mocked.updateTutor({ summary: empty });
+  await page.evaluate(() => window.iHearTeamProfiles.refresh());
+  await expect(card.locator("[data-tutor-preview]")).toHaveText(short.zhHans);
+  await expect(more).toBeHidden();
+  mocked.updateTutor({ bio: empty });
+  await page.evaluate(() => window.iHearTeamProfiles.refresh());
+  await expect(card.locator("[data-tutor-preview]")).toBeHidden();
+  await expect(more).toBeHidden();
+  // A short introduction still needs a button when a distinct field is hidden.
+  mocked.updateTutor({ summary: short, hobbies: short });
+  await page.evaluate(() => window.iHearTeamProfiles.refresh());
+  await expect(more).toBeVisible();
+  await more.click();
+  await expect(card.locator(".tp-hob")).toBeVisible();
+});
+
+test("tutor summaries measure four actual lines and resize safely in three languages", async ({ page }) => {
+  const empty = { en: "", zhHant: "", zhHans: "" };
+  const long = { en: "I help students grow through inclusive communication. ".repeat(35), zhHant: "我陪伴學生練習溝通、建立信心。".repeat(35), zhHans: "我陪伴学生练习沟通、建立信心。".repeat(35) };
+  const mocked = await mockApplication(page, { admin: false, tutorFields: {
+    showSchool: false, showGrade: false, summary: long, bio: empty, languages: empty, strengths: empty, hobbies: empty,
+  } });
+  await page.goto("/team");
+  const card = page.locator('[data-profile-id="tutor-test"] details');
+  const preview = card.locator("[data-tutor-preview]");
+  const more = card.locator("[data-tutor-more]");
+  for (const width of [320, 390, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const language of ["en", "zhTW", "zhCN"]) {
+      if(width < 800) await page.locator("#navToggle").click();
+      await page.locator(`#langSwitch button[data-lang="${language}"]`).click();
+      if(await page.locator("#navToggle").getAttribute("aria-expanded") === "true") await page.locator("#navToggle").click();
+      await expect(more).toBeVisible();
+      const heights = await preview.evaluate(node => ({ height: node.clientHeight, full: node.scrollHeight, line: parseFloat(getComputedStyle(node).lineHeight) }));
+      expect(heights.height).toBeLessThanOrEqual(heights.line * 4 + 1);
+      expect(heights.full).toBeGreaterThan(heights.height);
+      await more.click();
+      expect(await preview.evaluate(node => node.clientHeight)).toBeGreaterThan(heights.height);
+      await more.click();
+      await expect(page.locator('[data-team-view="summary"]')).toHaveAttribute("aria-pressed", "true");
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+      for (const button of await page.locator("[data-team-view]").all()) {
+        const box = await button.boundingBox();
+        expect(box.height).toBeGreaterThanOrEqual(44);
+        expect(box.x).toBeGreaterThanOrEqual(0);
+        expect(box.x + box.width).toBeLessThanOrEqual(width);
+      }
+    }
+  }
+  // Changing just the viewport can make the complete introduction fit.
+  await page.locator('#langSwitch button[data-lang="en"]').click();
+  mocked.updateTutor({ summary: { en: "Helping students build confidence through weekly conversations. ".repeat(3), zhHant: "", zhHans: "" } });
+  await page.setViewportSize({ width: 320, height: 900 });
+  await page.evaluate(() => window.iHearTeamProfiles.refresh());
+  await expect(more).toBeVisible();
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect(more).toBeHidden();
 });
 
 test("collapsed tutor summary keeps a long name, avatar, and chevron safe at supported viewports", async ({ page }) => {
@@ -1651,6 +1776,7 @@ test("collapsed tutor summary keeps a long name, avatar, and chevron safe at sup
     await page.goto("/team");
 
     const details = page.locator('[data-profile-id="tutor-test"] details');
+    await page.locator('[data-team-view="collapsed"]').click();
     const summary = details.locator("summary");
     const avatar = summary.locator(".av-roster");
     await expect(details).not.toHaveAttribute("open", "");

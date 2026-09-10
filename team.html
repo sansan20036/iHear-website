@@ -108,9 +108,11 @@
               <h2 data-i18n="roster_h" data-editable-content="team.roster.title" data-editable-mode="singleline" data-editable-maxlength="200">Our Tutors</h2>
               <p class="roster-sub" data-i18n="roster_sub" data-editable-content="team.roster.subtitle" data-editable-mode="multiline" data-editable-maxlength="5000">Every iHear tutor, with their full profile. Tap a name to read their story.</p>
             </div>
-            <button type="button" class="btn btn-ghost roster-expand-toggle" data-team-expand-toggle aria-controls="team-tutor-roster" aria-expanded="false" hidden>
-              <span data-team-expand-label>Expand all</span>
-            </button>
+            <div class="roster-view-options" data-team-views data-no-inline-edit role="group" aria-label="Tutor profile display" hidden>
+              <button type="button" data-team-view="collapsed" aria-controls="team-tutor-roster" aria-pressed="false">Collapse all</button>
+              <button type="button" data-team-view="summary" aria-controls="team-tutor-roster" aria-pressed="true">Summary</button>
+              <button type="button" data-team-view="full" aria-controls="team-tutor-roster" aria-pressed="false">Expand all</button>
+            </div>
           </div>
           <div class="roster-grid" id="team-tutor-roster" data-team-tutors data-site-media-dynamic data-no-inline-edit>
             <p class="team-directory-message">Loading team profiles…</p>
