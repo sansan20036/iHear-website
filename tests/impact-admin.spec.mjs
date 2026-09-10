@@ -922,6 +922,49 @@ function flashTestMedia(version, imageName = "volunteers") {
   };
 }
 
+test("the current photo lookup and preload start before slow page setup, without a duplicate lookup", async ({ page }) => {
+  await mockApplication(page, { admin: false });
+  let releaseTheme;
+  const pendingTheme = new Promise(resolve => { releaseTheme = resolve; });
+  await page.route("**/api/site-theme/bootstrap", async route => {
+    await pendingTheme;
+    await route.fulfill({ contentType: "application/javascript", body: "" });
+  });
+  let mediaReads = 0;
+  await page.route("**/api/site-media", route => {
+    mediaReads += 1;
+    return route.fulfill({ json: { items: { "home.hero": flashTestMedia(2) } } });
+  });
+  await page.goto("/", { waitUntil: "commit" });
+  await expect.poll(() => mediaReads).toBe(1);
+  await expect(page.locator('link[rel="preload"][as="image"]')).toHaveAttribute("href", flashTestMedia(2).src);
+  releaseTheme();
+  await expect(page.locator('[data-site-media-slot="home.hero"]')).toHaveAttribute("data-site-media-ready", "true");
+  expect(mediaReads).toBe(1);
+});
+
+test("a ready responsive photo is shown without downloading or waiting for other sizes", async ({ page }) => {
+  await mockApplication(page, { admin: false });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const variants = [480, 800, 1200].map(width => ({ width, pixelWidth: width, pixelHeight: width * 0.75, url: `/responsive-${width}.webp` }));
+  const item = { ...flashTestMedia(2), src: variants[2].url, srcSet: variants.map(v => `${v.url} ${v.width}w`).join(", "), variants };
+  await page.route("**/api/site-media", route => route.fulfill({ json: { items: { "home.hero": item } } }));
+  const imageRequests = [];
+  await page.route("**/responsive-*.webp", async route => {
+    imageRequests.push(new URL(route.request().url()).pathname);
+    if (route.request().url().includes("responsive-800.webp")) {
+      await route.fulfill({ contentType: "image/webp", body: await readFile("assets/images/volunteers-800.webp") });
+    } else await route.abort();
+  });
+  await page.goto("/");
+  const hero = page.locator('[data-site-media-slot="home.hero"]');
+  await expect(hero).toHaveAttribute("data-site-media-ready", "true");
+  await expect(hero.locator("picture")).toBeVisible();
+  expect(await hero.locator("img").evaluate(img => img.currentSrc.endsWith("/responsive-800.webp") && img.complete && img.naturalWidth > 0)).toBe(true);
+  expect(imageRequests.length).toBeGreaterThan(0);
+  expect(imageRequests.every(url => url === "/responsive-800.webp")).toBe(true);
+});
+
 test("managed photos never paint the repository image while initial metadata is pending", async ({ page }) => {
   await mockApplication(page, { admin: false });
   let release;
@@ -933,6 +976,8 @@ test("managed photos never paint the repository image while initial metadata is 
   await page.goto("/", { waitUntil: "domcontentloaded" });
   const hero = page.locator('[data-site-media-slot="home.hero"]');
   await expect(hero.locator("picture")).toHaveCSS("visibility", "hidden");
+  const colors = await hero.evaluate(el => ({ actual: getComputedStyle(el).backgroundColor, dark: getComputedStyle(el).getPropertyValue("--navy-deep").trim() }));
+  expect(colors.actual).not.toBe("rgb(27, 42, 87)");
   expect((await hero.boundingBox()).height).toBeGreaterThan(0);
   release();
   await expect(hero).toHaveAttribute("data-site-media-ready", "true");

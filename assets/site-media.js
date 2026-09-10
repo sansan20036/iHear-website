@@ -107,7 +107,7 @@
     return Promise.all(urls.map((url) => preloadMediaImage(url, cacheBust))).then(() => true, () => false);
   }
 
-  function preloadMediaImage(url, cacheBust) {
+  function preloadMediaImage(url, cacheBust, responsive) {
     return new Promise((resolve, reject) => {
       const preload = new Image();
       preload.onload = () => {
@@ -115,6 +115,12 @@
         else resolve();
       };
       preload.onerror = reject;
+      if (responsive) {
+        preload.sizes = responsive.sizes;
+        preload.srcset = cacheBust
+          ? responsive.variants.map((variant) => `${mediaProbeUrl(variant.url, cacheBust)} ${variant.pixelWidth || variant.width}w`).join(", ")
+          : responsive.srcSet;
+      }
       preload.src = mediaProbeUrl(url, cacheBust);
     });
   }
@@ -130,6 +136,8 @@
   const isAvatar = host.dataset.siteMediaKind === "avatar" && Boolean(fallbackInitials);
   const chartFallback = host.querySelector("[data-site-media-fallback]");
   const isChart = host.dataset.siteMediaKind === "chart" && Boolean(chartFallback);
+  // Avatars are small even on wide screens; do not select a full-page image.
+  if (isAvatar) picture.querySelectorAll("source").forEach((source) => source.setAttribute("sizes", "80px"));
   const controlHost = (host.closest("summary") ? host.closest(".team-profile-tutor-shell") : host) || host;
 
   const defaults = {
@@ -256,11 +264,13 @@
       return Promise.resolve(true);
     }
     const token = ++applyToken;
-    const urls = [...new Set([
-      item.src,
-      ...(Array.isArray(item.variants) ? item.variants.map((variant) => variant.url) : []),
-    ].filter(Boolean))];
-    return Promise.all(urls.map((url) => preloadMediaImage(url, options.cacheBust))).then(
+    // Let the browser select the same responsive candidate as the visible
+    // picture. Other widths must not delay displaying the image already ready.
+    return preloadMediaImage(item.src, options.cacheBust, {
+      srcSet: item.srcSet,
+      variants: Array.isArray(item.variants) ? item.variants : [],
+      sizes: picture.querySelector("source")?.getAttribute("sizes") || image.getAttribute("sizes") || "100vw",
+    }).then(
       () => {
         if (token !== applyToken) return false;
         commitItem(item);
@@ -1087,12 +1097,16 @@
     return data;
   }
 
-  async function refreshAll() {
+  async function refreshAll(initialRequest) {
     const sequence = ++mediaRefreshSequence;
-    const response = await fetch("/api/site-media", { credentials: "same-origin", cache: "no-store" });
+    let payload = initialRequest ? await initialRequest : null;
     if (sequence !== mediaRefreshSequence) return;
-    if (!response.ok) throw new Error("site media unavailable");
-    const payload = await response.json();
+    if (!payload) {
+      const response = await fetch("/api/site-media", { credentials: "same-origin", cache: "no-store" });
+      if (sequence !== mediaRefreshSequence) return;
+      if (!response.ok) throw new Error("site media unavailable");
+      payload = await response.json();
+    }
     if (sequence !== mediaRefreshSequence) return;
     const data = preserveRecentCommits(payload);
     lastMediaData = data;
@@ -1121,14 +1135,16 @@
   });
 
   window.iHearLiveContent?.register("content", {
-    refresh: refreshAll,
+    refresh: () => refreshAll(),
     isDirty: () => controllers.some((controller) => controller.isDirty()),
     shouldBlock: ({ external }) => external,
     onBlocked: () => controllers.find((controller) => controller.isDirty())?.onBlocked(),
   });
 
   reconcileControllers();
-  refreshAll().catch(() => {
+  const initialMediaRequest = window.iHearInitialSiteMedia;
+  delete window.iHearInitialSiteMedia;
+  refreshAll(initialMediaRequest).catch(() => {
     // Leave the initial placeholder until a later successful metadata refresh.
     // An unavailable API does not confirm that a custom photo was deleted.
   });

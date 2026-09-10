@@ -28,7 +28,8 @@ const themeInitScript = `<script data-site-theme-init>(function(){var a={warm:1,
 const themeBootstrapScript = `<script src="/api/site-theme/bootstrap" data-site-theme-bootstrap></script>`;
 // Hide only managed pictures before the first paint. Layout and no-JS images
 // remain intact; each controller reveals its confirmed image after decoding.
-const mediaInit = `<script data-site-media-init>document.documentElement.classList.add("site-media-loading")</script><style data-site-media-init-style>.site-media-loading [data-site-media-slot]:not([data-site-media-ready]) picture,.site-media-loading [data-site-media-slot]:not([data-site-media-ready]) [data-site-media-fallback]{visibility:hidden}</style>`;
+const mediaBootstrap = await readFile(path.join(root, "assets/site-media-bootstrap.js"), "utf8");
+const mediaInit = `<script data-site-media-init>${mediaBootstrap}</script><style data-site-media-init-style>.site-media-loading [data-site-media-slot]:not([data-site-media-ready]) picture,.site-media-loading [data-site-media-slot]:not([data-site-media-ready]) [data-site-media-fallback]{visibility:hidden}</style>`;
 function layoutBootstrapScript(file) {
   const route = file === "index.html" ? "/" : `/${file.replace(/\.html$/, "")}`;
   return `<script src="/api/site-layout/bootstrap?page=${encodeURIComponent(route)}" data-site-layout-bootstrap></script>`;
@@ -85,7 +86,7 @@ function withClientScripts(html, file) {
   const withThemeDefault = withoutManagedStyles.replace(/<html(?![^>]*\bdata-theme=)/i, '<html data-theme="warm"');
   const withThemeHead = withThemeDefault.replace(
     /<head([^>]*)>/i,
-    (opening) => `${opening}\n  ${themeInitScript}\n  ${themeBootstrapScript}\n  ${layoutBootstrapScript(file)}${html.includes("data-site-media-slot") || html.includes("data-site-media-dynamic") ? `\n  ${mediaInit}` : ""}`,
+    (opening) => `${opening}\n  ${themeInitScript}${html.includes("data-site-media-slot") || html.includes("data-site-media-dynamic") ? `\n  ${mediaInit}` : ""}\n  ${themeBootstrapScript}\n  ${layoutBootstrapScript(file)}`,
   );
   const withFavicon = withThemeHead.replace(
     "</head>",

@@ -136,7 +136,7 @@
     .hero-visual{ position:relative; }
     .hero-photo{
       border-radius: 32px 120px 32px 32px; overflow:hidden; box-shadow: var(--shadow-lg);
-      aspect-ratio: 4/3.4; background: var(--navy-deep);
+      aspect-ratio: 4/3.4; background: var(--bg-subtle);
     }
     .hero-photo picture,.prog-card .photo picture,.involve-photo picture{ display:block; width:100%; height:100%; }
     .hero-photo img{ width:100%; height:100%; object-fit:cover; }
@@ -820,6 +820,7 @@ body.home .stats-band{ padding-bottom:28px; }
 .team-avatar-visual .avatar-initials{
   grid-area:1/1; width:100%; height:100%; display:grid; place-items:center;
 }
+.site-media-loading .team-avatar-slot:not([data-site-media-ready]) .team-avatar-visual{ background:var(--bg-subtle); color:var(--navy); }
 .team-avatar-visual picture{
   grid-area:1/1; width:100%; height:100%; overflow:hidden; border-radius:50%;
 }
