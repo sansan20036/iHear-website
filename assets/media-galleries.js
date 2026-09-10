@@ -147,8 +147,8 @@
       const section = root.closest('[data-gallery-section]');
       if (section) section.hidden = !items.length && !administrator; else root.hidden = !items.length && !administrator;
       manage.hidden = !administrator; manage.textContent = `✎ ${editorText().manage}`;
-      empty.textContent = editorText().empty; empty.hidden = !administrator || !!items.length;
-      frame.hidden = !items.length;
+      empty.textContent = editorText().empty; empty.hidden = !administrator || !!items.length || !gallery;
+      frame.hidden = !items.length && Boolean(gallery);
       if (!items.length) {
         frame.replaceChildren(); playing = false; selected = '';
         caption.hidden = external.hidden = controls.hidden = thumbnails.hidden = true;

@@ -1213,6 +1213,22 @@ test("service galleries share content and release the old single-image editors",
   await expect(page.locator('[data-media-gallery] .site-media-edit')).toHaveCount(0);
 });
 
+test('admin galleries keep a loading frame until the initial media response arrives', async ({ page }) => {
+  await mockApplication(page);
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  await page.route('**/api/media-galleries', async route => { await gate; await route.fallback(); });
+  await page.goto('/programs');
+  const gallery = page.locator('[data-media-gallery="tutoring"]');
+  try {
+    await expect(gallery.locator('.gallery-manage')).toBeVisible();
+    await expect(gallery.locator('.gallery-frame')).toBeVisible();
+    await expect(gallery.locator('.gallery-empty')).toBeHidden();
+  } finally { release(); }
+  await expect(gallery.locator('.gallery-frame img')).toBeVisible();
+  await expect(gallery.locator('.gallery-empty')).toBeHidden();
+});
+
 test('portrait, landscape and video use a stable frame on narrow phones and desktop', async ({ page }) => {
   await mockApplication(page);
   const portrait = await sharp({ create: { width: 180, height: 320, channels: 3, background: '#c8daf0' } }).webp().toBuffer();

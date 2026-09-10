@@ -23,7 +23,7 @@ const htmlFiles = [
 
 const passthroughFiles = ["robots.txt", "sitemap.xml", "CNAME", "favicon.ico"];
 const dynamicI18nKeys = new Set(["latest_label", "latest_period", "latest_headline", "latest_description", "latest_link", "stat_asof", "stat_countries_sub"]);
-const clientAssetVersion = "20260910-gallery-inline-editor-v2";
+const clientAssetVersion = "20260910-gallery-inline-editor-v3";
 const themeInitScript = `<script data-site-theme-init>(function(){var a={warm:1,ocean:1,sage:1,lavender:1,slate:1},t="warm";try{var s=localStorage.getItem("ihear:site-theme");if(a[s])t=s}catch(e){}document.documentElement.setAttribute("data-theme",t)})()</script>`;
 const themeBootstrapScript = `<script src="/api/site-theme/bootstrap" data-site-theme-bootstrap></script>`;
 // Hide only managed pictures before the first paint. Layout and no-JS images
