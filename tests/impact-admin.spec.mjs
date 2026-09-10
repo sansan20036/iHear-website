@@ -1371,7 +1371,9 @@ test("team avatars crop one person into a square WebP, recrop, and delete the ph
   await tutorAvatar.hover();
   const tutorEdit = page.locator('[data-profile-id="tutor-test"] > .site-media-avatar-edit');
   await expect(tutorEdit).toBeVisible();
-  await tutorEdit.click();
+  // Keep the card focused while its hover control settles after collapsing the roster.
+  await tutorEdit.focus();
+  await tutorEdit.press("Enter");
   await expect(tutorDetails).not.toHaveAttribute("open", "");
   await expect(page.locator('.site-media-dialog[open][data-media-kind="avatar"]')).toBeVisible();
   await page.locator('.site-media-dialog[open] [data-media-cancel]').last().click();
@@ -1728,9 +1730,13 @@ test("tutor summaries measure four actual lines and resize safely in three langu
   for (const width of [320, 390, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     for (const language of ["en", "zhTW", "zhCN"]) {
-      if(width < 800) await page.locator("#navToggle").click();
+      if(width < 800) {
+        await expect(page.locator("#navLinks")).toHaveAttribute("hidden", "");
+        await page.locator("#navToggle").click();
+      }
       await page.locator(`#langSwitch button[data-lang="${language}"]`).click();
       if(await page.locator("#navToggle").getAttribute("aria-expanded") === "true") await page.locator("#navToggle").click();
+      if(width < 800) await expect(page.locator("#navLinks")).toHaveAttribute("hidden", "");
       await expect(more).toBeVisible();
       const heights = await preview.evaluate(node => ({ height: node.clientHeight, full: node.scrollHeight, line: parseFloat(getComputedStyle(node).lineHeight) }));
       expect(heights.height).toBeLessThanOrEqual(heights.line * 4 + 1);
