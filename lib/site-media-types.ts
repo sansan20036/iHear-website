@@ -3,6 +3,8 @@ export const SITE_MEDIA_SLOTS = [
   "services.tutoring",
   "services.outreach",
   "global.volunteers",
+  "impact.learners.chart",
+  "impact.tutors.chart",
   "team.zoe-lu.avatar",
   "team.daniel-hollis.avatar",
   "team.howard-ren.avatar",

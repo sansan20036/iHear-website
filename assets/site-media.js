@@ -27,6 +27,8 @@
       forbidden: "Your administrator session has expired.", conflict: "Another administrator changed this image. Reload and try again.",
       confirmRestore: "Restore the original image? The current custom image will be removed.", liveBlocked: "A newer image is available. Finish or cancel this edit to refresh.",
       editAvatar: "Change avatar", titleAvatar: "Change avatar", introAvatar: "Upload or paste a portrait, then crop the person you want to show.",
+      editChart: "Upload chart image", titleChart: "Upload chart image", introChart: "Upload a finished chart. The whole image will be shown without cropping. Use large labels for mobile screens; text inside the image is shared across languages and is not automatically translated.",
+      restoreChart: "Restore original chart", restoredChart: "Original chart restored", confirmRestoreChart: "Remove the uploaded image and show the original chart and figures again?",
       restoreAvatar: "Delete photo", restoredAvatar: "Photo deleted", confirmRestoreAvatar: "Delete this profile photo? The name initials will be shown instead.",
       cropCurrent: "Crop current photo", cropReady: "Square crop ready. Save when it looks right.", cropUnavailable: "The crop editor is still loading. Please try again.",
       autoTranslate: "Automatically update Chinese descriptions", replaceTranslation: "Also overwrite existing or manually edited Chinese descriptions", preparingTranslation: "Translating…", translationReady: "Chinese descriptions are ready. Review them, then save.",
@@ -49,6 +51,8 @@
       forbidden: "管理員登入已失效。", conflict: "另一位管理員已更改圖片，請重新整理後再試。",
       confirmRestore: "確定恢復原始圖片？目前的自訂圖片將被移除。", liveBlocked: "已有較新的圖片，請先完成或取消目前編輯。",
       editAvatar: "更換頭像", titleAvatar: "更換頭像", introAvatar: "上傳或貼上人物照片，再裁切要顯示的單一人物。",
+      editChart: "上傳圖表圖片", titleChart: "上傳圖表圖片", introChart: "上傳製作好的統計圖表，圖片會完整顯示、不裁切。建議使用大字，方便手機閱讀；圖片內的文字會在各語言共用，不會自動翻譯。",
+      restoreChart: "恢復原本圖表", restoredChart: "已恢復原本圖表", confirmRestoreChart: "移除上傳圖片，重新顯示原本的圖表與數字？",
       restoreAvatar: "刪除照片", restoredAvatar: "照片已刪除", confirmRestoreAvatar: "確定要刪除這張頭像照片嗎？刪除後將改為顯示姓名縮寫。",
       cropCurrent: "裁切目前照片", cropReady: "方形裁切已準備好，確認效果後即可儲存。", cropUnavailable: "裁切工具仍在載入，請稍後再試。",
       autoTranslate: "自動更新中文圖片描述", replaceTranslation: "同時覆蓋既有或人工修改過的中文圖片描述", preparingTranslation: "翻譯中…", translationReady: "中文圖片描述已完成，請檢查後再儲存。",
@@ -71,6 +75,8 @@
       forbidden: "管理员登录已失效。", conflict: "另一位管理员已更改图片，请刷新后重试。",
       confirmRestore: "确定恢复原始图片？当前的自定义图片将被删除。", liveBlocked: "已有较新的图片，请先完成或取消当前编辑。",
       editAvatar: "更换头像", titleAvatar: "更换头像", introAvatar: "上传或粘贴人物照片，再裁切要显示的单一人物。",
+      editChart: "上传图表图片", titleChart: "上传图表图片", introChart: "上传制作好的统计图表，图片会完整显示、不裁切。建议使用大字，方便手机阅读；图片内的文字会在各语言共用，不会自动翻译。",
+      restoreChart: "恢复原本图表", restoredChart: "已恢复原本图表", confirmRestoreChart: "移除上传图片，重新显示原本的图表与数字？",
       restoreAvatar: "删除照片", restoredAvatar: "照片已删除", confirmRestoreAvatar: "确定要删除这张头像照片吗？删除后将改为显示姓名缩写。",
       cropCurrent: "裁切目前照片", cropReady: "方形裁切已准备好，确认效果后即可保存。", cropUnavailable: "裁切工具仍在加载，请稍后再试。",
       autoTranslate: "自动更新中文图片描述", replaceTranslation: "同时覆盖现有或人工修改过的中文图片描述", preparingTranslation: "翻译中…", translationReady: "中文图片描述已完成，请检查后再保存。",
@@ -122,6 +128,8 @@
   if (!picture || !image) return null;
   const fallbackInitials = host.querySelector(".avatar-initials");
   const isAvatar = host.dataset.siteMediaKind === "avatar" && Boolean(fallbackInitials);
+  const chartFallback = host.querySelector("[data-site-media-fallback]");
+  const isChart = host.dataset.siteMediaKind === "chart" && Boolean(chartFallback);
   const controlHost = (host.closest("summary") ? host.closest(".team-profile-tutor-shell") : host) || host;
 
   const defaults = {
@@ -168,6 +176,8 @@
 
   function labels() {
     const text = copy[locale()] || copy.en;
+    if (isChart) return { ...text, edit: text.editChart, title: text.titleChart, intro: text.introChart,
+      restore: text.restoreChart, restored: text.restoredChart, confirmRestore: text.confirmRestoreChart };
     if (!isAvatar) return text;
     return {
       ...text,
@@ -188,11 +198,12 @@
       node.setAttribute("sizes", sizes);
       node.setAttribute("type", type);
     });
-    if (isAvatar) {
+    if (isAvatar || isChart) {
       picture.hidden = true;
       image.removeAttribute("src");
       image.alt = "";
-      fallbackInitials.hidden = false;
+      if (isAvatar) fallbackInitials.hidden = false;
+      if (isChart) chartFallback.hidden = false;
     } else {
       image.src = defaults.src;
       image.alt = defaults.alt[locale()] || defaults.alt.en;
@@ -217,6 +228,10 @@
     });
     image.src = item.src;
     image.alt = isAvatar ? "" : (item.alt?.[locale()] || item.alt?.en || defaults.alt.en);
+    if (isChart) {
+      picture.hidden = false;
+      chartFallback.hidden = true;
+    }
     if (isAvatar) {
       image.style.objectPosition = "50% 50%";
       const square = variants.every((variant) => Number(variant.pixelWidth) === Number(variant.pixelHeight));
@@ -322,6 +337,7 @@
     releasePreview();
     previewUrl = URL.createObjectURL(file);
     dialog.querySelector("[data-media-preview]").src = previewUrl;
+    dialog.querySelector(".site-media-preview-wrap").hidden = false;
   }
 
   function setStatus(message, options) {
@@ -348,6 +364,7 @@
     const node = document.createElement("dialog");
     node.className = "site-media-dialog";
     if (isAvatar) node.dataset.mediaKind = "avatar";
+    if (isChart) node.dataset.mediaKind = "chart";
     node.style.setProperty("--site-media-preview-aspect", host.dataset.siteMediaAspect || "4 / 3.4");
     node.innerHTML = `
       <form method="dialog" class="site-media-form" data-media-form>
@@ -497,7 +514,7 @@
       if (!button.classList.contains("site-media-close")) button.textContent = text.cancel;
       button.setAttribute("aria-label", text.cancel);
     });
-    if (!isAvatar) renderFocalGrid();
+    if (!isAvatar && !isChart) renderFocalGrid();
   }
 
   function populateDialog() {
@@ -506,9 +523,13 @@
     dialog.querySelector("[data-media-alt-en]").value = alt.en;
     dialog.querySelector("[data-media-alt-zht]").value = alt.zhHant;
     dialog.querySelector("[data-media-alt-zhs]").value = alt.zhHans;
-    dialog.querySelector("[data-media-preview]").src = currentItem?.src || defaults.previewSrc;
+    const previewSrc = currentItem?.src || defaults.previewSrc;
+    const preview = dialog.querySelector("[data-media-preview]");
+    if (previewSrc) preview.src = previewSrc;
+    else preview.removeAttribute("src");
+    dialog.querySelector(".site-media-preview-wrap").hidden = isChart && !previewSrc;
     selectFocal(currentItem?.focalX ?? 50, currentItem?.focalY ?? 50);
-    dialog.querySelector("[data-media-focal]").hidden = isAvatar;
+    dialog.querySelector("[data-media-focal]").hidden = isAvatar || isChart;
     dialog.querySelector(".site-media-alt-grid").hidden = isAvatar;
     dialog.querySelector(".site-media-translation-options").hidden = isAvatar;
     dialog.querySelector("[data-media-recrop]").hidden = !isAvatar || !currentItem;

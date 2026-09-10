@@ -796,6 +796,20 @@ body.home .stats-band{ padding-bottom:28px; }
   opacity:1; visibility:visible; transform:none; pointer-events:auto;
 }
 .hero-photo[data-site-media-slot] .site-media-edit{ top:112px; }
+[data-site-media-kind=chart] picture[hidden],
+[data-site-media-kind=chart] [data-site-media-fallback][hidden]{ display:none; }
+[data-site-media-kind=chart] picture,
+[data-site-media-kind=chart] img{ height:auto; }
+[data-site-media-kind=chart] img{ object-fit:contain; }
+[data-site-media-kind=chart][data-site-media-custom]{ padding:12px; align-self:start; }
+[data-site-media-kind=chart] .site-media-edit{
+  position:relative; top:auto; right:auto; width:auto; padding:9px 14px; margin:16px 0 0; opacity:1; visibility:visible; transform:none; pointer-events:auto;
+}
+[data-site-media-kind=chart] .site-media-edit [data-site-media-edit-label]{ position:static; width:auto; height:auto; overflow:visible; clip-path:none; }
+.site-media-dialog[data-media-kind=chart] .site-media-preview-wrap{ grid-template-columns:minmax(0,1fr); }
+.site-media-dialog[data-media-kind=chart] .site-media-preview-wrap[hidden]{ display:none; }
+.site-media-dialog[data-media-kind=chart] .site-media-preview-frame{ aspect-ratio:auto; background:var(--bg-subtle); }
+.site-media-dialog[data-media-kind=chart] .site-media-preview-frame img{ height:auto; object-fit:contain; }
 .team-avatar-slot{
   position:relative; aspect-ratio:1/1; overflow:visible; flex:none; isolation:isolate;
 }

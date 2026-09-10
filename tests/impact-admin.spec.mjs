@@ -980,6 +980,78 @@ test("a failed replacement keeps the displayed custom photo instead of restoring
   await expect(image).toHaveCSS("visibility", "visible");
 });
 
+test("Impact charts support independent uploads, uncropped mobile images, reload and restore", async ({ page }) => {
+  const mocked = await mockApplication(page);
+  const chart = await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1400"><rect width="1000" height="1400" fill="white"/><text x="60" y="110" font-size="52" fill="#263974">TEST CHART</text><rect x="60" y="220" width="830" height="48" fill="#263974"/><text x="60" y="1340" font-size="44" fill="#263974">Bottom label stays visible</text></svg>')).png().toBuffer();
+  const chartWebp = await sharp(chart).webp().toBuffer();
+  await page.route("**/assets/images/volunteers-*.webp", route => route.fulfill({ contentType: "image/webp", body: chartWebp }));
+  await page.goto("/impact");
+  const learners = page.locator('[data-site-media-slot="impact.learners.chart"]');
+  const tutors = page.locator('[data-site-media-slot="impact.tutors.chart"]');
+  await expect(learners.locator("[data-site-media-fallback]")).toBeVisible();
+  await expect(tutors.locator("[data-site-media-fallback]")).toBeVisible();
+  await expect(learners.locator("picture")).toBeHidden();
+  await page.locator(".impact-grid").screenshot({ path: "output/impact-chart-upload/original-with-upload-controls.png" });
+  for (const card of [learners, tutors]) {
+    await card.getByRole("button", { name: "Upload chart image", exact: true }).click();
+    const dialog = page.locator(".site-media-dialog[open]");
+    await expect(dialog.locator("[data-media-intro]")).toContainText("without cropping");
+    await expect(dialog.locator("[data-media-focal]")).toBeHidden();
+    await expect(dialog.locator(".site-media-preview-wrap")).toBeHidden();
+    await dialog.locator("[data-media-file]").setInputFiles({ name: "chart.png", mimeType: "image/png", buffer: chart });
+    await expect(dialog.locator("[data-media-save]")).toBeEnabled();
+    await expect(dialog.locator("[data-media-preview]")).toHaveCSS("object-fit", "contain");
+    await previewAndSaveMedia(dialog);
+    await expect(card).toHaveAttribute("data-site-media-custom", "true");
+    await expect(card.locator("img")).toHaveAttribute("src", "/assets/images/volunteers-1200.webp");
+    await expect(card.locator("[data-site-media-fallback]")).toBeHidden();
+    if (card === learners) await expect(tutors.locator("[data-site-media-fallback]")).toBeVisible();
+  }
+  expect(mocked.getMediaItem("impact.learners.chart")).toBeTruthy();
+  expect(mocked.getMediaItem("impact.tutors.chart")).toBeTruthy();
+  await page.reload();
+  await expect(learners.locator("picture")).toBeVisible();
+  await expect(tutors.locator("picture")).toBeVisible();
+  await page.locator(".impact-grid").screenshot({ path: "output/impact-chart-upload/uploaded-desktop.png" });
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    await learners.scrollIntoViewIfNeeded();
+    const dimensions = await learners.locator("img").evaluate(img => ({ width: img.clientWidth, height: img.clientHeight, naturalRatio: img.naturalWidth / img.naturalHeight }));
+    expect(dimensions.width / dimensions.height).toBeCloseTo(dimensions.naturalRatio, 2);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await expect(learners.getByRole("button", { name: "Upload chart image", exact: true })).toBeVisible();
+    await expect(learners.locator("[data-site-media-edit-label]")).toHaveCSS("clip-path", "none");
+    if (width === 390) await learners.screenshot({ path: "output/impact-chart-upload/uploaded-mobile.png" });
+  }
+  await learners.getByRole("button", { name: "Upload chart image", exact: true }).click();
+  page.once("dialog", nativeDialog => nativeDialog.accept());
+  await page.locator(".site-media-dialog[open] [data-media-restore]").click();
+  await expect(learners.locator("[data-site-media-fallback]")).toBeVisible();
+  await expect(learners.locator("picture")).toBeHidden();
+  await expect(learners.locator(".pct").first()).toHaveText("83%");
+  await expect(tutors.locator("[data-site-media-fallback]")).toBeHidden();
+  await expect(tutors.locator("picture")).toBeVisible();
+});
+
+test("Impact visitors cannot edit and never see old figures before a saved chart loads", async ({ page }) => {
+  await mockApplication(page, { admin: false });
+  let release;
+  const pending = new Promise(resolve => { release = resolve; });
+  await page.route("**/api/site-media", async route => {
+    await pending;
+    await route.fulfill({ json: { items: { "impact.learners.chart": { ...flashTestMedia(1), slot: "impact.learners.chart" } } } });
+  });
+  await page.goto("/impact", { waitUntil: "domcontentloaded" });
+  const learners = page.locator('[data-site-media-slot="impact.learners.chart"]');
+  await expect(learners.locator("[data-site-media-fallback]")).toHaveCSS("visibility", "hidden");
+  await expect(learners.locator("picture")).toBeHidden();
+  release();
+  await expect(learners.locator("picture")).toBeVisible();
+  await expect(learners.locator("[data-site-media-fallback]")).toBeHidden();
+  await expect(page.locator(".site-media-edit")).toHaveCount(0);
+  await expect(page.locator('[data-site-media-slot="impact.tutors.chart"] [data-site-media-fallback]')).toBeVisible();
+});
+
 test("Hero image editor compresses before upload and restores the repository fallback", async ({ page }) => {
   const mocked = await mockApplication(page);
   await page.goto("/");

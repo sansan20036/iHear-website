@@ -194,6 +194,8 @@ describe("site media API", () => {
     "services.tutoring",
     "services.outreach",
     "global.volunteers",
+    "impact.learners.chart",
+    "impact.tutors.chart",
     "team.zoe-lu.avatar",
     "team.daniel-hollis.avatar",
     "team.howard-ren.avatar",
