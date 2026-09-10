@@ -1330,7 +1330,10 @@ test("all repository content photos expose stable sitewide media slots", async (
   await expect(volunteersEdit).toHaveCount(1);
   await volunteers.scrollIntoViewIfNeeded();
   await volunteers.hover();
+  // focus()/press() do not wait for the hover control to become visible.
+  await expect(volunteersEdit).toBeVisible();
   await volunteersEdit.focus();
+  await expect(volunteersEdit).toBeFocused();
   await volunteersEdit.press("Enter");
   let openDialog = page.locator(".site-media-dialog[open]");
   await openDialog.locator("[data-media-file]").setInputFiles("assets/images/hero-classroom.jpg");
@@ -1344,9 +1347,12 @@ test("all repository content photos expose stable sitewide media slots", async (
   await expect(volunteersEdit).toBeEnabled({ timeout: 20_000 });
   await volunteers.scrollIntoViewIfNeeded();
   await volunteers.hover();
+  await expect(volunteersEdit).toBeVisible();
   await volunteersEdit.focus();
+  await expect(volunteersEdit).toBeFocused();
   await volunteersEdit.press("Enter");
   openDialog = page.locator(".site-media-dialog[open]");
+  await expect(openDialog).toBeVisible();
   page.once("dialog", (nativeDialog) => nativeDialog.accept());
   await openDialog.locator("[data-media-restore]").click();
   await expect(volunteers).not.toHaveAttribute("data-site-media-custom", "true");
