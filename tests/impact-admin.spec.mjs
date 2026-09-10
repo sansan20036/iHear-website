@@ -914,6 +914,72 @@ test("theme control is admin-only, localized, keyboard-safe, and mobile-safe", a
   await page.keyboard.press("Escape");
 });
 
+function flashTestMedia(version, imageName = "volunteers") {
+  const src = `/assets/images/${imageName}-800.webp`;
+  return { slot: "home.hero", recordVersion: version, updatedAt: `2026-09-10T00:00:0${version}.000Z`,
+    focalX: 50, focalY: 50, alt: { en: "Current photo" }, src, srcSet: `${src} 800w`,
+    variants: [{ url: src, width: 800, pixelWidth: 800, pixelHeight: 600 }],
+  };
+}
+
+test("managed photos never paint the repository image while initial metadata is pending", async ({ page }) => {
+  await mockApplication(page, { admin: false });
+  let release;
+  const pending = new Promise(resolve => { release = resolve; });
+  await page.route("**/api/site-media", async route => {
+    await pending;
+    await route.fulfill({ json: { items: { "home.hero": flashTestMedia(2) } } });
+  });
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  const hero = page.locator('[data-site-media-slot="home.hero"]');
+  await expect(hero.locator("picture")).toHaveCSS("visibility", "hidden");
+  expect((await hero.boundingBox()).height).toBeGreaterThan(0);
+  release();
+  await expect(hero).toHaveAttribute("data-site-media-ready", "true");
+  await expect(hero.locator("img")).toHaveAttribute("src", flashTestMedia(2).src);
+  await expect(hero.locator("picture")).toHaveCSS("visibility", "visible");
+  expect(await hero.locator("img").evaluate(img => img.complete && img.naturalWidth > 0)).toBe(true);
+});
+
+test("a late initial media response cannot replace a newer live photo", async ({ page }) => {
+  await mockApplication(page, { admin: false });
+  let release;
+  let reads = 0;
+  const pending = new Promise(resolve => { release = resolve; });
+  await page.route("**/api/site-media", async route => {
+    const first = ++reads === 1;
+    if (first) await pending;
+    await route.fulfill({ json: { items: { "home.hero": first ? flashTestMedia(1, "hero-classroom") : flashTestMedia(2) } } });
+  });
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await expect.poll(() => reads).toBe(1);
+  await page.evaluate(() => window.iHearLiveContent.announce("content", "photo-2"));
+  const image = page.locator('[data-site-media-slot="home.hero"] img');
+  await expect(image).toHaveAttribute("src", flashTestMedia(2).src);
+  const completed = page.waitForResponse("**/api/site-media");
+  release();
+  await (await completed).finished();
+  await page.evaluate(() => new Promise(resolve => { requestAnimationFrame(() => requestAnimationFrame(resolve)); }));
+  await expect(image).toHaveAttribute("src", flashTestMedia(2).src);
+});
+
+test("a failed replacement keeps the displayed custom photo instead of restoring the old fallback", async ({ page }) => {
+  await mockApplication(page, { admin: false });
+  let item = flashTestMedia(2);
+  await page.route("**/api/site-media", route => route.fulfill({ json: { items: { "home.hero": item } } }));
+  await page.goto("/");
+  const image = page.locator('[data-site-media-slot="home.hero"] img');
+  await expect(image).toHaveAttribute("src", item.src);
+  await page.route("**/broken-photo.webp", route => route.fulfill({ contentType: "image/webp", body: "not an image" }));
+  item = { ...flashTestMedia(3), src: "/broken-photo.webp", srcSet: "/broken-photo.webp 800w", variants: [{ url: "/broken-photo.webp", width: 800 }] };
+  const failedImage = page.waitForResponse("**/broken-photo.webp");
+  await page.evaluate(() => window.iHearLiveContent.announce("content", "photo-3"));
+  await (await failedImage).finished();
+  await page.evaluate(() => new Promise(resolve => { requestAnimationFrame(() => requestAnimationFrame(resolve)); }));
+  await expect(image).toHaveAttribute("src", flashTestMedia(2).src);
+  await expect(image).toHaveCSS("visibility", "visible");
+});
+
 test("Hero image editor compresses before upload and restores the repository fallback", async ({ page }) => {
   const mocked = await mockApplication(page);
   await page.goto("/");
@@ -970,6 +1036,31 @@ test("Hero compression failure never sends an upload request", async ({ page }) 
   await expect(page.locator("[data-media-save]")).toBeDisabled();
   expect(mocked.getMediaUploadCount()).toBe(0);
   expect(mocked.requests.some((request) => request.startsWith("POST "))).toBe(false);
+});
+
+test("background metadata refresh never flashes the fallback during an optimistic upload", async ({ page }) => {
+  const mocked = await mockApplication(page);
+  mocked.setMediaMutationDelay(4_000);
+  await page.goto("/");
+  const hero = page.locator('[data-site-media-slot="home.hero"]');
+  await hero.hover();
+  await hero.locator(".site-media-edit").click();
+  const dialog = page.locator(".site-media-dialog");
+  await dialog.locator("[data-media-file]").setInputFiles("assets/images/hero-classroom.jpg");
+  await expect(dialog.locator("[data-media-save]")).toBeEnabled({ timeout: 20_000 });
+  await previewAndSaveMedia(dialog);
+  await expect(hero.locator("img")).toHaveAttribute("src", /^blob:/);
+  await hero.locator("img").evaluate(img => {
+    window.photoTransitions = [];
+    new MutationObserver(records => {
+      records.forEach(record => window.photoTransitions.push(record.oldValue, img.getAttribute("src")));
+    }).observe(img, { attributes: true, attributeFilter: ["src"], attributeOldValue: true });
+  });
+  const refreshed = page.waitForResponse("**/api/site-media");
+  await page.evaluate(() => window.iHearLiveContent.announce("content", "upload-in-progress"));
+  await (await refreshed).finished();
+  await expect(hero.locator("img")).toHaveAttribute("src", "/assets/images/volunteers-1200.webp");
+  expect(await page.evaluate(() => window.photoTransitions.some(src => String(src).includes("hero-classroom")))).toBe(false);
 });
 
 test("a timed-out upload response is reconciled when the server already committed the image", async ({ page }) => {

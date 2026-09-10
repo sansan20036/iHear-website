@@ -98,12 +98,19 @@
       ...(Array.isArray(item?.variants) ? item.variants.map((variant) => variant.url) : []),
     ].filter(Boolean))];
     if (!item?.src || !item?.srcSet || !urls.length) return Promise.resolve(false);
-    return Promise.all(urls.map((url) => new Promise((resolve, reject) => {
+    return Promise.all(urls.map((url) => preloadMediaImage(url, cacheBust))).then(() => true, () => false);
+  }
+
+  function preloadMediaImage(url, cacheBust) {
+    return new Promise((resolve, reject) => {
       const preload = new Image();
-      preload.onload = resolve;
+      preload.onload = () => {
+        if (typeof preload.decode === "function") preload.decode().then(resolve, reject);
+        else resolve();
+      };
       preload.onerror = reject;
       preload.src = mediaProbeUrl(url, cacheBust);
-    }))).then(() => true, () => false);
+    });
   }
 
   function createController(host) {
@@ -195,6 +202,7 @@
     image.style.transform = defaults.transform;
     image.style.transformOrigin = defaults.transformOrigin;
     host.removeAttribute("data-site-media-custom");
+    host.setAttribute("data-site-media-ready", "true");
   }
 
   function commitItem(item) {
@@ -224,6 +232,7 @@
       image.style.transformOrigin = defaults.transformOrigin;
     }
     host.setAttribute("data-site-media-custom", "true");
+    host.setAttribute("data-site-media-ready", "true");
   }
 
   function applyItem(item, options = {}) {
@@ -236,19 +245,15 @@
       item.src,
       ...(Array.isArray(item.variants) ? item.variants.map((variant) => variant.url) : []),
     ].filter(Boolean))];
-    return Promise.all(urls.map((url) => new Promise((resolve, reject) => {
-      const preload = new Image();
-      preload.onload = resolve;
-      preload.onerror = reject;
-      preload.src = mediaProbeUrl(url, options.cacheBust);
-    }))).then(
+    return Promise.all(urls.map((url) => preloadMediaImage(url, options.cacheBust))).then(
       () => {
         if (token !== applyToken) return false;
         commitItem(item);
         return true;
       },
       () => {
-        if (token === applyToken && !options.keepCurrentOnFailure) restoreDefault();
+        // Keep the current photo or initial placeholder. A failed custom image
+        // must not briefly reveal the obsolete repository fallback.
         return false;
       },
     );
@@ -847,6 +852,7 @@
   }
 
   function destroy() {
+    applyToken += 1;
     compressionController?.abort();
     if (activeRequest) activeRequest.abort();
     releasePreview();
@@ -877,6 +883,7 @@
 
   let controllers = [];
   let lastMediaData = null;
+  let mediaRefreshSequence = 0;
   let optimisticSequence = 0;
   const pendingSlots = new Map();
   const recentCommittedSlots = new Map();
@@ -1001,12 +1008,11 @@
       if (!controller) return;
       controllers.push(controller);
       controller.renderAdminControl();
-      if (lastMediaData) controller.refresh(lastMediaData);
       const pendingOperation = pendingSlots.get(controller.slot);
       if (pendingOperation) {
         controller.setPending(true, pendingOperation.action);
         controller.previewItem(pendingOperation.item);
-      }
+      } else if (lastMediaData) controller.refresh(lastMediaData);
     });
   }
 
@@ -1061,18 +1067,21 @@
   }
 
   async function refreshAll() {
+    const sequence = ++mediaRefreshSequence;
     const response = await fetch("/api/site-media", { credentials: "same-origin", cache: "no-store" });
+    if (sequence !== mediaRefreshSequence) return;
     if (!response.ok) throw new Error("site media unavailable");
-    const data = preserveRecentCommits(await response.json());
+    const payload = await response.json();
+    if (sequence !== mediaRefreshSequence) return;
+    const data = preserveRecentCommits(payload);
     lastMediaData = data;
     reconcileControllers();
     controllers.forEach((controller) => {
-      controller.refresh(data);
       const pendingOperation = pendingSlots.get(controller.slot);
       if (pendingOperation) {
         controller.setPending(true, pendingOperation.action);
         controller.previewItem(pendingOperation.item);
-      }
+      } else controller.refresh(data);
     });
   }
 
@@ -1098,6 +1107,9 @@
   });
 
   reconcileControllers();
-  refreshAll().catch(() => controllers.forEach((controller) => controller.restoreDefault()));
+  refreshAll().catch(() => {
+    // Leave the initial placeholder until a later successful metadata refresh.
+    // An unavailable API does not confirm that a custom photo was deleted.
+  });
   controllers.forEach((controller) => controller.renderAdminControl());
 })();

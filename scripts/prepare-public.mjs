@@ -26,6 +26,9 @@ const dynamicI18nKeys = new Set(["latest_label", "latest_period", "latest_headli
 const clientAssetVersion = "20260908-team-password-gate-v1";
 const themeInitScript = `<script data-site-theme-init>(function(){var a={warm:1,ocean:1,sage:1,lavender:1,slate:1},t="warm";try{var s=localStorage.getItem("ihear:site-theme");if(a[s])t=s}catch(e){}document.documentElement.setAttribute("data-theme",t)})()</script>`;
 const themeBootstrapScript = `<script src="/api/site-theme/bootstrap" data-site-theme-bootstrap></script>`;
+// Hide only managed pictures before the first paint. Layout and no-JS images
+// remain intact; each controller reveals its confirmed image after decoding.
+const mediaInit = `<script data-site-media-init>document.documentElement.classList.add("site-media-loading")</script><style data-site-media-init-style>.site-media-loading [data-site-media-slot]:not([data-site-media-ready]) picture{visibility:hidden}</style>`;
 function layoutBootstrapScript(file) {
   const route = file === "index.html" ? "/" : `/${file.replace(/\.html$/, "")}`;
   return `<script src="/api/site-layout/bootstrap?page=${encodeURIComponent(route)}" data-site-layout-bootstrap></script>`;
@@ -82,7 +85,7 @@ function withClientScripts(html, file) {
   const withThemeDefault = withoutManagedStyles.replace(/<html(?![^>]*\bdata-theme=)/i, '<html data-theme="warm"');
   const withThemeHead = withThemeDefault.replace(
     /<head([^>]*)>/i,
-    (opening) => `${opening}\n  ${themeInitScript}\n  ${themeBootstrapScript}\n  ${layoutBootstrapScript(file)}`,
+    (opening) => `${opening}\n  ${themeInitScript}\n  ${themeBootstrapScript}\n  ${layoutBootstrapScript(file)}${html.includes("data-site-media-slot") || html.includes("data-site-media-dynamic") ? `\n  ${mediaInit}` : ""}`,
   );
   const withFavicon = withThemeHead.replace(
     "</head>",
