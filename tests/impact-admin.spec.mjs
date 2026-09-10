@@ -1258,6 +1258,44 @@ test('portrait, landscape and video use a stable frame on narrow phones and desk
   }
 });
 
+test('video startup shows a poster and status, follows playback events, and cleans up on switching', async ({ page }) => {
+  await mockApplication(page);
+  await page.route('https://i.ytimg.com/**', async route => route.fulfill({ contentType: 'image/webp', body: await readFile('assets/images/seminar-800.webp') }));
+  let apiRequests = 0;
+  await page.route('https://www.youtube.com/iframe_api', async route => {
+    apiRequests++;
+    await route.fulfill({ contentType: 'text/javascript', body: `window.YT = { Player: class { constructor(frame, options) { window.testVideoEvents = options.events; this.frame = frame; } destroy() { this.frame.remove(); } } }; window.onYouTubeIframeAPIReady();` });
+  });
+  await page.route('https://www.youtube-nocookie.com/**', route => route.fulfill({ contentType: 'text/html', body: '<html><body>Player fixture</body></html>' }));
+  await page.route('**/api/media-galleries', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ items: [{ id: 'home', items: [{ id: 'video', kind: 'youtube', videoId: 'LsQWwDBLKUc', caption: {} }, { id: 'photo', kind: 'photo', caption: {}, image: { src: '/assets/images/seminar-800.webp', alt: { en: 'Photo' } } }] }] }) }));
+  await page.goto('/');
+  const gallery = page.locator('[data-media-gallery="home"]');
+  await expect(gallery.locator('.gallery-video-cover')).toBeVisible();
+  expect(apiRequests).toBe(0);
+  await gallery.locator('.gallery-video-cover').click();
+  const status = gallery.locator('.gallery-video-loading [role=status]');
+  await expect(status).toHaveText(/Loading video|影片載入中/);
+  await expect(gallery.locator('.gallery-video-loading img')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => !!window.testVideoEvents)).toBe(true);
+  await page.evaluate(() => window.testVideoEvents.onReady());
+  await expect(status).toHaveText(/press play|播放鍵/);
+  await page.evaluate(() => window.testVideoEvents.onStateChange({ data: 1 }));
+  await expect(gallery.locator('.gallery-video-loading')).toBeHidden();
+  await page.evaluate(() => window.testVideoEvents.onStateChange({ data: 3 }));
+  await expect(status).toHaveText(/Loading video|影片載入中/);
+  await expect(status).toHaveText(/taking longer|載入較久/, { timeout: 15000 });
+  await page.evaluate(() => window.testVideoEvents.onAutoplayBlocked());
+  await expect(status).toHaveText(/press play|播放鍵/);
+  await page.evaluate(() => window.testVideoEvents.onError({ data: 150 }));
+  await expect(status).toHaveText(/could not play|無法在此播放/);
+  await expect(gallery.locator('.gallery-external')).toBeVisible();
+  await gallery.locator('.gallery-thumb').last().click();
+  await expect(gallery.locator('.gallery-frame iframe')).toHaveCount(0);
+  await page.evaluate(() => window.testVideoEvents.onStateChange({ data: 3 }));
+  await expect(gallery.locator('.gallery-video-loading')).toHaveCount(0);
+  await expect(gallery.locator('.gallery-frame > img')).toBeVisible();
+});
+
 test('a slow photo switch retains the current photo and ignores an obsolete decode', async ({ page }) => {
   await mockApplication(page);
   let release; const gate = new Promise(resolve => { release = resolve; });

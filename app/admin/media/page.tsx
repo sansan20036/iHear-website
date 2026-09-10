@@ -27,6 +27,7 @@ export default function MediaPage() {
   const [embedded, setEmbedded] = useState(false);
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [confirmRemove, setConfirmRemove] = useState<PublicGalleryItem | null>(null);
@@ -77,10 +78,12 @@ export default function MediaPage() {
     if (embedded) window.parent.postMessage({ type: 'ihear:gallery-editor-saved' }, window.location.origin);
   }
   async function load() {
+    setLoading(true);
     try {
       const data = await adminFetch<{ items: PublicGallery[] }>('/api/media-galleries?admin=1');
       if (alive.current) { setGalleries(data.items); current.current = data.items.find(g => g.id === selected); setError(''); }
     } catch (e) { if (alive.current) setError(displayError(e, locale)); }
+    finally { if (alive.current) setLoading(false); }
   }
   async function work(fn: () => Promise<void>) {
     if (busy) return;
@@ -196,13 +199,13 @@ export default function MediaPage() {
     <header className="admin-page-head"><div><h1>{t('Media galleries', '媒體展示', '媒体展示')}</h1><p>{t('Upload photos or add YouTube links. Each successful save updates the website immediately.', '上傳照片或貼上 YouTube 連結，每次儲存成功後立即更新網站。', '上传照片或粘贴 YouTube 链接，每次保存成功后立即更新网站。')}</p></div></header>
     {error && <p className="admin-alert error" role="alert">{error}</p>}
     {notice && <p role="status">{notice}</p>}
-    <div className="admin-toolbar"><label>{t('Gallery', '展示區')}<select value={selected} disabled={busy || pending} onChange={e => { setSelected(e.target.value as GalleryId); setDrafts([]); setConflict(false); }}>{Object.entries(names[locale]).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label><button className="admin-button secondary" disabled={busy} onClick={() => void work(async () => { await load(); setConflict(false); })}>{t('Refresh saved content', '重新讀取已儲存內容', '重新读取已保存内容')}</button><span>{gallery?.items.length || 0} / 20</span></div>
+    <div className="admin-toolbar"><label>{t('Gallery', '展示區')}<select value={selected} disabled={loading || busy || pending} onChange={e => { setSelected(e.target.value as GalleryId); setDrafts([]); setConflict(false); }}>{Object.entries(names[locale]).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label><button className="admin-button secondary" disabled={loading || busy} onClick={() => void work(async () => { await load(); setConflict(false); })}>{t('Refresh saved content', '重新讀取已儲存內容', '重新读取已保存内容')}</button><span className="admin-gallery-status" role="status">{loading ? t('Loading gallery…', '相簿載入中…', '相册加载中…') : gallery ? `${gallery.items.length} / 20` : t('Could not load gallery. Please retry.', '相簿載入失敗，請重新讀取。', '相册加载失败，请重新读取。')}</span></div>
     {conflict && <p role="alert">{t('A newer version exists. Refresh saved content, review your draft, then save again.', '有更新版本，請重新讀取已儲存內容，核對草稿後再儲存。')}</p>}
     <div className="admin-actions"><label className="admin-button primary">{t('Add photos', '新增照片')}<input className="admin-media-file" aria-label={t('Add photos', '新增照片')} type="file" multiple accept="image/png,image/jpeg,image/webp" disabled={busy || !gallery || pending && drafts.some(d => d.attempted)} onChange={e => { choosePhotos(e.target.files); e.target.value = ''; }} /></label><button className="admin-button primary" disabled={busy || !gallery || (gallery.items.length + drafts.filter(d => !d.done && !gallery.items.some(i => i.id === d.itemId)).length >= 20)} onClick={() => setDrafts(list => [...list, newDraft('youtube')])}>{t('Add YouTube video', '新增 YouTube 影片')}</button></div>
     <p>{t('PNG / JPEG / WebP, up to 20 MB each. Videos: upload to YouTube, then paste the link. Hidden items count toward the 20-item limit.', '照片支援 PNG／JPEG／WebP，每張上限 20 MB。影片請先上傳 YouTube 再貼連結；隱藏項目也計入 20 個上限。')}</p>
     <div className="admin-media-list">{gallery?.items.map((item, index) => <article className="admin-panel admin-media-item" key={item.id}>
       <img onLoad={e => { e.currentTarget.style.visibility = ""; }} onError={e => { e.currentTarget.style.visibility = "hidden"; }} src={item.image?.src || `https://i.ytimg.com/vi/${item.videoId}/default.jpg`} alt={item.image?.alt[locale] || ''} />
-      <div><strong>{index + 1}. {item.kind === 'photo' ? t('Photo', '照片') : 'YouTube'} {item.hidden ? t('(Hidden)', '（隱藏）', '（隐藏）') : ''}</strong><p>{item.caption[locale] || item.caption.en || item.image?.alt[locale]}</p><div className="admin-actions">
+      <div><strong>{index + 1}. {item.kind === 'photo' ? t('Photo', '照片') : 'YouTube'} {item.hidden ? t('(Hidden)', '（隱藏）', '（隐藏）') : ''}</strong><p>{item.caption[locale] || item.caption.en || item.image?.alt[locale]}</p><div className="admin-actions admin-media-item-actions">
         <button className="admin-button secondary" disabled={busy || pending} onClick={() => setDrafts([newDraft(item.kind, item)])}>{t('Edit / replace', '編輯／更換', '编辑／更换')}</button>
         <button className="admin-button secondary" disabled={busy || pending || conflict} onClick={() => void mutate(item, 'put')}>{item.hidden ? t('Show', '顯示', '显示') : t('Hide', '隱藏', '隐藏')}</button>
         <button aria-label={t('Move up', '向前移動')} className="admin-button secondary" disabled={busy || pending || conflict || index === 0} onClick={() => void mutate(item, 'move', -1)}>↑</button>

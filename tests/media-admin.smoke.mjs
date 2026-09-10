@@ -32,9 +32,21 @@ try {
   await context.addCookies([{ name: 'authjs.session-token', value: token, url: origin, httpOnly: true, sameSite: 'Lax' }]);
   page = await context.newPage();
   page.on('response', async response => { if (response.url().includes('/api/media-galleries') && response.status() >= 400) console.error('Gallery test response:', response.status(), await response.text()); });
+  let releaseInitial;
+  const initialGate = new Promise(resolve => { releaseInitial = resolve; });
+  const adminGalleryUrl = '**/api/media-galleries?admin=1';
+  await page.route(adminGalleryUrl, async route => { await initialGate; await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'Temporary test outage' }) }); });
   await page.goto(`${origin}/admin/media`);
   await expect(page.getByRole('heading', { name: '媒體展示', exact: true })).toBeVisible();
+  await expect(page.locator('.admin-gallery-status')).toHaveText('相簿載入中…');
+  await expect(page.getByRole('combobox')).toBeDisabled();
+  await expect(page.locator('.admin-empty')).toHaveCount(0);
+  releaseInitial();
+  await expect(page.locator('.admin-gallery-status')).toHaveText('相簿載入失敗，請重新讀取。');
+  await page.unroute(adminGalleryUrl);
+  await page.getByRole('button', { name: '重新讀取已儲存內容', exact: true }).click();
   await page.getByRole('combobox').selectOption('impact');
+  await expect(page.locator('.admin-gallery-status')).toHaveText('0 / 20');
   await page.getByRole('button', { name: '新增 YouTube 影片', exact: true }).click();
   await page.getByLabel('YouTube URL').fill('https://youtu.be/LsQWwDBLKUc?si=phone-sharing&t=99');
   await page.getByRole('button', { name: '儲存／重試未完成項目', exact: true }).click();
@@ -126,6 +138,12 @@ try {
     await page.setViewportSize({ width, height: 900 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     expect(await editor.locator('html').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+    if (width <= 390) {
+      const buttons = editor.locator('.admin-media-item-actions').first().getByRole('button');
+      const boxes = await buttons.evaluateAll(elements => elements.map(el => { const b = el.getBoundingClientRect(); return { y: Math.round(b.y), height: b.height, width: b.width }; }));
+      expect(new Set(boxes.map(b => b.y)).size).toBe(2);
+      expect(boxes.every(b => b.height >= 44 && b.width >= 44)).toBe(true);
+    }
     await page.screenshot({ path: `output/playwright/gallery-inline-${width}.png` });
   }
   await closeEditor.click();

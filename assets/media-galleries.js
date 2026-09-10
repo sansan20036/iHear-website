@@ -50,11 +50,12 @@
     document.body.append(dialog); document.body.style.overflow = 'hidden'; dialog.showModal(); close.focus();
   }
   const controllers = roots.map(root => {
-    let items = [], selected = '', generation = 0, signature = '', playing = false;
+    let items = [], selected = '', generation = 0, signature = '', playing = false, stopVideo;
+    const stop = () => { stopVideo?.(); stopVideo = null; playing = false; };
     const frame = node('div', 'gallery-frame');
     const manage = node('button', 'gallery-manage'); manage.type = 'button'; manage.hidden = true;
     manage.onclick = () => {
-      if (playing) { frame.replaceChildren(); playing = false; void select(selected, true); }
+      if (playing) { stop(); frame.replaceChildren(); void select(selected, true); }
       openEditor(root.dataset.mediaGallery, manage);
     };
     const empty = node('p', 'gallery-empty'); empty.hidden = true;
@@ -83,7 +84,7 @@
       const token = ++generation;
       frame.setAttribute('aria-busy', 'true');
       // Stop sound immediately, even when the next photo is still downloading.
-      if (playing) { frame.replaceChildren(); playing = false; }
+      if (playing) { stop(); frame.replaceChildren(); }
       let visual;
       if (item.kind === 'photo') {
         const image = new Image();
@@ -111,12 +112,8 @@
         button.append(cover, icon);
         button.onclick = () => {
           if (selected !== id) return;
-          const iframe = node('iframe');
-          iframe.src = `https://www.youtube-nocookie.com/embed/${item.videoId}?autoplay=1&playsinline=1`;
-          iframe.title = localized(item.caption) || text().video;
-          iframe.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
-          iframe.allowFullscreen = true; iframe.referrerPolicy = 'strict-origin-when-cross-origin';
-          frame.replaceChildren(iframe); playing = true;
+          stopVideo = window.iHearGalleryVideo.start(frame, item, locale(), localized(item.caption) || text().video);
+          playing = true;
         };
         visual = button;
       }
@@ -150,7 +147,7 @@
       empty.textContent = editorText().empty; empty.hidden = !administrator || !!items.length || !gallery;
       frame.hidden = !items.length && Boolean(gallery);
       if (!items.length) {
-        frame.replaceChildren(); playing = false; selected = '';
+        stop(); frame.replaceChildren(); selected = '';
         caption.hidden = external.hidden = controls.hidden = thumbnails.hidden = true;
         root.querySelector('.gallery-error')?.remove(); return;
       }
