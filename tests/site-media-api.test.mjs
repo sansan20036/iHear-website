@@ -191,8 +191,6 @@ describe("site media API", () => {
   });
 
   test.each([
-    "services.tutoring",
-    "services.outreach",
     "global.volunteers",
     "impact.learners.chart",
     "impact.tutors.chart",
@@ -220,6 +218,15 @@ describe("site media API", () => {
       variants.map((variant) => variant.storagePath),
     );
     expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  test.each(['services.tutoring', 'services.outreach', 'gallery.11111111-1111-4111-8111-111111111111'])('legacy editors cannot mutate gallery-owned slot %s', async slot => {
+    for (const handler of [postSiteMedia, patchSiteMedia, deleteSiteMedia]) {
+      expect((await handler(uploadRequest(), context(slot))).status).toBe(409);
+    }
+    expect(store.replaceSiteMediaAsset).not.toHaveBeenCalled();
+    expect(store.deleteSiteMediaAsset).not.toHaveBeenCalled();
+    expect(storage.removeSiteMediaObjects).not.toHaveBeenCalled();
   });
 
   test("POST requires expectedVersion and DELETE restores the default with optimistic locking", async () => {

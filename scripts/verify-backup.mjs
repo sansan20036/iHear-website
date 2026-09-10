@@ -149,7 +149,7 @@ try {
   }
   if (
     backup.payload?.format !== "ihear-postgres-backup" ||
-    ![1, 2, 3, 4, 5, 6, 7, 8].includes(backup.payload?.version)
+    ![1, 2, 3, 4, 5, 6, 7, 8, 9].includes(backup.payload?.version)
   ) {
     throw new Error("Unsupported backup format.");
   }
@@ -222,6 +222,25 @@ try {
   try {
     await sql.begin(async (transaction) => {
       const transactionRevisionsBefore = await currentRevisions(transaction);
+      if (backup.payload.version >= 9) {
+        for (const row of tables.media_galleries) await transaction`
+          INSERT INTO public.media_galleries(id,version,items,updated_by,updated_at)
+          VALUES (${row.id},${row.version},${transaction.json(row.items)},${row.updated_by},${row.updated_at})
+          ON CONFLICT(id) DO UPDATE SET version=EXCLUDED.version,items=EXCLUDED.items,updated_by=EXCLUDED.updated_by,updated_at=EXCLUDED.updated_at`;
+        for (const row of tables.media_gallery_assets) await transaction`
+          INSERT INTO public.media_gallery_assets(slot,payload) VALUES (${row.slot},${transaction.json(row.payload)})
+          ON CONFLICT(slot) DO UPDATE SET payload=EXCLUDED.payload`;
+        for (const row of tables.media_gallery_operations) await transaction`
+          INSERT INTO public.media_gallery_operations(id,gallery_id,actor,fingerprint,created_at)
+          VALUES (${row.id},${row.gallery_id},${row.actor},${row.fingerprint},${row.created_at}) ON CONFLICT(id) DO NOTHING`;
+        for (const [name, key] of [['media_galleries','id'],['media_gallery_assets','slot'],['media_gallery_operations','id']]) {
+          const rows = await transaction.unsafe(`SELECT * FROM public.${name} ORDER BY ${key}`);
+          for (const row of tables[name]) {
+            const restored = rows.find(value => value[key] === row[key]);
+            if (!restored || JSON.stringify(restored) !== JSON.stringify(row)) throw new Error(`Gallery restore mismatch: ${name}`);
+          }
+        }
+      }
       for (const row of impactMilestoneSettings) {
         await transaction`
           INSERT INTO impact_milestone_settings (key, value, updated_at)

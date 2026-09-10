@@ -127,6 +127,7 @@ export async function POST(request: Request, context: RouteContext) {
   if ("response" in access) return access.response;
   const respond = <T extends Response>(response: T) => withRateLimitHeaders(response, access.decision);
   const { slot } = await context.params;
+  if (slot === "services.tutoring" || slot === "services.outreach" || slot.startsWith("gallery.")) return respond(NextResponse.json({ error: "Manage this image in Media galleries" }, { status: 409 }));
   if (!isSiteMediaSlot(slot)) return respond(NextResponse.json({ error: "Unknown image slot" }, { status: 400 }));
 
   const contentLength = Number(request.headers.get("content-length") || 0);
@@ -206,6 +207,7 @@ export async function PATCH(request: Request, context: RouteContext) {
   if ("response" in access) return access.response;
   const respond = <T extends Response>(response: T) => withRateLimitHeaders(response, access.decision);
   const { slot } = await context.params;
+  if (slot === "services.tutoring" || slot === "services.outreach" || slot.startsWith("gallery.")) return respond(NextResponse.json({ error: "Manage this image in Media galleries" }, { status: 409 }));
   if (!isSiteMediaSlot(slot)) return respond(NextResponse.json({ error: "Unknown image slot" }, { status: 400 }));
 
   let body: unknown;
@@ -257,6 +259,7 @@ export async function DELETE(request: Request, context: RouteContext) {
   if ("response" in access) return access.response;
   const respond = <T extends Response>(response: T) => withRateLimitHeaders(response, access.decision);
   const { slot } = await context.params;
+  if (slot === "services.tutoring" || slot === "services.outreach" || slot.startsWith("gallery.")) return respond(NextResponse.json({ error: "Manage this image in Media galleries" }, { status: 409 }));
   if (!isSiteMediaSlot(slot)) return respond(NextResponse.json({ error: "Unknown image slot" }, { status: 400 }));
 
   let body: unknown;

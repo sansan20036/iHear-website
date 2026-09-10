@@ -184,6 +184,7 @@ async function mockApplication(page, { admin = true, duplicateAvatar = false, tu
     layout: { revision: "1", updatedAt: "2026-08-23T00:00:00.000Z" },
   };
 
+  await page.route("**/api/media-galleries", route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: ['tutoring','outreach','home','stories','impact'].map(id => ({ id, version: 0, items: id === 'impact' ? [] : [{ id: 'initial-'+id, kind: ['home','stories'].includes(id) ? 'youtube' : 'photo', hidden: false, caption: { en:'', zhHant:'', zhHans:'' }, videoId: 'LsQWwDBLKUc', image: { src: '/assets/images/'+(id === 'tutoring' ? 'tutoring-student' : 'seminar')+'-800.webp', alt: { en:'Activity', zhHant:'活動', zhHans:'活动' }, variants: [] } }] })) }) }));
   await page.route("**/api/auth/session", (route) => route.fulfill({
     status: 200,
     contentType: "application/json",
@@ -1200,76 +1201,69 @@ test("a timed-out upload response is reconciled when the server already committe
   expect(mocked.getMediaItem("home.hero")?.recordVersion).toBeGreaterThan(0);
 });
 
-test("sitewide media slots independently update service cards, localized alt text, focus, and fallback", async ({ page }) => {
-  const mocked = await mockApplication(page);
+test("service galleries share content and release the old single-image editors", async ({ page }) => {
+  await mockApplication(page);
   await page.goto("/programs");
+  await expect(page.locator('[data-media-gallery="tutoring"] .gallery-frame img')).toBeVisible();
+  await expect(page.locator('[data-media-gallery="outreach"] .gallery-frame img')).toBeVisible();
+  await expect(page.locator('[data-site-media-slot="services.tutoring"]')).toHaveCount(0);
+  const src = await page.locator('[data-media-gallery="tutoring"] .gallery-frame img').getAttribute('src');
+  await page.goto('/');
+  await expect(page.locator('[data-media-gallery="tutoring"] .gallery-frame img')).toHaveAttribute('src', src);
+  await expect(page.locator('[data-media-gallery] .site-media-edit')).toHaveCount(0);
+});
 
-  const tutoring = page.locator('[data-site-media-slot="services.tutoring"]');
-  const outreach = page.locator('[data-site-media-slot="services.outreach"]');
-  await expect(tutoring).toHaveCount(1);
-  await expect(outreach).toHaveCount(1);
+test('portrait, landscape and video use a stable frame on narrow phones and desktop', async ({ page }) => {
+  await mockApplication(page);
+  const portrait = await sharp({ create: { width: 180, height: 320, channels: 3, background: '#c8daf0' } }).webp().toBuffer();
+  await page.route('**/gallery-portrait.webp', route => route.fulfill({ contentType: 'image/webp', body: portrait }));
+  await page.route('https://www.youtube-nocookie.com/**', route => route.fulfill({ contentType: 'text/html', body: '<html><body>Embedded player fixture</body></html>' }));
+  const photo = (id, src) => ({ id, kind: 'photo', caption: { en: id }, image: { src, alt: { en: id }, variants: [] } });
+  await page.route('**/api/media-galleries', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ items: [{ id: 'tutoring', items: [photo('portrait', '/gallery-portrait.webp'), photo('landscape', '/assets/images/seminar-800.webp'), { id: 'video', kind: 'youtube', videoId: 'LsQWwDBLKUc', caption: { en: 'Our volunteers' } }] }, { id: 'outreach', items: [] }] }) }));
+  for (const width of [320, 390, 1280]) {
+    await page.setViewportSize({ width, height: 900 }); await page.goto('/programs');
+    const gallery = page.locator('[data-media-gallery="tutoring"]');
+    const frame = gallery.locator('.gallery-frame');
+    await expect(frame.locator('img')).toHaveCSS('object-fit', 'contain');
+    const first = await frame.boundingBox(); expect(first.height).toBeGreaterThanOrEqual(200);
+    await gallery.locator('.gallery-thumb').nth(1).click();
+    await expect(frame.locator('img')).toHaveAttribute('src', /seminar/);
+    expect((await frame.boundingBox()).height).toBeCloseTo(first.height, 1);
+    await gallery.locator('.gallery-thumb').nth(2).click();
+    await expect(frame.locator('iframe')).toHaveCount(0);
+    await frame.locator('button').click(); await expect(frame.locator('iframe')).toHaveAttribute('src', /embed\/LsQWwDBLKUc\?autoplay=1/);
+    expect((await frame.boundingBox()).height).toBeCloseTo(first.height, 1);
+    await gallery.locator('.gallery-thumb').first().click(); await expect(frame.locator('iframe')).toHaveCount(0);
+    await expect(frame.locator('img')).toHaveAttribute('src', '/gallery-portrait.webp');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    if (width === 390) await gallery.screenshot({ path: 'output/playwright/gallery-mobile.png' });
+  }
+});
 
-  await tutoring.scrollIntoViewIfNeeded();
-  await tutoring.hover();
-  const tutoringEdit = tutoring.locator(".site-media-edit");
-  await expect(tutoringEdit).toBeVisible();
-  await tutoringEdit.focus();
-  await tutoringEdit.click();
-  let openDialog = page.locator(".site-media-dialog[open]");
-  await openDialog.locator("[data-media-file]").setInputFiles("assets/images/hero-classroom.jpg");
-  await expect(openDialog.locator("[data-media-save]")).toBeEnabled({ timeout: 20_000 });
-  await openDialog.locator('[data-media-focal-grid] button[data-x="0"][data-y="100"]').click();
-  await previewAndSaveMedia(openDialog);
-  await expect(openDialog).not.toBeVisible({ timeout: 20_000 });
-
-  await expect(tutoring).toHaveAttribute("data-site-media-custom", "true");
-  await expect(tutoring.locator("img")).toHaveCSS("object-position", "0% 100%");
-  await expect(outreach).not.toHaveAttribute("data-site-media-custom", "true");
-  await page.locator('#langSwitch button[data-lang="zhTW"]').click();
-  await expect(tutoring.locator("img")).toHaveAttribute("alt", "學生接受一對一英語輔導");
-
-  await outreach.scrollIntoViewIfNeeded();
-  await outreach.hover();
-  const outreachEdit = outreach.locator(".site-media-edit");
-  await expect(outreachEdit).toBeVisible();
-  await outreachEdit.focus();
-  await outreachEdit.click();
-  openDialog = page.locator(".site-media-dialog[open]");
-  await openDialog.locator("[data-media-file]").setInputFiles("assets/images/hero-classroom.jpg");
-  await expect(openDialog.locator("[data-media-save]")).toBeEnabled({ timeout: 20_000 });
-  await openDialog.locator('[data-media-focal-grid] button[data-x="100"][data-y="0"]').click();
-  await previewAndSaveMedia(openDialog);
-  await expect(openDialog).not.toBeVisible({ timeout: 20_000 });
-
-  await expect(tutoring).toHaveAttribute("data-site-media-custom", "true");
-  await expect(outreach).toHaveAttribute("data-site-media-custom", "true");
-  await expect(outreach.locator("img")).toHaveCSS("object-position", "100% 0%");
-  await expect(outreach.locator("img")).toHaveAttribute("alt", "社區成員參與聽力健康講座");
-
-  await tutoring.scrollIntoViewIfNeeded();
-  await tutoring.hover();
-  await tutoringEdit.focus();
-  await tutoringEdit.click();
-  page.once("dialog", (nativeDialog) => nativeDialog.accept());
-  await page.locator(".site-media-dialog[open] [data-media-restore]").click();
-  await expect(tutoring).not.toHaveAttribute("data-site-media-custom", "true");
-  await expect(tutoring.locator("img")).toHaveAttribute("src", /tutoring-student\.jpg$/);
-  await expect(outreach).toHaveAttribute("data-site-media-custom", "true");
-
-  expect(mocked.getMediaUploadCount()).toBe(2);
-  expect(mocked.requests.some((request) => request.includes("/api/site-media/services.tutoring"))).toBe(true);
-  expect(mocked.requests.some((request) => request.includes("/api/site-media/services.outreach"))).toBe(true);
+test('a slow photo switch retains the current photo and ignores an obsolete decode', async ({ page }) => {
+  await mockApplication(page);
+  let release; const gate = new Promise(resolve => { release = resolve; });
+  await page.route('**/slow-gallery.webp', async route => { await gate; await route.fulfill({ contentType: 'image/webp', body: await readFile('assets/images/seminar-800.webp') }); });
+  const item = (id, src) => ({ id, kind: 'photo', caption: { en: id }, image: { src, alt: { en: id }, variants: [] } });
+  await page.route('**/api/media-galleries', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ items: [{ id: 'tutoring', items: [item('first','/assets/images/tutoring-student-800.webp'), item('slow','/slow-gallery.webp'), item('last','/assets/images/volunteers-800.webp')] }] }) }));
+  await page.goto('/programs'); const gallery = page.locator('[data-media-gallery="tutoring"]'); const image = gallery.locator('.gallery-frame img');
+  await expect(image).toHaveAttribute('src', /tutoring-student/);
+  await gallery.locator('.gallery-thumb').nth(1).click(); await expect(image).toHaveAttribute('src', /tutoring-student/);
+  await gallery.locator('.gallery-thumb').nth(2).click(); await expect(image).toHaveAttribute('src', /volunteers/);
+  release(); await page.waitForResponse('**/slow-gallery.webp');
+  await expect(image).toHaveAttribute('src', /volunteers/);
 });
 
 test("all repository content photos expose stable sitewide media slots", async ({ page }) => {
   test.setTimeout(60_000);
   await mockApplication(page);
   await page.goto("/");
-  await expect(page.locator("[data-site-media-slot]")).toHaveCount(4);
+  await expect(page.locator("[data-site-media-slot]")).toHaveCount(2);
   await expect(page.locator('[data-site-media-slot="global.volunteers"] .site-media-edit')).toHaveCount(1);
 
   await page.goto("/programs");
-  await expect(page.locator("[data-site-media-slot]")).toHaveCount(2);
+  await expect(page.locator("[data-site-media-slot]")).toHaveCount(0);
+  await expect(page.locator("[data-media-gallery]")).toHaveCount(2);
 
   await page.goto("/get-involved");
   const volunteers = page.locator('[data-site-media-slot="global.volunteers"]');

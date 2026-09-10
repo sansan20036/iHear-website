@@ -10,7 +10,7 @@ export const SITE_MEDIA_SLOTS = [
   "team.howard-ren.avatar",
 ] as const;
 export type TeamAvatarSlot = `team.${string}.avatar`;
-export type SiteMediaSlot = (typeof SITE_MEDIA_SLOTS)[number] | TeamAvatarSlot;
+export type SiteMediaSlot = (typeof SITE_MEDIA_SLOTS)[number] | TeamAvatarSlot | `gallery.${string}`;
 
 export type SiteMediaAlt = {
   en: string;
@@ -59,7 +59,7 @@ export type PublicSiteMediaAsset = Omit<SiteMediaAsset, "updatedBy" | "variants"
 export function isSiteMediaSlot(value: unknown): value is SiteMediaSlot {
   if (typeof value !== "string" || value.length > 100) return false;
   if (SITE_MEDIA_SLOTS.includes(value as (typeof SITE_MEDIA_SLOTS)[number])) return true;
-  return /^team\.[a-z0-9]+(?:-[a-z0-9]+)*\.avatar$/.test(value);
+  return /^team\.[a-z0-9]+(?:-[a-z0-9]+)*\.avatar$/.test(value) || /^gallery\.[0-9a-f-]{36}$/.test(value);
 }
 
 export function publicSiteMediaAsset(asset: SiteMediaAsset): PublicSiteMediaAsset {

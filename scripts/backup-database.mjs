@@ -82,6 +82,12 @@ try {
     ? await sql`SELECT * FROM localized_translation_states ORDER BY resource_type, resource_scope, resource_id, field_key, locale`
     : [];
   const schemaMigrations = await sql`SELECT * FROM public.schema_migrations ORDER BY version`;
+  const [galleryTable] = await sql`SELECT to_regclass('public.media_galleries') IS NOT NULL AS available`;
+  const galleryTables = galleryTable.available ? {
+    media_galleries: await sql`SELECT * FROM public.media_galleries ORDER BY id`,
+    media_gallery_assets: await sql`SELECT * FROM public.media_gallery_assets ORDER BY slot`,
+    media_gallery_operations: await sql`SELECT * FROM public.media_gallery_operations ORDER BY id`,
+  } : {};
   const constraints = await sql`
     SELECT
       relation.relname AS table_name,
@@ -144,9 +150,10 @@ try {
 
   const payload = {
     format: "ihear-postgres-backup",
-    version: hasTranslationStates ? 8 : hasAdminTables ? 7 : hasSiteLayouts ? 6 : hasSiteSettings ? 5 : hasSiteMediaTables ? 4 : hasLocalizedContent ? 3 : 2,
+    version: galleryTable.available ? 9 : hasTranslationStates ? 8 : hasAdminTables ? 7 : hasSiteLayouts ? 6 : hasSiteSettings ? 5 : hasSiteMediaTables ? 4 : hasLocalizedContent ? 3 : 2,
     createdAt: new Date().toISOString(),
     tables: {
+      ...galleryTables,
       impact_milestones: impactMilestones,
       impact_milestone_settings: impactMilestoneSettings,
       content_overrides: contentOverrides,
@@ -188,6 +195,7 @@ try {
     path: path.relative(process.cwd(), backupPath),
     checksum: backup.checksum,
     rowCounts: {
+      ...Object.fromEntries(Object.entries(galleryTables).map(([name, rows]) => [name, rows.length])),
       impact_milestones: impactMilestones.length,
       impact_milestone_settings: impactMilestoneSettings.length,
       content_overrides: contentOverrides.length,

@@ -5,9 +5,9 @@ import { usePathname } from "next/navigation";
 import { AdminProvider, useAdmin, type AdminLocale } from "./admin-context";
 
 const copy = {
-  en: { title: "iHear Admin", overview: "Overview", content: "Website content", team: "Team", impact: "Impact", trash: "Trash", admins: "Administrators", publicSite: "View public site", signOut: "Sign out", owner: "Owner", editor: "Editor", menu: "Open menu" },
-  zhHant: { title: "iHear 管理後台", overview: "總覽", content: "網站內容", team: "團隊名冊", impact: "成果資料", trash: "回收區", admins: "管理員", publicSite: "查看公開網站", signOut: "登出", owner: "擁有者", editor: "編輯者", menu: "開啟選單" },
-  zhHans: { title: "iHear 管理后台", overview: "总览", content: "网站内容", team: "团队名册", impact: "成果数据", trash: "回收区", admins: "管理员", publicSite: "查看公开网站", signOut: "登出", owner: "拥有者", editor: "编辑者", menu: "打开菜单" },
+  en: { title: "iHear Admin", overview: "Overview", content: "Website content", team: "Team", impact: "Impact", media: "Media galleries", trash: "Trash", admins: "Administrators", publicSite: "View public site", signOut: "Sign out", owner: "Owner", editor: "Editor", menu: "Open menu" },
+  zhHant: { title: "iHear 管理後台", overview: "總覽", content: "網站內容", team: "團隊名冊", impact: "成果資料", media: "媒體展示", trash: "回收區", admins: "管理員", publicSite: "查看公開網站", signOut: "登出", owner: "擁有者", editor: "編輯者", menu: "開啟選單" },
+  zhHans: { title: "iHear 管理后台", overview: "总览", content: "网站内容", team: "团队名册", impact: "成果数据", media: "媒体展示", trash: "回收区", admins: "管理员", publicSite: "查看公开网站", signOut: "登出", owner: "拥有者", editor: "编辑者", menu: "打开菜单" },
 };
 
 function ShellContent({ children }: { children: React.ReactNode }) {
@@ -17,7 +17,7 @@ function ShellContent({ children }: { children: React.ReactNode }) {
   const text = copy[locale];
   const links = [
     ["/admin", text.overview, "⌂"], ["/admin/content", text.content, "✎"], ["/admin/team", text.team, "👥"],
-    ["/admin/impact", text.impact, "▥"], ["/admin/trash", text.trash, "♲"],
+    ["/admin/impact", text.impact, "▥"], ["/admin/media", text.media, "▧"], ["/admin/trash", text.trash, "♲"],
     ...(principal.role === "owner" ? [["/admin/admins", text.admins, "⚙"]] : []),
   ];
   const go = (href: string) => { setOpen(false); navigate(href); };

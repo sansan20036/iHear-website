@@ -205,6 +205,10 @@ async function mutateFile<T>(callback: (store: SiteMediaFileStore) => T | Promis
 // Image requests arrive in bursts. Keep their single lookup independent of the
 // shared editor pool and close it before streaming the stored image.
 export async function findSiteMediaImagePath(slot: SiteMediaSlot, width: number): Promise<string | null> {
+  if (slot.startsWith('gallery.')) {
+    const { getGalleryAsset } = await import('./media-gallery-store');
+    return (await getGalleryAsset(slot))?.asset.variants.find(v => v.width === width)?.storagePath || null;
+  }
   assertPersistence();
   if (!databaseUrl) {
     const asset = (await listSiteMediaAssets()).find((item) => item.slot === slot);

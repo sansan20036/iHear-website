@@ -228,5 +228,6 @@ export const RATE_LIMIT_POLICIES = {
   auth: { scope: "auth", limit: 10, windowSeconds: 60 },
   adminMutation: { scope: "admin-mutation", limit: 30, windowSeconds: 60 },
   mediaUpload: { scope: "media-upload", limit: 10, windowSeconds: 600 },
+  galleryUpload: { scope: "gallery-upload", limit: 30, windowSeconds: 600 },
   translation: { scope: "translation", limit: 15, windowSeconds: 60 },
 } as const;

@@ -23,6 +23,7 @@ const nextConfig = {
   outputFileTracingIncludes: {
     "/team": ["./.private/team.html"],
     "/api/site-media/[slot]": ["./node_modules/@img/**/*"],
+    "/api/media-galleries/[id]": ["./node_modules/@img/**/*"],
   },
   async rewrites() {
     return [

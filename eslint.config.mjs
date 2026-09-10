@@ -68,7 +68,7 @@ export default [
     rules: commonRules,
   },
   {
-    files: ["assets/text-language-guard.js", "assets/image-intake.js", "assets/team-translation-edits.js"],
+    files: ["assets/youtube.js", "assets/text-language-guard.js", "assets/image-intake.js", "assets/team-translation-edits.js"],
     languageOptions: {
       ecmaVersion: "latest",
       sourceType: "module",

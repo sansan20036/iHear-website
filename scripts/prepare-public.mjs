@@ -23,7 +23,7 @@ const htmlFiles = [
 
 const passthroughFiles = ["robots.txt", "sitemap.xml", "CNAME", "favicon.ico"];
 const dynamicI18nKeys = new Set(["latest_label", "latest_period", "latest_headline", "latest_description", "latest_link", "stat_asof", "stat_countries_sub"]);
-const clientAssetVersion = "20260908-team-password-gate-v1";
+const clientAssetVersion = "20260910-media-galleries-v1";
 const themeInitScript = `<script data-site-theme-init>(function(){var a={warm:1,ocean:1,sage:1,lavender:1,slate:1},t="warm";try{var s=localStorage.getItem("ihear:site-theme");if(a[s])t=s}catch(e){}document.documentElement.setAttribute("data-theme",t)})()</script>`;
 const themeBootstrapScript = `<script src="/api/site-theme/bootstrap" data-site-theme-bootstrap></script>`;
 // Hide only managed pictures before the first paint. Layout and no-JS images
@@ -83,6 +83,7 @@ function withClientScripts(html, file) {
     managedStyles.push(`  <link rel="stylesheet" href="/assets/team-profiles.css?v=${clientAssetVersion}">`);
   }
 
+  if (html.includes('data-media-gallery')) managedStyles.push(`  <link rel="stylesheet" href="/assets/media-galleries.css?v=${clientAssetVersion}">`);
   const withThemeDefault = withoutManagedStyles.replace(/<html(?![^>]*\bdata-theme=)/i, '<html data-theme="warm"');
   const withThemeHead = withThemeDefault.replace(
     /<head([^>]*)>/i,
@@ -115,6 +116,7 @@ function withClientScripts(html, file) {
   if (html.includes("data-team-")) {
     scripts.push(`  <script src="/assets/team-profiles.js?v=${clientAssetVersion}" defer></script>`);
   }
+  if (html.includes("data-media-gallery")) scripts.push(`  <script src="/assets/media-galleries.js?v=${clientAssetVersion}" defer></script>`);
   scripts.push(`  <script src="/assets/inline-edit.js?v=${clientAssetVersion}" defer></script>`);
 
   return withFavicon.replace(

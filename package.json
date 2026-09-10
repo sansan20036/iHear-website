@@ -11,10 +11,10 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit --incremental false",
     "test": "npm run test:api && npm run test:operations && npm run test:e2e",
-    "test:api": "vitest run tests/team-public.test.mjs tests/image-intake.test.mjs tests/text-language-guard.test.mjs tests/translation-core.test.mjs tests/translation-api.test.mjs tests/api-routes.test.mjs tests/team-api.test.mjs tests/team-sort.test.mjs tests/team-store-postgres.test.mjs tests/admin-console-api.test.mjs tests/rate-limit.test.mjs tests/site-media-api.test.mjs tests/site-media-image.test.mjs tests/site-theme-api.test.mjs tests/site-layout-api.test.mjs",
+    "test:api": "vitest run tests/team-public.test.mjs tests/image-intake.test.mjs tests/text-language-guard.test.mjs tests/translation-core.test.mjs tests/translation-api.test.mjs tests/api-routes.test.mjs tests/team-api.test.mjs tests/team-sort.test.mjs tests/team-store-postgres.test.mjs tests/admin-console-api.test.mjs tests/rate-limit.test.mjs tests/site-media-api.test.mjs tests/site-media-image.test.mjs tests/site-theme-api.test.mjs tests/site-layout-api.test.mjs tests/media-galleries.test.mjs",
     "test:operations": "vitest run tests/operations-config.test.mjs",
     "test:e2e": "node scripts/prepare-public.mjs && playwright test",
-    "check": "npm run lint && npm run typecheck && npm test && npm run build",
+    "check": "npm run lint && npm run typecheck && npm test && npm run build && npm run test:media-admin",
     "serve:legacy": "node scripts/prepare-public.mjs && node server.js",
     "db:audit": "node scripts/audit-database.mjs",
     "db:backup": "node scripts/backup-database.mjs",
@@ -32,7 +32,8 @@
     "content:generate": "node scripts/generate-content-slots.mjs --write",
     "content:check": "node scripts/generate-content-slots.mjs",
     "translation:configure": "node scripts/configure-google-translation.mjs",
-    "translation:backfill-team-local": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/backfill-local-team-translations.mjs"
+    "translation:backfill-team-local": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/backfill-local-team-translations.mjs",
+    "test:media-admin": "node tests/media-admin.smoke.mjs"
   },
   "dependencies": {
     "@google-cloud/translate": "^10.0.1",
