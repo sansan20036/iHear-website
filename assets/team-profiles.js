@@ -51,10 +51,8 @@
   }
   function updateReadMore(details){
     if(!details.open)return;
-    const preview=details.querySelector("[data-tutor-preview]"),button=details.querySelector("[data-tutor-more]");
-    // Measure rendered lines, not character counts: fonts, language and width all affect wrapping.
-    const overflow=preview.scrollHeight>parseFloat(getComputedStyle(preview).lineHeight)*4+1;
-    const hasMore=details.dataset.extra==="true"||overflow;
+    const button=details.querySelector("[data-tutor-more]");
+    const hasMore=details.dataset.extra==="true";
     if(!hasMore&&button.contains(document.activeElement))details.querySelector("summary").focus({preventScroll:true});
     button.hidden=!hasMore;
     button.textContent=tutorView(details)==="full"?l().readLess:l().readMore;
@@ -113,21 +111,22 @@
       ${actions(item,index,items)}</article>`;
   }
   function tutorCard(item,index,items){
-    const meta=[item.showSchool?(pick(item.schoolDisplay)||item.school):"",item.showGrade?(locale()==="en"?`Grade ${item.grade}`:locale()==="zhHans"?`${item.grade} 年级`:`${item.grade} 年級`):""].filter(Boolean).join(" · ");
+    const meta=[item.showSchool?(pick(item.schoolDisplay)||item.school):"",item.showGrade&&String(item.grade||"").trim()?(locale()==="en"?`Grade ${item.grade}`:locale()==="zhHans"?`${item.grade} 年级`:`${item.grade} 年級`):""].filter(Boolean).join(" · ");
     const draft=item.status==="draft"?`<span class="team-profile-status">${l().draft}</span>`:"";
     const introduction=pick(item.summary)||pick(item.bio);
     const bio=pick(item.summary)&&pick(item.bio)!==introduction?pick(item.bio):"";
-    const extra=[meta,pick(item.languages),pick(item.strengths),bio,pick(item.hobbies)].some(Boolean);
+    const extra=[pick(item.languages),bio,pick(item.hobbies)].some(Boolean);
     return `<article class="team-profile-tutor-shell team-profile-admin-card" data-profile-id="${esc(item.id)}" data-status="${esc(item.status)}">
       ${dragHandle(item)}<details class="tutor-prof" data-extra="${extra}"><summary>
       ${avatar(item,"av-roster")}
       <span class="tp-id"><b>${esc(item.name)}${draft}</b><span class="tp-role">${esc(pick(item.role))}</span></span>
       <svg class="chev" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7.4 8.6L12 13.2l4.6-4.6L18 10l-6 6-6-6z"/></svg></summary>
       <div class="tp-body" id="tutor-intro-${esc(item.id)}">
-      <p class="tp-lead" data-tutor-preview>${esc(introduction)}</p>
-      <div class="tp-extra" data-tutor-extra hidden>${meta?`<p class="tp-meta">${esc(meta)}</p>`:""}
-      ${pick(item.languages)?`<p class="tp-langs">${esc(pick(item.languages))}</p>`:""}
+      ${meta?`<p class="tp-meta">${esc(meta)}</p>`:""}
       ${pick(item.strengths)?`<p class="tp-tags">${esc(pick(item.strengths))}</p>`:""}
+      <p class="tp-lead" data-tutor-preview>${esc(introduction)}</p>
+      <div class="tp-extra" data-tutor-extra hidden>
+      ${pick(item.languages)?`<p class="tp-langs">${esc(pick(item.languages))}</p>`:""}
       ${bio?`<p>${esc(bio)}</p>`:""}
       ${pick(item.hobbies)?`<p class="tp-hob">${esc(pick(item.hobbies))}</p>`:""}</div>
       <button type="button" class="tutor-read-more" data-tutor-more aria-controls="tutor-intro-${esc(item.id)}" aria-expanded="false" hidden>${esc(l().readMore)}</button>
@@ -167,7 +166,6 @@
     existing.forEach((node,id)=>{if(!retained.has(id))node.remove()})
   }
   function render(){
-    previewObserver?.disconnect();
     reconcile(leaderMount,leaderCard,visible(all("leader")));
     reconcile(tutorMount,tutorCard,visible(all("tutor")));
     adminBar.hidden=!state.admin;
@@ -176,7 +174,7 @@
       <button class="team-admin-button primary" data-team-toggle>${state.editMode?l().done:l().editMode}</button></div>`;
     const retainedIds=new Set(state.tutors.map(item=>item.id));
     state.tutorOverrides.forEach((_mode,id)=>{if(!retainedIds.has(id))state.tutorOverrides.delete(id)});
-    tutorDetails().forEach(details=>{applyTutorView(details);previewObserver?.observe(details.querySelector("[data-tutor-preview]"))});
+    tutorDetails().forEach(applyTutorView);
     updateTutorToggle();
     window.dispatchEvent(new CustomEvent("ihear:media-slots-changed"));
   }
@@ -417,9 +415,6 @@
     // Ignore our own open-attribute changes; native summary clicks only affect this card.
     if(details.open!==(tutorView(details)!=="collapsed"))setTutorView(details,details.open?"summary":"collapsed");
   },true);
-  const previewObserver=typeof ResizeObserver!=="undefined"?new ResizeObserver(entries=>entries.forEach(entry=>updateReadMore(entry.target.closest("details")))):null;
-  window.addEventListener("resize",()=>tutorDetails().forEach(updateReadMore));
-  document.fonts?.ready.then(()=>tutorDetails().forEach(updateReadMore));
   dialog.addEventListener("input",event=>{if(event.target.name){syncDraft();const [field,fieldLocale]=event.target.name.split(".");if(textFields.includes(field)&&locales.includes(fieldLocale)){state.translationEdits[field][fieldLocale]=true;if(fieldLocale==="en"){state.translationReceipt="";state.translationReady=false;state.englishGuardAccepted=false}}void renderLanguageGuards();event.target.removeAttribute("aria-invalid");const marker=dialog.querySelector(`[data-error="${CSS.escape(event.target.name)}"]`);if(marker)marker.textContent=""}});
   dialog.addEventListener("cancel",event=>{event.preventDefault();if(!state.busy)closeEditor()});
   sortDialog.addEventListener("cancel",event=>{event.preventDefault();cancelAlphabeticalSort()});

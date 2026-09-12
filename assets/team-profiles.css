@@ -40,7 +40,7 @@
 .roster-view-options button:focus-visible,.tutor-read-more:focus-visible,.tutor-prof summary:focus-visible{outline:3px solid var(--orange);outline-offset:3px}
 .tutor-prof .tp-id .tp-role{font-size:.85rem;overflow-wrap:anywhere}
 .tutor-prof [data-tutor-preview]{line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere}
-.tutor-prof[data-view="summary"] [data-tutor-preview]{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:4;overflow:hidden}
+.tutor-prof .tp-meta,.tutor-prof .tp-tags{white-space:pre-wrap;overflow-wrap:anywhere}
 .tutor-prof [data-tutor-preview]:empty{display:none}
 .tp-extra{display:grid;gap:8px;overflow-wrap:anywhere;white-space:pre-wrap}
 .tp-extra[hidden],.tutor-read-more[hidden]{display:none}

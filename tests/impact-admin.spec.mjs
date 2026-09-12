@@ -1723,11 +1723,14 @@ test("short and empty tutor introductions have no ineffective read-more button",
   await expect(card.locator(".tp-hob")).toBeVisible();
 });
 
-test("tutor summaries measure four actual lines and resize safely in three languages", async ({ page }) => {
+test("tutor summaries show school, grade, strengths and the entire introduction in order in three languages", async ({ page }) => {
   const empty = { en: "", zhHant: "", zhHans: "" };
   const long = { en: "I help students grow through inclusive communication. ".repeat(35), zhHant: "我陪伴學生練習溝通、建立信心。".repeat(35), zhHans: "我陪伴学生练习沟通、建立信心。".repeat(35) };
+  const strengths = { en: "Step-by-step teaching · Confidence building", zhHant: "循序漸進教學 · 建立信心", zhHans: "循序渐进教学 · 建立信心" };
+  const school = { en: "University of Michigan–Ann Arbor", zhHant: "密西根大學安娜堡分校", zhHans: "密歇根大学安娜堡分校" };
+  const languages = { en: "English, Mandarin", zhHant: "英語、華語", zhHans: "英语、华语" };
   const mocked = await mockApplication(page, { admin: false, tutorFields: {
-    showSchool: false, showGrade: false, summary: long, bio: empty, languages: empty, strengths: empty, hobbies: empty,
+    showSchool: true, showGrade: true, schoolDisplay: school, grade: "Sophomore", summary: long, bio: empty, languages, strengths, hobbies: empty,
   } });
   await page.goto("/team");
   const card = page.locator('[data-profile-id="tutor-test"] details');
@@ -1743,13 +1746,26 @@ test("tutor summaries measure four actual lines and resize safely in three langu
       await page.locator(`#langSwitch button[data-lang="${language}"]`).click();
       if(await page.locator("#navToggle").getAttribute("aria-expanded") === "true") await page.locator("#navToggle").click();
       if(width < 800) await expect(page.locator("#navLinks")).toHaveAttribute("hidden", "");
-      await expect(more).toBeVisible();
+      const key = { en: "en", zhTW: "zhHant", zhCN: "zhHans" }[language];
+      await expect(card.locator(".tp-meta")).toBeVisible();
+      await expect(card.locator(".tp-meta")).toHaveText(`${school[key]} · ${language === "en" ? "Grade Sophomore" : `Sophomore ${language === "zhTW" ? "年級" : "年级"}`}`);
+      await expect(card.locator(".tp-tags")).toHaveText(strengths[key]);
+      await expect(card.locator(".tp-tags")).toBeVisible();
+      await expect(preview).toHaveText(long[key]);
+      await expect(card.locator(".tp-langs")).toBeHidden();
+      expect(await card.locator(".tp-body > p").evaluateAll(nodes => nodes.map(node => node.className))).toEqual(["tp-meta", "tp-tags", "tp-lead"]);
+      const avatar = await card.locator(".team-avatar-slot").elementHandle();
       const heights = await preview.evaluate(node => ({ height: node.clientHeight, full: node.scrollHeight, line: parseFloat(getComputedStyle(node).lineHeight) }));
-      expect(heights.height).toBeLessThanOrEqual(heights.line * 4 + 1);
-      expect(heights.full).toBeGreaterThan(heights.height);
+      expect(heights.height).toBeGreaterThan(heights.line * 4);
+      expect(heights.full).toBeLessThanOrEqual(heights.height + 1);
+      await expect(more).toBeVisible();
       await more.click();
-      expect(await preview.evaluate(node => node.clientHeight)).toBeGreaterThan(heights.height);
+      await expect(card.locator(".tp-langs")).toBeVisible();
+      await expect(card.locator(".tp-langs")).toHaveText(languages[key]);
+      expect(await preview.evaluate(node => node.clientHeight)).toBe(heights.height);
+      expect(await card.locator(".tp-body > p").evaluateAll(nodes => nodes.map(node => node.className))).toEqual(["tp-meta", "tp-tags", "tp-lead"]);
       await more.click();
+      expect(await avatar.evaluate(node => node.isConnected)).toBe(true);
       await expect(page.locator('[data-team-view="summary"]')).toHaveAttribute("aria-pressed", "true");
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
       for (const button of await page.locator("[data-team-view]").all()) {
@@ -1760,14 +1776,24 @@ test("tutor summaries measure four actual lines and resize safely in three langu
       }
     }
   }
-  // Changing just the viewport can make the complete introduction fit.
+  // Long introductions and visible metadata alone never need an expansion button.
   await page.locator('#langSwitch button[data-lang="en"]').click();
-  mocked.updateTutor({ summary: { en: "Helping students build confidence through weekly conversations. ".repeat(3), zhHant: "", zhHans: "" } });
+  mocked.updateTutor({ languages: empty });
   await page.setViewportSize({ width: 320, height: 900 });
   await page.evaluate(() => window.iHearTeamProfiles.refresh());
-  await expect(more).toBeVisible();
+  await expect(more).toBeHidden();
   await page.setViewportSize({ width: 1440, height: 900 });
   await expect(more).toBeHidden();
+  // Each visibility flag is independent; blank grade must not render a label.
+  mocked.updateTutor({ showSchool: false });
+  await page.evaluate(() => window.iHearTeamProfiles.refresh());
+  await expect(card.locator(".tp-meta")).toHaveText("Grade Sophomore");
+  mocked.updateTutor({ showSchool: true, showGrade: false });
+  await page.evaluate(() => window.iHearTeamProfiles.refresh());
+  await expect(card.locator(".tp-meta")).toHaveText(school.en);
+  mocked.updateTutor({ showSchool: false, showGrade: true, grade: "" });
+  await page.evaluate(() => window.iHearTeamProfiles.refresh());
+  await expect(card.locator(".tp-meta")).toHaveCount(0);
 });
 
 test("collapsed tutor summary keeps a long name, avatar, and chevron safe at supported viewports", async ({ page }) => {
