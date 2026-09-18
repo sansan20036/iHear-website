@@ -579,7 +579,12 @@ try {
         await transaction`INSERT INTO resource_links (id,title,description,url,sort_order,status,version,created_at,updated_at,created_by,updated_by,archived_from_status)
           VALUES (${row.id},${transaction.json(row.title)},${transaction.json(row.description)},${row.url},${row.sort_order},${row.status},${row.version},${row.created_at},${row.updated_at},${row.created_by},${row.updated_by},${row.archived_from_status})
           ON CONFLICT (id) DO UPDATE SET title=EXCLUDED.title,description=EXCLUDED.description,url=EXCLUDED.url,sort_order=EXCLUDED.sort_order,status=EXCLUDED.status,version=EXCLUDED.version,created_at=EXCLUDED.created_at,updated_at=EXCLUDED.updated_at,created_by=EXCLUDED.created_by,updated_by=EXCLUDED.updated_by,archived_from_status=EXCLUDED.archived_from_status`;
+        if (row.category !== undefined) {
+          if (!['form', 'article'].includes(row.category)) throw new Error('Invalid resource category in backup');
+          await transaction`UPDATE resource_links SET category=${row.category} WHERE id=${row.id}`;
+        }
         const [restored] = await transaction`SELECT * FROM resource_links WHERE id=${row.id}`;
+        if (row.category !== undefined && restored.category !== row.category) throw new Error('Resource category did not round-trip: ' + row.id);
         for (const key of ['url','sort_order','status','version','created_by','updated_by','archived_from_status']) if (restored[key] !== row[key]) throw new Error('Resource did not round-trip: ' + row.id);
         for (const field of ['title','description']) for (const locale of ['en','zhHant','zhHans']) if (restored[field][locale] !== row[field][locale]) throw new Error('Resource translation did not round-trip: ' + row.id);
       }

@@ -2,24 +2,35 @@
   const root = document.querySelector('[data-resource-links]');
   if (!root) return;
   const copy = {
-    en: { heading: 'Forms & useful links', intro: 'Find registration forms, session reflections and scheduling links here.', loading: 'Loading resources…', error: 'Resources could not be loaded.', retry: 'Try again', empty: 'There are no published forms yet.', manage: 'Manage forms / links', external: 'opens in a new tab' },
-    zhHant: { heading: '表單／常用連結', intro: '在這裡查找報名、課後反思及授課時間登記等表單。', loading: '資源載入中…', error: '資源載入失敗。', retry: '重新載入', empty: '目前沒有公開表單。', manage: '管理表單／連結', external: '另開新分頁' },
-    zhHans: { heading: '表单／常用链接', intro: '在这里查找报名、课后反思及授课时间登记等表单。', loading: '资源加载中…', error: '资源加载失败。', retry: '重新加载', empty: '目前没有公开表单。', manage: '管理表单／链接', external: '另开新分页' },
+    en: { heading: 'Forms & useful links', intro: 'Find registration forms, session reflections and scheduling links here.', loading: 'Loading resources…', error: 'Resources could not be loaded.', retry: 'Try again', empty: 'There are no published forms yet.', manage: 'Manage resources', external: 'opens in a new tab' },
+    zhHant: { heading: '表單／常用連結', intro: '在這裡查找報名、課後反思及授課時間登記等表單。', loading: '資源載入中…', error: '資源載入失敗。', retry: '重新載入', empty: '目前沒有公開表單。', manage: '管理資源（表單／文章）', external: '另開新分頁' },
+    zhHans: { heading: '表单／常用链接', intro: '在这里查找报名、课后反思及授课时间登记等表单。', loading: '资源加载中…', error: '资源加载失败。', retry: '重新加载', empty: '目前没有公开表单。', manage: '管理资源（表单／文章）', external: '另开新分页' },
+  };
+  const articleCopy = {
+    en: { heading: 'Articles', intro: 'Read articles and practical advice from external sources.' },
+    zhHant: { heading: '文章', intro: '閱讀文章與實用建議；點擊後將另開來源網站。' },
+    zhHans: { heading: '文章', intro: '阅读文章与实用建议；点击后将另开来源网站。' },
   };
   const lang = () => document.documentElement.lang === 'zh-Hant' || document.documentElement.lang === 'zh-TW' ? 'zhHant' : document.documentElement.lang === 'zh-Hans' || document.documentElement.lang === 'zh-CN' ? 'zhHans' : 'en';
   const localized = value => value?.[lang()] || value?.en || '';
   const heading = root.querySelector('h1'), intro = root.querySelector('[data-resource-intro]');
   const list = root.querySelector('ul'), status = root.querySelector('[role="status"]'), retry = root.querySelector('[data-resource-retry]'), manage = root.querySelector('[data-resource-manage]');
+  const articles = document.querySelector('[data-resource-articles]'), articleList = articles?.querySelector('ul');
   let items = null, failed = false, fetching = false, pending = false, rendered = '';
   function render() {
     const text = copy[lang()]; heading.textContent = text.heading; intro.textContent = text.intro; manage.textContent = text.manage; retry.textContent = text.retry;
-    status.textContent = failed ? text.error : items === null ? text.loading : items.length ? '' : text.empty;
+    status.textContent = failed ? text.error : items === null ? text.loading : items.some(item => item.category !== 'article') ? '' : text.empty;
+    if (articles) {
+      articles.querySelector('h2').textContent = articleCopy[lang()].heading;
+      articles.querySelector('[data-article-intro]').textContent = articleCopy[lang()].intro;
+    }
     retry.hidden = !failed;
     if (!items) return;
     const signature = JSON.stringify([lang(), items]);
     if (signature === rendered) return;
     rendered = signature;
     list.replaceChildren();
+    articleList?.replaceChildren();
     for (const item of items) {
       let url;
       try { url = new URL(item.url); if (url.protocol !== 'https:' || url.username || url.password) continue; } catch { continue; }
@@ -28,8 +39,9 @@
       hint.className = 'resource-external'; hint.textContent = ` ↗ (${text.external})`; link.append(hint); row.append(link);
       const description = localized(item.description);
       if (description) { const paragraph = document.createElement('p'); paragraph.textContent = description; row.append(paragraph); }
-      list.append(row);
+      (item.category === 'article' ? articleList : list)?.append(row);
     }
+    if (articles) articles.hidden = !articleList.children.length;
   }
   async function refresh() {
     if (document.hidden) return;

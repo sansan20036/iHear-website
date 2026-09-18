@@ -39,6 +39,10 @@ try {
   expect((await fetch(origin + '/api/resources?admin=1')).status).toBe(403);
   await page.getByRole('button', { name: '新增資源', exact: true }).click();
   const dialog = page.locator('.admin-resource-dialog');
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await page.getByRole('button', { name: '新增資源', exact: true }).click();
+  await dialog.getByLabel('分類', { exact: true }).selectOption('article');
   await dialog.getByLabel('English · 名稱', { exact: true }).fill('Test resource');
   await dialog.getByLabel('繁體中文 · 名稱', { exact: true }).fill('測試資源');
   await dialog.getByLabel('简体中文 · 名稱', { exact: true }).fill('测试资源');
@@ -73,6 +77,8 @@ try {
   const visitorPage = await visitor.newPage();
   await visitorPage.goto(origin + '/resources#resources');
   await expect(visitorPage.locator('.resource-links-list li')).toHaveCount(4);
+  await expect(visitorPage.locator('[data-resource-links] li')).toHaveCount(3);
+  await expect(visitorPage.locator('[data-resource-articles] li')).toHaveCount(1);
   await expect(visitorPage.locator('[data-resource-manage]')).toBeHidden();
   await expect(visitorPage.locator('.res-chips .chip')).toHaveCount(9);
   expect(await visitorPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
@@ -81,6 +87,7 @@ try {
   await expect(row.getByRole('button', { name: '發布', exact: true })).toBeVisible();
   await visitorPage.bringToFront();
   await expect(visitorPage.locator('.resource-links-list li')).toHaveCount(3, { timeout: 20000 });
+  await expect(visitorPage.locator('[data-resource-articles]')).toBeHidden();
   await page.bringToFront();
   await row.getByRole('button', { name: '發布', exact: true }).click();
   await expect(row.getByRole('button', { name: '隱藏', exact: true })).toBeVisible();
@@ -94,6 +101,7 @@ try {
   await trashed.getByRole('button', { name: '復原', exact: true }).click();
   await expect(trashed).toHaveCount(0);
   expect((await publicItems())[0].title.en).toBe('Renamed resource');
+  expect((await publicItems())[0].category).toBe('article');
   await page.goto(origin + '/admin/resources');
   await row.getByRole('button', { name: '編輯', exact: true }).click();
   const current = (await (await context.request.get(origin + '/api/resources?admin=1')).json()).items.find(item => item.title.en === 'Renamed resource');

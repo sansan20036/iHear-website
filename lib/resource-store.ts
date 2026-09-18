@@ -15,13 +15,13 @@ const sql = databaseUrl ? postgres(databaseUrl, { max: 2, prepare: false, ssl: p
 let fileQueue: Promise<unknown> = Promise.resolve();
 
 function fromRow(row: any): ResourceLink {
-  return { id: row.id, title: row.title, description: row.description, url: row.url, sortOrder: row.sort_order, status: row.status,
+  return { id: row.id, category: row.category || "form", title: row.title, description: row.description, url: row.url, sortOrder: row.sort_order, status: row.status,
     version: row.version, createdAt: new Date(row.created_at).toISOString(), updatedAt: new Date(row.updated_at).toISOString(),
     createdBy: row.created_by, updatedBy: row.updated_by, archivedFromStatus: row.archived_from_status || undefined };
 }
 async function readItems(): Promise<StoredResource[]> {
   if (process.env.NODE_ENV === "production" && (process.env.VERCEL || process.env.NETLIFY || process.env.CONTEXT) && process.env.IHEAR_FORCE_FILE_STORE !== "1") throw new ResourceError("Resource persistence is not configured", 503);
-  try { return JSON.parse(await readFile(filePath, "utf8")).items; }
+  try { return JSON.parse(await readFile(filePath, "utf8")).items.map((item: StoredResource) => ({ ...item, category: item.category || "form" })); }
   catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     return RESOURCE_SEEDS.map(item => ({ ...structuredClone(item), states: manualTranslationWrites({ title: item.title, description: item.description }) }));
@@ -47,9 +47,9 @@ async function mutate(id: string, version: number | null, actor: string, changes
     if (version !== null && !previous) throw new ResourceError("Resource not found", 404);
     if (previous && previous.version !== version) throw new ResourceError("Resource has changed; reload before saving", 409);
     const item = changes(previous);
-    await tx`INSERT INTO resource_links (id,title,description,url,sort_order,status,version,created_at,updated_at,created_by,updated_by,archived_from_status)
-      VALUES (${id},${tx.json(item.title)},${tx.json(item.description)},${item.url},${item.sortOrder},${item.status},${item.version},${item.createdAt},${item.updatedAt},${item.createdBy},${actor},${item.archivedFromStatus || null})
-      ON CONFLICT (id) DO UPDATE SET title=EXCLUDED.title,description=EXCLUDED.description,url=EXCLUDED.url,sort_order=EXCLUDED.sort_order,status=EXCLUDED.status,version=EXCLUDED.version,updated_at=EXCLUDED.updated_at,updated_by=EXCLUDED.updated_by,archived_from_status=EXCLUDED.archived_from_status`;
+    await tx`INSERT INTO resource_links (id,category,title,description,url,sort_order,status,version,created_at,updated_at,created_by,updated_by,archived_from_status)
+      VALUES (${id},${item.category},${tx.json(item.title)},${tx.json(item.description)},${item.url},${item.sortOrder},${item.status},${item.version},${item.createdAt},${item.updatedAt},${item.createdBy},${actor},${item.archivedFromStatus || null})
+      ON CONFLICT (id) DO UPDATE SET category=EXCLUDED.category,title=EXCLUDED.title,description=EXCLUDED.description,url=EXCLUDED.url,sort_order=EXCLUDED.sort_order,status=EXCLUDED.status,version=EXCLUDED.version,updated_at=EXCLUDED.updated_at,updated_by=EXCLUDED.updated_by,archived_from_status=EXCLUDED.archived_from_status`;
     await upsertTranslationStatesInTransaction(tx, { type: "resource", scope: "", id }, states, actor);
     return item;
   });

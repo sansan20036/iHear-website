@@ -22,10 +22,11 @@ try {
     const key = row => JSON.stringify(fields.map(field => row[field]));
     const previousKeys = new Set(before.map(key));
     const additions = rows.filter(row => !previousKeys.has(key(row)));
-    if (additions.some(row => !(table === 'schema_migrations' && row.version === '020') && !(table === 'localized_translation_states' && row.resource_type === 'resource' && RESOURCE_SEEDS.some(seed => seed.id === row.resource_id)))) throw new Error(`Unexpected new data in ${table}; review concurrent edits without restoring over them`);
+    if (additions.some(row => !(table === 'schema_migrations' && ['020', '021'].includes(row.version)) && !(table === 'localized_translation_states' && row.resource_type === 'resource' && RESOURCE_SEEDS.some(seed => seed.id === row.resource_id)))) throw new Error(`Unexpected new data in ${table}; review concurrent edits without restoring over them`);
     const after = rows.filter(row => previousKeys.has(key(row)));
     const sorted = items => [...items].sort((a,b) => key(a).localeCompare(key(b)));
-    if (canonical(sorted(before)) !== canonical(sorted(after))) throw new Error(`Existing data changed: ${table}; review concurrent edits without restoring over them`);
+    const normalizedBefore = table === 'resource_links' ? before.map(row => ({ ...row, category: row.category || 'form' })) : before;
+    if (canonical(sorted(normalizedBefore)) !== canonical(sorted(after))) throw new Error(`Existing data changed: ${table}; review concurrent edits without restoring over them`);
     results.push({ table, preservedRows: before.length, additions: additions.length });
   }
   const resources = await sql`SELECT * FROM resource_links ORDER BY sort_order, id`;

@@ -548,6 +548,39 @@ test("Resources show verified form links, localized descriptions and a private m
   }
 });
 
+test("Resources separate published articles, keep keyboard focus and hide an empty article section", async ({ page }) => {
+  await mockApplication(page, { admin: false });
+  const { RESOURCE_SEEDS } = await import("../lib/resource-seed.ts");
+  let items = [...RESOURCE_SEEDS, { id: "article-test", category: "article", title: { en: "Communication advice", zhHant: "溝通建議", zhHans: "沟通建议" }, description: { en: "Read the source article.", zhHant: "", zhHans: "" }, url: "https://example.org/articles/communication" }];
+  await page.route("**/api/resources", route => route.fulfill({ json: { items } }));
+  await page.goto("/resources#resources");
+  const articles = page.locator("[data-resource-articles]");
+  await expect(page.locator("[data-resource-links] li")).toHaveCount(3);
+  await expect(articles.locator("li")).toHaveCount(1);
+  const link = articles.getByRole("link");
+  await expect(link).toHaveAttribute("target", "_blank");
+  await expect(link).toHaveAttribute("rel", "noopener noreferrer");
+  await link.focus();
+  const refreshed = page.waitForResponse("**/api/resources");
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await refreshed;
+  await expect(link).toBeFocused();
+  for (const [language, expected] of [["en", "Communication advice"], ["zhTW", "溝通建議"], ["zhCN", "沟通建议"]]) {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.locator('#langSwitch button[data-lang="' + language + '"]').click();
+    for (const width of [320, 390, 1440]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect(link).toContainText(expected);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    }
+    await expect(articles.locator("li p")).toHaveText("Read the source article.");
+  }
+  items = RESOURCE_SEEDS;
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(articles).toBeHidden();
+  await expect(page.locator(".res-chips .chip")).toHaveCount(9);
+});
+
 test("Resources recover from failure, refresh current items and keep visitor controls hidden", async ({ page }) => {
   await mockApplication(page, { admin: false });
   let failed = true;

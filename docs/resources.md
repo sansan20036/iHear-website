@@ -1,5 +1,9 @@
 # Resource links
 
+Administrator instructions: [繁體中文操作說明](resources-admin-guide.zh-TW.md). User acceptance checklist: [驗收清單](resources-acceptance.zh-TW.md).
+
+Migration 021 adds a `form` / `article` category to existing resource links. All existing records default to `form`; no titles, translations, URLs, publication states or versions change. Older API clients may omit category: creation defaults to forms and updates retain the persisted category. File records without category also read as forms. Published articles appear in a separate list that disappears when empty. Articles link to external reading pages; this stage does not store full article bodies or upload media. Numeric order applies within each public category. The backup already includes all resource columns; restore verification also restores and checks category when present in the backup. Rollback retains category data.
+
 The public `/resources#resources` list is managed at `/admin/resources`. The existing guides and email request link remain below it. Links open in a new tab. Display names are independent of Google Form titles; other pages' registration buttons are not rewritten.
 
 Administrators can add a draft, edit names/descriptions in English, Traditional Chinese and Simplified Chinese, preview translations, set a numeric display order, publish/hide, archive and restore from Trash. Missing Chinese falls back to English only when displayed. Manual Chinese is protected unless the administrator explicitly chooses to replace it. English changes require a fresh signed translation preview. Permanent resource deletion is not supported.

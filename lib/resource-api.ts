@@ -14,6 +14,6 @@ export function resourceApiError(error: unknown) {
 }
 export async function resourceSaved(item: ResourceLink, principal: AdminPrincipal, action: string, status = 200) {
   const revision = await revisionAfterMutation("content");
-  await appendAdminActivity({ actorEmail: principal.email, actorRole: principal.role, action: `resource.${action}`, entityType: "resource", entityId: item.id, changedFields: action === "updated" || action === "created" ? ["title", "description", "url", "sortOrder", "status"] : ["status"], entityStatus: item.status, entityVersion: item.version });
+  await appendAdminActivity({ actorEmail: principal.email, actorRole: principal.role, action: `resource.${action}`, entityType: "resource", entityId: item.id, changedFields: action === "updated" || action === "created" ? ["category", "title", "description", "url", "sortOrder", "status"] : ["status"], entityStatus: item.status, entityVersion: item.version });
   return NextResponse.json({ ok: true, item, revision }, { status, headers: RESOURCE_HEADERS });
 }

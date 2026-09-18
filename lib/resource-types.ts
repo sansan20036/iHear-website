@@ -1,6 +1,7 @@
 import type { LocalizedTranslationField } from "./translation-types";
 
 export type ResourceInput = {
+  category: "form" | "article";
   title: LocalizedTranslationField;
   description: LocalizedTranslationField;
   url: string;
@@ -28,9 +29,11 @@ export function resourceVersion(value: unknown) {
   if (!Number.isSafeInteger(value) || Number(value) < 1) throw new ResourceError("A current version is required");
   return Number(value);
 }
-export function parseResourceInput(value: unknown): ResourceInput {
+export function parseResourceInput(value: unknown, defaultCategory: ResourceInput["category"] = "form"): ResourceInput {
   if (!value || typeof value !== "object") throw new ResourceError("Invalid resource");
   const body = value as Record<string, unknown>;
+  const category = body.category === undefined ? defaultCategory : body.category;
+  if (category !== "form" && category !== "article") throw new ResourceError("Invalid resource category");
   function localized(field: string, limit: number) {
     const source = body[field];
     if (!source || typeof source !== "object") throw new ResourceError(`Invalid ${field}`);
@@ -51,8 +54,8 @@ export function parseResourceInput(value: unknown): ResourceInput {
   if (url.protocol !== "https:" || url.username || url.password) throw new ResourceError("Only HTTPS links without credentials are allowed");
   if (!Number.isSafeInteger(body.sortOrder) || Number(body.sortOrder) < 0 || Number(body.sortOrder) > 1_000_000) throw new ResourceError("Invalid display order");
   if (body.status !== "draft" && body.status !== "published") throw new ResourceError("Invalid resource status");
-  return { title, description, url: url.href, sortOrder: Number(body.sortOrder), status: body.status };
+  return { category, title, description, url: url.href, sortOrder: Number(body.sortOrder), status: body.status };
 }
 export function publicResource(item: ResourceLink) {
-  return { id: item.id, title: item.title, description: item.description, url: item.url, sortOrder: item.sortOrder };
+  return { id: item.id, category: item.category, title: item.title, description: item.description, url: item.url, sortOrder: item.sortOrder };
 }

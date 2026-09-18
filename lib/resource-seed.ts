@@ -19,4 +19,4 @@ export const RESOURCE_SEEDS: ResourceLink[] = [
     description: { en: "Share available teaching times to help schedule sessions.", zhHant: "提供可授課時段，協助安排課程。", zhHans: "提供可授课时段，协助安排课程。" },
     url: "https://forms.gle/r4XamySbXCDWHvAA8",
   },
-].map(item => ({ ...item, status: "published", version: 1, createdAt: "2026-09-18T00:00:00.000Z", updatedAt: "2026-09-18T00:00:00.000Z", createdBy: "migration-020", updatedBy: "migration-020" }));
+].map(item => ({ ...item, category: "form", status: "published", version: 1, createdAt: "2026-09-18T00:00:00.000Z", updatedAt: "2026-09-18T00:00:00.000Z", createdBy: "migration-020", updatedBy: "migration-020" }));

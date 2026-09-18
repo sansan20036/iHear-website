@@ -79,3 +79,30 @@ test("missing Chinese stays empty in persistence for display-only fallback", asy
   expect((await store.getResource(item.id)).title.zhHant).toBe("");
   expect(await store.readResourceFileStates(item.id)).toEqual([]);
 });
+
+test("articles retain category across legacy edits, archive and restore", async () => {
+  const response = await collection.POST(request("POST", { ...input(), category: "article" }));
+  expect(response.status).toBe(201);
+  let { item } = await response.json();
+  expect(item.category).toBe("article");
+  expect((await (await collection.GET(request())).json()).items.some(row => row.id === item.id)).toBe(false);
+  const legacy = { ...item };
+  delete legacy.category;
+  item = (await (await single.PATCH(request("PATCH", { ...legacy, status: "published" }), context(item.id))).json()).item;
+  expect(item.category).toBe("article");
+  expect((await (await collection.GET(request())).json()).items.find(row => row.id === item.id).category).toBe("article");
+  item = (await (await single.DELETE(request("DELETE", { version: item.version }), context(item.id))).json()).item;
+  item = (await (await restore.POST(request("POST", { version: item.version }), context(item.id))).json()).item;
+  expect(item.category).toBe("article");
+  expect(item.status).toBe("published");
+  item = (await (await single.PATCH(request("PATCH", { ...item, category: "form" }), context(item.id))).json()).item;
+  expect(item.category).toBe("form");
+});
+
+test("new legacy clients default to forms and unsupported categories are rejected", async () => {
+  const { item } = await (await collection.POST(request("POST", input()))).json();
+  expect(item.category).toBe("form");
+  for (const category of [null, "video", "", {}, 1]) {
+    expect((await collection.POST(request("POST", { ...input(), category }))).status).toBe(400);
+  }
+});

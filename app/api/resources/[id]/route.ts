@@ -10,8 +10,9 @@ export async function PATCH(request: Request, context: Context) {
   if ("response" in access) return access.response;
   try {
     const id = resourceId((await context.params).id), body = await request.json();
-    const version = resourceVersion(body.version), input = parseResourceInput(body);
+    const version = resourceVersion(body.version);
     const previous = await getResource(id);
+    const input = parseResourceInput(body, previous.category);
     if (previous.version !== version) throw new ResourceError("Resource has changed; reload before saving", 409);
     const fields = { title: input.title, description: input.description };
     const states = body.translationReceipt ? verifyTranslationReceipt({ receipt: body.translationReceipt, email: access.principal.email, resource: { type: "resource", scope: "", id, version }, fields }) : manualTranslationUpdateWrites(fields, { title: previous.title, description: previous.description });

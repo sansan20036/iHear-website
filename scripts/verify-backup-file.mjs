@@ -68,6 +68,7 @@ try {
   }
 
   if (backup.payload.version >= 10) assertUnique(tables.resource_links, row => row.id, "resource_links");
+  if (tables.resource_links?.some(row => row.category !== undefined && !['form', 'article'].includes(row.category))) throw new Error("Invalid resource category in backup");
   assertUnique(tables.impact_milestones, (row) => row.id, "impact_milestones");
   assertUnique(tables.impact_milestone_settings, (row) => row.key, "impact_milestone_settings");
   assertUnique(tables.content_overrides, (row) => `${row.page}\u0000${row.key}`, "content_overrides");
