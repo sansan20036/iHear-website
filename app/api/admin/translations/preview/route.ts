@@ -25,6 +25,7 @@ const FIELD_LIMITS: Record<Exclude<TranslationResource["type"], "content">, Reco
   team: { role: 500, schoolDisplay: 300, languages: 500, strengths: 1_000, summary: 2_000, bio: 5_000, hobbies: 2_000 },
   impact: { title: 200, description: 2_000, countryNames: 500 },
   media: { alt: 300 },
+  resource: { title: 200, description: 2_000 },
 };
 
 function parseResource(value: unknown): TranslationResource | null {

@@ -112,6 +112,7 @@ try {
         'site_media_variants',
         'site_settings',
         'site_layout_configs',
+        'resource_links',
         'schema_migrations',
         'site_content_revisions'
       )
@@ -142,18 +143,22 @@ try {
         'site_media_variants',
         'site_settings',
         'site_layout_configs',
+        'resource_links',
         'schema_migrations',
         'site_content_revisions'
       )
     ORDER BY relation.relname, index_relation.relname
   `;
 
+  const [resourceTable] = await sql`SELECT to_regclass('public.resource_links') IS NOT NULL AS available`;
+  const resourceLinks = resourceTable.available ? await sql`SELECT * FROM public.resource_links ORDER BY id` : [];
   const payload = {
     format: "ihear-postgres-backup",
-    version: galleryTable.available ? 9 : hasTranslationStates ? 8 : hasAdminTables ? 7 : hasSiteLayouts ? 6 : hasSiteSettings ? 5 : hasSiteMediaTables ? 4 : hasLocalizedContent ? 3 : 2,
+    version: resourceTable.available ? 10 : galleryTable.available ? 9 : hasTranslationStates ? 8 : hasAdminTables ? 7 : hasSiteLayouts ? 6 : hasSiteSettings ? 5 : hasSiteMediaTables ? 4 : hasLocalizedContent ? 3 : 2,
     createdAt: new Date().toISOString(),
     tables: {
       ...galleryTables,
+      ...(resourceTable.available ? { resource_links: resourceLinks } : {}),
       impact_milestones: impactMilestones,
       impact_milestone_settings: impactMilestoneSettings,
       content_overrides: contentOverrides,
@@ -196,6 +201,7 @@ try {
     checksum: backup.checksum,
     rowCounts: {
       ...Object.fromEntries(Object.entries(galleryTables).map(([name, rows]) => [name, rows.length])),
+      ...(resourceTable.available ? { resource_links: resourceLinks.length } : {}),
       impact_milestones: impactMilestones.length,
       impact_milestone_settings: impactMilestoneSettings.length,
       content_overrides: contentOverrides.length,

@@ -26,6 +26,7 @@ const endpoints = [
   "/api/impact-milestones",
   "/api/site-media",
   "/api/site-metrics",
+  "/api/resources",
   "/api/site-theme",
   "/api/live-revisions",
   "/api/site-layout?page=%2F",

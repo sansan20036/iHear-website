@@ -20,7 +20,7 @@ export type AdminActivity = {
   actorEmail: string;
   actorRole: "owner" | "editor";
   action: string;
-  entityType: "team" | "impact" | "admin";
+  entityType: "team" | "impact" | "admin" | "resource";
   entityId: string;
   changedFields: string[];
   entityStatus: string | null;
@@ -33,7 +33,7 @@ type AdminFileStore = { accounts: StoredAdminAccount[]; activity: AdminActivity[
 const databaseUrl = process.env.IHEAR_FORCE_FILE_STORE === "1"
   ? ""
   : process.env.POSTGRES_URL || process.env.DATABASE_URL || "";
-const filePath = path.join(process.cwd(), "data", "admin-console.json");
+const filePath = path.join(process.env.IHEAR_TEST_DATA_DIR || path.join(process.cwd(), "data"), "admin-console.json");
 const globalForAdminStore = globalThis as typeof globalThis & {
   ihearAdminSql?: ReturnType<typeof postgres>;
 };
@@ -74,7 +74,7 @@ function fromActivityRow(row: Record<string, unknown>): AdminActivity {
     actorEmail: String(row.actor_email),
     actorRole: row.actor_role as "owner" | "editor",
     action: String(row.action),
-    entityType: row.entity_type as "team" | "impact" | "admin",
+    entityType: row.entity_type as "team" | "impact" | "admin" | "resource",
     entityId: String(row.entity_id),
     changedFields: Array.isArray(row.changed_fields) ? row.changed_fields.map(String) : [],
     entityStatus: row.entity_status == null ? null : String(row.entity_status),

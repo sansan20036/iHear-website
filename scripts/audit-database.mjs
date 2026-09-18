@@ -23,6 +23,7 @@ const sql = postgres(databaseUrl, {
 });
 
 const expectedTables = [
+  "resource_links",
   "api_rate_limits",
   "admin_accounts",
   "admin_activity_log",

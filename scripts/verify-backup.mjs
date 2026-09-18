@@ -93,7 +93,10 @@ async function currentCounts(client) {
   const adminActivityLog = adminTables.activity ? await client`SELECT COUNT(*)::INTEGER AS count FROM admin_activity_log` : [{ count: 0 }];
   const [translationTable] = await client`SELECT to_regclass('public.localized_translation_states') IS NOT NULL AS available`;
   const localizedTranslationStates = translationTable.available ? await client`SELECT COUNT(*)::INTEGER AS count FROM localized_translation_states` : [{ count: 0 }];
+  const [resourceTable] = await client`SELECT to_regclass('public.resource_links') IS NOT NULL AS available`;
+  const resources = resourceTable.available ? await client`SELECT COUNT(*)::INTEGER AS count FROM resource_links` : [{ count: 0 }];
   return {
+    resource_links: Number(resources[0].count),
     impact_milestones: Number(impact[0].count),
     impact_milestone_settings: Number(settings[0].count),
     content_overrides: Number(content[0].count),
@@ -149,7 +152,7 @@ try {
   }
   if (
     backup.payload?.format !== "ihear-postgres-backup" ||
-    ![1, 2, 3, 4, 5, 6, 7, 8, 9].includes(backup.payload?.version)
+    ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10].includes(backup.payload?.version)
   ) {
     throw new Error("Unsupported backup format.");
   }
@@ -174,6 +177,9 @@ try {
   const adminAccounts = backup.payload.version >= 7 ? tables.admin_accounts : [];
   const adminActivityLog = backup.payload.version >= 7 ? tables.admin_activity_log : [];
   const localizedTranslationStates = backup.payload.version >= 8 ? tables.localized_translation_states : [];
+  const resourceLinks = backup.payload.version >= 10 ? tables.resource_links : [];
+  if (!Array.isArray(resourceLinks)) throw new Error("Backup is missing resource_links");
+  assertUnique(resourceLinks, row => row.id, "resource_links");
 
   if (
     !Array.isArray(impactMilestones) ||
@@ -569,6 +575,14 @@ try {
         `;
       }
 
+      for (const row of resourceLinks) {
+        await transaction`INSERT INTO resource_links (id,title,description,url,sort_order,status,version,created_at,updated_at,created_by,updated_by,archived_from_status)
+          VALUES (${row.id},${transaction.json(row.title)},${transaction.json(row.description)},${row.url},${row.sort_order},${row.status},${row.version},${row.created_at},${row.updated_at},${row.created_by},${row.updated_by},${row.archived_from_status})
+          ON CONFLICT (id) DO UPDATE SET title=EXCLUDED.title,description=EXCLUDED.description,url=EXCLUDED.url,sort_order=EXCLUDED.sort_order,status=EXCLUDED.status,version=EXCLUDED.version,created_at=EXCLUDED.created_at,updated_at=EXCLUDED.updated_at,created_by=EXCLUDED.created_by,updated_by=EXCLUDED.updated_by,archived_from_status=EXCLUDED.archived_from_status`;
+        const [restored] = await transaction`SELECT * FROM resource_links WHERE id=${row.id}`;
+        for (const key of ['url','sort_order','status','version','created_by','updated_by','archived_from_status']) if (restored[key] !== row[key]) throw new Error('Resource did not round-trip: ' + row.id);
+        for (const field of ['title','description']) for (const locale of ['en','zhHant','zhHans']) if (restored[field][locale] !== row[field][locale]) throw new Error('Resource translation did not round-trip: ' + row.id);
+      }
       for (const row of localizedTranslationStates) {
         await transaction`
           INSERT INTO localized_translation_states (
@@ -641,6 +655,7 @@ try {
         ...(backup.payload.version >= 6 ? { site_layout_configs: siteLayoutConfigs.length } : {}),
         ...(backup.payload.version >= 7 ? { admin_accounts: adminAccounts.length, admin_activity_log: adminActivityLog.length } : {}),
         ...(backup.payload.version >= 8 ? { localized_translation_states: localizedTranslationStates.length } : {}),
+        ...(backup.payload.version >= 10 ? { resource_links: resourceLinks.length } : {}),
       })) {
         if (restoredCounts[tableName] < expectedRows) {
           throw new Error(`Restore verification produced too few rows for ${tableName}.`);
@@ -651,7 +666,7 @@ try {
         const transactionRevisionsAfter = await currentRevisions(transaction);
         const expectedScopes = [
           ...(impactMilestones.length || impactMilestoneSettings.length ? ["impact"] : []),
-          ...(contentOverrides.length || localizedContentOverrides.length || siteMediaAssets.length
+          ...(contentOverrides.length || localizedContentOverrides.length || siteMediaAssets.length || resourceLinks.length
             ? ["content"]
             : []),
           ...(teamPeople.length || teamProfiles.length ? ["team"] : []),
@@ -705,6 +720,7 @@ try {
       admin_accounts: adminAccounts.length,
       admin_activity_log: adminActivityLog.length,
       localized_translation_states: localizedTranslationStates.length,
+      resource_links: resourceLinks.length,
       schema_migrations: schemaMigrations.length,
     },
   }));

@@ -525,6 +525,49 @@ async function mockApplication(page, { admin = true, duplicateAvatar = false, tu
   };
 }
 
+test("Resources show verified form links, localized descriptions and a private management entry", async ({ page }) => {
+  await mockApplication(page);
+  const { RESOURCE_SEEDS } = await import("../lib/resource-seed.ts");
+  await page.route("**/api/resources", route => route.fulfill({ json: { items: RESOURCE_SEEDS } }));
+  await page.goto("/resources#resources");
+  const list = page.locator(".resource-links-list");
+  await expect(list.locator("li")).toHaveCount(3);
+  await expect(list.getByRole("link").nth(1)).toHaveAttribute("href", "https://forms.gle/FzayZzgAEiGHsA1b9");
+  await expect(list.getByRole("link").first()).toHaveAttribute("target", "_blank");
+  await expect(list.getByRole("link").first()).toHaveAttribute("rel", "noopener noreferrer");
+  await expect(page.locator("[data-resource-manage]")).toBeVisible();
+  await expect(page.locator(".res-chips .chip")).toHaveCount(9);
+  for (const width of [320, 390, 1440]) {
+    for (const [language, expected] of [["en", "Tutor Reflection"], ["zhTW", "小老師課後反思表"], ["zhCN", "小老师课后反思表"]]) {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await page.locator(`#langSwitch button[data-lang="${language}"]`).click();
+      await page.setViewportSize({ width, height: 900 });
+      await expect(list.getByRole("link").nth(1)).toContainText(expected);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    }
+  }
+});
+
+test("Resources recover from failure, refresh current items and keep visitor controls hidden", async ({ page }) => {
+  await mockApplication(page, { admin: false });
+  let failed = true;
+  let items = [{ id: "sample", title: { en: "<img> Test form", zhHant: "", zhHans: "" }, description: { en: "A description" }, url: "https://forms.gle/FzayZzgAEiGHsA1b9" }];
+  await page.route("**/api/resources", route => route.fulfill(failed ? { status: 503, json: { error: "Unavailable" } } : { json: { items } }));
+  await page.goto("/resources");
+  const region = page.locator("[data-resource-links]");
+  await expect(region.getByRole("status")).toHaveText("Resources could not be loaded.");
+  failed = false; await region.getByRole("button", { name: "Try again" }).click();
+  await expect(region.locator("ul a")).toContainText("<img> Test form");
+  await expect(region.locator("img")).toHaveCount(0);
+  await expect(page.locator("[data-resource-manage]")).toBeHidden();
+  await page.locator('#langSwitch button[data-lang="zhTW"]').click();
+  await expect(region.locator("ul a")).toContainText("<img> Test form");
+  items = [];
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(region.getByRole("status")).toHaveText("目前沒有公開表單。");
+  await expect(region.locator("li")).toHaveCount(0);
+});
+
 test("environment-defined admin receives inline editing controls", async ({ page }) => {
   const requestedUrls = [];
   page.on("request", (request) => requestedUrls.push(request.url()));

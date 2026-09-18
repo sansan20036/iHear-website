@@ -84,7 +84,10 @@ describe("production operations configuration", () => {
 
     expect(backup).toContain("site_media_assets: siteMediaAssets");
     expect(backup).toContain("site_media_variants: siteMediaVariants");
-    expect(verifier).toContain("[1, 2, 3, 4, 5, 6, 7, 8, 9]");
+    expect(verifier).toContain("[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]");
+    expect(backup).toContain("resource_links: resourceLinks");
+    expect(verifier).toContain('required.push("resource_links")');
+    expect(restoreVerifier).toContain("INSERT INTO resource_links");
     expect(verifier).toContain('backup.payload.version >= 4 ? "011"');
     expect(restoreVerifier).toContain("site_media_assets: siteMediaAssets.length");
     expect(restoreVerifier).toContain("INSERT INTO site_media_variants");

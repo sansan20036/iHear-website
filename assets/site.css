@@ -1173,3 +1173,12 @@ body:has(.site-theme-dialog[open]){ overflow:hidden; }
   .site-theme-trigger,.site-theme-dialog,.site-theme-option,.site-theme-actions button,.site-theme-swatch{ border:2px solid ButtonText; }
   .site-theme-option.is-selected .site-theme-swatch>b{ display:grid; background:Highlight; color:HighlightText; }
 }
+
+/* Resources use compact links with selectable descriptions. */
+[data-resource-links] [hidden]{display:none!important}
+.resource-links-list{list-style:none;padding:0;margin:24px 0}
+.resource-links-list li{padding:20px 0;border-bottom:1px solid var(--border,#dedede);overflow-wrap:anywhere}
+.resource-links-list a{display:inline-block;min-height:44px;padding:8px 0;font-size:1.15rem;font-weight:700;text-decoration:underline;text-underline-offset:4px}
+.resource-links-list p{margin:4px 0;white-space:pre-wrap}
+.resource-external{font-size:.85rem;font-weight:400}
+[data-resource-links] h1{font-size:clamp(1.6rem,4vw,2.4rem)}

@@ -37,7 +37,7 @@ try {
   }
   if (
     backup.payload?.format !== "ihear-postgres-backup" ||
-    ![1, 2, 3, 4, 5, 6, 7, 8, 9].includes(backup.payload?.version)
+    ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10].includes(backup.payload?.version)
   ) {
     throw new Error("Unsupported backup format.");
   }
@@ -60,12 +60,14 @@ try {
   if (backup.payload.version >= 7) required.push("admin_accounts", "admin_activity_log");
   if (backup.payload.version >= 8) required.push("localized_translation_states");
   if (backup.payload.version >= 9) required.push('media_galleries', 'media_gallery_assets', 'media_gallery_operations');
+  if (backup.payload.version >= 10) required.push("resource_links");
   for (const tableName of required) {
     if (!Array.isArray(tables[tableName])) {
       throw new Error(`Backup is missing ${tableName}.`);
     }
   }
 
+  if (backup.payload.version >= 10) assertUnique(tables.resource_links, row => row.id, "resource_links");
   assertUnique(tables.impact_milestones, (row) => row.id, "impact_milestones");
   assertUnique(tables.impact_milestone_settings, (row) => row.key, "impact_milestone_settings");
   assertUnique(tables.content_overrides, (row) => `${row.page}\u0000${row.key}`, "content_overrides");
@@ -113,7 +115,7 @@ try {
     assertUnique(tables.localized_translation_states, (row) => `${row.resource_type}\u0000${row.resource_scope}\u0000${row.resource_id}\u0000${row.field_key}\u0000${row.locale}`, "localized_translation_states");
   }
 
-  const requiredMigration = backup.payload.version >= 9 ? "019" : backup.payload.version >= 8 ? "017" : backup.payload.version >= 7 ? "015" : backup.payload.version >= 6 ? "014" : backup.payload.version >= 5 ? "012" : backup.payload.version >= 4 ? "011" : backup.payload.version >= 3 ? "010" : "009";
+  const requiredMigration = backup.payload.version >= 10 ? "020" : backup.payload.version >= 9 ? "019" : backup.payload.version >= 8 ? "017" : backup.payload.version >= 7 ? "015" : backup.payload.version >= 6 ? "014" : backup.payload.version >= 5 ? "012" : backup.payload.version >= 4 ? "011" : backup.payload.version >= 3 ? "010" : "009";
   if (!tables.schema_migrations.some((row) => String(row.version) === requiredMigration)) {
     throw new Error(`Backup does not include migration ${requiredMigration}.`);
   }

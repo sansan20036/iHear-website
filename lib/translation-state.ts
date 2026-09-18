@@ -32,7 +32,7 @@ export async function ensureTranslationSchema(client: any = sqlClient()) {
   const work = (async () => {
     await client`
       CREATE TABLE IF NOT EXISTS public.localized_translation_states (
-        resource_type TEXT NOT NULL CHECK (resource_type IN ('content','team','impact','media')),
+        resource_type TEXT NOT NULL CHECK (resource_type IN ('content','team','impact','media','resource')),
         resource_scope TEXT NOT NULL DEFAULT '' CHECK (char_length(resource_scope) <= 500),
         resource_id TEXT NOT NULL CHECK (char_length(resource_id) BETWEEN 1 AND 5000),
         field_key TEXT NOT NULL CHECK (char_length(field_key) BETWEEN 1 AND 100),
@@ -61,6 +61,10 @@ function resourceKey(resource: TranslationResource) {
 }
 
 export async function readTranslationStates(resource: TranslationResource): Promise<TranslationState[]> {
+  if (!databaseUrl && resource.type === "resource") {
+    const { readResourceFileStates } = await import("./resource-store");
+    return readResourceFileStates(resource.id);
+  }
   if (!databaseUrl && resource.type === 'media' && resource.id.startsWith('gallery.')) {
     const { getGalleryAsset } = await import('./media-gallery-store');
     return (await getGalleryAsset(resource.id))?.states || [];

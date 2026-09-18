@@ -82,11 +82,23 @@
   </header>
 
   <main id="main">
-<section id="resources" aria-labelledby="res-h">
+<section id="resources" data-resource-links data-no-inline-edit aria-labelledby="resource-links-heading">
+      <div class="container">
+        <h1 id="resource-links-heading">Forms &amp; useful links</h1>
+        <span id="resource-links"></span>
+        <p data-resource-intro>Find registration forms, session reflections and scheduling links here.</p>
+        <a data-resource-manage class="btn btn-outline" href="/admin/resources" hidden>Manage forms / links</a>
+        <p role="status" aria-live="polite">Loading resources…</p>
+        <button type="button" class="btn btn-outline" data-resource-retry hidden>Try again</button>
+        <ul class="resource-links-list"></ul>
+        <noscript><p>JavaScript is needed to load the current list. / 請啟用 JavaScript 以載入最新表單清單。</p></noscript>
+      </div>
+    </section>
+<section id="resource-guides" aria-labelledby="res-h">
       <div class="container">
         <div class="sec-head" data-animate>
           <span class="eyebrow"><span class="dot" aria-hidden="true"></span><span data-i18n="res_eyebrow" data-editable-content="resources.res.eyebrow" data-editable-mode="singleline" data-editable-maxlength="120">Free Resources</span></span>
-          <h1 id="res-h" data-i18n="res_h2" data-editable-content="resources.res.heading" data-editable-mode="singleline" data-editable-maxlength="200">Guides for families &amp; educators</h1>
+          <h2 id="res-h" data-i18n="res_h2" data-editable-content="resources.res.heading" data-editable-mode="singleline" data-editable-maxlength="200">Guides for families &amp; educators</h2>
           <p data-i18n="res_sub" data-editable-content="resources.res.subtitle" data-editable-mode="multiline" data-editable-maxlength="5000">Nine practical guides, available in English, 繁體中文, 简体中文, and Español. Email us and we'll send you any of them, free.</p>
         </div>
         <div class="res-chips" data-layout-group="resources.guides" data-animate>

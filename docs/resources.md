@@ -1,0 +1,11 @@
+# Resource links
+
+The public `/resources#resources` list is managed at `/admin/resources`. The existing guides and email request link remain below it. Links open in a new tab. Display names are independent of Google Form titles; other pages' registration buttons are not rewritten.
+
+Administrators can add a draft, edit names/descriptions in English, Traditional Chinese and Simplified Chinese, preview translations, set a numeric display order, publish/hide, archive and restore from Trash. Missing Chinese falls back to English only when displayed. Manual Chinese is protected unless the administrator explicitly chooses to replace it. English changes require a fresh signed translation preview. Permanent resource deletion is not supported.
+
+Migration 020 creates `resource_links`, extends translation/activity type constraints and seeds the three approved public links using stable IDs and `ON CONFLICT DO NOTHING`. The reflection URL is `https://forms.gle/FzayZzgAEiGHsA1b9` (lowercase **g**). Existing resource edits are not overwritten on migration reruns. PostgreSQL saves resource content and translation provenance in one transaction. File mode stores both in one queued, atomically renamed file; tests use `IHEAR_TEST_DATA_DIR`.
+
+`GET /api/resources` returns published public fields. `?admin=1` returns active administrator records; `?includeArchived=true` returns archived records. `POST /api/resources` creates records; `PATCH` and `DELETE /api/resources/[id]`, and `POST /api/resources/[id]/restore`, require the current version. All mutations require an administrator, same-origin validation and rate limits. Conflicts return 409. Updates bump the existing content revision and notify open resource pages.
+
+Before release run `npm run check`, back up with `npm run db:backup`, validate the backup file, then run the tracked migrations. Backup format 10 includes resources. After migration/deployment run `node scripts/verify-resource-deployment.mjs <pre-deployment-backup>` and check the public page/API without submitting forms or changing production records. Roll back code if needed while retaining the new table and translation rows. Never restore over concurrent administrator edits.

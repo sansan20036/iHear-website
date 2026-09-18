@@ -1,6 +1,6 @@
 export const TRANSLATION_LOCALES = ["zhHant", "zhHans"] as const;
 export const TRANSLATION_ORIGINS = ["machine", "manual", "protected_legacy"] as const;
-export const TRANSLATION_RESOURCE_TYPES = ["content", "team", "impact", "media"] as const;
+export const TRANSLATION_RESOURCE_TYPES = ["content", "team", "impact", "media", "resource"] as const;
 
 export type TranslationLocale = (typeof TRANSLATION_LOCALES)[number];
 export type TranslationOrigin = (typeof TRANSLATION_ORIGINS)[number];

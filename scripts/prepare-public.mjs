@@ -23,7 +23,7 @@ const htmlFiles = [
 
 const passthroughFiles = ["robots.txt", "sitemap.xml", "CNAME", "favicon.ico"];
 const dynamicI18nKeys = new Set(["latest_label", "latest_period", "latest_headline", "latest_description", "latest_link", "stat_asof", "stat_countries_sub"]);
-const clientAssetVersion = "20260912-team-summary-v6";
+const clientAssetVersion = "20260918-resources-v1";
 const themeInitScript = `<script data-site-theme-init>(function(){var a={warm:1,ocean:1,sage:1,lavender:1,slate:1},t="warm";try{var s=localStorage.getItem("ihear:site-theme");if(a[s])t=s}catch(e){}document.documentElement.setAttribute("data-theme",t)})()</script>`;
 const themeBootstrapScript = `<script src="/api/site-theme/bootstrap" data-site-theme-bootstrap></script>`;
 // Hide only managed pictures before the first paint. Layout and no-JS images
@@ -101,6 +101,7 @@ function withClientScripts(html, file) {
     `  <script src="/assets/site-theme.js?v=${clientAssetVersion}" defer></script>`,
     `  <script src="/assets/site-layout.js?v=${clientAssetVersion}" defer></script>`,
   ];
+  if (html.includes("data-resource-links")) scripts.push(`  <script src="/assets/resources.js?v=${clientAssetVersion}" defer></script>`);
   if (html.includes("data-site-media-slot") || html.includes("data-site-media-dynamic")) {
     scripts.push(`  <script src="/assets/vendor/browser-image-compression.js?v=${clientAssetVersion}" defer></script>`);
     scripts.push(`  <script src="/assets/avatar-background-removal.js?v=${clientAssetVersion}" defer></script>`);
