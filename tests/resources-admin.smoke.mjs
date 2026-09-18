@@ -12,7 +12,7 @@ const secret = 'isolated-gallery-smoke-test-key-never-use-in-production';
 await mkdir('output/playwright', { recursive: true });
 const directory = await mkdtemp(path.resolve('output/playwright/resource-admin-'));
 const child = spawn(process.execPath, ['node_modules/next/dist/bin/next', 'start', '--hostname', 'localhost', '--port', String(port)], {
-  env: { ...process.env, NODE_ENV: 'production', VERCEL: '', NETLIFY: '', CONTEXT: '', IHEAR_FORCE_FILE_STORE: '1', IHEAR_TEST_DATA_DIR: directory, AUTH_SECRET: secret, AUTH_OWNER_EMAILS: 'media-test@example.com', AUTH_URL: origin, AUTH_TRUST_HOST: 'true' },
+  env: { ...process.env, NODE_ENV: 'production', VERCEL: '', NETLIFY: '', CONTEXT: '', IHEAR_FORCE_FILE_STORE: '1', IHEAR_TEST_DATA_DIR: directory, AUTH_SECRET: secret, TRANSLATION_RECEIPT_SECRET: 'isolated-resource-preview-test-key-never-use-in-production', AUTH_OWNER_EMAILS: 'media-test@example.com', AUTH_URL: origin, AUTH_TRUST_HOST: 'true' },
   windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
 });
 let logs = ''; child.stdout.on('data', chunk => { logs += chunk; }); child.stderr.on('data', chunk => { logs += chunk; });
