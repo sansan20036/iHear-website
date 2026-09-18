@@ -28,6 +28,13 @@ Vercel Runtime Logs remain the first place to inspect a failed request. Use the
 
 ## 2. Server-error investigation
 
+The separate `Production read-only browser inspection` workflow checks five public
+pages at desktop, 390px and 320px widths every six hours. It uses fresh anonymous
+browser contexts, blocks write requests, and retains reports/failure traces for
+seven days. Run it manually with `npm run test:production`; see
+[the inspection guide](production-inspection.zh-TW.md) for scope, read-only limits,
+activation and troubleshooting. The existing hourly uptime monitor remains unchanged.
+
 Use Vercel Runtime Logs for server exceptions and function failures. Filter by the
 Production environment and affected API path. The public health endpoint returns an
 `X-Health-Request-Id` header that can be matched with the server log entry.

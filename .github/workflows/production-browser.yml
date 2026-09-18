@@ -1,0 +1,42 @@
+name: Production read-only browser inspection
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "43 */6 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-browser-inspection
+  cancel-in-progress: false
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.11.1
+          cache: npm
+      - name: Pin npm
+        run: npm install --global npm@11.6.2
+      - name: Install test dependencies
+        run: npm ci --include=optional
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Verify the read-only boundary
+        run: npm run test:operations
+      - name: Inspect public production pages
+        run: npm run test:production
+      - name: Preserve report and failure evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: production-browser-${{ github.run_id }}-${{ github.run_attempt }}
+          path: output/playwright-production/
+          if-no-files-found: warn
+          retention-days: 7
