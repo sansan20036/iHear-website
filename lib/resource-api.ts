@@ -7,7 +7,8 @@ import type { AdminPrincipal } from "./admins";
 
 export const RESOURCE_HEADERS = { "Cache-Control": "no-store", "Vercel-CDN-Cache-Control": "no-store" };
 export function resourceApiError(error: unknown) {
-  if (error instanceof ResourceError || error instanceof TranslationReceiptError) return NextResponse.json({ error: error.message }, { status: error instanceof ResourceError ? error.status : 409, headers: RESOURCE_HEADERS });
+  if (error instanceof TranslationReceiptError) return NextResponse.json({ error: error.message, code: "TRANSLATION_PREVIEW_REQUIRED" }, { status: 409, headers: RESOURCE_HEADERS });
+  if (error instanceof ResourceError) return NextResponse.json({ error: error.message, code: error.code || (error.status === 409 ? "RESOURCE_VERSION_CONFLICT" : undefined) }, { status: error.status, headers: RESOURCE_HEADERS });
   if (error instanceof SyntaxError) return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   console.error("Resource operation failed", error);
   return NextResponse.json({ error: "Resource operation failed" }, { status: 500, headers: RESOURCE_HEADERS });

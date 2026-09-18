@@ -53,9 +53,34 @@ test("draft, publish, sort, hide, archive and restore preserve the original form
   expect(item.status).toBe("draft"); expect(item.url).toBe(input().url);
 });
 test("invalid URLs, empty names and invalid ordering are rejected", async () => {
-  for (const url of ["javascript:alert(1)", "data:text/html,test", "http://example.org", "https://user:secret@example.org", "<iframe>"]) expect((await collection.POST(request("POST", { ...input(), url }))).status).toBe(400);
+  for (const url of ["javascript:alert(1)", "data:text/html,test", "http://example.org", "https://user:secret@example.org", "<iframe>"]) {
+    const response = await collection.POST(request("POST", { ...input(), url }));
+    expect(response.status).toBe(400);
+    expect((await response.json()).code).toBe("INVALID_RESOURCE_URL");
+  }
   expect((await collection.POST(request("POST", { ...input(), title: { en: "", zhHant: "", zhHans: "" } }))).status).toBe(400);
   expect((await collection.POST(request("POST", { ...input(), sortOrder: 1.5 }))).status).toBe(400);
+});
+
+test("expired previews are recoverable and distinct from version conflicts", async () => {
+  const { item } = await (await collection.POST(request("POST", input()))).json();
+  for (const id of ["__new__", item.id]) {
+    const body = id === "__new__" ? input() : item;
+    const generate = async () => (await translations.POST(request("POST", { resource: { type: "resource", scope: "", id, ...(id === "__new__" ? {} : { version: item.version }) }, fields: { title: body.title }, autoTranslate: false }))).json();
+    const save = receipt => id === "__new__" ? collection.POST(request("POST", { ...body, translationReceipt: receipt })) : single.PATCH(request("PATCH", { ...body, translationReceipt: receipt }), context(id));
+    const preview = await generate();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 16 * 60 * 1000);
+    try {
+      const expired = await save(preview.receipt);
+      expect(expired.status).toBe(409);
+      expect((await expired.json()).code).toBe("TRANSLATION_PREVIEW_REQUIRED");
+    } finally { clock.mockRestore(); }
+    const fresh = await generate();
+    expect((await save(fresh.receipt)).status).toBe(id === "__new__" ? 201 : 200);
+  }
+  const conflict = await single.PATCH(request("PATCH", item), context(item.id));
+  expect(conflict.status).toBe(409);
+  expect((await conflict.json()).code).toBe("RESOURCE_VERSION_CONFLICT");
 });
 test("concurrent updates accept one version and retain its translation states atomically", async () => {
   const { item } = await (await collection.POST(request("POST", input()))).json();
