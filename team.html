@@ -102,7 +102,9 @@
           <div class="cell"><b data-i18n="ts2_b" data-editable-content="team.ts2.b" data-editable-mode="singleline" data-editable-maxlength="120">Comprehensive Training</b><span data-i18n="ts2_s" data-editable-content="team.ts2.s" data-editable-mode="singleline" data-editable-maxlength="120">All tutors complete training in inclusive communication strategies</span></div>
           <a class="btn btn-primary" href="#roster" data-i18n="team_cta" data-editable-content="team.team.cta" data-editable-mode="singleline" data-editable-maxlength="120" data-layout-link="team.team.cta.href">View Full Tutor Profiles</a>
         </div>
-        <div class="roster" id="roster" data-animate>
+        <!-- The dynamic roster can exceed the viewport many times over. Keep it
+             visible without waiting for a scroll-reveal intersection ratio. -->
+        <div class="roster" id="roster">
           <div class="roster-heading">
             <div class="roster-heading-copy">
               <h2 data-i18n="roster_h" data-editable-content="team.roster.title" data-editable-mode="singleline" data-editable-maxlength="200">Our Tutors</h2>

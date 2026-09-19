@@ -91,6 +91,11 @@ for (const route of publicPages) {
       const count = data.leaders.length + data.tutors.length;
       expect(count, "Published team profiles should be present").toBeGreaterThan(0);
       await expect(page.locator("[data-profile-id]")).toHaveCount(count);
+      const roster = page.locator("#roster");
+      await roster.scrollIntoViewIfNeeded();
+      await expect(roster).toBeVisible();
+      // A populated DOM (and toBeVisible) can still be completely transparent.
+      await expect(roster).toHaveCSS("opacity", "1");
     }
     if (route === "/resources") {
       const data = await responses[required.indexOf("/api/resources") + 1].json();

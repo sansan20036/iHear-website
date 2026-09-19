@@ -149,7 +149,7 @@ const futureJourneyEvent = {
   sortOrder: 202801,
 };
 
-async function mockApplication(page, { admin = true, duplicateAvatar = false, tutorName = "Test Tutor", tutorFields = {} } = {}) {
+async function mockApplication(page, { admin = true, duplicateAvatar = false, tutorName = "Test Tutor", tutorFields = {}, tutorCount = 1 } = {}) {
   const requests = [];
   let publishedPayload = null;
   let translationPreviewCount = 0;
@@ -459,7 +459,9 @@ async function mockApplication(page, { admin = true, duplicateAvatar = false, tu
     contentType: "application/json",
     body: JSON.stringify({
       leaders: [zoeProfile, danielProfile, howardProfile],
-      tutors: duplicateAvatar ? [teamProfile, zoeTutorProfile] : [teamProfile],
+      tutors: tutorCount > 1 ? Array.from({ length: tutorCount }, (_, index) => ({
+        ...teamProfile, id: `tutor-fixture-${index}`, personId: `person-fixture-${index}`, name: `Tutor ${index + 1}`,
+      })) : duplicateAvatar ? [teamProfile, zoeTutorProfile] : [teamProfile],
       people: [
         { id: "person-zoe-lu", name: "Zoe Lu", initials: "ZL", consentConfirmed: true },
         { id: "person-daniel-hollis", name: "Daniel Hollis", initials: "DH", consentConfirmed: true },
@@ -1748,6 +1750,37 @@ test("avatar cropper stays usable without horizontal overflow at supported viewp
     await mediaDialog.locator("[data-media-cancel]").last().click();
   }
 });
+
+for (const viewport of [{ width: 1440, height: 600 }, { width: 390, height: 844 }, { width: 320, height: 720 }]) {
+  test(`long tutor roster remains opaque after profile navigation at ${viewport.width}px`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await mockApplication(page, { admin: false, tutorCount: 36, tutorFields: {
+      summary: { en: "An experienced tutor supporting students with confidence and communication. ".repeat(8), zhHant: "協助學生建立自信與溝通能力。".repeat(20), zhHans: "协助学生建立自信与沟通能力。".repeat(20) },
+    } });
+    await page.goto("/team");
+    await expect(page.locator("[data-team-tutors] .tutor-prof")).toHaveCount(36);
+    const roster = page.locator("#roster");
+    expect(await roster.evaluate(node => node.getBoundingClientRect().height * 0.12 > innerHeight)).toBe(true);
+    await page.getByRole("link", { name: "View Full Tutor Profiles", exact: true }).click();
+    await expect(page).toHaveURL(/#roster$/);
+    // Playwright's toBeVisible alone does not reject opacity:0 on a parent.
+    await expect(roster).toHaveCSS("opacity", "1");
+    for (const language of ["zhTW", "zhCN", "en"]) {
+      const languageButton = page.locator(`#langSwitch button[data-lang="${language}"]`);
+      if (!(await languageButton.isVisible())) await page.locator("#navToggle").click();
+      await languageButton.click();
+      if (await page.locator("#navToggle").getAttribute("aria-expanded") === "true") {
+        await page.locator("#navToggle").click();
+        await expect(page.locator("#navLinks")).toBeHidden();
+      }
+      await expect(roster).toHaveCSS("opacity", "1");
+      await expect(page.locator("[data-team-tutors] .tutor-prof")).toHaveCount(36);
+    }
+    await page.reload();
+    await expect(page.locator("[data-team-tutors] .tutor-prof")).toHaveCount(36);
+    await expect(roster).toHaveCSS("opacity", "1");
+  });
+}
 
 test("team directory renders API data, switches language, and excludes generic pencils", async ({ page }) => {
   await mockApplication(page, { admin: false });
