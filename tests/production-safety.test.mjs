@@ -13,7 +13,7 @@ describe("production inspection read-only boundary", () => {
   });
   it("allows only approved public page navigation", () => {
     expect(readOnlyDecision({ url: `${origin}/team`, method: "GET", navigation: true })).toBeNull();
-    for (const url of ["https://forms.gle/example", `${origin}/submit-bio`, `${origin}/admin`]) {
+    for (const url of ["https://forms.gle/example", `${origin}/internal`, `${origin}/admin`]) {
       expect(readOnlyDecision({ url, method: "GET", navigation: true })).toBe("non-public-navigation");
     }
   });

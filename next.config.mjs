@@ -21,16 +21,19 @@ const nextConfig = {
   // installed @img runtime files in media API functions so Vercel's output
   // tracing cannot omit the Linux shared library.
   outputFileTracingIncludes: {
+    "/": ["./.private/index.html"],
+    "/[publicPage]": ["./.private/*.html"],
     "/team": ["./.private/team.html"],
     "/api/site-media/[slot]": ["./node_modules/@img/**/*"],
     "/api/media-galleries/[id]": ["./node_modules/@img/**/*"],
   },
-  async rewrites() {
+  async redirects() {
     return [
-      { source: "/", destination: "/index.html" },
+      { source: "/index.html", destination: "/", permanent: true },
       ...htmlRoutes.map(([source, destination]) => ({
-        source: `/${source}`,
-        destination: `/${destination}`,
+        source: `/${destination}`,
+        destination: `/${source}`,
+        permanent: true,
       })),
     ];
   },

@@ -919,6 +919,7 @@
       });
     }
     function animateCount(element) {
+      if (element.hasAttribute("data-published-metric")) return;
       let target = Number.parseInt(element.getAttribute("data-count"), 10) || 0;
       if (reduced) { element.textContent = target.toLocaleString("en-US"); return; }
       let start;

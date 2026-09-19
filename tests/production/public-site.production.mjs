@@ -69,7 +69,28 @@ async function inspectImages(page) {
 for (const route of publicPages) {
   test(`${route} visitor content, images, links and layout`, async ({ page }, testInfo) => {
     const required = ["/api/auth/session"];
-    if (route !== "/team") required.push("/api/content/get");
+    await page.addInitScript(() => {
+      window.staleFirstPaintText = [];
+      window.publishedPaintSamples = 0;
+      let seed;
+      const sample = () => {
+        const node = document.getElementById("ihear-published-content");
+        if (!seed && node) seed = JSON.parse(node.textContent);
+        if (seed) {
+          window.publishedPaintSamples += 1;
+          document.querySelectorAll("[data-editable-content], [data-published-metric]").forEach(element => {
+            const scope = element.dataset.editablePage || seed.page;
+            const key = element.dataset.editableContent;
+            const expected = element.hasAttribute("data-published-metric") ? seed.metricText[element.dataset.publishedMetric]?.en : seed.store.locales.en.pages[scope]?.[key];
+            if (expected == null) return;
+            const actual = Array.from(element.childNodes).filter(child => child.nodeType === Node.TEXT_NODE).map(child => child.nodeValue).join("").trim();
+            if (actual !== expected.trim() && window.staleFirstPaintText.length < 20) window.staleFirstPaintText.push({ key: key || element.dataset.publishedMetric, actual, expected });
+          });
+        }
+        requestAnimationFrame(sample);
+      };
+      requestAnimationFrame(sample);
+    });
     if (route === "/team") {
       await page.addInitScript(() => {
         window.teamFirstPaintCounts = [];
@@ -98,11 +119,18 @@ for (const route of publicPages) {
     const session = await responses[1].json();
     expect(session?.user, "Fresh inspection context must remain signed out").toBeFalsy();
 
-    const contentResponse = route === "/team"
-      ? await page.request.get(`/api/content/get?page=${encodeURIComponent(route)}`)
-      : responses[required.indexOf("/api/content/get") + 1];
+    const contentResponse = await page.request.get(`/api/content/get?page=${encodeURIComponent(route)}`);
     expect(contentResponse.status()).toBe(200);
     const content = await contentResponse.json();
+    const snapshot = JSON.parse(await page.locator("#ihear-published-content").textContent());
+    expect(snapshot.store.locales).toEqual(content.locales);
+    await expect.poll(() => page.evaluate(() => window.publishedPaintSamples)).toBeGreaterThan(0);
+    expect(await page.evaluate(() => window.staleFirstPaintText), "No old text or counters may appear at a paint").toEqual([]);
+    if (route === "/") {
+      const metrics = await page.request.get("/api/site-metrics");
+      expect(metrics.status()).toBe(200);
+      expect(snapshot.metrics).toEqual((await metrics.json()).metrics);
+    }
     await expect.poll(() => page.locator("[data-editable-content]").evaluateAll((nodes, { content, route }) => nodes.flatMap(node => {
       const scope = node.dataset.editablePage || route;
       const expected = content.locales.en.pages[scope]?.[node.dataset.editableContent];

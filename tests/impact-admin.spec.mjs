@@ -110,6 +110,54 @@ for (const [language, expected] of [["en", "40+ Active Tutors"], ["zhTW", "40+ ä
   });
 }
 
+for (const [language, locale, width] of [["en", "en", 1440], ["zhTW", "zhHant", 390], ["zhCN", "zhHans", 320]]) {
+  test(`all public pages show published text and homepage metrics from first paint in ${language}`, async ({ page }) => {
+    test.setTimeout(90_000);
+    await page.setViewportSize({ width, height: 900 });
+    await mockApplication(page, { admin: false });
+    await page.route("**/api/content/get**", route => route.abort());
+    await page.route("**/api/site-metrics", route => route.abort());
+    await page.addInitScript(({ language, locale }) => {
+      localStorage.setItem("ihear-lang", language);
+      window.badInitialText = [];
+      window.initialSamples = 0;
+      const sample = () => {
+        const seedNode = document.getElementById("ihear-published-content");
+        if (seedNode) {
+          const seed = JSON.parse(seedNode.textContent);
+          document.querySelectorAll("[data-editable-content], [data-published-metric]").forEach(node => {
+            const expected = node.hasAttribute("data-published-metric") ? seed.metricText[node.dataset.publishedMetric]?.[locale] : seed.store.locales[locale].pages[node.dataset.editablePage || seed.page]?.[node.dataset.editableContent];
+            if (expected == null) return;
+            const actual = Array.from(node.childNodes).filter(child => child.nodeType === Node.TEXT_NODE).map(child => child.nodeValue).join("").trim();
+            if (expected.trim() !== actual && window.badInitialText.length < 10) window.badInitialText.push({ actual, expected });
+            window.initialSamples += 1;
+          });
+        }
+        requestAnimationFrame(sample);
+      };
+      requestAnimationFrame(sample);
+    }, { language, locale });
+    for (const route of ["/", "/about", "/programs", "/impact", "/team", "/submit-bio", "/stories", "/get-involved", "/academy", "/donate", "/resources", "/faq", "/contact"]) {
+      const template = await readFile(path.resolve(".private", route === "/" ? "index.html" : `${route.slice(1)}.html`), "utf8");
+      const key = [...template.matchAll(/<[^>]+data-editable-content="([^"]+)"[^>]*>/g)].find(match => !match[0].includes("data-editable-page"))?.[1];
+      const store = { version: 3, updatedAt: "", locales: Object.fromEntries(["en", "zhHant", "zhHans"].map(lang => [lang, { pages: {
+        [route]: key ? { [key]: `${lang} Current heading` } : {}, "/__global__": { "site.nav.about": `${lang} About` },
+      }, itemUpdatedAt: {} }])) };
+      await page.route(e2eOrigin + route, handler => handler.fulfill({ contentType: "text/html", body: renderPageContent(template, route, store, "en", route === "/" ? siteMetrics : undefined) }));
+      await page.goto(route);
+      await expect.poll(() => page.evaluate(() => window.initialSamples), { message: route }).toBeGreaterThan(0);
+      expect(await page.evaluate(() => window.badInitialText), route).toEqual([]);
+      if (route === "/") {
+        await page.locator('[data-site-metric-value="volunteers"]').scrollIntoViewIfNeeded();
+        await expect(page.locator('[data-site-metric-value="volunteers"]')).toHaveText("41");
+        // Triggering the reveal must not restart a zero-to-current counter.
+        await page.waitForTimeout(1600);
+        expect(await page.evaluate(() => window.badInitialText)).toEqual([]);
+      }
+    }
+  });
+}
+
 test.afterAll(async () => {
   testServer.closeIdleConnections?.();
   testServer.closeAllConnections?.();

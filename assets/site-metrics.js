@@ -40,7 +40,8 @@
     },
   };
 
-  let currentMetrics = null;
+  const publishedMetrics = window.iHearPublishedContent?.metrics;
+  let currentMetrics = publishedMetrics || null;
   const fallback = {
     values: valueSlots.map((slot) => ({
       slot,
@@ -62,6 +63,13 @@
   };
 
   function restoreFallback() {
+    if (publishedMetrics !== undefined) {
+      valueSlots.forEach(slot => { slot.textContent = "—"; if (slot.hasAttribute("data-count")) slot.setAttribute("data-count", "0"); });
+      plusSlots.forEach(slot => { slot.textContent = ""; slot.hidden = true; });
+      [...asOfSlots, ...countryNameSlots].forEach(slot => { slot.textContent = ""; });
+      latestCards.forEach(slot => { slot.hidden = true; });
+      return;
+    }
     fallback.values.forEach(({ slot, text, count }) => {
       slot.textContent = text;
       if (count === null) slot.removeAttribute("data-count");
@@ -144,6 +152,7 @@
 
   function render() {
     if (!currentMetrics) return;
+    latestCards.forEach(slot => { slot.hidden = false; });
 
     valueSlots.forEach((slot) => {
       const field = slot.dataset.siteMetricValue;
@@ -222,5 +231,6 @@
   if (window.iHearLiveContent) {
     window.iHearLiveContent.register("impact", { refresh: load });
   }
-  load();
+  if (publishedMetrics !== undefined) { if (currentMetrics) render(); else restoreFallback(); }
+  else load();
 })();

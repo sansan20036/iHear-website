@@ -13,6 +13,7 @@
   }
   const initialLocale = { en: "en", zhTW: "zhHant", zhCN: "zhHans" }[language];
   function valueFor(element, locale) {
+    if (element.hasAttribute("data-published-metric")) return seed.metricText?.[element.dataset.publishedMetric]?.[locale];
     const page = element.dataset.editablePage || seed.page;
     const key = element.dataset.editableContent;
     return store.locales?.[locale]?.pages?.[page]?.[key] ?? definitions.get(`${page}\u0000${key}`)?.values[locale];
@@ -32,10 +33,10 @@
   // preference as the HTML is parsed, before paint, without hiding the page.
   const observer = new MutationObserver(() => {
     observer.disconnect();
-    document.querySelectorAll("[data-editable-content]").forEach(apply);
+    document.querySelectorAll("[data-editable-content], [data-published-metric]").forEach(apply);
     observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
   });
   observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
   document.addEventListener("DOMContentLoaded", () => observer.disconnect(), { once: true });
-  window.iHearPublishedContent = { store, slots: seed.slots, valueFor, update(latest) { store = latest; this.store = latest; } };
+  window.iHearPublishedContent = { store, slots: seed.slots, metrics: seed.metrics, valueFor, update(latest) { store = latest; this.store = latest; } };
 })();

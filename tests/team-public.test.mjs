@@ -3,6 +3,7 @@ vi.mock("node:fs/promises", () => ({ readFile: vi.fn() }));
 vi.mock("../lib/site-media-store", () => ({ listSiteMediaAssets: vi.fn(), findSiteMediaImagePath: vi.fn() }));
 vi.mock("../lib/site-media-storage", () => ({ readSiteMediaObject: vi.fn() }));
 vi.mock("../lib/content-store", () => ({ readContentStore: vi.fn(), publicContentStore: value => value }));
+vi.mock("../lib/impact-store", () => ({ getCurrentSiteMetrics: vi.fn(async () => null) }));
 import { readFile } from "node:fs/promises";
 import { GET as page } from "../app/team/route";
 import { POST as legacySubmit } from "../app/api/team-access/route";
@@ -13,9 +14,55 @@ import { listSiteMediaAssets, findSiteMediaImagePath } from "../lib/site-media-s
 import { readSiteMediaObject } from "../lib/site-media-storage";
 import { readContentStore } from "../lib/content-store";
 import { publicSiteMediaAsset } from "../lib/site-media-types";
+import { servePublicPage, PUBLIC_PAGES } from "../lib/public-page";
+import { getCurrentSiteMetrics } from "../lib/impact-store";
 beforeEach(() => {
   vi.resetAllMocks();
   readContentStore.mockResolvedValue({ version: 3, updatedAt: "", locales: Object.fromEntries(["en", "zhHant", "zhHans"].map(locale => [locale, { pages: {}, itemUpdatedAt: {} }])) });
+  getCurrentSiteMetrics.mockResolvedValue(null);
+});
+
+test.each(PUBLIC_PAGES)("%s serves current page and shared text without waiting for browser fetch", async route => {
+  readFile.mockResolvedValue('<html lang="en"><head></head><body><h1 data-editable-content="test.heading">Old title</h1><a href="/" data-editable-content="site.nav.about" data-editable-page="/__global__">Old navigation</a></body></html>');
+  const store = await readContentStore();
+  for (const locale of ["en", "zhHant", "zhHans"]) {
+    store.locales[locale].pages[route] = { "test.heading": `${locale} Current title` };
+    store.locales[locale].pages["/__global__"] = { "site.nav.about": `${locale} Current navigation` };
+  }
+  for (const [cookie, locale] of [["en", "en"], ["zhTW", "zhHant"], ["zhCN", "zhHans"]]) {
+    const response = await servePublicPage(new Request(`https://www.ihearus.org${route}`, { headers: { cookie: `ihear-lang=${cookie}` } }), route);
+    const html = await response.text();
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toContain("no-store");
+    expect(html).toContain(`>${locale} Current title</h1>`);
+    expect(html).toContain(`>${locale} Current navigation</a>`);
+    expect(html).not.toContain("Old title");
+  }
+  expect(readContentStore).toHaveBeenCalledWith(route);
+});
+
+test("unknown routes cannot access files or query content", async () => {
+  for (const route of ["/unknown", "/../.env", "/admin-fake"]) {
+    expect((await servePublicPage(new Request("https://www.ihearus.org/"), route)).status).toBe(404);
+  }
+  expect(readFile).not.toHaveBeenCalled();
+  expect(readContentStore).not.toHaveBeenCalled();
+});
+
+test("homepage renders authoritative metrics and never keeps old numbers after their removal", async () => {
+  readFile.mockResolvedValue('<html lang="en"><head></head><body><span data-count="35" data-site-metric-value="volunteers">35</span><span data-site-metric-asof>old date</span><section data-latest-impact><h2 data-latest-impact-headline>old summary</h2></section></body></html>');
+  getCurrentSiteMetrics.mockResolvedValue({ id: "current", kind: "metrics", period: "2027-01", volunteers: 41, volunteersPlus: true, students: 63, studentsPlus: true, sessions: 1299, sessionsPlus: true, countryNames: { en: "US", zhHant: "美國", zhHans: "美国" }, description: { en: "Current", zhHant: "最新", zhHans: "最新" }, updatedBy: "private@example.com" });
+  const html = await (await servePublicPage(new Request("https://www.ihearus.org/"), "/")).text();
+  expect(html).toContain('data-count="41"');
+  expect(html).toContain('>41</span>');
+  expect(html).toContain('>as of January 2027</span>');
+  expect(html).toContain('41+ volunteers · 63+ students · 1,299+ sessions');
+  expect(html).not.toContain("private@example.com");
+  getCurrentSiteMetrics.mockResolvedValue(null);
+  const removed = await (await servePublicPage(new Request("https://www.ihearus.org/"), "/")).text();
+  expect(removed).toContain('>—</span>');
+  expect(removed).toContain('data-latest-impact hidden');
+  expect(removed).not.toContain('>35</span>');
 });
 
 test("team HTML includes published text before client requests and escapes untrusted content", async () => {
