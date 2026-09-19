@@ -13,7 +13,30 @@ import { listSiteMediaAssets, findSiteMediaImagePath } from "../lib/site-media-s
 import { readSiteMediaObject } from "../lib/site-media-storage";
 import { readContentStore } from "../lib/content-store";
 import { publicSiteMediaAsset } from "../lib/site-media-types";
-beforeEach(() => vi.resetAllMocks());
+beforeEach(() => {
+  vi.resetAllMocks();
+  readContentStore.mockResolvedValue({ version: 3, updatedAt: "", locales: Object.fromEntries(["en", "zhHant", "zhHans"].map(locale => [locale, { pages: {}, itemUpdatedAt: {} }])) });
+});
+
+test("team HTML includes published text before client requests and escapes untrusted content", async () => {
+  readFile.mockResolvedValue('<html lang="en"><head></head><body><b data-editable-content="team.ts1.b">36 Active Tutors</b><h2 data-editable-content="team.roster.title">Our Tutors</h2></body></html>');
+  const store = await readContentStore();
+  store.locales.en.pages["/team"] = { "team.ts1.b": "40+ Active Tutors", "team.roster.title": '</script><img src=x onerror=alert(1)> $&' };
+  store.locales.zhHant.pages["/team"] = { "team.ts1.b": "40+ 位活躍小老師" };
+  const response = await page(new Request("https://www.ihearus.org/team"));
+  const html = await response.text();
+  expect(response.headers.get("cache-control")).toContain("no-store");
+  expect(html).toContain('>40+ Active Tutors</b>');
+  expect(html).not.toContain('>36 Active Tutors</b>');
+  expect(html).toContain('&lt;/script&gt;&lt;img src=x onerror=alert(1)&gt; $&');
+  expect(html).not.toContain('<img src=x');
+  const seed = JSON.parse(html.match(/type="application\/json">([\s\S]*?)<\/script>/)[1]);
+  expect(seed.store).toEqual(store);
+  expect(seed.slots.every(slot => ["/team", "/__global__"].includes(slot.page))).toBe(true);
+  const chinese = await page(new Request("https://www.ihearus.org/team", { headers: { cookie: "ihear-lang=zhTW" } }));
+  expect(await chinese.text()).toContain('>40+ 位活躍小老師</b>');
+  expect(readContentStore).toHaveBeenCalledWith("/team");
+});
 test("anonymous page entries render the roster and clear obsolete cookies", async () => {
   const html = '<html><body data-team-tutors>Current team</body></html>';
   readFile.mockResolvedValue(html);
@@ -29,6 +52,17 @@ test("old form submissions redirect without password verification", async () => 
   const response = await legacySubmit(new Request("https://www.ihearus.org/api/team-access", { method: "POST" }));
   expect(response.status).toBe(303);
   expect(response.headers.get("location")).toBe("https://www.ihearus.org/team");
+});
+
+test("team data outage offers retry without showing historical numbers", async () => {
+  readFile.mockResolvedValue('<html><head></head><body>36 Active Tutors</body></html>');
+  readContentStore.mockRejectedValue(new Error("database unavailable"));
+  const response = await page(new Request("https://www.ihearus.org/team"));
+  expect(response.status).toBe(503);
+  expect(response.headers.get("cache-control")).toContain("no-store");
+  const html = await response.text();
+  expect(html).toContain("Try again");
+  expect(html).not.toContain("36 Active Tutors");
 });
 test("anonymous visitors receive team media metadata and photo bytes", async () => {
   listSiteMediaAssets.mockResolvedValue([{ slot: "team.test.avatar", recordVersion: 1, variants: [{ width: 480, pixelWidth: 480, storagePath: "team-photo" }], alt: {} }]);

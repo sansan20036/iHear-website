@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
+import { renderPageContent } from "../lib/render-page-content.ts";
 
 const publicDir = path.resolve("public");
 const contentTypes = {
@@ -60,6 +61,54 @@ test.beforeAll(async () => {
     testServer.listen(e2ePort, "127.0.0.1", resolve);
   });
 });
+
+for (const [language, expected] of [["en", "40+ Active Tutors"], ["zhTW", "40+ 位活躍小老師"], ["zhCN", "40+ 位活跃小老师"]]) {
+  test(`published team text is correct from first paint in ${language}`, async ({ page }) => {
+    await mockApplication(page, { admin: false });
+    const values = { en: "40+ Active Tutors", zhHant: "40+ 位活躍小老師", zhHans: "40+ 位活跃小老师" };
+    const store = { version: 3, updatedAt: "", locales: Object.fromEntries(Object.entries(values).map(([locale, value]) => [locale, {
+      pages: { "/team": { "team.ts1.b": value, "team.roster.title": "iHear Tutors 2026-2027" } }, itemUpdatedAt: {},
+    }])) };
+    const template = await readFile(path.resolve(".private/team.html"), "utf8");
+    // Render the actual server helper; intentionally give the browser a
+    // different cookie locale to cover its saved language preference too.
+    await page.route("**/team", route => route.fulfill({ contentType: "text/html", body: renderPageContent(template, "/team", store, "en") }));
+    let contentRequests = 0;
+    await page.route("**/api/content/get**", route => { contentRequests += 1; return route.abort(); });
+    await page.route("**/assets/content-slots.json", route => route.abort());
+    await page.route("**/assets/inline-edit.js*", async route => {
+      await new Promise(resolve => { setTimeout(resolve, 600); });
+      await route.continue();
+    });
+    await page.addInitScript(({ language }) => {
+      localStorage.setItem("ihear-lang", language);
+      window.paintedCounts = [];
+      const sample = () => {
+        const node = document.querySelector('[data-editable-content="team.ts1.b"]');
+        if (node) window.paintedCounts.push(node.textContent);
+        requestAnimationFrame(sample);
+      };
+      requestAnimationFrame(sample);
+    }, { language });
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await page.goto("/team");
+      await expect(page.locator('[data-editable-content="team.ts1.b"]')).toHaveText(expected);
+      await expect.poll(() => page.evaluate(() => window.paintedCounts.length)).toBeGreaterThan(2);
+      expect(await page.evaluate(() => [...new Set(window.paintedCounts)])).toEqual([expected]);
+      await expect(page.locator('[data-editable-content="team.roster.title"]')).toHaveText("iHear Tutors 2026-2027");
+    }
+    expect(contentRequests).toBe(0);
+    await page.getByRole("button", { name: "EN", exact: true }).click();
+    await expect(page.locator('[data-editable-content="team.ts1.b"]')).toHaveText(values.en);
+    // A later live update still replaces the embedded snapshot.
+    store.locales.en.pages["/team"]["team.ts1.b"] = "41+ Active Tutors";
+    await page.route("**/api/content/get**", route => route.fulfill({ json: store }));
+    await page.evaluate(() => window.iHearInlineEdit.refresh());
+    await page.getByRole("button", { name: "繁", exact: true }).click();
+    await page.getByRole("button", { name: "EN", exact: true }).click();
+    await expect(page.locator('[data-editable-content="team.ts1.b"]')).toHaveText("41+ Active Tutors");
+  });
+}
 
 test.afterAll(async () => {
   testServer.closeIdleConnections?.();

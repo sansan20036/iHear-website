@@ -10,8 +10,9 @@
   };
 
   const pageKey = normalizePage(location.pathname);
-  let store = emptyStore();
-  let catalog = new Map();
+  const published = window.iHearPublishedContent;
+  let store = published?.store || emptyStore();
+  let catalog = new Map((published?.slots || []).map(slot => [`${slot.page}\u0000${slot.key}`, slot]));
   let session = null;
   let active = null;
   let hoverTarget = null;
@@ -217,7 +218,7 @@
         const data = await response.json().catch(() => null);
         if (response.status === 409 || response.status === 428) throw new Error(labels().conflict);
         if (!response.ok) throw new Error(data?.error || labels().failed);
-        store = data.content || store; close(false); await loadContent().catch(() => applyContent()); window.iHearToast?.(labels().saved); window.iHearLiveContent?.announce("content", data.revision);
+        store = data.content || store; published?.update(store); close(false); await loadContent().catch(() => applyContent()); window.iHearToast?.(labels().saved); window.iHearLiveContent?.announce("content", data.revision);
       } catch (reason) { save.disabled = cancel.disabled = false; error.textContent = reason?.message || labels().failed; error.hidden = false; }
     });
     active = { dialog, element, baseUpdatedAtByLocale, dirty, close: () => close(true) }; dialog.showModal();
@@ -254,11 +255,12 @@
     prefetchedContent = null;
     const latest = prefetched || await fetchContentStore(context);
     if (!latest) return;
-    store = latest; applyContent(); renderAdminControls(); if (notice) notice.hidden = true;
+    store = latest; published?.update(latest); applyContent(); renderAdminControls(); if (notice) notice.hidden = true;
   }
 
   async function boot() {
     installStyles();
+    if (published) { applyContent(); renderAdminControls(); return; }
     try { const data = await fetch("/assets/content-slots.json", { cache: "force-cache" }).then((response) => response.json()); catalog = new Map(data.slots.map((slot) => [`${slot.page}\u0000${slot.key}`, slot])); } catch {}
     await loadContent().catch(() => undefined); applyContent(); renderAdminControls();
   }

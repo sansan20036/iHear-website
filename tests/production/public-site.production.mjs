@@ -68,7 +68,19 @@ async function inspectImages(page) {
 
 for (const route of publicPages) {
   test(`${route} visitor content, images, links and layout`, async ({ page }, testInfo) => {
-    const required = ["/api/auth/session", "/api/content/get"];
+    const required = ["/api/auth/session"];
+    if (route !== "/team") required.push("/api/content/get");
+    if (route === "/team") {
+      await page.addInitScript(() => {
+        window.teamFirstPaintCounts = [];
+        const sample = () => {
+          const node = document.querySelector('[data-editable-content="team.ts1.b"]');
+          if (node) window.teamFirstPaintCounts.push(node.textContent);
+          requestAnimationFrame(sample);
+        };
+        requestAnimationFrame(sample);
+      });
+    }
     if (["/", "/impact", "/team"].includes(route)) required.push("/api/site-media");
     if (route === "/team") required.push("/api/team-profiles");
     if (route === "/resources") required.push("/api/resources");
@@ -86,7 +98,25 @@ for (const route of publicPages) {
     const session = await responses[1].json();
     expect(session?.user, "Fresh inspection context must remain signed out").toBeFalsy();
 
+    const contentResponse = route === "/team"
+      ? await page.request.get(`/api/content/get?page=${encodeURIComponent(route)}`)
+      : responses[required.indexOf("/api/content/get") + 1];
+    expect(contentResponse.status()).toBe(200);
+    const content = await contentResponse.json();
+    await expect.poll(() => page.locator("[data-editable-content]").evaluateAll((nodes, { content, route }) => nodes.flatMap(node => {
+      const scope = node.dataset.editablePage || route;
+      const expected = content.locales.en.pages[scope]?.[node.dataset.editableContent];
+      if (expected == null) return [];
+      const actual = Array.from(node.childNodes).filter(child => child.nodeType === Node.TEXT_NODE).map(child => child.nodeValue).join("").trim();
+      return actual === expected.trim() ? [] : [{ key: node.dataset.editableContent, actual, expected }];
+    }), { content, route }), { message: "Displayed text must match currently published content" }).toEqual([]);
+
     if (route === "/team") {
+      const expected = content.locales.en.pages["/team"]["team.ts1.b"];
+      const seed = JSON.parse(await page.locator("#ihear-published-content").textContent());
+      expect(seed.store.locales.en.pages["/team"]["team.ts1.b"]).toBe(expected);
+      await expect.poll(() => page.evaluate(() => window.teamFirstPaintCounts.length)).toBeGreaterThan(0);
+      expect(await page.evaluate(() => [...new Set(window.teamFirstPaintCounts)])).toEqual([expected]);
       const data = await responses[required.indexOf("/api/team-profiles") + 1].json();
       const count = data.leaders.length + data.tutors.length;
       expect(count, "Published team profiles should be present").toBeGreaterThan(0);

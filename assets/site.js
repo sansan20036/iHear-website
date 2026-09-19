@@ -674,6 +674,8 @@
     const dictionary = I18N[activeLanguage] || I18N.en;
     document.querySelectorAll("[data-i18n]").forEach((element) => {
       const key = element.getAttribute("data-i18n");
+      const published = window.iHearPublishedContent?.valueFor(element, localeKeys[activeLanguage]);
+      if (published != null) { setLocalizedText(element, published); return; }
       const translated = activeLanguage === "en" ? englishText.get(key) : dictionary[key];
       if (translated != null) setLocalizedText(element, translated);
       else if (englishText.has(key)) setLocalizedText(element, englishText.get(key));
