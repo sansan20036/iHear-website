@@ -5,6 +5,14 @@ import { describe, expect, it } from "vitest";
 const read = async (path) => (await readFile(new URL(`../${path}`, import.meta.url), "utf8")).replace(/\r\n?/g, "\n");
 
 describe("production operations configuration", () => {
+  it("does not bypass current-data page routes with legacy static HTML rewrites", async () => {
+    const vercel = JSON.parse(await read("vercel.json"));
+    expect((vercel.rewrites || []).filter(rule => /\.html(?:$|\?)/.test(rule.destination))).toEqual([]);
+    const nextConfig = (await import("../next.config.mjs")).default;
+    expect(nextConfig.rewrites).toBeUndefined();
+    const redirects = await nextConfig.redirects();
+    expect(redirects).toContainEqual({ source: "/about.html", destination: "/about", permanent: true });
+  });
   it("keeps health checks uncached and responses free of database details", async () => {
     const route = await read("app/api/health/route.ts");
     expect(route).toContain('"Vercel-CDN-Cache-Control": "no-store"');
