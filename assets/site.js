@@ -767,6 +767,14 @@
     const media = window.matchMedia("(max-width: 1024px)");
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
     const supportsInert = "inert" in HTMLElement.prototype;
+    let menuAnimation = null;
+    let menuAnimationVersion = 0;
+    function cancelMenuAnimation() {
+      menuAnimationVersion += 1;
+      const previous = menuAnimation;
+      menuAnimation = null;
+      if (previous) previous.cancel();
+    }
     const placeholder = languageSwitch ? document.createComment("language-switch") : null;
     const languageItem = document.createElement("li");
     languageItem.className = "nav-language-item";
@@ -800,6 +808,8 @@
     function closeMenu(options) {
       const settings = options || {};
       if (!media.matches) return;
+      cancelMenuAnimation();
+      const version = menuAnimationVersion;
       const wasOpen = toggle.getAttribute("aria-expanded") === "true";
       toggle.setAttribute("aria-expanded", "false");
       toggle.setAttribute("aria-label", textForUi().menu);
@@ -810,15 +820,26 @@
         finalizeClosed();
       } else {
         drawer.classList.add("is-closing");
-        drawer.animate(
+        const animation = drawer.animate(
           [{ opacity: 1, transform: "translateY(0)" }, { opacity: 0, transform: "translateY(-12px)" }],
           { duration: 220, easing: "ease", fill: "both" },
-        ).finished.then(finalizeClosed, finalizeClosed);
+        );
+        menuAnimation = animation;
+        const finish = () => {
+          // A previous close must never hide a newer open or desktop state.
+          if (version !== menuAnimationVersion) return;
+          finalizeClosed();
+          menuAnimation = null;
+          // Remove fill:both's retained transparent frame before the next open.
+          animation.cancel();
+        };
+        animation.finished.then(finish, finish);
       }
       if (settings.restoreFocus) toggle.focus();
     }
     function openMenu() {
       if (!media.matches) return;
+      cancelMenuAnimation();
       drawer.hidden = false;
       drawer.classList.remove("is-closing");
       drawer.classList.add("open");
@@ -828,13 +849,14 @@
       toggle.setAttribute("aria-expanded", "true");
       toggle.setAttribute("aria-label", textForUi().closeMenu);
       if (!reducedMotion.matches && typeof drawer.animate === "function") {
-        drawer.animate(
+        menuAnimation = drawer.animate(
           [{ opacity: 0, transform: "translateY(-12px)" }, { opacity: 1, transform: "translateY(0)" }],
           { duration: 220, easing: "ease-out" },
         );
       }
     }
     function syncLayout() {
+      cancelMenuAnimation();
       if (media.matches) {
         if (languageSwitch && languageSwitch.parentNode !== languageItem) {
           languageItem.appendChild(languageSwitch);

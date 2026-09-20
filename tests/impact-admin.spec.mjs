@@ -2826,6 +2826,38 @@ test("skip link moves keyboard focus into the main content", async ({ page }) =>
   await expect(main).toBeFocused();
 });
 
+for (const width of [320, 390]) {
+  test(`mobile menu remains opaque after scrolling and repeated toggles at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await mockApplication(page, { admin: false });
+    await page.goto("/");
+    await page.evaluate(() => window.scrollTo(0, 1000));
+    const toggle = page.locator("#navToggle");
+    const drawer = page.locator("#navLinks");
+    for (let cycle = 0; cycle < 3; cycle++) {
+      await toggle.click();
+      await drawer.evaluate(async node => { await Promise.all(node.getAnimations().map(animation => animation.finished.catch(() => {}))); });
+      await expect(toggle).toHaveAttribute("aria-expanded", "true");
+      await expect(drawer).toBeVisible();
+      await expect(drawer).toHaveCSS("opacity", "1");
+      await toggle.click();
+      await expect(drawer).toBeHidden();
+    }
+    // A pending close must not hide a newer open state.
+    await toggle.evaluate(node => { node.click(); node.click(); node.click(); });
+    await drawer.evaluate(async node => { await Promise.all(node.getAnimations().map(animation => animation.finished.catch(() => {}))); });
+    await expect(drawer).toBeVisible();
+    await expect(drawer).toHaveCSS("opacity", "1");
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    // Nor may a mobile close callback hide desktop navigation after resizing.
+    await toggle.click();
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await drawer.evaluate(async node => { await Promise.all(node.getAnimations().map(animation => animation.finished.catch(() => {}))); });
+    await expect(drawer).toBeVisible();
+    await expect(drawer).toHaveCSS("opacity", "1");
+  });
+}
+
 test("mobile drawer is safe with native inert and the tabindex fallback", async ({ context, page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockApplication(page, { admin: false });
