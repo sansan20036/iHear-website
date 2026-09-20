@@ -79,6 +79,10 @@ for (const route of publicPages) {
         if (seed) {
           window.publishedPaintSamples += 1;
           document.querySelectorAll("[data-editable-content], [data-published-metric]").forEach(element => {
+            // Streaming HTML can paint between an opening tag and its text.
+            // An unparsed empty node is not a stale value; once parsing ends,
+            // the normal content assertion below still rejects missing text.
+            if (document.readyState === "loading" && !element.childNodes.length) return;
             const scope = element.dataset.editablePage || seed.page;
             const key = element.dataset.editableContent;
             const expected = element.hasAttribute("data-published-metric") ? seed.metricText[element.dataset.publishedMetric]?.en : seed.store.locales.en.pages[scope]?.[key];
