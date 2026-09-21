@@ -1,0 +1,40 @@
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { beforeEach, afterEach, expect, test, vi } from "vitest";
+vi.mock("../lib/translation-state", () => ({ saveTranslationStates: vi.fn(), upsertTranslationStatesInTransaction: vi.fn() }));
+let store, directory, original;
+beforeEach(async () => {
+  vi.resetModules(); vi.clearAllMocks();
+  await mkdir("output/test-data", { recursive: true });
+  directory = await mkdtemp(path.resolve("output/test-data/team-visibility-"));
+  vi.stubEnv("IHEAR_FORCE_FILE_STORE", "1"); vi.stubEnv("IHEAR_TEST_DATA_DIR", directory);
+  const person = { id: "person-test", name: "Test", initials: "TT", version: 1, publicationConsentAt: "2026-09-01T00:00:00Z" };
+  const profile = { id: "tutor-test", personId: person.id, section: "tutor", status: "published", version: 1, sortOrder: 20, bio: { en: "Biography", zhHant: "人工介紹", zhHans: "人工介绍" } };
+  original = { people: [person], profiles: [profile, { ...profile, id: "leader-test", section: "leader" }, { ...profile, id: "draft-test", status: "draft" }, { ...profile, id: "trash-test", deletedAt: "2026-09-01T00:00:00Z" }] };
+  await writeFile(path.join(directory, "team-profiles.json"), JSON.stringify(original));
+  store = await import("../lib/team-store");
+});
+afterEach(() => vi.unstubAllEnvs());
+const saved = async () => JSON.parse(await readFile(path.join(directory, "team-profiles.json"), "utf8"));
+test("hide and restore retain shared person, independent placement, translations and order", async () => {
+  expect((await store.listPublishedTeamProfiles()).map(p => p.id)).toEqual(["leader-test", "tutor-test"]);
+  const hidden = await store.setTeamProfileVisibility("tutor-test", true, 1, "admin@example.com");
+  expect(hidden.isHidden).toBe(true); expect(hidden.profileVersion).toBe(2); expect(hidden.personVersion).toBe(1);
+  expect((await store.listPublishedTeamProfiles()).map(p => p.id)).toEqual(["leader-test"]);
+  expect((await saved()).people).toEqual(original.people);
+  expect((await saved()).profiles.slice(1)).toEqual(original.profiles.slice(1));
+  expect(hidden.bio).toEqual(original.profiles[0].bio); expect(hidden.sortOrder).toBe(20);
+  expect((await store.listAllTeamProfiles()).find(p => p.id === hidden.id).isHidden).toBe(true);
+  await store.setTeamProfileVisibility("tutor-test", false, 2, "admin@example.com");
+  expect((await store.listPublishedTeamProfiles()).map(p => p.id)).toEqual(["leader-test", "tutor-test"]);
+  const translations = await import("../lib/translation-state");
+  expect(translations.saveTranslationStates).not.toHaveBeenCalled();
+});
+test("serialized concurrent edits reject stale version; drafts and trash never become published", async () => {
+  const results = await Promise.allSettled([store.setTeamProfileVisibility("tutor-test", true, 1, "a@example.com"), store.setTeamProfileVisibility("tutor-test", false, 1, "b@example.com")]);
+  expect(results.map(r => r.status)).toEqual(["fulfilled", "rejected"]);
+  expect(results[1].reason).toBeInstanceOf(store.TeamConflictError);
+  await store.setTeamProfileVisibility("draft-test", false, 1, "a@example.com");
+  await expect(store.setTeamProfileVisibility("trash-test", false, 1, "a@example.com")).rejects.toBeInstanceOf(store.TeamNotFoundError);
+  expect((await store.listPublishedTeamProfiles()).map(p => p.id)).toEqual(["leader-test"]);
+});

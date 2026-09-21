@@ -28,6 +28,7 @@ export type TeamProfileSeed = {
   personId: string;
   section: TeamSection;
   status: TeamStatus;
+  isHidden?: boolean;
   sortOrder: number;
   school: string;
   grade: string;
@@ -125,6 +126,7 @@ export function parseTeamProfileInput(
 
   if (!TEAM_SECTIONS.includes(source.section as TeamSection)) issues.section = "Invalid section";
   if (!TEAM_STATUSES.includes(source.status as TeamStatus)) issues.status = "Invalid status";
+  if (source.isHidden !== undefined && typeof source.isHidden !== "boolean") issues.isHidden = "Must be a boolean";
 
   const parsed: TeamProfileInput = {
     personId:
@@ -136,6 +138,7 @@ export function parseTeamProfileInput(
     consentConfirmed: source.consentConfirmed === true,
     section,
     status,
+    ...(source.isHidden !== undefined ? { isHidden: source.isHidden === true } : {}),
     sortOrder:
       source.sortOrder == null ? undefined : Number(source.sortOrder),
     school: text(source.school, "school", issues, 300),

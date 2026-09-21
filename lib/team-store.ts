@@ -59,7 +59,7 @@ const databaseUrl = process.env.IHEAR_FORCE_FILE_STORE === "1"
 const isHostedProduction =
   process.env.NODE_ENV === "production" &&
   Boolean(process.env.VERCEL || process.env.NETLIFY || process.env.CONTEXT);
-const filePath = path.join(process.cwd(), "data", "team-profiles.json");
+const filePath = path.join(process.env.IHEAR_FORCE_FILE_STORE === "1" && process.env.IHEAR_TEST_DATA_DIR || path.join(process.cwd(), "data"), "team-profiles.json");
 const globalForTeam = globalThis as typeof globalThis & {
   ihearTeamSql?: ReturnType<typeof postgres>;
 };
@@ -101,6 +101,7 @@ function fromRow(row: TeamRow): TeamProfile {
     personId: row.person_id,
     section: row.section,
     status: row.status,
+    isHidden: row.is_hidden === true,
     sortOrder: Number(row.sort_order),
     school: row.school,
     grade: row.grade,
@@ -127,7 +128,7 @@ function fromRow(row: TeamRow): TeamProfile {
 }
 
 const SELECT_COLUMNS = `
-  profile.id, profile.person_id, profile.section, profile.status, profile.sort_order,
+  profile.id, profile.person_id, profile.section, profile.status, profile.is_hidden, profile.sort_order,
   profile.school, profile.grade, profile.show_school, profile.show_grade,
   profile.role_en, profile.role_zh_hant, profile.role_zh_hans,
   profile.school_display_en, profile.school_display_zh_hant, profile.school_display_zh_hans,
@@ -191,6 +192,7 @@ function fromFile(store: TeamFileStore) {
     return {
       ...profile,
       name: person.name,
+      isHidden: profile.isHidden === true,
       initials: person.initials,
       publicationConsentAt: person.publicationConsentAt,
       profileVersion: profile.version,
@@ -212,13 +214,13 @@ export async function listPublishedTeamProfiles() {
       `SELECT ${SELECT_COLUMNS}
        FROM team_profiles AS profile
        JOIN team_people AS person ON person.id = profile.person_id
-       WHERE profile.status = 'published' AND profile.deleted_at IS NULL
+       WHERE profile.status = 'published' AND NOT profile.is_hidden AND profile.deleted_at IS NULL
        ORDER BY profile.section, profile.sort_order, profile.id`,
     );
     return rows.map(fromRow);
   }
   return fromFile(await readFileStore())
-    .filter((profile) => profile.status === "published" && !profile.deletedAt)
+    .filter((profile) => profile.status === "published" && !profile.isHidden && !profile.deletedAt)
     .sort((a, b) => a.section.localeCompare(b.section) || a.sortOrder - b.sortOrder || a.id.localeCompare(b.id));
 }
 
@@ -378,7 +380,7 @@ async function insertProfile(
 ) {
   await tx`
     INSERT INTO team_profiles (
-      id, person_id, section, status, sort_order, school, grade, show_school, show_grade,
+      id, person_id, section, status, is_hidden, sort_order, school, grade, show_school, show_grade,
       role_en, role_zh_hant, role_zh_hans,
       school_display_en, school_display_zh_hant, school_display_zh_hans,
       languages_en, languages_zh_hant, languages_zh_hans,
@@ -388,7 +390,7 @@ async function insertProfile(
       hobbies_en, hobbies_zh_hant, hobbies_zh_hans,
       created_by, updated_by
     ) VALUES (
-      ${id}, ${personId}, ${input.section}, ${input.status}, ${sortOrder},
+      ${id}, ${personId}, ${input.section}, ${input.status}, ${input.isHidden === true}, ${sortOrder},
       ${input.school}, ${input.grade}, ${input.showSchool}, ${input.showGrade},
       ${input.role.en}, ${input.role.zhHant}, ${input.role.zhHans},
       ${input.schoolDisplay.en}, ${input.schoolDisplay.zhHant}, ${input.schoolDisplay.zhHans},
@@ -438,6 +440,7 @@ export async function updateTeamProfile(id: string, input: TeamProfileUpdateInpu
       const updated = await tx`
         UPDATE team_profiles SET
           section = ${input.section}, status = ${input.status},
+          is_hidden = COALESCE(${input.isHidden ?? null}::boolean, is_hidden),
           sort_order = ${input.sortOrder ?? 0}, school = ${input.school}, grade = ${input.grade},
           show_school = ${input.showSchool}, show_grade = ${input.showGrade},
           role_en = ${input.role.en}, role_zh_hant = ${input.role.zhHant}, role_zh_hans = ${input.role.zhHans},
@@ -506,6 +509,40 @@ export async function updateTeamProfile(id: string, input: TeamProfileUpdateInpu
   });
   await saveTranslationStates({ type: "team", scope: "", id }, writes || [], email);
   return result;
+}
+
+export async function setTeamProfileVisibility(id: string, isHidden: boolean, profileVersion: number, email: string) {
+  assertPersistence();
+  const sql = sqlClient();
+  if (sql) {
+    return sql.begin(async (tx) => {
+      const updated = await tx`
+        UPDATE team_profiles
+        SET is_hidden = ${isHidden}, version = version + 1, updated_at = NOW(), updated_by = ${email}
+        WHERE id = ${id} AND version = ${profileVersion} AND deleted_at IS NULL
+        RETURNING id
+      `;
+      if (!updated[0]) {
+        const exists = await tx`SELECT id FROM team_profiles WHERE id = ${id} AND deleted_at IS NULL`;
+        if (!exists[0]) throw new TeamNotFoundError("Team profile not found");
+        throw new TeamConflictError("Team profile changed");
+      }
+      const rows = await tx.unsafe<TeamRow[]>(`SELECT ${SELECT_COLUMNS}
+        FROM team_profiles AS profile JOIN team_people AS person ON person.id = profile.person_id
+        WHERE profile.id = $1`, [id]);
+      return fromRow(rows[0]);
+    });
+  }
+  return mutateFile(async (store) => {
+    const profile = store.profiles.find(item => item.id === id) as (TeamFileStore["profiles"][number] & { deletedAt?: string }) | undefined;
+    if (!profile || profile.deletedAt) throw new TeamNotFoundError("Team profile not found");
+    if (profile.version !== profileVersion) throw new TeamConflictError("Team profile changed");
+    profile.isHidden = isHidden;
+    profile.version += 1;
+    profile.updatedAt = new Date().toISOString();
+    profile.updatedBy = email;
+    return fromFile(store).find(item => item.id === id)!;
+  });
 }
 
 export async function trashTeamProfile(id: string, profileVersion: number, email: string) {

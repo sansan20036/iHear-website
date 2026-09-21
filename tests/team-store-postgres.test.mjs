@@ -128,3 +128,17 @@ describe("team translation provenance on update", () => {
     expect(states.upsertTranslationStatesInTransaction.mock.calls[0][2]).toEqual(writes);
   });
 });
+
+
+describe("team visibility PostgreSQL transaction",()=>{
+ test("updates only placement visibility/version and filters published reads",async()=>{
+  vi.resetModules();vi.clearAllMocks();vi.stubEnv("DATABASE_URL","postgresql://test:test@localhost:5432/ihear");vi.stubEnv("POSTGRES_URL","");vi.stubEnv("IHEAR_FORCE_FILE_STORE","0");delete globalThis.ihearTeamSql;
+  const tx=Object.assign(vi.fn(async()=>[{id:"tutor-test"}]),{unsafe:vi.fn(async()=>[{id:"tutor-test",person_id:"person-test",status:"published",is_hidden:true,profile_version:2,person_version:1}])});
+  const sql={begin:vi.fn(callback=>callback(tx)),unsafe:vi.fn(async()=>[])};postgres.mockReturnValue(sql);
+  const store=await import("../lib/team-store");const result=await store.setTeamProfileVisibility("tutor-test",true,1,"test@example.com");
+  expect(result.isHidden).toBe(true);expect(result.personVersion).toBe(1);expect(sql.begin).toHaveBeenCalledOnce();expect(tx).toHaveBeenCalledOnce();
+  const query=tx.mock.calls[0][0].join("?");expect(query).toContain("is_hidden =");expect(query).toContain("version =");expect(query).toContain("deleted_at IS NULL");expect(query).not.toContain("team_people");
+  const translations=await import("../lib/translation-state");expect(translations.upsertTranslationStatesInTransaction).not.toHaveBeenCalled();
+  await store.listPublishedTeamProfiles();expect(sql.unsafe.mock.calls[0][0]).toContain("NOT profile.is_hidden");vi.unstubAllEnvs();
+ });
+});

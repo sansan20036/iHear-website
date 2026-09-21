@@ -21,6 +21,9 @@
   Object.assign(labels.en,{views:"Tutor profile display",collapsed:"Collapse all",summaryView:"Summary",full:"Expand all",readMore:"Read full introduction",readLess:"Show summary"});
   Object.assign(labels.zhHant,{views:"小老師卡片顯示方式",collapsed:"全部收合",summaryView:"部分展開（摘要）",full:"全部展開",readMore:"查看完整介紹",readLess:"收合為摘要"});
   Object.assign(labels.zhHans,{views:"小老师卡片显示方式",collapsed:"全部收合",summaryView:"部分展开（摘要）",full:"全部展开",readMore:"查看完整介绍",readLess:"收合为摘要"});
+  Object.assign(labels.en,{hide:"Hide",show:"Show again",hidden:"Hidden",hiddenNotice:"Hidden — visitors can no longer see this profile.",draftNotice:"Visibility restored; this is still an unpublished draft.",shownNotice:"Shown again.",hideField:"Temporarily hide this profile",saveVisibility:"Save changes"});
+  Object.assign(labels.zhHant,{hide:"隱藏",show:"重新顯示",hidden:"已隱藏",hiddenNotice:"已隱藏，訪客已看不到此卡片。",draftNotice:"已取消隱藏，仍為草稿，訪客看不到。",shownNotice:"已重新顯示。",hideField:"暫時隱藏此卡片",saveVisibility:"儲存變更"});
+  Object.assign(labels.zhHans,{hide:"隐藏",show:"重新显示",hidden:"已隐藏",hiddenNotice:"已隐藏，访客已看不到此卡片。",draftNotice:"已取消隐藏，仍为草稿，访客看不到。",shownNotice:"已重新显示。",hideField:"暂时隐藏此卡片",saveVisibility:"保存更改"});
   const state={leaders:[],tutors:[],people:[],tutorView:"summary",tutorOverrides:new Map(),admin:false,editMode:false,busy:false,reordering:false,deleteConfirming:false,draft:null,sortPreview:null,originalDraft:"",activeLocale:"en",translationReceipt:"",translationReady:false,englishGuardAccepted:false,translationEdits:{}};
   const adminBar=document.createElement("div"),dialog=document.createElement("dialog"),sortDialog=document.createElement("dialog"),toast=document.createElement("div");
   adminBar.className="team-directory-admin";adminBar.hidden=true;adminBar.setAttribute("data-no-inline-edit","");
@@ -80,7 +83,8 @@
   function showToast(message,error){clearTimeout(toastTimer);toast.textContent=message;toast.dataset.error=String(Boolean(error));toast.hidden=false;toastTimer=setTimeout(()=>toast.hidden=true,3500)}
   function message(mount,text){mount.innerHTML=`<p class="team-directory-message">${esc(text)}</p>`}
   function all(section){return state[section==="leader"?"leaders":"tutors"]}
-  function visible(items){return state.admin&&state.editMode?items:items.filter(item=>item.status!=="draft")}
+  function isPublic(item){return item.status==="published"&&!item.isHidden&&!item.deletedAt}
+  function visible(items){return state.admin&&state.editMode?items:items.filter(isPublic)}
   function dragHandle(item){
     if(!state.admin||!state.editMode)return"";
     return `<button type="button" class="team-profile-drag-handle" data-team-drag="${esc(item.section)}" data-drag-id="${esc(item.id)}" aria-label="${esc(l().drag)}: ${esc(item.name)}" aria-keyshortcuts="ArrowUp ArrowDown" ${state.reordering?"disabled":""}><span aria-hidden="true">⠇⠇</span><span class="team-profile-drag-text">${esc(l().drag)}</span></button>`;
@@ -104,19 +108,19 @@
   }
 
   function leaderCard(item,index,items){
-    const draft=item.status==="draft"?`<span class="team-profile-status">${l().draft}</span>`:"";
-    return `<article class="leader team-profile-admin-card" data-profile-id="${esc(item.id)}" data-status="${esc(item.status)}">
+    const draft=item.isHidden?`<span class="team-profile-status">${l().hidden}</span>`:item.status==="draft"?`<span class="team-profile-status">${l().draft}</span>`:"";
+    return `<article class="leader team-profile-admin-card" data-profile-id="${esc(item.id)}" data-hidden="${Boolean(item.isHidden)}" data-status="${esc(item.status)}">
       ${dragHandle(item)}${avatar(item)}<h2>${esc(item.name)}${draft}</h2>
       <p class="roles">${esc(pick(item.role))}</p><p>${esc(pick(item.bio))}</p>
       ${actions(item,index,items)}</article>`;
   }
   function tutorCard(item,index,items){
     const meta=[item.showSchool?(pick(item.schoolDisplay)||item.school):"",item.showGrade&&String(item.grade||"").trim()?(locale()==="en"?`Grade ${item.grade}`:locale()==="zhHans"?`${item.grade} 年级`:`${item.grade} 年級`):""].filter(Boolean).join(" · ");
-    const draft=item.status==="draft"?`<span class="team-profile-status">${l().draft}</span>`:"";
+    const draft=item.isHidden?`<span class="team-profile-status">${l().hidden}</span>`:item.status==="draft"?`<span class="team-profile-status">${l().draft}</span>`:"";
     const introduction=pick(item.summary)||pick(item.bio);
     const bio=pick(item.summary)&&pick(item.bio)!==introduction?pick(item.bio):"";
     const extra=[pick(item.languages),bio,pick(item.hobbies)].some(Boolean);
-    return `<article class="team-profile-tutor-shell team-profile-admin-card" data-profile-id="${esc(item.id)}" data-status="${esc(item.status)}">
+    return `<article class="team-profile-tutor-shell team-profile-admin-card" data-profile-id="${esc(item.id)}" data-hidden="${Boolean(item.isHidden)}" data-status="${esc(item.status)}">
       ${dragHandle(item)}<details class="tutor-prof" data-extra="${extra}"><summary>
       ${avatar(item,"av-roster")}
       <span class="tp-id"><b>${esc(item.name)}${draft}</b><span class="tp-role">${esc(pick(item.role))}</span></span>
@@ -135,6 +139,7 @@
   function actions(item,index,items){
     if(!state.admin||!state.editMode)return"";
     return `<div class="team-card-actions">
+      ${item.status==="published"?`<button class="team-admin-button" data-visibility="${esc(item.id)}" ${state.busy||state.reordering?"disabled":""}>${item.isHidden?l().show:l().hide}</button>`:""}
       <button class="team-admin-button" data-edit="${esc(item.id)}" ${state.reordering?"disabled":""}>${l().edit}</button>
       <button class="team-admin-button" data-move="${esc(item.id)}" data-direction="-1" ${index===0||state.reordering?"disabled":""}>↑ ${l().up}</button>
       <button class="team-admin-button" data-move="${esc(item.id)}" data-direction="1" ${index===items.length-1||state.reordering?"disabled":""}>↓ ${l().down}</button>
@@ -145,8 +150,8 @@
     return JSON.stringify([display,locale(),state.admin,state.editMode]);
   }
   function updateOrderControls(node,index,total){
-    const disabled=state.reordering;
-    node.querySelectorAll("[data-team-drag],[data-edit]").forEach(button=>button.disabled=disabled);
+    const disabled=state.reordering||state.busy;
+    node.querySelectorAll("[data-team-drag],[data-edit],[data-visibility]").forEach(button=>button.disabled=disabled);
     const up=node.querySelector('[data-move][data-direction="-1"]');
     const down=node.querySelector('[data-move][data-direction="1"]');
     if(up)up.disabled=disabled||index===0;
@@ -180,12 +185,12 @@
   }
   function emptyLocalized(){return{en:"",zhHant:"",zhHans:""}}
   function newDraft(){
-    const draft={personId:"",name:"",initials:"",section:"tutor",status:"draft",sortOrder:0,school:"",grade:"",showSchool:false,showGrade:false,consentConfirmed:false};
+    const draft={personId:"",name:"",initials:"",section:"tutor",status:"draft",isHidden:false,sortOrder:0,school:"",grade:"",showSchool:false,showGrade:false,consentConfirmed:false};
     textFields.forEach(field=>draft[field]=emptyLocalized());return draft
   }
   function resetTranslationEdits(){state.translationEdits=Object.fromEntries(textFields.map(field=>[field,{en:false,zhHant:false,zhHans:false}]));state.translationBaseline=Object.fromEntries(textFields.map(field=>[field,{...state.draft[field]}]))}
   function openEditor(item){
-    state.draft=item?JSON.parse(JSON.stringify({...item,consentConfirmed:Boolean(item.publicationConsentAt)})):newDraft();
+    state.draft=item?JSON.parse(JSON.stringify({...item,isHidden:Boolean(item.isHidden),consentConfirmed:Boolean(item.publicationConsentAt)})):newDraft();
     resetTranslationEdits();state.originalDraft=JSON.stringify(state.draft);state.activeLocale="en";state.translationReceipt="";state.translationReady=false;state.englishGuardAccepted=false;state.deleteConfirming=false;buildEditor();dialog.showModal();document.body.classList.add("team-profile-modal-open");dialog.querySelector("input,select,textarea,button")?.focus()
   }
   function isDirty(){if(state.sortPreview)return true;if(!state.draft)return false;syncDraft();return JSON.stringify(state.draft)!==state.originalDraft}
@@ -209,6 +214,7 @@
       ${field("name",l().name)}${field("initials",l().initials)}
       <div class="team-field"><label for="team-section">${l().section}</label><select id="team-section" name="section"><option value="leader" ${state.draft.section==="leader"?"selected":""}>${l().leader}</option><option value="tutor" ${state.draft.section==="tutor"?"selected":""}>${l().tutor}</option></select></div>
       ${field("school",l().school)}${field("grade",l().grade)}
+      <label class="team-check wide"><input type="checkbox" name="isHidden" ${state.draft.isHidden?"checked":""}>${l().hideField}</label>
       <label class="team-check"><input type="checkbox" name="showSchool" ${state.draft.showSchool?"checked":""}>${l().showSchool}</label>
       <label class="team-check"><input type="checkbox" name="showGrade" ${state.draft.showGrade?"checked":""}>${l().showGrade}</label>
       <label class="team-check team-field wide"><input type="checkbox" name="consentConfirmed" ${state.draft.consentConfirmed?"checked":""}>${l().consent}</label>
@@ -216,7 +222,7 @@
     <div class="team-locale-tabs" role="tablist" aria-label="${esc(l().shared)}">${locales.map(key=>`<button type="button" id="team-tab-${key}" class="team-locale-tab" role="tab" data-locale="${key}" data-complete="${complete(key)}" aria-selected="${state.activeLocale===key}" aria-controls="team-panel-${key}" tabindex="${state.activeLocale===key?0:-1}"><span class="team-locale-dot"></span>${labelsForLocale[key]}</button>`).join("")}</div>
     <div class="team-locale-panel" id="team-panel-${state.activeLocale}" role="tabpanel" aria-labelledby="team-tab-${state.activeLocale}">${localField("role",l().role)}${localField("schoolDisplay",l().schoolDisplay)}${localField("languages",l().languages)}${localField("strengths",l().strengths,true)}${localField("summary",l().summary,true)}${localField("bio",l().bio,true)}${localField("hobbies",l().hobbies,true)}${state.activeLocale!=="en"?`<button type="button" class="team-admin-button" data-copy-en>${l().copy}</button>`:""}</div>
     <p class="team-form-error" data-form-error role="alert" tabindex="-1" hidden></p></div>
-    <footer class="team-editor-footer">${state.deleteConfirming?`<div class="team-delete-confirm" role="group" aria-labelledby="team-delete-confirm-message"><p id="team-delete-confirm-message">${esc(l().deleteConfirm)}</p><div class="team-editor-actions"><button type="button" class="team-admin-button" data-delete-cancel>${l().cancel}</button><button type="button" class="team-admin-button danger" data-delete-confirm>${l().delete}</button></div></div>`:`<div>${state.draft.id?`<button type="button" class="team-admin-button danger" data-delete>${l().delete}</button>`:""}</div><div class="team-editor-actions"><button type="button" class="team-admin-button" data-cancel>${l().cancel}</button><button type="button" class="team-admin-button primary" data-save="draft">${l().saveDraft}</button><button type="button" class="team-admin-button accent" data-save="published">${l().publish}</button></div>`}</footer></form></div>`;
+    <footer class="team-editor-footer">${state.deleteConfirming?`<div class="team-delete-confirm" role="group" aria-labelledby="team-delete-confirm-message"><p id="team-delete-confirm-message">${esc(l().deleteConfirm)}</p><div class="team-editor-actions"><button type="button" class="team-admin-button" data-delete-cancel>${l().cancel}</button><button type="button" class="team-admin-button danger" data-delete-confirm>${l().delete}</button></div></div>`:`<div>${state.draft.id?`<button type="button" class="team-admin-button danger" data-delete>${l().delete}</button>`:""}</div><div class="team-editor-actions"><button type="button" class="team-admin-button" data-cancel>${l().cancel}</button>${state.draft.id?`<button type="button" class="team-admin-button" data-save="${state.draft.status}">${l().saveVisibility}</button>`:""}<button type="button" class="team-admin-button primary" data-save="draft">${l().saveDraft}</button><button type="button" class="team-admin-button accent" data-save="published">${l().publish}</button></div>`}</footer></form></div>`;
     const trashLabel=locale()==="en"?"Move to trash":locale()==="zhHans"?"移至回收区":"移至回收區";
     const trashConfirm=locale()==="en"?"Move this profile to trash? You can restore it in the admin dashboard.":locale()==="zhHans"?"确定移至回收区？之后可在管理后台恢复。":"確定移至回收區？之後可在管理後台復原。";
     dialog.querySelectorAll("[data-delete],[data-delete-confirm]").forEach(control=>control.textContent=trashLabel);
@@ -230,7 +236,7 @@
   function syncDraft(){
     const form=dialog.querySelector("[data-team-form]");if(!form)return;
     new FormData(form).forEach((value,key)=>{if(key.includes(".")){const [field,lang]=key.split(".");state.draft[field][lang]=String(value)}else state.draft[key]=String(value)});
-    ["showSchool","showGrade","consentConfirmed"].forEach(key=>state.draft[key]=form.elements[key].checked);
+    ["showSchool","showGrade","consentConfirmed","isHidden"].forEach(key=>state.draft[key]=form.elements[key].checked);
   }
   function payload(status){
     syncDraft();return{...state.draft,status,sortOrder:Number(state.draft.sortOrder||0),profileVersion:state.draft.profileVersion,personVersion:state.draft.personVersion,translationReceipt:state.translationReceipt||undefined}
@@ -255,6 +261,13 @@
   }
   async function save(status){
     if(state.busy)return;let body=payload(status);
+    if(state.draft.id&&status===state.draft.status){
+      const before=JSON.parse(state.originalDraft),after={...state.draft,isHidden:before.isHidden};
+      if(JSON.stringify(after)===JSON.stringify(before)){
+        if(state.draft.isHidden===before.isHidden){closeEditor(true);return}
+        await changeVisibility(state.draft,state.draft.isHidden,true);return
+      }
+    }
     const guard=await languageGuardPromise;
     if(guard?.hasRiskyEnglish(textFields.map(field=>String(state.draft[field]?.en||"")))&&!state.englishGuardAccepted){state.activeLocale="en";buildEditor();dialog.querySelector('[name$=".en"]')?.focus();return}
     if(!state.translationReady){
@@ -277,6 +290,21 @@
       const data=await response.json().catch(()=>null);if(!response.ok)throw errorFrom(response,data);
       state.originalDraft=JSON.stringify(state.draft);closeEditor(true);await load(true,{revision:data.revision&&data.revision.revision});showToast(l().saved,false);if(window.iHearLiveContent)window.iHearLiveContent.announce("team",data.revision)
     }catch(error){if(error.code==="TRANSLATION_RECEIPT_INVALID"){state.translationReady=false;state.translationReceipt=""}setBusy(false);showIssues(error)}
+  }
+  async function changeVisibility(item,isHidden,fromEditor=false){
+    if(state.busy||state.reordering||!state.admin)return;
+    const session=authVersion;setBusy(true);render();
+    try{
+      const response=await fetch('/api/team-profiles/'+encodeURIComponent(item.id)+'/visibility',{method:"PATCH",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify({isHidden,profileVersion:item.profileVersion})});
+      const data=await response.json().catch(()=>null);if(!response.ok)throw errorFrom(response,data);
+      if(session!==authVersion||!state.admin)return;
+      for(const key of ["leaders","tutors"])state[key]=state[key].map(profile=>profile.id===item.id?data.profile:profile);
+      if(fromEditor)closeEditor(true);
+      render();showToast(isHidden?l().hiddenNotice:data.profile.status==="published"?l().shownNotice:l().draftNotice,false);
+      window.iHearLiveContent?.announce("team",data.revision);
+      requestAnimationFrame(()=>document.querySelector('[data-visibility="'+CSS.escape(item.id)+'"]')?.focus());
+    }catch(error){if(session===authVersion){if(fromEditor)showIssues(error);else showToast(error.status===409?l().conflict:l().failed,true)}}
+    finally{setBusy(false);render()}
   }
   function requestRemove(){
     if(state.busy||!state.draft.id)return;syncDraft();state.deleteConfirming=true;buildEditor();requestAnimationFrame(()=>dialog.querySelector("[data-delete-confirm]")?.focus())
@@ -306,8 +334,9 @@
     const ordered=state.sortPreview;
     sortDialog.innerHTML=`<div class="team-sort-shell"><h3 id="team-sort-title">${esc(l().sortTitle)}</h3><p>${esc(l().sortBody(ordered.length))}</p><p class="team-sort-hint">${esc(l().sortHint)}</p><ol class="team-sort-list">${ordered.map((profile,index)=>`<li><span class="team-sort-position" aria-hidden="true">${index+1}</span><span>${esc(profile.name)}</span>${profile.status==="draft"?`<span class="team-profile-status">${esc(l().draft)}</span>`:""}</li>`).join("")}</ol><div class="team-editor-actions"><button type="button" class="team-admin-button" data-sort-cancel ${state.reordering?"disabled":""}>${esc(l().sortCancel)}</button><button type="button" class="team-admin-button primary" data-sort-confirm ${state.reordering?"disabled":""}>${esc(state.reordering?l().sortSaving:l().sortConfirm)}</button></div></div>`
   }
-  function requestAlphabeticalSort(){
-    if(state.reordering||state.sortPreview)return;
+  async function requestAlphabeticalSort(){
+    if(state.reordering||state.busy||state.sortPreview||!state.admin)return;
+    const session=authVersion;await load(true);if(session!==authVersion||!state.admin)return;
     const ordered=alphabeticalTutors();
     if(ordered.length<2||ordered.every((profile,index)=>profile.id===state.tutors[index]?.id)){showToast(l().sortAlready,false);return}
     state.sortPreview=ordered;buildSortDialog();sortDialog.showModal();document.body.classList.add("team-profile-modal-open");requestAnimationFrame(()=>sortDialog.querySelector("[data-sort-cancel]")?.focus())
@@ -379,29 +408,32 @@
     const handle=event.target.closest("[data-team-drag]");if(!handle||!['ArrowUp','ArrowDown'].includes(event.key))return;
     event.preventDefault();event.stopPropagation();move(handle.dataset.dragId,event.key==='ArrowUp'?-1:1)
   });
-  let loadSequence=0;
+  let loadSequence=0,authVersion=0;
+  function leaveManagement(){loadSequence++;state.editMode=false;state.leaders=state.leaders.filter(isPublic);state.tutors=state.tutors.filter(isPublic);state.people=[];render();load(false)}
   async function load(admin,context){
-    const sequence=++loadSequence;
+    if(admin&&!state.admin)return;
+    const sequence=++loadSequence,session=authVersion;
     try{
       const parameters=new URLSearchParams();if(admin)parameters.set("includeDrafts","true");if(context&&context.revision)parameters.set("live",context.revision);const query=parameters.toString();
       const response=await fetch(`/api/team-profiles${query?`?${query}`:""}`,{credentials:"same-origin",cache:"no-store"});
-      if(!response.ok)throw new Error("load");const data=await response.json();if(sequence!==loadSequence)return;
-      state.leaders=Array.isArray(data.leaders)?data.leaders:[];state.tutors=Array.isArray(data.tutors)?data.tutors:[];state.people=Array.isArray(data.people)?data.people:[];state.admin=Boolean(data.admin)||state.admin;state.busy=false;render()
-    }catch(error){if(sequence!==loadSequence)return;if(!state.leaders.length&&!state.tutors.length){const failure=`<p class="team-directory-message">${esc(l().failed)}</p><button type="button" class="team-admin-button" data-team-retry>${esc(l().retry)}</button>`;leaderMount.innerHTML=failure;tutorMount.innerHTML=failure}if(context)throw error}
+      if(!response.ok)throw new Error("load");const data=await response.json();if(sequence!==loadSequence||session!==authVersion)return;
+      state.leaders=Array.isArray(data.leaders)?data.leaders:[];state.tutors=Array.isArray(data.tutors)?data.tutors:[];state.people=Array.isArray(data.people)?data.people:[];state.busy=false;render()
+    }catch(error){if(sequence!==loadSequence)return;if(!admin||!state.leaders.length&&!state.tutors.length){const failure=`<p class="team-directory-message">${esc(l().failed)}</p><button type="button" class="team-admin-button" data-team-retry>${esc(l().retry)}</button>`;leaderMount.innerHTML=failure;tutorMount.innerHTML=failure}if(context)throw error}
   }
   document.addEventListener("click",event=>{
     const button=event.target.closest("button");if(!button)return;
     if(button.matches("[data-team-drag]")){event.preventDefault();event.stopPropagation()}
     else if(button.matches("[data-team-view]"))setAllTutorViews(button.dataset.teamView);
     else if(button.matches("[data-tutor-more]")){const details=button.closest("details");setTutorView(details,tutorView(details)==="full"?"summary":"full")}
-    else if(button.matches("[data-team-toggle]")){state.editMode=!state.editMode;render()}
+    else if(button.matches("[data-team-toggle]")){if(state.busy||state.reordering)return;if(state.editMode)leaveManagement();else{state.editMode=true;render();load(true)}}
+    else if(button.dataset.visibility){const item=[...state.leaders,...state.tutors].find(profile=>profile.id===button.dataset.visibility);if(item)changeVisibility(item,!item.isHidden)}
     else if(button.matches("[data-team-sort-az]"))requestAlphabeticalSort();
     else if(button.matches("[data-sort-cancel]"))cancelAlphabeticalSort();
     else if(button.matches("[data-sort-confirm]"))confirmAlphabeticalSort();
     else if(button.matches("[data-team-add]"))openEditor(null);
     else if(button.dataset.edit)openEditor([...state.leaders,...state.tutors].find(item=>item.id===button.dataset.edit));
     else if(button.dataset.move)move(button.dataset.move,Number(button.dataset.direction));
-    else if(button.matches("[data-team-retry]")){message(leaderMount,l().loading);message(tutorMount,l().loading);load(state.admin)}
+    else if(button.matches("[data-team-retry]")){message(leaderMount,l().loading);message(tutorMount,l().loading);load(state.admin&&state.editMode)}
     else if(button.matches("[data-close],[data-cancel]"))closeEditor();
     else if(button.dataset.save)save(button.dataset.save);
     else if(button.matches("[data-delete]"))requestRemove();
@@ -442,8 +474,8 @@
   window.addEventListener("ihear:before-language",event=>{if(dialog.open&&isDirty()){if(!confirm(l().unsaved))event.preventDefault();else closeEditor(true)}});
   window.addEventListener("ihear:language",()=>{render();if(dialog.open){syncDraft();buildEditor()}if(sortDialog.open)buildSortDialog()});
   window.addEventListener("beforeunload",event=>{if(!isDirty())return;event.preventDefault();event.returnValue=""});
-  window.addEventListener("ihear:auth",event=>{const session=event.detail&&event.detail.session;if(session&&session.user&&session.user.isAdmin){state.admin=true;load(true)}else{state.admin=false;state.editMode=false;load(false)}});
-  window.iHearTeamProfiles={refresh:context=>load(state.admin,context),isDirty};
-  if(window.iHearLiveContent)window.iHearLiveContent.register("team",{refresh:context=>load(state.admin,context),isDirty,onBlocked:()=>showToast(l().conflict,true)});
+  window.addEventListener("ihear:auth",event=>{const session=event.detail&&event.detail.session;authVersion++;if(session&&session.user&&session.user.isAdmin){state.admin=true;load(true)}else{state.admin=false;closeEditor(true);dialog.replaceChildren();state.sortPreview=null;if(sortDialog.open)sortDialog.close();sortDialog.replaceChildren();leaveManagement()}});
+  window.iHearTeamProfiles={refresh:context=>load(state.admin&&state.editMode,context),isDirty};
+  if(window.iHearLiveContent)window.iHearLiveContent.register("team",{refresh:context=>load(state.admin&&state.editMode,context),isDirty,onBlocked:()=>showToast(l().conflict,true)});
   message(leaderMount,l().loading);message(tutorMount,l().loading);load(false);
 })();

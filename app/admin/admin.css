@@ -142,3 +142,8 @@ body:has(.admin-app) > :is(.site-theme-trigger,.ihear-layout-trigger,.ihear-inli
 .admin-resource-dialog .admin-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:20px}.admin-resource-dialog button{min-height:44px}
 .admin-resource-language{border-bottom:1px solid #e4e7ed;padding:8px 0}.admin-resource-dialog h3{margin-bottom:8px}
 @media(max-width:390px){.admin-resource-dialog{padding:14px}.admin-resource-dialog .admin-actions>*{flex:1 1 40%;white-space:normal}}
+
+.admin-card[data-team-hidden="true"]{background:#f1f3f6;border-style:dashed;transition:background-color .2s}
+.admin-visibility-notice:empty{display:none}
+.admin-card[data-team-hidden] .admin-card-actions .admin-button{min-height:44px}
+@media(prefers-reduced-motion:reduce){.admin-card[data-team-hidden="true"]{transition:none}}

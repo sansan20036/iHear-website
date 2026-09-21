@@ -63,7 +63,7 @@ export async function GET(request: Request) {
       );
     }
 
-    const profiles = (await listPublishedTeamProfiles()).map(publicTeamProfile);
+    const profiles = (await listPublishedTeamProfiles()).filter(profile => profile.status === "published" && !profile.isHidden && !profile.deletedAt).map(publicTeamProfile);
     return NextResponse.json(grouped(profiles), {
       headers: {
         ...NO_STORE_HEADERS,

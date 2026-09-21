@@ -36,6 +36,7 @@ vi.mock("../lib/team-store", () => {
     listDeletedTeamProfiles: vi.fn(),
     createTeamProfile: vi.fn(),
     updateTeamProfile: vi.fn(),
+    setTeamProfileVisibility: vi.fn(),
     deleteTeamProfile: vi.fn(),
     trashTeamProfile: vi.fn(),
     restoreTeamProfile: vi.fn(),
@@ -49,6 +50,7 @@ import { GET, POST } from "../app/api/team-profiles/route";
 import { DELETE, PATCH } from "../app/api/team-profiles/[id]/route";
 import { POST as RESTORE } from "../app/api/team-profiles/[id]/restore/route";
 import { PATCH as REORDER } from "../app/api/team-profiles/reorder/route";
+import { PATCH as VISIBILITY } from "../app/api/team-profiles/[id]/visibility/route";
 import * as store from "../lib/team-store";
 import { revisionAfterMutation } from "../lib/live-revisions";
 import { enforceRateLimit } from "../lib/rate-limit";
@@ -394,4 +396,44 @@ describe("team profile API", () => {
       email,
     );
   });
+});
+
+
+describe("team visibility", () => {
+ const request = body => json("http://localhost/api/team-profiles/tutor-test/visibility", "PATCH", body);
+ test("changes visibility without saving person or translations and announces revision", async () => {
+  store.setTeamProfileVisibility.mockResolvedValue({...stored,isHidden:true,profileVersion:2});
+  const response=await VISIBILITY(request({isHidden:true,profileVersion:1}),context);
+  expect(response.status).toBe(200);
+  expect(store.setTeamProfileVisibility).toHaveBeenCalledWith(stored.id,true,1,email);
+  expect(store.updateTeamProfile).not.toHaveBeenCalled();
+  expect((await response.json()).profile.personVersion).toBe(1);
+  expect(adminStore.appendAdminActivity).toHaveBeenCalledWith(expect.objectContaining({action:"team.hidden",changedFields:["isHidden"]}));
+  expect(revalidatePath).toHaveBeenCalledWith("/team");
+ });
+ test("public response excludes hidden, draft and trash even if supplied by the store", async () => {
+  store.listPublishedTeamProfiles.mockResolvedValue([stored,{...stored,id:"hidden",isHidden:true},{...stored,id:"draft",status:"draft"},{...stored,id:"trash",deletedAt:"2026-09-21"}]);
+  expect((await (await GET(new Request("http://localhost/api/team-profiles"))).json()).tutors.map(p=>p.id)).toEqual([stored.id]);
+ });
+ test.each([{isHidden:"true",profileVersion:1},{isHidden:true,profileVersion:0},{isHidden:false,profileVersion:"1"},{}])("rejects invalid visibility input %j",async body=>{
+  expect((await VISIBILITY(request(body),context)).status).toBe(400);expect(store.setTeamProfileVisibility).not.toHaveBeenCalled();
+ });
+ test("rejects anonymous users and cross-origin mutations", async()=>{
+  auth.mockResolvedValue(null);expect((await VISIBILITY(request({isHidden:true,profileVersion:1}),context)).status).toBe(403);
+  auth.mockResolvedValue({user:{email,isAdmin:true}});
+  const cross=request({isHidden:true,profileVersion:1});cross.headers.set("Origin","https://evil.example");
+  expect((await VISIBILITY(cross,context)).status).toBe(403);expect(store.setTeamProfileVisibility).not.toHaveBeenCalled();
+ });
+ test("preserves rate limit and conflict responses",async()=>{
+  enforceRateLimit.mockResolvedValue({limited:true,response:rateLimitedResponse()});
+  const limited=await VISIBILITY(request({isHidden:true,profileVersion:1}),context);expect(limited.status).toBe(429);expect(limited.headers.get("Retry-After")).toBe("60");
+  enforceRateLimit.mockResolvedValue(allowedRateLimitDecision());store.setTeamProfileVisibility.mockRejectedValueOnce(new store.TeamConflictError("changed"));
+  expect((await VISIBILITY(request({isHidden:true,profileVersion:1}),context)).status).toBe(409);
+ });
+ test("normal content save passes visibility only when provided",async()=>{
+  await PATCH(json("http://localhost/api/team-profiles/tutor-test","PATCH",{...payload,isHidden:true,profileVersion:1,personVersion:1}),context);
+  expect(store.updateTeamProfile.mock.calls[0][1].isHidden).toBe(true);
+  await PATCH(json("http://localhost/api/team-profiles/tutor-test","PATCH",{...payload,profileVersion:1,personVersion:1}),context);
+  expect(store.updateTeamProfile.mock.calls[1][1]).not.toHaveProperty("isHidden");
+ });
 });

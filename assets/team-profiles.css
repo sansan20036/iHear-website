@@ -151,3 +151,7 @@ body.team-profile-modal-open{overflow:hidden}
 @media(max-width:390px){
   .team-locale-tabs{grid-template-columns:1fr}
 }
+
+.team-profile-admin-card[data-hidden="true"]{background:#f1f3f6;border-style:dashed}
+.team-card-actions{flex-wrap:wrap}
+.team-card-actions button{min-height:44px}
