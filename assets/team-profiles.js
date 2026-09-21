@@ -21,10 +21,10 @@
   Object.assign(labels.en,{views:"Tutor profile display",collapsed:"Collapse all",summaryView:"Summary",full:"Expand all",readMore:"Read full introduction",readLess:"Show summary"});
   Object.assign(labels.zhHant,{views:"小老師卡片顯示方式",collapsed:"全部收合",summaryView:"部分展開（摘要）",full:"全部展開",readMore:"查看完整介紹",readLess:"收合為摘要"});
   Object.assign(labels.zhHans,{views:"小老师卡片显示方式",collapsed:"全部收合",summaryView:"部分展开（摘要）",full:"全部展开",readMore:"查看完整介绍",readLess:"收合为摘要"});
-  Object.assign(labels.en,{hide:"Hide",show:"Show again",hidden:"Hidden",hiddenNotice:"Hidden — visitors can no longer see this profile.",draftNotice:"Visibility restored; this is still an unpublished draft.",shownNotice:"Shown again.",hideField:"Temporarily hide this profile",saveVisibility:"Save changes"});
-  Object.assign(labels.zhHant,{hide:"隱藏",show:"重新顯示",hidden:"已隱藏",hiddenNotice:"已隱藏，訪客已看不到此卡片。",draftNotice:"已取消隱藏，仍為草稿，訪客看不到。",shownNotice:"已重新顯示。",hideField:"暫時隱藏此卡片",saveVisibility:"儲存變更"});
-  Object.assign(labels.zhHans,{hide:"隐藏",show:"重新显示",hidden:"已隐藏",hiddenNotice:"已隐藏，访客已看不到此卡片。",draftNotice:"已取消隐藏，仍为草稿，访客看不到。",shownNotice:"已重新显示。",hideField:"暂时隐藏此卡片",saveVisibility:"保存更改"});
-  const state={leaders:[],tutors:[],people:[],tutorView:"summary",tutorOverrides:new Map(),admin:false,editMode:false,busy:false,reordering:false,deleteConfirming:false,draft:null,sortPreview:null,originalDraft:"",activeLocale:"en",translationReceipt:"",translationReady:false,englishGuardAccepted:false,translationEdits:{}};
+  Object.assign(labels.en,{hide:"Hide",show:"Show again",hidden:"Hidden",hiddenNotice:"Hidden — visitors can no longer see this profile.",draftNotice:"Visibility restored; this is still an unpublished draft.",shownNotice:"Shown again.",hideField:"Temporarily hide this profile",saveVisibility:"Save changes",adminLoading:"Loading the management roster…"});
+  Object.assign(labels.zhHant,{hide:"隱藏",show:"重新顯示",hidden:"已隱藏",hiddenNotice:"已隱藏，訪客已看不到此卡片。",draftNotice:"已取消隱藏，仍為草稿，訪客看不到。",shownNotice:"已重新顯示。",hideField:"暫時隱藏此卡片",saveVisibility:"儲存變更",adminLoading:"正在載入管理名冊…"});
+  Object.assign(labels.zhHans,{hide:"隐藏",show:"重新显示",hidden:"已隐藏",hiddenNotice:"已隐藏，访客已看不到此卡片。",draftNotice:"已取消隐藏，仍为草稿，访客看不到。",shownNotice:"已重新显示。",hideField:"暂时隐藏此卡片",saveVisibility:"保存更改",adminLoading:"正在加载管理名册…"});
+  const state={leaders:[],tutors:[],people:[],tutorView:"summary",tutorOverrides:new Map(),admin:false,adminSnapshot:null,adminLoading:false,adminError:false,adminEmail:"",editMode:false,busy:false,reordering:false,deleteConfirming:false,draft:null,sortPreview:null,originalDraft:"",activeLocale:"en",translationReceipt:"",translationReady:false,englishGuardAccepted:false,translationEdits:{}};
   const adminBar=document.createElement("div"),dialog=document.createElement("dialog"),sortDialog=document.createElement("dialog"),toast=document.createElement("div");
   adminBar.className="team-directory-admin";adminBar.hidden=true;adminBar.setAttribute("data-no-inline-edit","");
   leaderMount.parentElement.insertBefore(adminBar,leaderMount);
@@ -171,11 +171,16 @@
     existing.forEach((node,id)=>{if(!retained.has(id))node.remove()})
   }
   function render(){
-    reconcile(leaderMount,leaderCard,visible(all("leader")));
-    reconcile(tutorMount,tutorCard,visible(all("tutor")));
+    if(state.editMode&&!state.adminSnapshot){
+      const html=state.adminError?'<p class="team-directory-message" role="alert">'+esc(l().failed)+'</p><button type="button" class="team-admin-button" data-team-retry>'+esc(l().retry)+'</button>':'<p class="team-directory-message" role="status">'+esc(l().adminLoading)+'</p>';
+      leaderMount.innerHTML=html;tutorMount.innerHTML=html;
+    }else{
+      reconcile(leaderMount,leaderCard,visible(all("leader")));
+      reconcile(tutorMount,tutorCard,visible(all("tutor")));
+    }
     adminBar.hidden=!state.admin;
     if(state.admin)adminBar.innerHTML=`<div><strong>${l().manager}</strong><span>${l().hint}</span></div><div class="team-admin-actions">
-      ${state.editMode?`<button class="team-admin-button" data-team-sort-az ${state.reordering||state.tutors.length<2?"disabled":""}>${l().sortAlphabetically} (${state.tutors.length})</button><button class="team-admin-button accent" data-team-add>${l().add}</button>`:""}
+      ${state.editMode?`<button class="team-admin-button" data-team-sort-az ${state.reordering||!state.adminSnapshot||state.tutors.length<2?"disabled":""}>${l().sortAlphabetically} (${state.tutors.length})</button><button class="team-admin-button accent" data-team-add ${!state.adminSnapshot?"disabled":""}>${l().add}</button>`:""}
       <button class="team-admin-button primary" data-team-toggle>${state.editMode?l().done:l().editMode}</button></div>`;
     const retainedIds=new Set(state.tutors.map(item=>item.id));
     state.tutorOverrides.forEach((_mode,id)=>{if(!retainedIds.has(id))state.tutorOverrides.delete(id)});
@@ -336,7 +341,7 @@
   }
   async function requestAlphabeticalSort(){
     if(state.reordering||state.busy||state.sortPreview||!state.admin)return;
-    const session=authVersion;await load(true);if(session!==authVersion||!state.admin)return;
+    const session=authVersion;await load(true,{});if(session!==authVersion||!state.admin)return;
     const ordered=alphabeticalTutors();
     if(ordered.length<2||ordered.every((profile,index)=>profile.id===state.tutors[index]?.id)){showToast(l().sortAlready,false);return}
     state.sortPreview=ordered;buildSortDialog();sortDialog.showModal();document.body.classList.add("team-profile-modal-open");requestAnimationFrame(()=>sortDialog.querySelector("[data-sort-cancel]")?.focus())
@@ -409,23 +414,26 @@
     event.preventDefault();event.stopPropagation();move(handle.dataset.dragId,event.key==='ArrowUp'?-1:1)
   });
   let loadSequence=0,authVersion=0;
-  function leaveManagement(){loadSequence++;state.editMode=false;state.leaders=state.leaders.filter(isPublic);state.tutors=state.tutors.filter(isPublic);state.people=[];render();load(false)}
+  function rememberAdminRoster(){state.adminSnapshot={leaders:state.leaders,tutors:state.tutors,people:state.people}}
+  function leaveManagement(){if(state.admin&&state.editMode&&state.adminSnapshot)rememberAdminRoster();loadSequence++;state.adminLoading=false;state.editMode=false;state.leaders=state.leaders.filter(isPublic);state.tutors=state.tutors.filter(isPublic);state.people=[];render();load(false)}
   async function load(admin,context){
     if(admin&&!state.admin)return;
+    if(admin&&state.adminLoading&&!context)return;
+    state.adminLoading=admin;state.adminError=false;
     const sequence=++loadSequence,session=authVersion;
     try{
       const parameters=new URLSearchParams();if(admin)parameters.set("includeDrafts","true");if(context&&context.revision)parameters.set("live",context.revision);const query=parameters.toString();
       const response=await fetch(`/api/team-profiles${query?`?${query}`:""}`,{credentials:"same-origin",cache:"no-store"});
       if(!response.ok)throw new Error("load");const data=await response.json();if(sequence!==loadSequence||session!==authVersion)return;
-      state.leaders=Array.isArray(data.leaders)?data.leaders:[];state.tutors=Array.isArray(data.tutors)?data.tutors:[];state.people=Array.isArray(data.people)?data.people:[];state.busy=false;render()
-    }catch(error){if(sequence!==loadSequence)return;if(!admin||!state.leaders.length&&!state.tutors.length){const failure=`<p class="team-directory-message">${esc(l().failed)}</p><button type="button" class="team-admin-button" data-team-retry>${esc(l().retry)}</button>`;leaderMount.innerHTML=failure;tutorMount.innerHTML=failure}if(context)throw error}
+      state.leaders=Array.isArray(data.leaders)?data.leaders:[];state.tutors=Array.isArray(data.tutors)?data.tutors:[];state.people=Array.isArray(data.people)?data.people:[];state.busy=false;state.adminLoading=false;if(admin)rememberAdminRoster();render()
+    }catch(error){if(sequence!==loadSequence||session!==authVersion)return;state.adminLoading=false;state.adminError=admin;if(admin&&state.editMode&&!state.adminSnapshot){render();if(context)throw error;return}if(!admin||!state.leaders.length&&!state.tutors.length){const failure=`<p class="team-directory-message">${esc(l().failed)}</p><button type="button" class="team-admin-button" data-team-retry>${esc(l().retry)}</button>`;leaderMount.innerHTML=failure;tutorMount.innerHTML=failure}if(context)throw error}
   }
   document.addEventListener("click",event=>{
     const button=event.target.closest("button");if(!button)return;
     if(button.matches("[data-team-drag]")){event.preventDefault();event.stopPropagation()}
     else if(button.matches("[data-team-view]"))setAllTutorViews(button.dataset.teamView);
     else if(button.matches("[data-tutor-more]")){const details=button.closest("details");setTutorView(details,tutorView(details)==="full"?"summary":"full")}
-    else if(button.matches("[data-team-toggle]")){if(state.busy||state.reordering)return;if(state.editMode)leaveManagement();else{state.editMode=true;render();load(true)}}
+    else if(button.matches("[data-team-toggle]")){if(state.busy||state.reordering)return;if(state.editMode)leaveManagement();else{state.editMode=true;if(state.adminSnapshot)Object.assign(state,state.adminSnapshot);render();load(true)}}
     else if(button.dataset.visibility){const item=[...state.leaders,...state.tutors].find(profile=>profile.id===button.dataset.visibility);if(item)changeVisibility(item,!item.isHidden)}
     else if(button.matches("[data-team-sort-az]"))requestAlphabeticalSort();
     else if(button.matches("[data-sort-cancel]"))cancelAlphabeticalSort();
@@ -474,8 +482,8 @@
   window.addEventListener("ihear:before-language",event=>{if(dialog.open&&isDirty()){if(!confirm(l().unsaved))event.preventDefault();else closeEditor(true)}});
   window.addEventListener("ihear:language",()=>{render();if(dialog.open){syncDraft();buildEditor()}if(sortDialog.open)buildSortDialog()});
   window.addEventListener("beforeunload",event=>{if(!isDirty())return;event.preventDefault();event.returnValue=""});
-  window.addEventListener("ihear:auth",event=>{const session=event.detail&&event.detail.session;authVersion++;if(session&&session.user&&session.user.isAdmin){state.admin=true;load(true)}else{state.admin=false;closeEditor(true);dialog.replaceChildren();state.sortPreview=null;if(sortDialog.open)sortDialog.close();sortDialog.replaceChildren();leaveManagement()}});
-  window.iHearTeamProfiles={refresh:context=>load(state.admin&&state.editMode,context),isDirty};
-  if(window.iHearLiveContent)window.iHearLiveContent.register("team",{refresh:context=>load(state.admin&&state.editMode,context),isDirty,onBlocked:()=>showToast(l().conflict,true)});
+  window.addEventListener("ihear:auth",event=>{const session=event.detail&&event.detail.session;authVersion++;state.adminLoading=false;if(session&&session.user&&session.user.isAdmin){if(state.adminEmail!==(session.user.email||""))state.adminSnapshot=null;state.adminEmail=session.user.email||"";state.admin=true;render();load(true)}else{state.admin=false;state.adminEmail="";state.adminSnapshot=null;closeEditor(true);dialog.replaceChildren();state.sortPreview=null;if(sortDialog.open)sortDialog.close();sortDialog.replaceChildren();leaveManagement()}});
+  window.iHearTeamProfiles={refresh:context=>load(state.admin,context),isDirty};
+  if(window.iHearLiveContent)window.iHearLiveContent.register("team",{refresh:context=>load(state.admin,context),isDirty,onBlocked:()=>showToast(l().conflict,true)});
   message(leaderMount,l().loading);message(tutorMount,l().loading);load(false);
 })();

@@ -2950,3 +2950,54 @@ test("team editor protects dirty work and provides keyboard tabs", async ({ page
   await page.getByRole("button", { name: "Cancel" }).click();
   await expect(dialog).toBeHidden();
 });
+
+
+for (const width of [320,390]) {
+ test('team management reopens cached hidden profiles before its refresh completes at '+width+'px',async({page})=>{
+  await page.setViewportSize({width,height:844});
+  const app=await mockApplication(page,{tutorFields:{isHidden:true}});
+  await page.goto('/team');
+  const toggle=page.locator('[data-team-toggle]'),hidden=page.locator('[data-profile-id="tutor-test"]');
+  await toggle.click();await expect(hidden).toBeVisible();await toggle.click();await expect(hidden).toHaveCount(0);
+  let release;const gate=new Promise(resolve=>{release=resolve});
+  await page.route('**/api/team-profiles?includeDrafts=true',async route=>{await gate;await route.fallback()},{times:1});
+  try {
+   // Synchronous assertion: the hidden card must exist in the same click task,
+   // before the blocked API can deliver any refreshed profiles.
+   expect(await toggle.evaluate(button=>{button.click();return Boolean(document.querySelector('[data-profile-id="tutor-test"]'))})).toBe(true);
+   await expect(hidden).toBeVisible();
+   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+   await toggle.click();await expect(hidden).toHaveCount(0);
+  }finally{release()}
+  app.updateTutor({name:'Fresh Hidden Tutor'});
+  await page.evaluate(()=>window.iHearTeamProfiles.refresh({revision:'cache-refresh-test'}));
+  await expect(hidden).toHaveCount(0);
+  await toggle.click();await expect(hidden).toContainText('Fresh Hidden Tutor');await toggle.click();
+  await page.evaluate(()=>window.dispatchEvent(new CustomEvent('ihear:auth',{detail:{session:null}})));
+  await expect(hidden).toHaveCount(0);await expect(toggle).toBeHidden();
+ });
+ test('team management explains cold loading and clears its cache on logout at '+width+'px',async({page})=>{
+  await page.setViewportSize({width,height:844});await mockApplication(page,{tutorFields:{isHidden:true}});
+  let release;const gate=new Promise(resolve=>{release=resolve});let reads=0;
+  await page.route('**/api/team-profiles?includeDrafts=true',async route=>{reads++;await gate;await route.fallback()});
+  try{
+   await page.goto('/team');await page.locator('[data-team-toggle]').click();
+   await expect(page.getByRole('status').filter({hasText:'Loading the management roster'}).first()).toBeVisible();
+   await expect(page.locator('[data-profile-id="tutor-test"]')).toHaveCount(0);expect(reads).toBe(1);
+   release();await expect(page.locator('[data-profile-id="tutor-test"]')).toBeVisible();
+  }finally{release()}
+  await page.unroute('**/api/team-profiles?includeDrafts=true');
+  await page.evaluate(()=>window.dispatchEvent(new CustomEvent('ihear:auth',{detail:{session:null}})));
+  await expect(page.locator('[data-profile-id="tutor-test"]')).toHaveCount(0);
+  let releaseNew;const nextGate=new Promise(resolve=>{releaseNew=resolve});
+  await page.route('**/api/team-profiles?includeDrafts=true',async route=>{await nextGate;await route.fulfill({status:503,json:{error:'unavailable'}})},{times:1});
+  try{
+   await page.evaluate(()=>window.dispatchEvent(new CustomEvent('ihear:auth',{detail:{session:{user:{isAdmin:true,email:'new-admin@example.com'}}}})));
+   await page.locator('[data-team-toggle]').click();
+   await expect(page.getByRole('status').filter({hasText:'Loading the management roster'}).first()).toBeVisible();
+   await expect(page.locator('[data-profile-id="tutor-test"]')).toHaveCount(0);
+   releaseNew();await expect(page.locator('[data-team-retry]').first()).toBeVisible();
+   await page.locator('[data-team-retry]').first().click();await expect(page.locator('[data-profile-id="tutor-test"]')).toBeVisible();
+  }finally{releaseNew()}
+ });
+}
