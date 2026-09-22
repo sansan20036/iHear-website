@@ -1,5 +1,6 @@
 import { expect, test as base } from "@playwright/test";
 import { installReadOnlyGuard, productionOrigin, publicPages } from "./read-only.mjs";
+import { assertResourceRendering } from "./resource-rendering.mjs";
 
 const test = base.extend({
   inspection: [async ({ context, page }, use, testInfo) => {
@@ -162,16 +163,20 @@ for (const route of publicPages) {
     if (route === "/resources") {
       const data = await responses[required.indexOf("/api/resources") + 1].json();
       expect(Array.isArray(data.items)).toBe(true);
-      const links = page.locator(".resource-links-list a");
-      await expect(links).toHaveCount(data.items.length);
-      const rendered = await links.evaluateAll(nodes => nodes.map(link => ({ href: link.href, target: link.target, rel: link.rel, title: link.textContent.trim() })));
-      expect(rendered.map(link => link.href).sort()).toEqual(data.items.map(item => new URL(item.url).href).sort());
-      for (const link of rendered) {
-        expect(new URL(link.href).protocol).toBe("https:");
-        expect(link.target).toBe("_blank");
-        expect(link.rel).toContain("noopener");
-        expect(link.title).not.toBe("");
-      }
+      await expect(page.locator("[data-resource-item]")).toHaveCount(data.items.length);
+      const rendered = await page.evaluate(() => ({
+        topicIds: [...document.querySelectorAll("[data-resource-topic]")].map(node => node.dataset.resourceTopic),
+        legacyGuides: document.querySelectorAll("[data-resource-legacy-guides]").length,
+        rows: [...document.querySelectorAll("[data-resource-item]")].map(node => ({
+          id: node.dataset.resourceItem,
+          type: node.dataset.resourceType,
+          topicId: node.closest("[data-resource-topic]")?.dataset.resourceTopic,
+          title: node.querySelector("h3")?.textContent || "",
+          description: node.querySelector("p")?.textContent || "",
+          links: [...node.querySelectorAll("a")].map(link => ({ href: link.href, target: link.target, rel: link.rel })),
+        })),
+      }));
+      assertResourceRendering(data, rendered);
       await expect(page.locator("[data-resource-retry]")).toBeHidden();
     }
     if (required.includes("/api/media-galleries")) {
