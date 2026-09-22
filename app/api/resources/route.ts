@@ -1,28 +1,30 @@
 import { NextResponse } from "next/server";
 import { authorizeAdminRequest } from "../../../lib/admin-auth";
-import { resourceApiError, resourceSaved, RESOURCE_HEADERS } from "../../../lib/resource-api";
-import { createResource, listResources } from "../../../lib/resource-store";
-import { parseResourceInput, publicResource } from "../../../lib/resource-types";
+import { resourceApiError, resourceSaved, resourceReadAccess, publicResourceTopic, RESOURCE_HEADERS } from "../../../lib/resource-api";
+import { createResource, listResourceSnapshot } from "../../../lib/resource-store";
+import { publicResource, resourceId } from "../../../lib/resource-types";
+import { parseResourceItemInput, resourceBody } from "../../../lib/resource-input";
 import { manualTranslationWrites, verifyTranslationReceipt } from "../../../lib/translation-core";
 import { withRateLimitHeaders } from "../../../lib/rate-limit";
 export const dynamic = "force-dynamic";
 export async function GET(request: Request) {
   try {
-    const params = new URL(request.url).searchParams;
-    const archived = params.get("includeArchived") === "true";
-    const admin = archived || params.get("admin") === "1";
-    if (admin) { const access = await authorizeAdminRequest(request); if ("response" in access) return access.response; }
-    const items = await listResources(archived ? "archived" : admin ? "active" : "public");
-    return NextResponse.json({ items: admin ? items : items.map(publicResource) }, { headers: RESOURCE_HEADERS });
+    const access = await resourceReadAccess(request); if ("response" in access) return access.response;
+    const topicId = new URL(request.url).searchParams.get("topicId"); if (topicId !== null) resourceId(topicId);
+    const data = await listResourceSnapshot(access.mode);
+    if (!access.admin && data.guidesTakeover === "unavailable") return NextResponse.json({ error: "Resources are temporarily unavailable. Please try again." }, { status: 503, headers: RESOURCE_HEADERS });
+    const items = topicId === null ? data.items : data.items.filter(item => item.topicId === topicId);
+    const topics = topicId === null ? data.topics : data.topics.filter(topic => topic.id === topicId);
+    return NextResponse.json({ items: access.admin ? items : items.map(publicResource), topics: access.admin ? topics : topics.map(publicResourceTopic), guidesTakeover: data.guidesTakeover }, { headers: RESOURCE_HEADERS });
   } catch (error) { return resourceApiError(error); }
 }
 export async function POST(request: Request) {
   const access = await authorizeAdminRequest(request, { mutation: true });
   if ("response" in access) return access.response;
   try {
-    const body = await request.json(), input = parseResourceInput(body);
+    const body = resourceBody(await request.json()), input = parseResourceItemInput(body);
     const fields = { title: input.title, description: input.description };
-    const states = body.translationReceipt ? verifyTranslationReceipt({ receipt: body.translationReceipt, email: access.principal.email, resource: { type: "resource", scope: "", id: "__new__" }, fields }) : manualTranslationWrites(fields);
+    const states = body.translationReceipt ? verifyTranslationReceipt({ receipt: String(body.translationReceipt), email: access.principal.email, resource: { type: "resource", scope: "", id: "__new__" }, fields }) : manualTranslationWrites(fields);
     const item = await createResource(input, access.principal.email, states);
     return withRateLimitHeaders(await resourceSaved(item, access.principal, "created", 201), access.decision!);
   } catch (error) { return withRateLimitHeaders(resourceApiError(error), access.decision!); }

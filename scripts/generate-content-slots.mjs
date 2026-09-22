@@ -33,7 +33,7 @@ const groupDefinitions = {
   "get-involved.html": [["involve-grid", "involvement.options", "article", "involve", ["tutor", "student"], "/__global__"]],
   "donate.html": [["donate-grid", "donate.options", "div", "donate-card", ["monthly", "materials", "outreach"], "/__global__"]],
   "contact.html": [["contact-grid", "contact.methods", "div", "contact-card", ["email", "social"]]],
-  "resources.html": [["res-chips", "resources.guides", "span", "chip", ["communication", "classroom", "family", "hearing-loss", "implant", "hearing-aid", "activities", "tracking", "handbook"]]],
+  "resources.html": [["resource-legacy-list", "resources.guides", "li", "resource-legacy-item", ["communication", "classroom", "family", "hearing-loss", "implant", "hearing-aid", "activities", "tracking", "handbook"]]],
 };
 
 const text3 = (en, zhHant, zhHans = zhHant) => ({ en, zhHant, zhHans });

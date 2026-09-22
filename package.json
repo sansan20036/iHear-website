@@ -11,7 +11,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit --incremental false",
     "test": "npm run test:api && npm run test:operations && npm run test:e2e",
-    "test:api": "vitest run tests/team-public.test.mjs tests/image-intake.test.mjs tests/text-language-guard.test.mjs tests/translation-core.test.mjs tests/translation-api.test.mjs tests/api-routes.test.mjs tests/team-api.test.mjs tests/team-sort.test.mjs tests/team-store-postgres.test.mjs tests/team-visibility-store.test.mjs tests/admin-console-api.test.mjs tests/rate-limit.test.mjs tests/site-media-api.test.mjs tests/site-media-image.test.mjs tests/site-theme-api.test.mjs tests/site-layout-api.test.mjs tests/media-galleries.test.mjs tests/resources-api.test.mjs",
+    "test:api": "vitest run tests/team-public.test.mjs tests/image-intake.test.mjs tests/text-language-guard.test.mjs tests/translation-core.test.mjs tests/translation-api.test.mjs tests/api-routes.test.mjs tests/team-api.test.mjs tests/team-sort.test.mjs tests/team-store-postgres.test.mjs tests/team-visibility-store.test.mjs tests/admin-console-api.test.mjs tests/rate-limit.test.mjs tests/site-media-api.test.mjs tests/site-media-image.test.mjs tests/site-theme-api.test.mjs tests/site-layout-api.test.mjs tests/media-galleries.test.mjs tests/resources-api.test.mjs tests/resource-topic-model.test.mjs tests/resource-topic-api.test.mjs",
     "test:operations": "vitest run tests/operations-config.test.mjs tests/production-safety.test.mjs",
     "test:e2e": "node scripts/prepare-public.mjs && playwright test",
     "test:production": "playwright test --config=playwright.production.config.mjs",
@@ -38,7 +38,12 @@
     "translation:backfill-team-local": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/backfill-local-team-translations.mjs",
     "test:media-admin": "node tests/media-admin.smoke.mjs",
     "test:team-visibility": "node tests/team-visibility.smoke.mjs",
-    "test:resources-admin": "node tests/resources-admin.smoke.mjs"
+    "test:resources-admin": "node tests/resources-admin.smoke.mjs",
+    "test:resource-model": "vitest run tests/resource-topic-model.test.mjs",
+    "test:resource-schema": "vitest run tests/resource-topics-postgres.test.mjs",
+    "test:resource-api-postgres": "vitest run tests/resource-topic-api-postgres.test.mjs",
+    "test:resource-topics-admin": "node tests/resource-topics-admin.smoke.mjs",
+    "test:resource-topics-public": "node tests/resource-topics-public.smoke.mjs"
   },
   "dependencies": {
     "@google-cloud/translate": "^10.0.1",

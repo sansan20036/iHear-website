@@ -134,6 +134,11 @@ body:has(.admin-app) > :is(.site-theme-trigger,.ihear-layout-trigger,.ihear-inli
 }
 
 .admin-resource-list{display:grid;gap:16px}.admin-resource-list article{min-width:0;overflow-wrap:anywhere}
+.admin-resources .admin-page-head{flex-wrap:wrap}
+.admin-resource-filters label{display:grid;gap:6px;flex:1 1 220px;min-width:0}
+.admin-resources .admin-select,.admin-resource-dialog .admin-select{width:100%;min-width:0;max-width:100%}
+.admin-resources .admin-toolbar>.admin-button{white-space:normal;overflow-wrap:anywhere}
+.admin-resource-dialog h2,.admin-resource-dialog p{overflow-wrap:anywhere}
 .admin-resource-dialog{width:min(760px,calc(100vw - 24px));max-height:calc(100dvh - 24px);padding:24px;border:1px solid #d5d9e0;border-radius:20px;color:#263974;background:#fff;overflow:auto}
 .admin-resource-dialog::backdrop{background:#18233b88}.admin-resource-dialog fieldset{border:0;margin:0;padding:0;min-width:0}
 .admin-resource-dialog label{display:grid;gap:6px;margin:12px 0;font-weight:600;overflow-wrap:anywhere}

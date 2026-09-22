@@ -63,7 +63,7 @@ function resourceKey(resource: TranslationResource) {
 export async function readTranslationStates(resource: TranslationResource): Promise<TranslationState[]> {
   if (!databaseUrl && resource.type === "resource") {
     const { readResourceFileStates } = await import("./resource-store");
-    return readResourceFileStates(resource.id);
+    return readResourceFileStates(resource.id, resource.scope);
   }
   if (!databaseUrl && resource.type === 'media' && resource.id.startsWith('gallery.')) {
     const { getGalleryAsset } = await import('./media-gallery-store');

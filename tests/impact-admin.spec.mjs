@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
 import { renderPageContent } from "../lib/render-page-content.ts";
+import { legacyResourceSnapshot } from "./helpers/resource-public-snapshot.mjs";
 
 const publicDir = path.resolve("public");
 const contentTypes = {
@@ -624,18 +625,27 @@ async function mockApplication(page, { admin = true, duplicateAvatar = false, tu
   };
 }
 
+function resourceSnapshot(items) {
+  const topics = [
+    { id: "forms", slug: "resource-links", title: { en: "Forms & useful links", zhHant: "表單／常用連結", zhHans: "表单／常用链接" }, description: { en: "", zhHant: "", zhHans: "" }, sortOrder: 10 },
+    { id: "articles", slug: "resource-articles", title: { en: "Articles", zhHant: "文章", zhHans: "文章" }, description: { en: "", zhHant: "", zhHans: "" }, sortOrder: 30 },
+  ];
+  // These fixtures precede Guides takeover and retain the nine legacy Guides.
+  return legacyResourceSnapshot({ topics, items: items.map(item => ({ category: "form", sortOrder: 0, ...item, topicId: item.category === "article" ? "articles" : "forms", type: "external_link" })) });
+}
+
 test("Resources show verified form links, localized descriptions and a private management entry", async ({ page }) => {
   await mockApplication(page);
   const { RESOURCE_SEEDS } = await import("../lib/resource-seed.ts");
-  await page.route("**/api/resources", route => route.fulfill({ json: { items: RESOURCE_SEEDS } }));
+  await page.route("**/api/resources", route => route.fulfill({ json: resourceSnapshot(RESOURCE_SEEDS) }));
   await page.goto("/resources#resources");
-  const list = page.locator(".resource-links-list");
+  const list = page.locator("[data-resource-topics] .resource-links-list");
   await expect(list.locator("li")).toHaveCount(3);
   await expect(list.getByRole("link").nth(1)).toHaveAttribute("href", "https://forms.gle/FzayZzgAEiGHsA1b9");
   await expect(list.getByRole("link").first()).toHaveAttribute("target", "_blank");
   await expect(list.getByRole("link").first()).toHaveAttribute("rel", "noopener noreferrer");
   await expect(page.locator("[data-resource-manage]")).toBeVisible();
-  await expect(page.locator(".res-chips .chip")).toHaveCount(9);
+  await expect(page.locator("[data-resource-legacy-guides] li")).toHaveCount(9);
   for (const width of [320, 390, 1440]) {
     for (const [language, expected] of [["en", "Tutor Reflection"], ["zhTW", "小老師課後反思表"], ["zhCN", "小老师课后反思表"]]) {
       await page.setViewportSize({ width: 1440, height: 900 });
@@ -651,7 +661,7 @@ test("Resources separate published articles, keep keyboard focus and hide an emp
   await mockApplication(page, { admin: false });
   const { RESOURCE_SEEDS } = await import("../lib/resource-seed.ts");
   let items = [...RESOURCE_SEEDS, { id: "article-test", category: "article", title: { en: "Communication advice", zhHant: "溝通建議", zhHans: "沟通建议" }, description: { en: "Read the source article.", zhHant: "", zhHans: "" }, url: "https://example.org/articles/communication" }];
-  await page.route("**/api/resources", route => route.fulfill({ json: { items } }));
+  await page.route("**/api/resources", route => route.fulfill({ json: resourceSnapshot(items) }));
   await page.goto("/resources#resources");
   const articles = page.locator("[data-resource-articles]");
   await expect(page.locator("[data-resource-links] li")).toHaveCount(3);
@@ -677,16 +687,16 @@ test("Resources separate published articles, keep keyboard focus and hide an emp
   items = RESOURCE_SEEDS;
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect(articles).toBeHidden();
-  await expect(page.locator(".res-chips .chip")).toHaveCount(9);
+  await expect(page.locator("[data-resource-legacy-guides] li")).toHaveCount(9);
 });
 
 test("Resources recover from failure, refresh current items and keep visitor controls hidden", async ({ page }) => {
   await mockApplication(page, { admin: false });
   let failed = true;
   let items = [{ id: "sample", title: { en: "<img> Test form", zhHant: "", zhHans: "" }, description: { en: "A description" }, url: "https://forms.gle/FzayZzgAEiGHsA1b9" }];
-  await page.route("**/api/resources", route => route.fulfill(failed ? { status: 503, json: { error: "Unavailable" } } : { json: { items } }));
+  await page.route("**/api/resources", route => route.fulfill(failed ? { status: 503, json: { error: "Unavailable" } } : { json: resourceSnapshot(items) }));
   await page.goto("/resources");
-  const region = page.locator("[data-resource-links]");
+  const region = page.locator("[data-resource-catalog]");
   await expect(region.getByRole("status")).toHaveText("Resources could not be loaded.");
   failed = false; await region.getByRole("button", { name: "Try again" }).click();
   await expect(region.locator("ul a")).toContainText("<img> Test form");
@@ -696,7 +706,7 @@ test("Resources recover from failure, refresh current items and keep visitor con
   await expect(region.locator("ul a")).toContainText("<img> Test form");
   items = [];
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
-  await expect(region.getByRole("status")).toHaveText("目前沒有公開表單。");
+  await expect(region.getByRole("status")).toHaveText("目前沒有公開資源。");
   await expect(region.locator("li")).toHaveCount(0);
 });
 
@@ -876,6 +886,8 @@ test("static card reordering preserves the exact DOM nodes", async ({ page }) =>
 
 test("layout settings use the page control without a hover toolbar", async ({ page }) => {
   await mockApplication(page);
+  const { RESOURCE_SEEDS } = await import("../lib/resource-seed.ts");
+  await page.route("**/api/resources", route => route.fulfill({ json: resourceSnapshot(RESOURCE_SEEDS) }));
   await page.goto("/resources");
   await page.locator('[data-layout-group="resources.guides"]').hover();
   await expect(page.locator(".ihear-layout-quick")).toHaveCount(0);

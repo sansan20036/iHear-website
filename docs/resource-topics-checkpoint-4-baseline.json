@@ -1,0 +1,23 @@
+{
+  "baselineCommit": "5706e268015eebd421ce5d3e5af2ac261d944e6a",
+  "comparison": "LF-normalized SHA-256; generated outputs retained from the Checkpoint 4 isolated before/after comparison",
+  "files": [
+    {
+      "file": "index.html",
+      "baselineSourceSha256": "7c0aff200870dabadc70e927aed34927baa62b88465712b33352d833b584f6c6",
+      "currentSourceSha256": "7c0aff200870dabadc70e927aed34927baa62b88465712b33352d833b584f6c6",
+      "baselineExpectedSha256": "c7d17f2535054382d31b9e3e1bc91a939862dc12152d945e977c39941e0baecf",
+      "currentExpectedSha256": "c7d17f2535054382d31b9e3e1bc91a939862dc12152d945e977c39941e0baecf",
+      "sameDiscrepancy": true
+    },
+    {
+      "file": "stories.html",
+      "baselineSourceSha256": "d0782ed5c0595c80a30c03ec44fa06746b703b06163a6b3f6a5cc899c6fd8cdc",
+      "currentSourceSha256": "d0782ed5c0595c80a30c03ec44fa06746b703b06163a6b3f6a5cc899c6fd8cdc",
+      "baselineExpectedSha256": "3fc60b0090cd46d32dc52c885292c45d4e5193a701f6bc6349e347cb936b4f4e",
+      "currentExpectedSha256": "3fc60b0090cd46d32dc52c885292c45d4e5193a701f6bc6349e347cb936b4f4e",
+      "sameDiscrepancy": true
+    }
+  ],
+  "nonResourcesCatalogSourceAndExpectedUnchanged": true
+}

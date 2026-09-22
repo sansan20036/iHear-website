@@ -33,6 +33,7 @@ function parseResource(value: unknown): TranslationResource | null {
   const source = value as Record<string, unknown>;
   if (!TRANSLATION_RESOURCE_TYPES.includes(source.type as TranslationResource["type"])) return null;
   const scope = typeof source.scope === "string" ? source.scope : "";
+  if (source.type === "resource" && scope !== "" && scope !== "topic") return null;
   const id = typeof source.id === "string" ? source.id.trim() : "";
   const version = source.version == null || typeof source.version === "string" || typeof source.version === "number" ? source.version as TranslationResource["version"] : null;
   if (!id || id.length > 5_000 || scope.length > 500) return null;

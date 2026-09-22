@@ -970,6 +970,8 @@
   function installExternalHints() {
     function update() {
       document.querySelectorAll('a[target="_blank"]').forEach((link) => {
+        // React owns administrator markup; changing it before hydration loses editor state.
+        if (link.closest(".admin-app")) return;
         link.rel = `${link.rel || ""} noopener noreferrer`.trim().replace(/\s+/g, " ");
         let hint = link.querySelector(":scope > .external-hint");
         if (!hint) {

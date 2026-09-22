@@ -82,44 +82,35 @@
   </header>
 
   <main id="main">
-<section id="resources" data-resource-links data-no-inline-edit aria-labelledby="resource-links-heading">
+<section id="resources" data-resource-catalog data-no-inline-edit aria-labelledby="resource-catalog-heading">
       <div class="container">
-        <h1 id="resource-links-heading">Forms &amp; useful links</h1>
-        <span id="resource-links"></span>
-        <p data-resource-intro>Find registration forms, session reflections and scheduling links here.</p>
-        <a data-resource-manage class="btn btn-outline" href="/admin/resources" hidden>Manage forms / links</a>
-        <p role="status" aria-live="polite">Loading resources…</p>
+        <h1 id="resource-catalog-heading">Resources</h1>
+        <a data-resource-manage class="btn btn-outline" href="/admin/resources" hidden>Manage resources</a>
+        <p data-resource-status role="status" aria-live="polite">Loading resources…</p>
         <button type="button" class="btn btn-outline" data-resource-retry hidden>Try again</button>
-        <ul class="resource-links-list"></ul>
-        <noscript><p>JavaScript is needed to load the current list. / 請啟用 JavaScript 以載入最新表單清單。</p></noscript>
+        <div data-resource-topics></div>
+        <noscript><p>JavaScript is needed to load the current list. / 請啟用 JavaScript 以載入最新資源清單。</p></noscript>
       </div>
     </section>
-<section id="resource-articles" data-resource-articles data-no-inline-edit aria-labelledby="resource-articles-heading" hidden>
+<section id="resource-guides" data-resource-legacy-guides hidden aria-labelledby="res-h">
       <div class="container">
-        <h2 id="resource-articles-heading">Articles</h2>
-        <p data-article-intro>Read articles and practical advice from external sources.</p>
-        <ul class="resource-links-list"></ul>
-      </div>
-    </section>
-<section id="resource-guides" aria-labelledby="res-h">
-      <div class="container">
-        <div class="sec-head" data-animate>
+        <div class="resource-topic-head">
           <span class="eyebrow"><span class="dot" aria-hidden="true"></span><span data-i18n="res_eyebrow" data-editable-content="resources.res.eyebrow" data-editable-mode="singleline" data-editable-maxlength="120">Free Resources</span></span>
           <h2 id="res-h" data-i18n="res_h2" data-editable-content="resources.res.heading" data-editable-mode="singleline" data-editable-maxlength="200">Guides for families &amp; educators</h2>
           <p data-i18n="res_sub" data-editable-content="resources.res.subtitle" data-editable-mode="multiline" data-editable-maxlength="5000">Nine practical guides, available in English, 繁體中文, 简体中文, and Español. Email us and we'll send you any of them, free.</p>
         </div>
-        <div class="res-chips" data-layout-group="resources.guides" data-animate>
-          <span data-layout-item="communication" class="chip"><svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4 4h16v12H7l-3 3V4z"/></svg><span data-i18n="res1" data-editable-content="resources.res1" data-editable-mode="singleline" data-editable-maxlength="120">Effective Communication Strategies</span></span>
-          <span data-layout-item="classroom" class="chip"><svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4 4h16v12H7l-3 3V4z"/></svg><span data-i18n="res2" data-editable-content="resources.res2" data-editable-mode="singleline" data-editable-maxlength="120">Classroom Communication Guide</span></span>
-          <span data-layout-item="family" class="chip"><svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4 4h16v12H7l-3 3V4z"/></svg><span data-i18n="res3" data-editable-content="resources.res3" data-editable-mode="singleline" data-editable-maxlength="120">Family Communication Toolkit</span></span>
-          <span data-layout-item="hearing-loss" class="chip"><svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4 4h16v12H7l-3 3V4z"/></svg><span data-i18n="res4" data-editable-content="resources.res4" data-editable-mode="singleline" data-editable-maxlength="120">Understanding Hearing Loss</span></span>
-          <span data-layout-item="implant" class="chip"><svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4 4h16v12H7l-3 3V4z"/></svg><span data-i18n="res5" data-editable-content="resources.res5" data-editable-mode="singleline" data-editable-maxlength="120">Cochlear Implant Basics</span></span>
-          <span data-layout-item="hearing-aid" class="chip"><svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4 4h16v12H7l-3 3V4z"/></svg><span data-i18n="res6" data-editable-content="resources.res6" data-editable-mode="singleline" data-editable-maxlength="120">Hearing Aid Care Guide</span></span>
-          <span data-layout-item="activities" class="chip"><svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4 4h16v12H7l-3 3V4z"/></svg><span data-i18n="res7" data-editable-content="resources.res7" data-editable-mode="singleline" data-editable-maxlength="120">English Learning Activities</span></span>
-          <span data-layout-item="tracking" class="chip"><svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4 4h16v12H7l-3 3V4z"/></svg><span data-i18n="res8" data-editable-content="resources.res8" data-editable-mode="singleline" data-editable-maxlength="120">Progress Tracking Templates</span></span>
-          <span data-layout-item="handbook" class="chip"><svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4 4h16v12H7l-3 3V4z"/></svg><span data-i18n="res9" data-editable-content="resources.res9" data-editable-mode="singleline" data-editable-maxlength="120">Volunteer Tutor Handbook</span></span>
-        </div>
-        <p class="res-cta" data-animate><a class="btn btn-navy" href="mailto:ihearprogram@gmail.com?subject=Resource%20guide%20request" data-i18n="res_cta" data-editable-content="resources.res.cta" data-editable-mode="singleline" data-editable-maxlength="120" data-layout-link="resources.res.cta.href">Request a Guide by Email</a></p>
+        <ul class="resource-links-list resource-legacy-list" data-layout-group="resources.guides">
+          <li data-layout-item="communication" class="resource-legacy-item"><h3 class="resource-item-title"><span data-i18n="res1" data-editable-content="resources.res1" data-editable-mode="singleline" data-editable-maxlength="120">Effective Communication Strategies</span></h3></li>
+          <li data-layout-item="classroom" class="resource-legacy-item"><h3 class="resource-item-title"><span data-i18n="res2" data-editable-content="resources.res2" data-editable-mode="singleline" data-editable-maxlength="120">Classroom Communication Guide</span></h3></li>
+          <li data-layout-item="family" class="resource-legacy-item"><h3 class="resource-item-title"><span data-i18n="res3" data-editable-content="resources.res3" data-editable-mode="singleline" data-editable-maxlength="120">Family Communication Toolkit</span></h3></li>
+          <li data-layout-item="hearing-loss" class="resource-legacy-item"><h3 class="resource-item-title"><span data-i18n="res4" data-editable-content="resources.res4" data-editable-mode="singleline" data-editable-maxlength="120">Understanding Hearing Loss</span></h3></li>
+          <li data-layout-item="implant" class="resource-legacy-item"><h3 class="resource-item-title"><span data-i18n="res5" data-editable-content="resources.res5" data-editable-mode="singleline" data-editable-maxlength="120">Cochlear Implant Basics</span></h3></li>
+          <li data-layout-item="hearing-aid" class="resource-legacy-item"><h3 class="resource-item-title"><span data-i18n="res6" data-editable-content="resources.res6" data-editable-mode="singleline" data-editable-maxlength="120">Hearing Aid Care Guide</span></h3></li>
+          <li data-layout-item="activities" class="resource-legacy-item"><h3 class="resource-item-title"><span data-i18n="res7" data-editable-content="resources.res7" data-editable-mode="singleline" data-editable-maxlength="120">English Learning Activities</span></h3></li>
+          <li data-layout-item="tracking" class="resource-legacy-item"><h3 class="resource-item-title"><span data-i18n="res8" data-editable-content="resources.res8" data-editable-mode="singleline" data-editable-maxlength="120">Progress Tracking Templates</span></h3></li>
+          <li data-layout-item="handbook" class="resource-legacy-item"><h3 class="resource-item-title"><span data-i18n="res9" data-editable-content="resources.res9" data-editable-mode="singleline" data-editable-maxlength="120">Volunteer Tutor Handbook</span></h3></li>
+        </ul>
+        <p class="resource-legacy-cta"><a class="btn btn-navy" href="mailto:ihearprogram@gmail.com?subject=Resource%20guide%20request" data-i18n="res_cta" data-editable-content="resources.res.cta" data-editable-mode="singleline" data-editable-maxlength="120" data-layout-link="resources.res.cta.href">Request a Guide by Email</a></p>
       </div>
     </section>
 </main>

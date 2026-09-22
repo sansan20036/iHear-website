@@ -7,13 +7,14 @@ import path from 'node:path';
 import { chromium, expect } from '@playwright/test';
 import { encode } from 'next-auth/jwt';
 
+const dev = process.argv.includes('--dev');
 const port = 3213;
 const origin = `http://localhost:${port}`;
 const secret = 'isolated-gallery-smoke-test-key-never-use-in-production';
 await mkdir('output/playwright', { recursive: true });
 const directory = await mkdtemp(path.resolve('output/playwright/resource-admin-'));
-const child = spawn(process.execPath, ['node_modules/next/dist/bin/next', 'start', '--hostname', 'localhost', '--port', String(port)], {
-  env: { ...process.env, NODE_ENV: 'production', VERCEL: '', NETLIFY: '', CONTEXT: '', IHEAR_FORCE_FILE_STORE: '1', IHEAR_TEST_DATA_DIR: directory, AUTH_SECRET: secret, TRANSLATION_RECEIPT_SECRET: 'isolated-resource-preview-test-key-never-use-in-production', AUTH_OWNER_EMAILS: 'media-test@example.com', AUTH_URL: origin, AUTH_TRUST_HOST: 'true' },
+const child = spawn(process.execPath, ['node_modules/next/dist/bin/next', dev ? 'dev' : 'start', '--hostname', 'localhost', '--port', String(port)], {
+  env: { ...process.env, NODE_ENV: dev ? 'development' : 'production', VERCEL: '', NETLIFY: '', CONTEXT: '', IHEAR_FORCE_FILE_STORE: '1', IHEAR_TEST_DATA_DIR: directory, AUTH_SECRET: secret, TRANSLATION_RECEIPT_SECRET: 'isolated-resource-preview-test-key-never-use-in-production', AUTH_OWNER_EMAILS: 'media-test@example.com', AUTH_URL: origin, AUTH_TRUST_HOST: 'true' },
   windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
 });
 let logs = ''; child.stdout.on('data', chunk => { logs += chunk; }); child.stderr.on('data', chunk => { logs += chunk; });
@@ -43,7 +44,7 @@ try {
   await page.keyboard.press('Escape');
   await expect(dialog).toHaveCount(0);
   await page.getByRole('button', { name: '新增資源', exact: true }).click();
-  await dialog.getByLabel('分類', { exact: true }).selectOption('article');
+  await dialog.getByLabel('所屬主題', { exact: true }).selectOption('articles');
   await dialog.getByLabel('English · 名稱', { exact: true }).fill('Test resource');
   await dialog.getByLabel('繁體中文 · 名稱', { exact: true }).fill('測試資源');
   await dialog.getByLabel('简体中文 · 名稱', { exact: true }).fill('测试资源');
@@ -83,18 +84,18 @@ try {
   const visitor = await browser.newContext({ viewport: { width: 320, height: 900 } });
   const visitorPage = await visitor.newPage();
   await visitorPage.goto(origin + '/resources#resources');
-  await expect(visitorPage.locator('.resource-links-list li')).toHaveCount(4);
+  await expect(visitorPage.locator('[data-resource-topics] .resource-links-list li')).toHaveCount(4);
   await expect(visitorPage.locator('[data-resource-links] li')).toHaveCount(3);
   await expect(visitorPage.locator('[data-resource-articles] li')).toHaveCount(1);
   await expect(visitorPage.locator('[data-resource-manage]')).toBeHidden();
-  await expect(visitorPage.locator('.res-chips .chip')).toHaveCount(9);
+  await expect(visitorPage.locator('[data-resource-legacy-guides] li')).toHaveCount(9);
   expect(await visitorPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.bringToFront();
   page.once('dialog', confirmation => confirmation.accept());
   await row.getByRole('button', { name: '隱藏', exact: true }).click();
   await expect(row.getByRole('button', { name: '發布', exact: true })).toBeVisible();
   await visitorPage.bringToFront();
-  await expect(visitorPage.locator('.resource-links-list li')).toHaveCount(3, { timeout: 20000 });
+  await expect(visitorPage.locator('[data-resource-topics] .resource-links-list li')).toHaveCount(3, { timeout: 20000 });
   await expect(visitorPage.locator('[data-resource-articles]')).toBeHidden();
   await page.bringToFront();
   await row.getByRole('button', { name: '發布', exact: true }).click();
@@ -119,7 +120,7 @@ try {
   await dialog.getByRole('button', { name: '下一步：預覽翻譯', exact: true }).click();
   await expect(dialog.getByRole('status')).toContainText('預覽已完成');
   await dialog.getByRole('button', { name: '儲存變更（維持發布）', exact: true }).click();
-  await expect(dialog.getByText('此資料已被其他管理員更新。您的草稿已保留，請關閉並重新讀取後再儲存。')).toBeVisible();
+  await expect(dialog.getByText('此資料已被其他管理員更新。您的輸入已保留，請先取得此筆最新資料，再重新儲存。')).toBeVisible();
   await expect(dialog.getByLabel('English · 名稱', { exact: true })).toHaveValue('Renamed resource');
   await expect(dialog.getByRole('button', { name: '儲存變更（維持發布）', exact: true })).toBeDisabled();
   page.once('dialog', confirmation => confirmation.accept());

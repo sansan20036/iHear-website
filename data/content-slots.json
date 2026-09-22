@@ -3252,7 +3252,7 @@
           "file": "resources.html",
           "legacyKey": "foot_copy",
           "tag": "span",
-          "line": 148
+          "line": 158
         },
         {
           "file": "faq.html",
@@ -3343,7 +3343,7 @@
           "file": "resources.html",
           "legacyKey": "foot_desc",
           "tag": "p",
-          "line": 114
+          "line": 124
         },
         {
           "file": "faq.html",
@@ -3434,7 +3434,7 @@
           "file": "resources.html",
           "legacyKey": "foot_inv_h",
           "tag": "h2",
-          "line": 126
+          "line": 136
         },
         {
           "file": "faq.html",
@@ -3525,7 +3525,7 @@
           "file": "resources.html",
           "legacyKey": "foot_inv1",
           "tag": "a",
-          "line": 128
+          "line": 138
         },
         {
           "file": "faq.html",
@@ -3616,7 +3616,7 @@
           "file": "resources.html",
           "legacyKey": "foot_inv2",
           "tag": "a",
-          "line": 129
+          "line": 139
         },
         {
           "file": "faq.html",
@@ -3707,7 +3707,7 @@
           "file": "resources.html",
           "legacyKey": "foot_inv3",
           "tag": "a",
-          "line": 130
+          "line": 140
         },
         {
           "file": "faq.html",
@@ -3798,7 +3798,7 @@
           "file": "resources.html",
           "legacyKey": "foot_inv4",
           "tag": "a",
-          "line": 131
+          "line": 141
         },
         {
           "file": "faq.html",
@@ -3889,7 +3889,7 @@
           "file": "resources.html",
           "legacyKey": "foot_inv5",
           "tag": "a",
-          "line": 132
+          "line": 142
         },
         {
           "file": "faq.html",
@@ -3980,7 +3980,7 @@
           "file": "resources.html",
           "legacyKey": "foot_made",
           "tag": "span",
-          "line": 149
+          "line": 159
         },
         {
           "file": "faq.html",
@@ -4071,7 +4071,7 @@
           "file": "resources.html",
           "legacyKey": "foot_more_h",
           "tag": "h2",
-          "line": 136
+          "line": 146
         },
         {
           "file": "faq.html",
@@ -4162,7 +4162,7 @@
           "file": "resources.html",
           "legacyKey": "foot_more1",
           "tag": "a",
-          "line": 138
+          "line": 148
         },
         {
           "file": "faq.html",
@@ -4253,7 +4253,7 @@
           "file": "resources.html",
           "legacyKey": "foot_more2",
           "tag": "a",
-          "line": 139
+          "line": 149
         },
         {
           "file": "faq.html",
@@ -4344,7 +4344,7 @@
           "file": "resources.html",
           "legacyKey": "foot_more3",
           "tag": "a",
-          "line": 140
+          "line": 150
         },
         {
           "file": "faq.html",
@@ -4435,7 +4435,7 @@
           "file": "resources.html",
           "legacyKey": "foot_more4",
           "tag": "a",
-          "line": 141
+          "line": 151
         },
         {
           "file": "faq.html",
@@ -4526,7 +4526,7 @@
           "file": "resources.html",
           "legacyKey": "foot_more5",
           "tag": "a",
-          "line": 142
+          "line": 152
         },
         {
           "file": "faq.html",
@@ -4617,7 +4617,7 @@
           "file": "resources.html",
           "legacyKey": "foot_more6",
           "tag": "a",
-          "line": 143
+          "line": 153
         },
         {
           "file": "faq.html",
@@ -4708,7 +4708,7 @@
           "file": "resources.html",
           "legacyKey": "foot_prog_h",
           "tag": "h2",
-          "line": 117
+          "line": 127
         },
         {
           "file": "faq.html",
@@ -4799,7 +4799,7 @@
           "file": "resources.html",
           "legacyKey": "foot_prog1",
           "tag": "a",
-          "line": 119
+          "line": 129
         },
         {
           "file": "faq.html",
@@ -4890,7 +4890,7 @@
           "file": "resources.html",
           "legacyKey": "foot_prog2",
           "tag": "a",
-          "line": 120
+          "line": 130
         },
         {
           "file": "faq.html",
@@ -4981,7 +4981,7 @@
           "file": "resources.html",
           "legacyKey": "foot_prog3",
           "tag": "a",
-          "line": 121
+          "line": 131
         },
         {
           "file": "faq.html",
@@ -5072,7 +5072,7 @@
           "file": "resources.html",
           "legacyKey": "foot_prog4",
           "tag": "a",
-          "line": 122
+          "line": 132
         },
         {
           "file": "faq.html",
@@ -5163,7 +5163,7 @@
           "file": "resources.html",
           "legacyKey": "foot_tag",
           "tag": "p",
-          "line": 113
+          "line": 123
         },
         {
           "file": "faq.html",
@@ -7708,7 +7708,7 @@
           "file": "resources.html",
           "legacyKey": "res_cta",
           "tag": "a",
-          "line": 103
+          "line": 113
         }
       ]
     },
@@ -7727,7 +7727,7 @@
           "file": "resources.html",
           "legacyKey": "res_eyebrow",
           "tag": "span",
-          "line": 88
+          "line": 98
         }
       ]
     },
@@ -7745,8 +7745,8 @@
         {
           "file": "resources.html",
           "legacyKey": "res_h2",
-          "tag": "h1",
-          "line": 89
+          "tag": "h2",
+          "line": 99
         }
       ]
     },
@@ -7765,7 +7765,7 @@
           "file": "resources.html",
           "legacyKey": "res_sub",
           "tag": "p",
-          "line": 90
+          "line": 100
         }
       ]
     },
@@ -7784,7 +7784,7 @@
           "file": "resources.html",
           "legacyKey": "res1",
           "tag": "span",
-          "line": 93
+          "line": 103
         }
       ]
     },
@@ -7803,7 +7803,7 @@
           "file": "resources.html",
           "legacyKey": "res2",
           "tag": "span",
-          "line": 94
+          "line": 104
         }
       ]
     },
@@ -7822,7 +7822,7 @@
           "file": "resources.html",
           "legacyKey": "res3",
           "tag": "span",
-          "line": 95
+          "line": 105
         }
       ]
     },
@@ -7841,7 +7841,7 @@
           "file": "resources.html",
           "legacyKey": "res4",
           "tag": "span",
-          "line": 96
+          "line": 106
         }
       ]
     },
@@ -7860,7 +7860,7 @@
           "file": "resources.html",
           "legacyKey": "res5",
           "tag": "span",
-          "line": 97
+          "line": 107
         }
       ]
     },
@@ -7879,7 +7879,7 @@
           "file": "resources.html",
           "legacyKey": "res6",
           "tag": "span",
-          "line": 98
+          "line": 108
         }
       ]
     },
@@ -7898,7 +7898,7 @@
           "file": "resources.html",
           "legacyKey": "res7",
           "tag": "span",
-          "line": 99
+          "line": 109
         }
       ]
     },
@@ -7917,7 +7917,7 @@
           "file": "resources.html",
           "legacyKey": "res8",
           "tag": "span",
-          "line": 100
+          "line": 110
         }
       ]
     },
@@ -7936,7 +7936,7 @@
           "file": "resources.html",
           "legacyKey": "res9",
           "tag": "span",
-          "line": 101
+          "line": 111
         }
       ]
     },

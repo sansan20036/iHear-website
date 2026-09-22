@@ -1176,6 +1176,18 @@ body:has(.site-theme-dialog[open]){ overflow:hidden; }
 
 /* Resources use compact links with selectable descriptions. */
 [data-resource-links] [hidden]{display:none!important}
+[data-resource-catalog] [hidden]{display:none!important}
+[data-resource-catalog] h1{font-size:clamp(1.8rem,4vw,2.6rem)}
+[data-resource-catalog] .resource-topic{padding:32px 0 0;min-width:0;overflow-wrap:anywhere}
+.resource-topic h2,[data-resource-legacy-guides] h2{font-size:clamp(1.5rem,3vw,2.1rem);text-align:left}
+.resource-topic-description{white-space:pre-wrap}
+.resource-item-title{margin:0;font-size:1.15rem;line-height:1.6;overflow-wrap:anywhere}
+.resource-kind{display:inline-block;margin:6px 0;padding:3px 10px;border-radius:8px;background:var(--sky,#e5edf7);font-size:.9rem}
+.resource-legacy-list{display:flex;flex-direction:column}
+.resource-topic-manage{margin-top:12px}
+[data-resource-legacy-guides][hidden]{display:none!important}
+[data-resource-legacy-guides] .resource-topic-head{max-width:none;text-align:left}
+[data-resource-catalog] a:focus-visible,[data-resource-legacy-guides] a:focus-visible{outline:3px solid var(--navy,#263974);outline-offset:4px}
 .resource-links-list{list-style:none;padding:0;margin:24px 0}
 .resource-links-list li{padding:20px 0;border-bottom:1px solid var(--border,#dedede);overflow-wrap:anywhere}
 .resource-links-list a{display:inline-block;min-height:44px;padding:8px 0;font-size:1.15rem;font-weight:700;text-decoration:underline;text-underline-offset:4px}

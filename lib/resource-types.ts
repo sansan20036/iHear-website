@@ -1,4 +1,5 @@
 import type { LocalizedTranslationField } from "./translation-types";
+import type { ResourceItem } from "./resource-topic-model";
 
 export type ResourceInput = {
   category: "form" | "article";
@@ -60,6 +61,6 @@ export function parseResourceInput(value: unknown, defaultCategory: ResourceInpu
   if (body.status !== "draft" && body.status !== "published") throw new ResourceError("Invalid resource status");
   return { category, title, description, url: url.href, sortOrder: Number(body.sortOrder), status: body.status };
 }
-export function publicResource(item: ResourceLink) {
-  return { id: item.id, category: item.category, title: item.title, description: item.description, url: item.url, sortOrder: item.sortOrder };
+export function publicResource(item: ResourceItem) {
+  return { id: item.id, category: item.category, topicId: item.topicId, type: item.type, title: item.title, description: item.description, url: item.url, sortOrder: item.sortOrder };
 }

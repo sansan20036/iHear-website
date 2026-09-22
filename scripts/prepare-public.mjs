@@ -101,7 +101,7 @@ function withClientScripts(html, file) {
     `  <script src="/assets/site-theme.js?v=${clientAssetVersion}" defer></script>`,
     `  <script src="/assets/site-layout.js?v=${clientAssetVersion}" defer></script>`,
   ];
-  if (html.includes("data-resource-links")) scripts.push(`  <script src="/assets/resources.js?v=${clientAssetVersion}" defer></script>`);
+  if (html.includes("data-resource-catalog")) scripts.push(`  <script src="/assets/resources.js?v=${clientAssetVersion}-resource-topics-v3" defer></script>`);
   if (html.includes("data-site-media-slot") || html.includes("data-site-media-dynamic")) {
     scripts.push(`  <script src="/assets/vendor/browser-image-compression.js?v=${clientAssetVersion}" defer></script>`);
     scripts.push(`  <script src="/assets/avatar-background-removal.js?v=${clientAssetVersion}" defer></script>`);
