@@ -855,7 +855,7 @@
     {
       "page": "/academy",
       "key": "academy.acad.cta1.href",
-      "defaultHref": "https://ihear-academy-replica.codinggod.chatgpt.site/zh/",
+      "defaultHref": "/academy/courses/zh",
       "label": {
         "en": "Academy primary button",
         "zhHant": "學院主要按鈕",

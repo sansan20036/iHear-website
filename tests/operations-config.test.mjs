@@ -9,7 +9,10 @@ describe("production operations configuration", () => {
     const vercel = JSON.parse(await read("vercel.json"));
     expect((vercel.rewrites || []).filter(rule => /\.html(?:$|\?)/.test(rule.destination))).toEqual([]);
     const nextConfig = (await import("../next.config.mjs")).default;
-    expect(nextConfig.rewrites).toBeUndefined();
+    expect(await nextConfig.rewrites()).toEqual([
+      { source: "/academy/courses", destination: "/academy/courses/index.html" },
+      { source: "/academy/courses/zh", destination: "/academy/courses/zh/index.html" },
+    ]);
     const redirects = await nextConfig.redirects();
     expect(redirects).toContainEqual({ source: "/about.html", destination: "/about", permanent: true });
   });

@@ -4,6 +4,20 @@ The `/team` page and published profiles and photos are public. Editing and draft
 
 Static iHear pages served by Next.js, with Auth.js / NextAuth.js Google sign-in.
 
+## Academy course website
+
+The standalone bilingual course website is public at `/academy/courses` (English)
+and `/academy/courses/zh` (Traditional Chinese). `/academy` remains the existing
+program introduction, with its primary button linking to the Chinese course page.
+The course pages need no ChatGPT account or site editor integration.
+
+Edit `academy-site/` or sync it from the adjacent local Academy project with
+`npm run sync:official` in that project's `site/` directory. During the normal build,
+`scripts/prepare-academy.mjs` copies these portable static files to
+`public/academy/courses/` and adapts asset and language URLs for the clean routes.
+The existing CMS pages keep their current-data routes. Use `npm run test:public-pages`
+after a build to check both the original pages and the Academy routes and assets.
+
 ## Local Preview
 
 Install dependencies once:
