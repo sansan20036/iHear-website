@@ -261,11 +261,15 @@ test("Academy introduction leads to course details before an email inquiry", asy
   expect(response.status()).toBe(200);
   await expect(page.locator("#academy-h")).toBeVisible();
   const courseLink = page.locator('[data-layout-link="academy.acad.courses.href"]');
+  const menuToggle = page.locator("#navToggle");
+  const mobileMenu = await menuToggle.isVisible();
+  if (mobileMenu) await menuToggle.click();
   for (const [language, label] of [["en", "Explore iHear Academy Courses"], ["zhCN", "了解 iHear Academy 课程"], ["zhTW", "了解 iHear Academy 課程"]]) {
     await page.locator(`#langSwitch button[data-lang="${language}"]`).click();
     await expect(courseLink).toHaveText(label);
     await expect(courseLink).toHaveAttribute("href", "/academy/courses/zh?entry=official");
   }
+  if (mobileMenu) await menuToggle.click();
   await courseLink.click();
   await expect(page).toHaveURL(`${productionOrigin}/academy/courses/zh?entry=official`);
   await expect(page.locator("html")).toHaveAttribute("lang", "zh-Hant");
