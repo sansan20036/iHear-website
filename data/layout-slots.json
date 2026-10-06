@@ -855,7 +855,7 @@
     {
       "page": "/academy",
       "key": "academy.acad.cta1.href",
-      "defaultHref": "mailto:ihearprogram@gmail.com?subject=iHear%20Academy%20enquiry",
+      "defaultHref": "https://ihear-academy-replica.codinggod.chatgpt.site/zh/",
       "label": {
         "en": "Academy primary button",
         "zhHant": "學院主要按鈕",
