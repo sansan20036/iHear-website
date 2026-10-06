@@ -169,7 +169,7 @@ Logical slots: 293
 | `about.journey.heading` | `/about` | singleline | 200 | From two students to four countries | 從兩位學生到四個國家 | 从两位学生到四个国家 | about.html:116 |
 | `about.mission.heading` | `/about` | singleline | 200 | Why iHear exists | iHear 為何而存在 | iHear 为何而存在 | about.html:90 |
 | `academy.acad.courses` | `/academy` | singleline | 120 | Explore iHear Academy Courses | 了解 iHear Academy 課程 | 了解 iHear Academy 课程 | academy.html:93 |
-| `academy.acad.cta2` | `/academy` | singleline | 120 | Pricing & Programs | 學費方案與課程 | 学费方案与课程 | academy.html:94 |
+| `academy.acad.email` | `/academy` | singleline | 120 | Email an inquiry | 寄信洽詢 | 邮件咨询 | academy.html:94 |
 | `academy.acad.eyebrow` | `/academy` | singleline | 120 | iHear Academy | iHear Academy | iHear Academy | academy.html:88 |
 | `academy.acad.heading` | `/academy` | singleline | 200 | Mission-aligned paid tutoring that funds free services | 以使命為本的付費輔導，支持免費服務 | 以使命为本的付费辅导，支持免费服务 | academy.html:89 |
 | `academy.acad.p1` | `/academy` | multiline | 5000 | iHear Academy is a mission-aligned paid tutoring program. Program revenue supports tutor compensation, training, and curriculum development, while surplus funds are reinvested into the iHear Program to expand free services for learners with hearing and communication needs. | iHear Academy 是與使命一致的付費輔導計畫。計畫收入用於導師報酬、培訓與課程開發，盈餘則再投入 iHear Program，擴大為聽力與溝通需求學習者提供的免費服務。 | iHear Academy 是与使命一致的付费辅导项目。项目收入用于导师报酬、培训与课程开发，盈余则再投入 iHear Program，扩大为听力与沟通需求学习者提供的免费服务。 | academy.html:90 |

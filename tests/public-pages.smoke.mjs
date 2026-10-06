@@ -129,7 +129,7 @@ try {
     if (page === '/academy') {
       const links = tags(html, 'a');
       const primary = links.find(link => link['data-layout-link'] === 'academy.acad.courses.href');
-      const secondary = links.find(link => link['data-layout-link'] === 'academy.acad.cta2.href');
+      const secondary = links.find(link => link['data-layout-link'] === 'academy.acad.email.href');
       assert.equal(primary?.href, `${academyPath}/zh?entry=official`, 'Introduction leads to the complete Chinese course site before email');
       assert.equal(primary?.['data-editable-content'], 'academy.acad.courses', 'Course link has its own content key, separate from the old inquiry label');
       assert.equal(secondary?.href, 'mailto:ihearprogram@gmail.com?subject=iHear%20Academy%20pricing', 'Existing optional pricing inquiry is preserved');

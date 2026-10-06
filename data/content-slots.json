@@ -6061,18 +6061,18 @@
     },
     {
       "page": "/academy",
-      "key": "academy.acad.cta2",
+      "key": "academy.acad.email",
       "mode": "singleline",
       "maxLength": 120,
       "values": {
-        "en": "Pricing & Programs",
-        "zhHant": "學費方案與課程",
-        "zhHans": "学费方案与课程"
+        "en": "Email an inquiry",
+        "zhHant": "寄信洽詢",
+        "zhHans": "邮件咨询"
       },
       "occurrences": [
         {
           "file": "academy.html",
-          "legacyKey": "acad_cta2",
+          "legacyKey": "acad_email",
           "tag": "a",
           "line": 94
         }

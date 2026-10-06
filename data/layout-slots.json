@@ -877,17 +877,17 @@
     },
     {
       "page": "/academy",
-      "key": "academy.acad.cta2.href",
+      "key": "academy.acad.email.href",
       "defaultHref": "mailto:ihearprogram@gmail.com?subject=iHear%20Academy%20pricing",
       "label": {
-        "en": "Academy secondary button",
-        "zhHant": "學院次要按鈕",
-        "zhHans": "学院次要按钮"
+        "en": "Academy email inquiry",
+        "zhHant": "學院寄信洽詢",
+        "zhHans": "学院邮件咨询"
       },
       "description": {
-        "en": "The secondary action on the Academy page.",
-        "zhHant": "線上學院頁面的次要行動按鈕。",
-        "zhHans": "在线学院页面的次要行动按钮。"
+        "en": "Opens an email inquiry to the Academy team.",
+        "zhHant": "開啟寄給 Academy 團隊的詢問郵件。",
+        "zhHans": "开启寄给 Academy 团队的咨询邮件。"
       },
       "locations": {
         "en": "Academy page",
@@ -896,7 +896,7 @@
       },
       "shared": false,
       "usageCount": 1,
-      "previewSelector": "[data-layout-link=\"academy.acad.cta2.href\"]"
+      "previewSelector": "[data-layout-link=\"academy.acad.email.href\"]"
     },
     {
       "page": "/contact",
