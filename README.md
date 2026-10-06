@@ -6,21 +6,27 @@ Static iHear pages served by Next.js, with Auth.js / NextAuth.js Google sign-in.
 
 ## Academy course website
 
-The complete bilingual course website is public directly at `/academy` (Traditional
-Chinese, the default) and `/academy/en` (English). Existing `/academy#academy` links
-land at the new page top. The former `/academy/courses` and `/academy/courses/zh`
-entry URLs permanently redirect to the corresponding new language routes. The course
-pages need no ChatGPT account or site editor integration. The retained `academy.html`
-is the former introduction source; it no longer serves the public `/academy` entry.
+The existing CMS introduction remains at `/academy#academy`, served from
+`academy.html`. Its primary "了解 iHear Academy 課程" button opens the complete
+bilingual course website, public at `/academy/courses/zh` (Traditional Chinese)
+and `/academy/courses` (English). Inquiry buttons within that course website open
+prefilled email drafts. All pages use the same official Vercel host and need no
+ChatGPT account or site editor integration.
+
+The introduction's course button uses `/academy/courses/zh?entry=official` to avoid
+previous permanent redirects cached by some browsers. The former `/academy/en`
+entry redirects to `/academy/courses?entry=official`. Canonical and hreflang metadata
+use the clean, query-free course URLs; the entry parameter only avoids stale browser
+redirect caches.
 
 Edit `academy-site/` or sync it from the adjacent local Academy project with
 `npm run sync:official` in that project's `site/` directory. During the normal build,
 `scripts/prepare-academy.mjs` copies these portable static files to
 `public/academy/courses/` and adapts asset and language URLs for the clean routes.
 The generated asset directory stays at that location while `next.config.mjs` maps the
-new page entry routes. Do not edit generated `public/` files. After local verification,
+course page entry routes. Do not edit generated `public/` files. After local verification,
 review, commit, and push the official repository to GitHub `main` for Vercel to publish;
-syncing local files alone does not publish the site. The other CMS pages keep their
+syncing local files alone does not publish the site. The CMS pages keep their
 current-data routes. Use `npm run test:public-pages` after a build to check the public
 CMS pages, both Academy languages, redirects, and assets.
 

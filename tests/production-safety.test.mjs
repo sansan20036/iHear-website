@@ -13,7 +13,7 @@ describe("production inspection read-only boundary", () => {
     expect(readOnlyDecision({ url: `${origin}${path}`, method: "GET" })).not.toBeNull();
   });
   it("allows only approved public page navigation", () => {
-    for (const path of ["/team", "/academy", "/academy/en"]) {
+    for (const path of ["/team", "/academy", "/academy/courses?entry=official", "/academy/courses/zh?entry=official"]) {
       expect(readOnlyDecision({ url: `${origin}${path}`, method: "GET", navigation: true })).toBeNull();
     }
     for (const url of ["https://forms.gle/example", `${origin}/internal`, `${origin}/admin`]) {

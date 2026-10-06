@@ -115,7 +115,7 @@ const linkMetadata = {
   "site.cta.volunteer.href": ["Volunteer button", "志工申請按鈕", "志工申请按钮", "Used by volunteer calls to action across the site.", "用於全站志工招募的行動按鈕。", "用于全站志工招募的行动按钮。", "Home and involvement calls to action", "首頁與參與頁面", "首页与参与页面"],
   "shared.donate.cta.href": ["Donation button", "捐款按鈕", "捐款按钮", "Used by donation calls to action across the site.", "用於全站捐款行動按鈕。", "用于全站捐款行动按钮。", "Home and donation calls to action", "首頁與捐款頁面", "首页与捐款页面"],
   "shared.inv1.cta.href": ["Get involved button", "參與我們按鈕", "参与我们按钮", "Used by participation calls to action across the site.", "用於全站參與行動按鈕。", "用于全站参与行动按钮。", "Home and involvement calls to action", "首頁與參與頁面", "首页与参与页面"],
-  "academy.acad.cta1.href": ["Academy primary button", "學院主要按鈕", "学院主要按钮", "The main action on the Academy page.", "線上學院頁面的主要行動按鈕。", "在线学院页面上的主要行动按钮。", "Academy page", "線上學院頁面", "在线学院页面"],
+  "academy.acad.courses.href": ["Explore Academy courses", "了解學院課程", "了解学院课程", "Opens the full Academy course website.", "開啟完整的 Academy 課程網站。", "开启完整的 Academy 课程网站。", "Academy page", "線上學院頁面", "在线学院页面"],
   "academy.acad.cta2.href": ["Academy secondary button", "學院次要按鈕", "学院次要按钮", "The secondary action on the Academy page.", "線上學院頁面的次要行動按鈕。", "在线学院页面的次要行动按钮。", "Academy page", "線上學院頁面", "在线学院页面"],
   "contact.contact.email.cta.href": ["Contact email link", "聯絡信箱連結", "联系邮箱链接", "Opens an email to the iHear team.", "開啟寄給 iHear 團隊的電子郵件。", "开启寄给 iHear 团队的电子邮件。", "Contact page", "聯絡頁面", "联系页面"],
   "contact.contact.form.cta.href": ["Contact form button", "聯絡表單按鈕", "联系表单按钮", "Opens the contact form.", "開啟 iHear 聯絡表單。", "开启 iHear 联系表单。", "Contact page", "聯絡頁面", "联系页面"],
@@ -374,10 +374,12 @@ const layoutCatalog = {
 const outputs = new Map([
   ["data/content-slots.json", catalogJson],
   ["docs/content-slot-inventory.md", inventory],
-  ["db/migrations/013_content_slots_seed.sql", migration],
   ["data/layout-slots.json", `${JSON.stringify(layoutCatalog, null, 2)}\n`],
   ...outputPages,
 ]);
+// Content edits must not change an applied database migration's checksum.
+// Retain the original seed; only generate it explicitly when bootstrapping.
+if (process.argv.includes("--initial-seed")) outputs.set("db/migrations/013_content_slots_seed.sql", migration);
 
 const mismatches = [];
 for (const [relative, expected] of outputs) {

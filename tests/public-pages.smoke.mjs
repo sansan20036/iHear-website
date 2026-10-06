@@ -2,8 +2,8 @@
 import { spawn } from 'node:child_process';
 import assert from 'node:assert/strict';
 const origin = 'http://127.0.0.1:3214';
-const pages = ['/', '/about', '/programs', '/impact', '/team', '/submit-bio', '/stories', '/get-involved', '/donate', '/resources', '/faq', '/contact'];
-const academyPath = '/academy';
+const pages = ['/', '/about', '/programs', '/impact', '/team', '/submit-bio', '/stories', '/get-involved', '/academy', '/donate', '/resources', '/faq', '/contact'];
+const academyPath = '/academy/courses';
 const academyAssets = '/academy/courses';
 const academyCanonical = `https://www.ihearus.org${academyPath}`;
 
@@ -39,7 +39,9 @@ async function checkAcademyAsset(value, base) {
 }
 
 async function checkAcademyPage(page, lang) {
-  const url = origin + page;
+  const url = origin + page + '?entry=official';
+  const direct = await fetch(origin + page, { redirect: 'manual' });
+  assert.equal(direct.status, 200, `Queryless course URL no longer redirects: ${page}`);
   const response = await fetch(url);
   assert.equal(response.status, 200, page);
   assert.equal(response.url, url, `Clean Academy URL has no redirect: ${page}`);
@@ -56,18 +58,17 @@ async function checkAcademyPage(page, lang) {
   const alternates = links.filter(link => link.rel === 'alternate' && link.hreflang);
   assert.equal(alternates.length, 3, `Three Academy language alternates: ${page}`);
   assert.deepEqual(Object.fromEntries(alternates.map(link => [link.hreflang, link.href])), {
-    en: `${academyCanonical}/en`,
-    'zh-Hant': academyCanonical,
+    en: academyCanonical,
+    'zh-Hant': `${academyCanonical}/zh`,
     'x-default': academyCanonical,
   }, `Academy hreflang URLs: ${page}`);
 
-  for (const [language, destination] of [['en', `${academyPath}/en`], ['zh-Hant', academyPath]]) {
+  for (const [language, destination] of [['en', academyPath], ['zh-Hant', `${academyPath}/zh`]]) {
     const switches = tags(html, 'a').filter(link => link.lang === language);
     assert.equal(switches.length, 2, `Header and footer ${language} language links: ${page}`);
-    for (const link of switches) assert.equal(link.href, destination, `Clean language destination: ${page}`);
+    for (const link of switches) assert.equal(link.href, `${destination}?entry=official`, `Language destination avoids cached previous redirects: ${page}`);
   }
 
-  assert.equal(tags(html, 'body')[0]?.id, 'academy', `Existing #academy links reach the complete Academy page: ${page}`);
   for (const section of ['subjects', 'approach', 'learners', 'tutors', 'pricing', 'purpose', 'faq', 'start']) {
     assert.match(html, new RegExp(`id=["']${section}["']`), `Complete Academy section ${section}: ${page}`);
   }
@@ -76,13 +77,13 @@ async function checkAcademyPage(page, lang) {
   assert.equal(head.status, 200, `HEAD ${page}`);
   assert.match(head.headers.get('content-type') || '', /text\/html/i, `HEAD content type: ${page}`);
   assert.equal(await head.text(), '', `HEAD has no response body: ${page}`);
-  for (const alias of [`${page}/`, `${page}/index.html`]) {
+  for (const [alias, destination] of [[`${page}/`, origin + page], [`${page}/?entry=official`, url], [`${page}/index.html`, url]]) {
     const redirect = await fetch(origin + alias, { redirect: 'manual' });
     assert.ok([301, 308].includes(redirect.status), `Permanent redirect: ${alias}`);
-    assert.equal(new URL(redirect.headers.get('location'), origin).href, url, `Redirect destination: ${alias}`);
+    assert.equal(new URL(redirect.headers.get('location'), origin).href, destination, `Redirect destination: ${alias}`);
     const final = await fetch(origin + alias);
     assert.equal(final.status, 200, `Redirect resolves successfully: ${alias}`);
-    assert.equal(final.url, url, `Redirect resolves to clean URL: ${alias}`);
+    assert.equal(final.url, destination, `Redirect resolves to course URL: ${alias}`);
     assert.equal(tags(await final.text(), 'html')[0]?.lang, lang, `Redirect retains language: ${alias}`);
   }
 
@@ -125,22 +126,30 @@ try {
     if (page === '/') {
       assert.deepEqual(seed.metrics, (await (await fetch(origin + '/api/site-metrics')).json()).metrics);
     }
+    if (page === '/academy') {
+      const links = tags(html, 'a');
+      const primary = links.find(link => link['data-layout-link'] === 'academy.acad.courses.href');
+      const secondary = links.find(link => link['data-layout-link'] === 'academy.acad.cta2.href');
+      assert.equal(primary?.href, `${academyPath}/zh?entry=official`, 'Introduction leads to the complete Chinese course site before email');
+      assert.equal(primary?.['data-editable-content'], 'academy.acad.courses', 'Course link has its own content key, separate from the old inquiry label');
+      assert.equal(secondary?.href, 'mailto:ihearprogram@gmail.com?subject=iHear%20Academy%20pricing', 'Existing optional pricing inquiry is preserved');
+      assert.match(html, /id=["']academy["']/, 'Existing introduction anchor remains available');
+    }
     const academyLinks = tags(html, 'a').filter(link => link['data-editable-content'] === 'site.footer.prog4');
     assert.ok(academyLinks.length > 0, `Official navigation still includes Academy: ${page}`);
-    for (const link of academyLinks) assert.equal(new URL(link.href, origin).pathname, academyPath, `Official navigation opens Academy directly: ${page}`);
+    for (const link of academyLinks) assert.equal(new URL(link.href, origin + page).pathname, '/academy', `Official navigation opens the Academy introduction: ${page}`);
   }
-  await checkAcademyPage(academyPath, 'zh-Hant');
-  await checkAcademyPage(`${academyPath}/en`, 'en');
-  for (const [alias, destination] of [
-    ['/academy.html', academyPath],
-    [academyAssets, `${academyPath}/en`],
-    [`${academyAssets}/index.html`, `${academyPath}/en`],
-    [`${academyAssets}/zh`, academyPath],
-    [`${academyAssets}/zh/index.html`, academyPath],
+  await checkAcademyPage(academyPath, 'en');
+  await checkAcademyPage(`${academyPath}/zh`, 'zh-Hant');
+  for (const [alias, destination, permanent] of [
+    ['/academy.html', '/academy', true],
+    ['/academy/index.html', '/academy', true],
+    ['/academy/en', `${academyPath}?entry=official`, false],
+    ['/academy/en/index.html', `${academyPath}?entry=official`, false],
   ]) {
     const redirect = await fetch(origin + alias, { redirect: 'manual' });
-    assert.ok([301, 308].includes(redirect.status), `Old Academy URL redirects permanently: ${alias}`);
-    assert.equal(new URL(redirect.headers.get('location'), origin).pathname, destination, `Old Academy URL retains its language: ${alias}`);
+    assert.ok((permanent ? [301, 308] : [302, 307]).includes(redirect.status), `Academy alias has the intended redirect status: ${alias}`);
+    assert.equal(new URL(redirect.headers.get('location'), origin).href, origin + destination, `Old Academy URL keeps its intended destination: ${alias}`);
     const final = await fetch(origin + alias);
     assert.equal(final.status, 200, `Old Academy URL remains usable: ${alias}`);
     assert.equal(final.url, origin + destination, `Old Academy URL resolves without a redirect loop: ${alias}`);

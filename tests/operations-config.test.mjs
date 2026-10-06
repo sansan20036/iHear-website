@@ -10,13 +10,15 @@ describe("production operations configuration", () => {
     expect((vercel.rewrites || []).filter(rule => /\.html(?:$|\?)/.test(rule.destination))).toEqual([]);
     const nextConfig = (await import("../next.config.mjs")).default;
     expect(await nextConfig.rewrites()).toEqual([
-      { source: "/academy", destination: "/academy/courses/zh/index.html" },
-      { source: "/academy/en", destination: "/academy/courses/index.html" },
+      { source: "/academy/courses", destination: "/academy/courses/index.html" },
+      { source: "/academy/courses/zh", destination: "/academy/courses/zh/index.html" },
     ]);
     const redirects = await nextConfig.redirects();
     expect(redirects).toContainEqual({ source: "/about.html", destination: "/about", permanent: true });
-    expect(redirects).toContainEqual({ source: "/academy/courses", destination: "/academy/en", permanent: true });
-    expect(redirects).toContainEqual({ source: "/academy/courses/zh", destination: "/academy", permanent: true });
+    expect(redirects).toContainEqual({ source: "/academy/en", destination: "/academy/courses?entry=official", permanent: false });
+    expect(redirects).toContainEqual({ source: "/academy/courses/index.html", destination: "/academy/courses?entry=official", permanent: true });
+    expect(redirects).toContainEqual({ source: "/academy/courses/zh/index.html", destination: "/academy/courses/zh?entry=official", permanent: true });
+    expect(redirects.some(rule => rule.source === "/academy/courses" || rule.source === "/academy/courses/zh")).toBe(false);
   });
   it("keeps health checks uncached and responses free of database details", async () => {
     const route = await read("app/api/health/route.ts");

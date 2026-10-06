@@ -5,9 +5,11 @@ import path from "node:path";
 // Deployed HTML uses absolute paths because Next's clean routes omit a slash.
 export async function prepareAcademy(root, publicDir) {
   const base = "/academy/courses";
+  // A versioned entry bypasses browser-cached redirects from the brief period
+  // when course URLs redirected to /academy and /academy/en. Canonicals stay clean.
   const pageRoutes = new Map([
-    [`${base}/index.html`, "/academy/en"],
-    [`${base}/zh/index.html`, "/academy"],
+    [`${base}/index.html`, `${base}?entry=official`],
+    [`${base}/zh/index.html`, `${base}/zh?entry=official`],
   ]);
   const destination = path.join(publicDir, "academy", "courses");
   await cp(path.join(root, "academy-site"), destination, { recursive: true });

@@ -31,11 +31,10 @@ const nextConfig = {
     return [
       { source: "/index.html", destination: "/", permanent: true },
       { source: "/academy/index.html", destination: "/academy", permanent: true },
-      { source: "/academy/en/index.html", destination: "/academy/en", permanent: true },
-      { source: "/academy/courses", destination: "/academy/en", permanent: true },
-      { source: "/academy/courses/zh", destination: "/academy", permanent: true },
-      { source: "/academy/courses/index.html", destination: "/academy/en", permanent: true },
-      { source: "/academy/courses/zh/index.html", destination: "/academy", permanent: true },
+      { source: "/academy/en", destination: "/academy/courses?entry=official", permanent: false },
+      { source: "/academy/en/index.html", destination: "/academy/courses?entry=official", permanent: false },
+      { source: "/academy/courses/index.html", destination: "/academy/courses?entry=official", permanent: true },
+      { source: "/academy/courses/zh/index.html", destination: "/academy/courses/zh?entry=official", permanent: true },
       ...htmlRoutes.map(([source, destination]) => ({
         source: `/${destination}`,
         destination: `/${source}`,
@@ -43,12 +42,12 @@ const nextConfig = {
       })),
     ];
   },
-  // Academy now opens the full course website at its existing official entry.
-  // All other public pages continue through their current-data CMS routes.
+  // Keep /academy as the CMS introduction. Visitors explicitly follow its
+  // course button to these standalone pages on the same Vercel website.
   async rewrites() {
     return [
-      { source: "/academy", destination: "/academy/courses/zh/index.html" },
-      { source: "/academy/en", destination: "/academy/courses/index.html" },
+      { source: "/academy/courses", destination: "/academy/courses/index.html" },
+      { source: "/academy/courses/zh", destination: "/academy/courses/zh/index.html" },
     ];
   },
 };

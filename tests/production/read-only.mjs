@@ -1,6 +1,6 @@
 export const productionOrigin = "https://www.ihearus.org";
-export const cmsPages = ["/", "/about", "/programs", "/impact", "/team", "/submit-bio", "/stories", "/get-involved", "/donate", "/resources", "/faq", "/contact"];
-export const academyPages = ["/academy", "/academy/en"];
+export const cmsPages = ["/", "/about", "/programs", "/impact", "/team", "/submit-bio", "/stories", "/get-involved", "/academy", "/donate", "/resources", "/faq", "/contact"];
+export const academyPages = ["/academy/courses", "/academy/courses/zh"];
 export const publicPages = [...cmsPages, ...academyPages];
 const academyAsset = /^\/academy\/courses\/(?:style\.css|self-hosted-fonts\.css|script\.js|logo\.png|classroom\.jpg|fonts\/[A-Za-z0-9_-]+\.woff2)$/;
 const publicApis = new Set([
