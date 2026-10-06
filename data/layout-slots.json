@@ -855,7 +855,7 @@
     {
       "page": "/academy",
       "key": "academy.acad.cta1.href",
-      "defaultHref": "/academy/courses/zh",
+      "defaultHref": "/academy",
       "label": {
         "en": "Academy primary button",
         "zhHant": "學院主要按鈕",

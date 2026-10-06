@@ -2,8 +2,9 @@
 import { spawn } from 'node:child_process';
 import assert from 'node:assert/strict';
 const origin = 'http://127.0.0.1:3214';
-const pages = ['/', '/about', '/programs', '/impact', '/team', '/submit-bio', '/stories', '/get-involved', '/academy', '/donate', '/resources', '/faq', '/contact'];
-const academyPath = '/academy/courses';
+const pages = ['/', '/about', '/programs', '/impact', '/team', '/submit-bio', '/stories', '/get-involved', '/donate', '/resources', '/faq', '/contact'];
+const academyPath = '/academy';
+const academyAssets = '/academy/courses';
 const academyCanonical = `https://www.ihearus.org${academyPath}`;
 
 function tags(html, name) {
@@ -16,7 +17,7 @@ const checkedAssets = new Set();
 async function checkAcademyAsset(value, base) {
   const url = new URL(value, base);
   if (url.origin !== origin) return;
-  assert.ok(url.pathname.startsWith(`${academyPath}/`), `Academy asset stays within its directory: ${url.pathname}`);
+  assert.ok(url.pathname.startsWith(`${academyAssets}/`), `Academy asset stays within its directory: ${url.pathname}`);
   if (checkedAssets.has(url.href)) return;
   checkedAssets.add(url.href);
   const response = await fetch(url);
@@ -55,15 +56,20 @@ async function checkAcademyPage(page, lang) {
   const alternates = links.filter(link => link.rel === 'alternate' && link.hreflang);
   assert.equal(alternates.length, 3, `Three Academy language alternates: ${page}`);
   assert.deepEqual(Object.fromEntries(alternates.map(link => [link.hreflang, link.href])), {
-    en: academyCanonical,
-    'zh-Hant': `${academyCanonical}/zh`,
+    en: `${academyCanonical}/en`,
+    'zh-Hant': academyCanonical,
     'x-default': academyCanonical,
   }, `Academy hreflang URLs: ${page}`);
 
-  for (const [language, destination] of [['en', academyPath], ['zh-Hant', `${academyPath}/zh`]]) {
+  for (const [language, destination] of [['en', `${academyPath}/en`], ['zh-Hant', academyPath]]) {
     const switches = tags(html, 'a').filter(link => link.lang === language);
     assert.equal(switches.length, 2, `Header and footer ${language} language links: ${page}`);
     for (const link of switches) assert.equal(link.href, destination, `Clean language destination: ${page}`);
+  }
+
+  assert.equal(tags(html, 'body')[0]?.id, 'academy', `Existing #academy links reach the complete Academy page: ${page}`);
+  for (const section of ['subjects', 'approach', 'learners', 'tutors', 'pricing', 'purpose', 'faq', 'start']) {
+    assert.match(html, new RegExp(`id=["']${section}["']`), `Complete Academy section ${section}: ${page}`);
   }
 
   const head = await fetch(url, { method: 'HEAD' });
@@ -119,17 +125,27 @@ try {
     if (page === '/') {
       assert.deepEqual(seed.metrics, (await (await fetch(origin + '/api/site-metrics')).json()).metrics);
     }
-    if (page === '/academy') {
-      const links = tags(html, 'a');
-      const primary = links.find(link => link['data-layout-link'] === 'academy.acad.cta1.href');
-      const secondary = links.find(link => link['data-layout-link'] === 'academy.acad.cta2.href');
-      assert.equal(primary?.href, `${academyPath}/zh`, 'Official Academy CTA links to the hosted Chinese course page');
-      assert.equal(secondary?.href, 'mailto:ihearprogram@gmail.com?subject=iHear%20Academy%20pricing', 'Official Academy secondary inquiry is retained');
-    }
+    const academyLinks = tags(html, 'a').filter(link => link['data-editable-content'] === 'site.footer.prog4');
+    assert.ok(academyLinks.length > 0, `Official navigation still includes Academy: ${page}`);
+    for (const link of academyLinks) assert.equal(new URL(link.href, origin).pathname, academyPath, `Official navigation opens Academy directly: ${page}`);
   }
-  await checkAcademyPage(academyPath, 'en');
-  await checkAcademyPage(`${academyPath}/zh`, 'zh-Hant');
+  await checkAcademyPage(academyPath, 'zh-Hant');
+  await checkAcademyPage(`${academyPath}/en`, 'en');
+  for (const [alias, destination] of [
+    ['/academy.html', academyPath],
+    [academyAssets, `${academyPath}/en`],
+    [`${academyAssets}/index.html`, `${academyPath}/en`],
+    [`${academyAssets}/zh`, academyPath],
+    [`${academyAssets}/zh/index.html`, academyPath],
+  ]) {
+    const redirect = await fetch(origin + alias, { redirect: 'manual' });
+    assert.ok([301, 308].includes(redirect.status), `Old Academy URL redirects permanently: ${alias}`);
+    assert.equal(new URL(redirect.headers.get('location'), origin).pathname, destination, `Old Academy URL retains its language: ${alias}`);
+    const final = await fetch(origin + alias);
+    assert.equal(final.status, 200, `Old Academy URL remains usable: ${alias}`);
+    assert.equal(final.url, origin + destination, `Old Academy URL resolves without a redirect loop: ${alias}`);
+  }
   assert.equal((await fetch(origin + '/unknown-page')).status, 404);
-  console.log(`Built public routes passed: 13 current-data pages and two Academy locales; canonical/language URLs, HEAD, redirects, ${checkedAssets.size} Academy resources, official Academy links and unknown-route protection.`);
+  console.log(`Built public routes passed: ${pages.length} current-data pages and two complete Academy locales; canonical/language URLs, HEAD, redirects, ${checkedAssets.size} Academy resources, official Academy navigation and unknown-route protection.`);
 } catch (error) { console.error(logs.slice(-3000)); throw error; }
 finally { child.kill(); }

@@ -5,6 +5,10 @@ import path from "node:path";
 // Deployed HTML uses absolute paths because Next's clean routes omit a slash.
 export async function prepareAcademy(root, publicDir) {
   const base = "/academy/courses";
+  const pageRoutes = new Map([
+    [`${base}/index.html`, "/academy/en"],
+    [`${base}/zh/index.html`, "/academy"],
+  ]);
   const destination = path.join(publicDir, "academy", "courses");
   await cp(path.join(root, "academy-site"), destination, { recursive: true });
   for (const file of ["index.html", "zh/index.html"]) {
@@ -14,7 +18,7 @@ export async function prepareAcademy(root, publicDir) {
       if (!value || /^(?:[a-z][a-z\d+.-]*:|\/|#)/i.test(value)) return attribute;
       const resolved = path.posix.join(base, path.posix.dirname(file), value);
       if (!resolved.startsWith(base + "/")) throw new Error(`Academy asset escapes its folder: ${value}`);
-      const href = resolved.replace(/\/index\.html$/, "");
+      const href = pageRoutes.get(resolved) || resolved;
       return `${name}="${href}"`;
     });
     await writeFile(target, deployed, "utf8");

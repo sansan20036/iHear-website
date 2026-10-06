@@ -1,5 +1,8 @@
 export const productionOrigin = "https://www.ihearus.org";
-export const publicPages = ["/", "/about", "/programs", "/impact", "/team", "/submit-bio", "/stories", "/get-involved", "/academy", "/donate", "/resources", "/faq", "/contact"];
+export const cmsPages = ["/", "/about", "/programs", "/impact", "/team", "/submit-bio", "/stories", "/get-involved", "/donate", "/resources", "/faq", "/contact"];
+export const academyPages = ["/academy", "/academy/en"];
+export const publicPages = [...cmsPages, ...academyPages];
+const academyAsset = /^\/academy\/courses\/(?:style\.css|self-hosted-fonts\.css|script\.js|logo\.png|classroom\.jpg|fonts\/[A-Za-z0-9_-]+\.woff2)$/;
 const publicApis = new Set([
   "/api/auth/session", "/api/health", "/api/content/get", "/api/team-profiles",
   "/api/impact-milestones", "/api/site-media", "/api/site-metrics", "/api/resources",
@@ -18,7 +21,7 @@ export function readOnlyDecision({ url, method, navigation = false }) {
       const publicImage = /^\/api\/site-media\/[A-Za-z0-9._-]+\/image$/.test(target.pathname);
       if (!publicApis.has(target.pathname) && !publicImage) return "non-public-api";
       if (target.searchParams.has("admin") || target.searchParams.has("includeDrafts")) return "administrative-query";
-    } else if (!publicPages.includes(target.pathname) && !target.pathname.startsWith("/assets/") && !target.pathname.startsWith("/_next/") && target.pathname !== "/favicon.ico") {
+    } else if (!publicPages.includes(target.pathname) && !academyAsset.test(target.pathname) && !target.pathname.startsWith("/assets/") && !target.pathname.startsWith("/_next/") && target.pathname !== "/favicon.ico") {
       return "non-public-path";
     }
   }

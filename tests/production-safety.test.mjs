@@ -13,9 +13,21 @@ describe("production inspection read-only boundary", () => {
     expect(readOnlyDecision({ url: `${origin}${path}`, method: "GET" })).not.toBeNull();
   });
   it("allows only approved public page navigation", () => {
-    expect(readOnlyDecision({ url: `${origin}/team`, method: "GET", navigation: true })).toBeNull();
+    for (const path of ["/team", "/academy", "/academy/en"]) {
+      expect(readOnlyDecision({ url: `${origin}${path}`, method: "GET", navigation: true })).toBeNull();
+    }
     for (const url of ["https://forms.gle/example", `${origin}/internal`, `${origin}/admin`]) {
       expect(readOnlyDecision({ url, method: "GET", navigation: true })).toBe("non-public-navigation");
+    }
+  });
+  it("allows Academy assets without allowing arbitrary paths or asset navigation", () => {
+    for (const path of ["style.css", "self-hosted-fonts.css", "script.js", "logo.png", "classroom.jpg", "fonts/xn7gYHE41ni1AdIRggexSg.woff2"]) {
+      const url = `${origin}/academy/courses/${path}`;
+      expect(readOnlyDecision({ url, method: "GET" })).toBeNull();
+      expect(readOnlyDecision({ url, method: "GET", navigation: true })).toBe("non-public-navigation");
+    }
+    for (const path of ["admin", "index.html", "private.json", "../../admin", "fonts/../../private.json"]) {
+      expect(readOnlyDecision({ url: `${origin}/academy/courses/${path}`, method: "GET" })).not.toBeNull();
     }
   });
   it("allows public data and HTTPS image reads, but rejects credentials and HTTP", () => {

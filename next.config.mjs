@@ -30,8 +30,12 @@ const nextConfig = {
   async redirects() {
     return [
       { source: "/index.html", destination: "/", permanent: true },
-      { source: "/academy/courses/index.html", destination: "/academy/courses", permanent: true },
-      { source: "/academy/courses/zh/index.html", destination: "/academy/courses/zh", permanent: true },
+      { source: "/academy/index.html", destination: "/academy", permanent: true },
+      { source: "/academy/en/index.html", destination: "/academy/en", permanent: true },
+      { source: "/academy/courses", destination: "/academy/en", permanent: true },
+      { source: "/academy/courses/zh", destination: "/academy", permanent: true },
+      { source: "/academy/courses/index.html", destination: "/academy/en", permanent: true },
+      { source: "/academy/courses/zh/index.html", destination: "/academy", permanent: true },
       ...htmlRoutes.map(([source, destination]) => ({
         source: `/${destination}`,
         destination: `/${source}`,
@@ -39,12 +43,12 @@ const nextConfig = {
       })),
     ];
   },
-  // These standalone course pages have their own local assets and content.
-  // Keep the existing CMS-backed public page routes untouched.
+  // Academy now opens the full course website at its existing official entry.
+  // All other public pages continue through their current-data CMS routes.
   async rewrites() {
     return [
-      { source: "/academy/courses", destination: "/academy/courses/index.html" },
-      { source: "/academy/courses/zh", destination: "/academy/courses/zh/index.html" },
+      { source: "/academy", destination: "/academy/courses/zh/index.html" },
+      { source: "/academy/en", destination: "/academy/courses/index.html" },
     ];
   },
 };

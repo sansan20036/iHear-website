@@ -6,17 +6,23 @@ Static iHear pages served by Next.js, with Auth.js / NextAuth.js Google sign-in.
 
 ## Academy course website
 
-The standalone bilingual course website is public at `/academy/courses` (English)
-and `/academy/courses/zh` (Traditional Chinese). `/academy` remains the existing
-program introduction, with its primary button linking to the Chinese course page.
-The course pages need no ChatGPT account or site editor integration.
+The complete bilingual course website is public directly at `/academy` (Traditional
+Chinese, the default) and `/academy/en` (English). Existing `/academy#academy` links
+land at the new page top. The former `/academy/courses` and `/academy/courses/zh`
+entry URLs permanently redirect to the corresponding new language routes. The course
+pages need no ChatGPT account or site editor integration. The retained `academy.html`
+is the former introduction source; it no longer serves the public `/academy` entry.
 
 Edit `academy-site/` or sync it from the adjacent local Academy project with
 `npm run sync:official` in that project's `site/` directory. During the normal build,
 `scripts/prepare-academy.mjs` copies these portable static files to
 `public/academy/courses/` and adapts asset and language URLs for the clean routes.
-The existing CMS pages keep their current-data routes. Use `npm run test:public-pages`
-after a build to check both the original pages and the Academy routes and assets.
+The generated asset directory stays at that location while `next.config.mjs` maps the
+new page entry routes. Do not edit generated `public/` files. After local verification,
+review, commit, and push the official repository to GitHub `main` for Vercel to publish;
+syncing local files alone does not publish the site. The other CMS pages keep their
+current-data routes. Use `npm run test:public-pages` after a build to check the public
+CMS pages, both Academy languages, redirects, and assets.
 
 ## Local Preview
 
