@@ -3826,7 +3826,7 @@
           "file": "academy.html",
           "legacyKey": "foot_copy",
           "tag": "span",
-          "line": 141
+          "line": 145
         },
         {
           "file": "donate.html",
@@ -3917,7 +3917,7 @@
           "file": "academy.html",
           "legacyKey": "foot_desc",
           "tag": "p",
-          "line": 107
+          "line": 111
         },
         {
           "file": "donate.html",
@@ -4008,7 +4008,7 @@
           "file": "academy.html",
           "legacyKey": "foot_inv_h",
           "tag": "h2",
-          "line": 119
+          "line": 123
         },
         {
           "file": "donate.html",
@@ -4099,7 +4099,7 @@
           "file": "academy.html",
           "legacyKey": "foot_inv1",
           "tag": "a",
-          "line": 121
+          "line": 125
         },
         {
           "file": "donate.html",
@@ -4190,7 +4190,7 @@
           "file": "academy.html",
           "legacyKey": "foot_inv2",
           "tag": "a",
-          "line": 122
+          "line": 126
         },
         {
           "file": "donate.html",
@@ -4281,7 +4281,7 @@
           "file": "academy.html",
           "legacyKey": "foot_inv3",
           "tag": "a",
-          "line": 123
+          "line": 127
         },
         {
           "file": "donate.html",
@@ -4372,7 +4372,7 @@
           "file": "academy.html",
           "legacyKey": "foot_inv4",
           "tag": "a",
-          "line": 124
+          "line": 128
         },
         {
           "file": "donate.html",
@@ -4463,7 +4463,7 @@
           "file": "academy.html",
           "legacyKey": "foot_inv5",
           "tag": "a",
-          "line": 125
+          "line": 129
         },
         {
           "file": "donate.html",
@@ -4554,7 +4554,7 @@
           "file": "academy.html",
           "legacyKey": "foot_made",
           "tag": "span",
-          "line": 142
+          "line": 146
         },
         {
           "file": "donate.html",
@@ -4645,7 +4645,7 @@
           "file": "academy.html",
           "legacyKey": "foot_more_h",
           "tag": "h2",
-          "line": 129
+          "line": 133
         },
         {
           "file": "donate.html",
@@ -4736,7 +4736,7 @@
           "file": "academy.html",
           "legacyKey": "foot_more1",
           "tag": "a",
-          "line": 131
+          "line": 135
         },
         {
           "file": "donate.html",
@@ -4827,7 +4827,7 @@
           "file": "academy.html",
           "legacyKey": "foot_more2",
           "tag": "a",
-          "line": 132
+          "line": 136
         },
         {
           "file": "donate.html",
@@ -4918,7 +4918,7 @@
           "file": "academy.html",
           "legacyKey": "foot_more3",
           "tag": "a",
-          "line": 133
+          "line": 137
         },
         {
           "file": "donate.html",
@@ -5009,7 +5009,7 @@
           "file": "academy.html",
           "legacyKey": "foot_more4",
           "tag": "a",
-          "line": 134
+          "line": 138
         },
         {
           "file": "donate.html",
@@ -5100,7 +5100,7 @@
           "file": "academy.html",
           "legacyKey": "foot_more5",
           "tag": "a",
-          "line": 135
+          "line": 139
         },
         {
           "file": "donate.html",
@@ -5191,7 +5191,7 @@
           "file": "academy.html",
           "legacyKey": "foot_more6",
           "tag": "a",
-          "line": 136
+          "line": 140
         },
         {
           "file": "donate.html",
@@ -5282,7 +5282,7 @@
           "file": "academy.html",
           "legacyKey": "foot_prog_h",
           "tag": "h2",
-          "line": 110
+          "line": 114
         },
         {
           "file": "donate.html",
@@ -5373,7 +5373,7 @@
           "file": "academy.html",
           "legacyKey": "foot_prog1",
           "tag": "a",
-          "line": 112
+          "line": 116
         },
         {
           "file": "donate.html",
@@ -5464,7 +5464,7 @@
           "file": "academy.html",
           "legacyKey": "foot_prog2",
           "tag": "a",
-          "line": 113
+          "line": 117
         },
         {
           "file": "donate.html",
@@ -5555,7 +5555,7 @@
           "file": "academy.html",
           "legacyKey": "foot_prog3",
           "tag": "a",
-          "line": 114
+          "line": 118
         },
         {
           "file": "donate.html",
@@ -5646,7 +5646,7 @@
           "file": "academy.html",
           "legacyKey": "foot_prog4",
           "tag": "a",
-          "line": 115
+          "line": 119
         },
         {
           "file": "donate.html",
@@ -5737,7 +5737,7 @@
           "file": "academy.html",
           "legacyKey": "foot_tag",
           "tag": "p",
-          "line": 106
+          "line": 110
         },
         {
           "file": "donate.html",
@@ -6628,6 +6628,25 @@
     },
     {
       "page": "/academy",
+      "key": "academy.acad.courses",
+      "mode": "singleline",
+      "maxLength": 120,
+      "values": {
+        "en": "Explore iHear Academy Courses",
+        "zhHant": "了解 iHear Academy 課程",
+        "zhHans": "了解 iHear Academy 课程"
+      },
+      "occurrences": [
+        {
+          "file": "academy.html",
+          "legacyKey": "acad_courses",
+          "tag": "a",
+          "line": 93
+        }
+      ]
+    },
+    {
+      "page": "/academy",
       "key": "academy.acad.cta1",
       "mode": "singleline",
       "maxLength": 120,
@@ -6640,8 +6659,8 @@
         {
           "file": "academy.html",
           "legacyKey": "acad_cta1",
-          "tag": "a",
-          "line": 93
+          "tag": "span",
+          "line": 100
         }
       ]
     },
@@ -6659,6 +6678,25 @@
         {
           "file": "academy.html",
           "legacyKey": "acad_cta2",
+          "tag": "span",
+          "line": 101
+        }
+      ]
+    },
+    {
+      "page": "/academy",
+      "key": "academy.acad.email",
+      "mode": "singleline",
+      "maxLength": 120,
+      "values": {
+        "en": "Email an inquiry",
+        "zhHant": "寄信洽詢",
+        "zhHans": "邮件咨询"
+      },
+      "occurrences": [
+        {
+          "file": "academy.html",
+          "legacyKey": "acad_email",
           "tag": "a",
           "line": 94
         }

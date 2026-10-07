@@ -4,6 +4,34 @@ The `/team` page and published profiles and photos are public. Editing and draft
 
 Static iHear pages served by Next.js, with Auth.js / NextAuth.js Google sign-in.
 
+## Academy course website
+
+The existing CMS introduction remains at `/academy#academy`, served from
+`academy.html`. Its primary "了解 iHear Academy 課程" button opens the complete
+bilingual course website, public at `/academy/courses/zh` (Traditional Chinese)
+and `/academy/courses` (English). Inquiry buttons within that course website open
+prefilled email drafts. All pages use the same official Vercel host and need no
+ChatGPT account or site editor integration.
+
+The introduction's course button uses `/academy/courses/zh?entry=official` to avoid
+previous permanent redirects cached by some browsers. The former `/academy/en`
+entry redirects to `/academy/courses?entry=official`. Canonical and hreflang metadata
+use the clean, query-free course URLs; the entry parameter only avoids stale browser
+redirect caches.
+
+Edit `academy-site/` or sync it from the adjacent local Academy project with
+`npm run sync:official` in that project's `site/` directory. During the normal build,
+`scripts/prepare-academy.mjs` copies these portable static files to
+`public/academy/courses/` and adapts asset and language URLs for the clean routes.
+The generated asset directory stays at that location while `next.config.mjs` maps the
+course page entry routes. Do not edit generated `public/` files. This integrated
+candidate disables automatic Git deployments in `vercel.json`; the setting has not
+yet been applied to the remote project. Follow the [release runbook](docs/home-focus-release-runbook.md)
+for a safe CI push, database preservation, staged Production deployment and explicit
+promotion. A push or local file sync alone is not release acceptance. The CMS pages keep their
+current-data routes. Use `npm run test:public-pages` after a build to check the public
+CMS pages, both Academy languages, redirects, and assets.
+
 ## Local Preview
 
 Install dependencies once:
@@ -388,7 +416,7 @@ Use these settings:
 - Framework Preset: `Next.js`
 - Build Command: `npm run build`
 - Output Directory: leave blank
-- Install Command: `npm install`
+- Install Command: `npm ci --include=optional`
 
 Add the same Auth.js environment variables in Vercel Project Settings.
 

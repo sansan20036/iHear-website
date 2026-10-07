@@ -59,7 +59,7 @@ export default [
     ],
   },
   {
-    files: ["assets/**/*.js"],
+    files: ["assets/**/*.js", "academy-site/**/*.js"],
     languageOptions: {
       ecmaVersion: "latest",
       sourceType: "script",
@@ -77,7 +77,7 @@ export default [
   },
   {
     files: ["**/*.js", "**/*.mjs"],
-    ignores: ["assets/**/*.js"],
+    ignores: ["assets/**/*.js", "academy-site/**/*.js"],
     languageOptions: {
       ecmaVersion: "latest",
       sourceType: "module",

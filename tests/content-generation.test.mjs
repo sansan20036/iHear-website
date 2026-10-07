@@ -175,6 +175,30 @@ describe("content generation determinism and historical migration protection", (
     }
   });
 
+  it("keeps old Academy translations inert while generating the new courses and email actions", async () => {
+    const originalMigrations = await snapshot(migrationFiles);
+    const academy = await read("academy.html");
+    const template = academy.match(/<template data-academy-legacy-content>[\s\S]*?<\/template>/)?.[0];
+    expect(template).toBeDefined();
+    expect(template).not.toMatch(/<a\b|data-layout-link=/);
+    const visible = academy.replace(template, "");
+    expect(visible).not.toMatch(/data-i18n="acad_cta[12]"/);
+    expect(visible).toContain('href="/academy/courses/zh?entry=official" data-i18n="acad_courses"');
+    expect(visible).toContain('href="mailto:ihearprogram@gmail.com?subject=iHear%20Academy%20pricing" data-i18n="acad_email"');
+    await write("academy.html", academy.replace("Explore iHear Academy Courses", "Updated courses fixture"));
+
+    // The remote branch's former bootstrap flag must never re-enable historical SQL output.
+    expectSuccess(await runGenerator("--write", "--initial-seed"));
+    const generated = await catalog();
+    const values = key => generated.slots.find(slot => slot.page === "/academy" && slot.key === key).values;
+    expect(values("academy.acad.cta1")).toEqual({ en: "Ask About iHear Academy", zhHant: "洽詢 iHear Academy", zhHans: "咨询 iHear Academy" });
+    expect(values("academy.acad.cta2")).toEqual({ en: "Pricing & Programs", zhHant: "學費方案與課程", zhHans: "学费方案与课程" });
+    expect(values("academy.acad.courses")).toEqual({ en: "Updated courses fixture", zhHant: "了解 iHear Academy 課程", zhHans: "了解 iHear Academy 课程" });
+    expect(values("academy.acad.email")).toEqual({ en: "Email an inquiry", zhHant: "寄信洽詢", zhHans: "邮件咨询" });
+    expect(await snapshot(migrationFiles)).toEqual(originalMigrations);
+    expectSuccess(await runGenerator());
+  });
+
   it("accepts normalized migration line endings without rewriting the historical file", async () => {
     await write(seedFile, (await read(seedFile)).replace(/\r\n?/g, "\n").replace(/\n/g, "\r\n"));
     const originalMigrations = await snapshot(migrationFiles);

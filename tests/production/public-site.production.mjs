@@ -1,5 +1,5 @@
 import { expect, test as base } from "@playwright/test";
-import { installReadOnlyGuard, productionOrigin, publicPages } from "./read-only.mjs";
+import { installReadOnlyGuard, productionOrigin, cmsPages, academyPages } from "./read-only.mjs";
 import { assertResourceRendering } from "./resource-rendering.mjs";
 
 const test = base.extend({
@@ -67,7 +67,7 @@ async function inspectImages(page) {
   expect(await images.count(), "Page should contain images").toBeGreaterThan(0);
 }
 
-for (const route of publicPages) {
+for (const route of cmsPages) {
   test(`${route} visitor content, images, links and layout`, async ({ page }, testInfo) => {
     const required = ["/api/auth/session"];
     await page.addInitScript(() => {
@@ -216,3 +216,73 @@ for (const route of publicPages) {
     }
   });
 }
+
+for (const route of academyPages) {
+  test(`${route} complete Academy content and interactions`, async ({ page }) => {
+    const lang = route.endsWith("/zh") ? "zh-Hant" : "en";
+    const response = await page.goto(`${route}?entry=official`, { waitUntil: "load" });
+    expect(response.status()).toBe(200);
+    expect(new URL(page.url()).pathname).toBe(route);
+    await expect(page.locator("html")).toHaveAttribute("lang", lang);
+    await expect(page.locator("main")).toBeVisible();
+    await expect(page.locator("h1")).toHaveCount(1);
+    await expect(page.locator("main h1")).toBeVisible();
+    await expect(page.locator('link[rel="canonical"]')).toHaveAttribute("href", productionOrigin + route);
+    for (const [language, destination] of [["en", "/academy/courses?entry=official"], ["zh-Hant", "/academy/courses/zh?entry=official"]]) {
+      const links = page.locator(`a[lang="${language}"]`);
+      await expect(links).toHaveCount(2);
+      for (const link of await links.all()) await expect(link).toHaveAttribute("href", destination);
+    }
+    for (const [tutor, plan, price] of [["highschool", "single", "$35"], ["highschool", "package", "$330"], ["college", "single", "$40"], ["college", "package", "$380"]]) {
+      await page.locator(`input[name="tutor"][value="${tutor}"]`).check();
+      await page.locator(`input[name="plan"][value="${plan}"]`).check();
+      await expect(page.locator("#price")).toHaveText(price);
+      await expect(page.locator("#price-detail")).toContainText(lang === "zh-Hant" ? "導師" : "tutor");
+    }
+    const faq = page.locator("#faq details").first();
+    await faq.locator("summary").click();
+    await expect(faq).toHaveAttribute("open", "");
+    await expect(faq.locator("p")).toBeVisible();
+    const draft = new URL(await page.locator('a[href^="mailto:"][href*="body="]').getAttribute("href"));
+    expect(draft.pathname).toBe("ihearprogram@gmail.com");
+    expect(draft.searchParams.get("subject")).toContain("iHear Academy");
+    expect(draft.searchParams.get("body")).toBeTruthy();
+    await inspectImages(page);
+    await expect(page.locator(adminControls)).toHaveCount(0);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), "Academy must not overflow horizontally").toBeLessThanOrEqual(1);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await expect(page.locator('header a[lang="en"]')).toBeVisible();
+    await expect(page.locator('header a[lang="zh-Hant"]')).toBeVisible();
+  });
+}
+
+test("Academy introduction leads to course details before an email inquiry", async ({ page }) => {
+  const response = await page.goto("/academy#academy", { waitUntil: "load" });
+  expect(response.status()).toBe(200);
+  await expect(page.locator("#academy-h")).toBeVisible();
+  const courseLink = page.locator('[data-layout-link="academy.acad.courses.href"]');
+  const menuToggle = page.locator("#navToggle");
+  const mobileMenu = await menuToggle.isVisible();
+  if (mobileMenu) await menuToggle.click();
+  for (const [language, label] of [["en", "Explore iHear Academy Courses"], ["zhCN", "了解 iHear Academy 课程"], ["zhTW", "了解 iHear Academy 課程"]]) {
+    await page.locator(`#langSwitch button[data-lang="${language}"]`).click();
+    await expect(courseLink).toHaveText(label);
+    await expect(courseLink).toHaveAttribute("href", "/academy/courses/zh?entry=official");
+  }
+  if (mobileMenu) await menuToggle.click();
+  await courseLink.click();
+  await expect(page).toHaveURL(`${productionOrigin}/academy/courses/zh?entry=official`);
+  await expect(page.locator("html")).toHaveAttribute("lang", "zh-Hant");
+  await expect(page.locator(".subject-grid article")).toHaveCount(3);
+  await expect(page.locator("#pricing")).toBeAttached();
+  await expect(page.locator("#faq details")).toHaveCount(9);
+  await page.locator('.hero a.button[href="#start"]').click();
+  await expect(page.locator("#start")).toBeInViewport();
+  const draftLink = page.locator('a[href^="mailto:"][href*="body="]');
+  await expect(draftLink).toBeVisible();
+  const draft = new URL(await draftLink.getAttribute("href"));
+  expect(draft.pathname).toBe("ihearprogram@gmail.com");
+  expect(draft.searchParams.get("subject")).toContain("iHear Academy");
+  expect(draft.searchParams.get("body")).toContain("年級");
+  // Inspect the draft destination only; never launch an email client or send it.
+});

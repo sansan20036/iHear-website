@@ -1,0 +1,27 @@
+# Deploy source only. prepare/build regenerates the public and private artifacts.
+.git/
+.vercel/
+.agents/
+.codex/
+.aws/
+node_modules/
+.next/
+public/
+.private/
+output/
+out/
+backups/
+scheduling/
+.playwright-cli/
+.env
+.env.*
+!.env.example
+data/*
+!data/content-slots.json
+!data/layout-slots.json
+*.log
+*.tsbuildinfo
+*.pem
+*.key
+*.p12
+*.pfx

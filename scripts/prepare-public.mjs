@@ -1,5 +1,6 @@
 import { copyFile, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { prepareAcademy } from "./prepare-academy.mjs";
 
 const root = process.cwd();
 const publicDir = path.join(root, "public");
@@ -193,6 +194,7 @@ await rm(publicDir, { recursive: true, force: true });
 await mkdir(publicDir, { recursive: true });
 await mkdir(privateDir, { recursive: true });
 await copyDir(path.join(root, "assets"), path.join(publicDir, "assets"));
+await prepareAcademy(root, publicDir);
 await mkdir(path.join(publicDir, "assets", "vendor"), { recursive: true });
 await copyFile(
   path.join(root, "node_modules", "browser-image-compression", "dist", "browser-image-compression.js"),
