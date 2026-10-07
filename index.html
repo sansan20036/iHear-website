@@ -49,6 +49,7 @@
   </script>
   <script>document.documentElement.classList.add('js');</script>
   <link rel="stylesheet" href="/assets/site.css">
+  <link rel="stylesheet" href="/assets/home-focus.css">
 </head>
 <body class="home">
   <a class="skip-link" href="#main" data-i18n="skip" data-editable-content="site.accessibility.skip_to_content" data-editable-mode="singleline" data-editable-maxlength="120" data-editable-page="/__global__">Skip to content</a>
@@ -82,7 +83,72 @@
   </header>
 
   <main id="main">
-<section class="hero" id="top" aria-label="Intro">
+    <section class="home-focus" id="top" data-home-focus data-banner-state="error" aria-labelledby="home-focus-heading">
+      <div class="container home-focus__grid">
+        <h2 class="home-focus__sr-only" id="home-focus-heading" data-i18n="focus_heading" data-editable-content="home.focus.heading" data-editable-mode="singleline" data-editable-maxlength="200">Latest from iHear</h2>
+        <div class="home-banner" data-home-banner>
+          <!-- home-banner:start -->
+          <div class="home-banner__error">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="m3 17 5-5 4 4 3-3 6 6M8 8h.01"/></svg>
+            <p data-i18n="focus_banner_error" data-editable-content="home.focus.banner.error" data-editable-mode="multiline" data-editable-maxlength="5000">Featured photos could not be loaded.</p>
+            <a class="home-focus__link" href="/" data-home-banner-retry data-i18n="focus_banner_retry" data-editable-content="home.focus.banner.retry" data-editable-mode="singleline" data-editable-maxlength="120">Try again</a>
+          </div>
+          <!-- home-banner:end -->
+        </div>
+        <div class="home-focus__cards" data-home-quick-cards data-home-cards>
+          <article class="home-focus__card home-focus__card--announcements" data-home-announcements data-home-card-state="loading" aria-labelledby="home-announcements-heading">
+            <div class="home-focus__card-heading"><span class="home-focus__icon" aria-hidden="true"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10v5h4l10 5V5L8 10H4Zm4 5 2 6h3l-2-5M21 9v7"/></svg></span><h3 id="home-announcements-heading" data-i18n="focus_announcements_h" data-editable-content="home.focus.announcements.title" data-editable-mode="singleline" data-editable-maxlength="200">Announcements</h3></div>
+            <div class="home-card__content" data-home-announcements-content data-no-inline-edit>
+              <h4 data-home-card-title hidden></h4><p data-home-card-summary hidden></p>
+              <p class="home-card__status" data-home-card-status data-i18n="focus_cards_loading" data-editable-content="home.focus.cards.loading" data-editable-mode="multiline" data-editable-maxlength="5000">Loading resources…</p>
+              <div class="home-card__skeleton" data-home-card-skeleton aria-hidden="true"><span></span><span></span></div>
+            </div>
+            <div class="home-card__actions" data-no-inline-edit><a class="home-focus__link" href="/resources" data-home-card-link data-i18n="focus_cards_resources" data-editable-content="home.focus.cards.resources" data-editable-mode="singleline" data-editable-maxlength="120">Browse resources</a><button type="button" class="home-card__retry" data-home-card-retry hidden data-i18n="focus_cards_retry" data-editable-content="home.focus.cards.retry" data-editable-mode="singleline" data-editable-maxlength="120">Try again</button></div>
+            <noscript><p class="home-card__noscript" data-i18n="focus_cards_noscript" data-editable-content="home.focus.cards.noscript" data-editable-mode="multiline" data-editable-maxlength="5000">Visit Resources for current information.</p></noscript>
+          </article>
+          <article class="home-focus__card home-focus__card--calendar" data-home-calendar data-home-card-state="loading" aria-labelledby="home-calendar-heading">
+            <div class="home-focus__card-heading"><span class="home-focus__icon" aria-hidden="true"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M7 3v4m10-4v4M3 11h18m-13 4h2m4 0h2"/></svg></span><h3 id="home-calendar-heading" data-i18n="focus_calendar_h" data-editable-content="home.focus.calendar.title" data-editable-mode="singleline" data-editable-maxlength="200">Calendar</h3></div>
+            <div class="home-card__content" data-home-calendar-content data-no-inline-edit>
+              <h4 data-home-card-title hidden></h4><p data-home-card-summary hidden></p>
+              <p class="home-card__status" data-home-card-status data-i18n="focus_cards_loading" data-editable-content="home.focus.cards.loading" data-editable-mode="multiline" data-editable-maxlength="5000">Loading resources…</p>
+              <div class="home-card__skeleton" data-home-card-skeleton aria-hidden="true"><span></span><span></span></div>
+            </div>
+            <div class="home-card__actions" data-no-inline-edit><a class="home-focus__link" href="/resources" data-home-card-link data-i18n="focus_cards_resources" data-editable-content="home.focus.cards.resources" data-editable-mode="singleline" data-editable-maxlength="120">Browse resources</a><button type="button" class="home-card__retry" data-home-card-retry hidden data-i18n="focus_cards_retry" data-editable-content="home.focus.cards.retry" data-editable-mode="singleline" data-editable-maxlength="120">Try again</button></div>
+            <noscript><p class="home-card__noscript" data-i18n="focus_cards_noscript" data-editable-content="home.focus.cards.noscript" data-editable-mode="multiline" data-editable-maxlength="5000">Visit Resources for current information.</p></noscript>
+          </article>
+          <article class="home-focus__card home-focus__card--tutors" data-home-tutors aria-labelledby="home-tutors-heading">
+            <div class="home-focus__card-heading"><span class="home-focus__icon" aria-hidden="true"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3"/><path d="M3 21v-2a6 6 0 0 1 12 0v2m2-16a3 3 0 0 1 0 6m1 4a5 5 0 0 1 3 4v2"/></svg></span><h3 id="home-tutors-heading" data-i18n="focus_tutors_h" data-editable-content="home.focus.tutors.title" data-editable-mode="singleline" data-editable-maxlength="200">Tutors</h3></div>
+            <p class="home-card__tutor-copy" data-home-tutors-content data-i18n="focus_tutors_resources" data-editable-content="home.focus.tutors.resources" data-editable-mode="multiline" data-editable-maxlength="5000">Find tutor forms and teaching guides.</p>
+            <div class="home-card__actions"><a class="home-focus__link" href="/resources#resource-links" data-home-tutor-forms data-i18n="focus_tutors_forms" data-editable-content="home.focus.tutors.forms" data-editable-mode="singleline" data-editable-maxlength="120">Forms</a><a class="home-focus__link" href="/resources#resource-guides" data-home-tutor-materials data-i18n="focus_tutors_guides" data-editable-content="home.focus.tutors.guides" data-editable-mode="singleline" data-editable-maxlength="120">Teaching guides</a></div>
+          </article>
+        </div>
+      </div>
+      <template data-home-banner-image-error-template><span data-i18n="focus_banner_image_error" data-editable-content="home.focus.banner.image.error" data-editable-mode="singleline" data-editable-maxlength="120">This photo could not be displayed.</span></template>
+      <template data-home-banner-controls-template>
+        <span data-home-banner-label="previous" data-i18n="focus_banner_previous" data-editable-content="home.focus.banner.previous" data-editable-mode="singleline" data-editable-maxlength="120">Previous photo</span>
+        <span data-home-banner-label="next" data-i18n="focus_banner_next" data-editable-content="home.focus.banner.next" data-editable-mode="singleline" data-editable-maxlength="120">Next photo</span>
+        <span data-home-banner-label="choose" data-i18n="focus_banner_choose" data-editable-content="home.focus.banner.choose" data-editable-mode="singleline" data-editable-maxlength="120">Show photo {current} of {total}</span>
+        <span data-home-banner-label="counter" data-i18n="focus_banner_counter" data-editable-content="home.focus.banner.counter" data-editable-mode="singleline" data-editable-maxlength="120">{current} / {total}</span>
+        <span data-home-banner-label="region" data-i18n="focus_banner_region" data-editable-content="home.focus.banner.region" data-editable-mode="singleline" data-editable-maxlength="120">Featured photos</span>
+        <span data-home-banner-label="changed" data-i18n="focus_banner_changed" data-editable-content="home.focus.banner.changed" data-editable-mode="singleline" data-editable-maxlength="120">Photo {current} of {total}</span>
+        <span data-home-banner-label="refreshError" data-i18n="focus_banner_refresh_error" data-editable-content="home.focus.banner.refresh.error" data-editable-mode="singleline" data-editable-maxlength="120">Updates could not be loaded.</span>
+        <span data-home-banner-label="refreshing" data-i18n="focus_banner_refreshing" data-editable-content="home.focus.banner.refreshing" data-editable-mode="singleline" data-editable-maxlength="120">Checking for updates</span>
+        <span data-home-banner-label="retry" data-i18n="focus_banner_retry" data-editable-content="home.focus.banner.retry" data-editable-mode="singleline" data-editable-maxlength="120">Try again</span>
+        <span data-home-banner-label="imageError" data-i18n="focus_banner_image_error" data-editable-content="home.focus.banner.image.error" data-editable-mode="singleline" data-editable-maxlength="120">This photo could not be displayed.</span>
+      </template>
+      <template data-home-cards-labels>
+        <span data-home-cards-label="loading" data-i18n="focus_cards_loading" data-editable-content="home.focus.cards.loading" data-editable-mode="singleline" data-editable-maxlength="120">Loading resources…</span>
+        <span data-home-cards-label="error" data-i18n="focus_cards_error" data-editable-content="home.focus.cards.error" data-editable-mode="singleline" data-editable-maxlength="120">Resources could not be loaded.</span>
+        <span data-home-cards-label="retry" data-i18n="focus_cards_retry" data-editable-content="home.focus.cards.retry" data-editable-mode="singleline" data-editable-maxlength="120">Try again</span>
+        <span data-home-cards-label="announcementsEmpty" data-i18n="focus_announcements_empty" data-editable-content="home.focus.announcements.empty" data-editable-mode="singleline" data-editable-maxlength="120">No public announcements at the moment.</span>
+        <span data-home-cards-label="calendarEmpty" data-i18n="focus_calendar_empty" data-editable-content="home.focus.calendar.empty" data-editable-mode="singleline" data-editable-maxlength="120">No public calendar updates at the moment.</span>
+        <span data-home-cards-label="resources" data-i18n="focus_cards_resources" data-editable-content="home.focus.cards.resources" data-editable-mode="singleline" data-editable-maxlength="120">Browse resources</span>
+        <span data-home-cards-label="announcementsLink" data-i18n="focus_announcements_link" data-editable-content="home.focus.announcements.link" data-editable-mode="singleline" data-editable-maxlength="120">View announcements</span>
+        <span data-home-cards-label="calendarLink" data-i18n="focus_calendar_link" data-editable-content="home.focus.calendar.link" data-editable-mode="singleline" data-editable-maxlength="120">View calendar</span>
+        <span data-i18n="focus_tutors_link" data-editable-content="home.focus.tutors.link" data-editable-mode="singleline" data-editable-maxlength="120">Meet our tutors</span>
+      </template>
+    </section>
+<section class="hero" aria-label="Intro">
       <div class="container hero-grid">
         <div>
           <span class="eyebrow"><span class="dot" aria-hidden="true"></span><span data-i18n="hero_eyebrow" data-editable-content="home.hero.eyebrow" data-editable-mode="singleline" data-editable-maxlength="120">Student-led · 501(c)(3) program · 100% free</span></span>
@@ -103,7 +169,7 @@
           <div class="hero-photo" data-site-media-slot="home.hero" data-site-media-aspect="4 / 3.4" data-site-media-alt-en="Students raising their hands in an inclusive classroom" data-site-media-alt-zh-hant="學生在共融教室中舉手" data-site-media-alt-zh-hans="学生在融合课堂中举手" data-no-inline-edit>
             <picture>
               <source type="image/webp" srcset="assets/images/hero-classroom-480.webp 480w, assets/images/hero-classroom-800.webp 800w, assets/images/hero-classroom-1200.webp 1200w" sizes="(max-width: 900px) calc(100vw - 48px), 520px">
-              <img src="assets/images/hero-classroom.jpg" alt="Students raising their hands in an inclusive classroom" width="800" height="680" fetchpriority="high">
+              <img src="assets/images/hero-classroom.jpg" alt="Students raising their hands in an inclusive classroom" width="800" height="680" loading="lazy">
             </picture>
           </div>
           <div class="float-card fc1">
@@ -381,7 +447,7 @@
         </div>
       </div>
     </section>
-<section data-gallery-section data-layout-section="home.video" id="video" aria-labelledby="video-h" style="padding-top:0" class="testis">
+<section data-layout-section="home.video" data-gallery-section id="video" aria-labelledby="video-h" style="padding-top:0" class="testis">
       <div class="container">
         <div class="sec-head" data-animate>
           <h2 id="video-h" data-i18n="video_h2" data-editable-content="shared.video.heading" data-editable-mode="singleline" data-editable-maxlength="200" data-editable-page="/__global__">See our impact</h2>

@@ -1,10 +1,15 @@
-// Exercise the actual built Next routes; only local, read-only HTTP requests.
+// Public GET may initialize local stores. Keep even read-only HTTP assertions
+// in a disposable data directory, never the developer's existing local data.
 import { spawn } from 'node:child_process';
 import assert from 'node:assert/strict';
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 const origin = 'http://127.0.0.1:3214';
+const directory = await mkdtemp(path.join(tmpdir(), 'ihear-public-pages-'));
 const pages = ['/', '/about', '/programs', '/impact', '/team', '/submit-bio', '/stories', '/get-involved', '/academy', '/donate', '/resources', '/faq', '/contact'];
 const child = spawn(process.execPath, ['node_modules/next/dist/bin/next', 'start', '--hostname', '127.0.0.1', '--port', '3214'], {
-  env: { ...process.env, NODE_ENV: 'production', VERCEL: '', NETLIFY: '', CONTEXT: '', IHEAR_FORCE_FILE_STORE: '1' },
+  env: { ...process.env, NODE_ENV: 'production', VERCEL: '', NETLIFY: '', CONTEXT: '', IHEAR_FORCE_FILE_STORE: '1', IHEAR_TEST_DATA_DIR: directory, DATABASE_URL: '', POSTGRES_URL: '', SUPABASE_URL: '', SUPABASE_SERVICE_ROLE_KEY: '' },
   windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
 });
 let logs = '';

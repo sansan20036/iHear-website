@@ -201,6 +201,12 @@ npm run db:migrate
 The command is safe to rerun. Applied migrations are skipped, and changing an
 already-recorded migration file is rejected. Add a new numbered migration instead.
 
+`npm run content:generate` updates HTML content/layout attributes, catalog metadata,
+and the content inventory. `npm run content:check` verifies those artifacts without
+writing them. Both validate the frozen migration 013 checksum before proceeding;
+content generation never writes SQL migrations. Changes to database defaults or
+stored content require a separate new migration or the existing content editor.
+
 ### Sitewide content image storage
 
 Migration 011 adds the versioned `site_media_assets` and `site_media_variants`

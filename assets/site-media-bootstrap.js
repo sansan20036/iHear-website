@@ -9,8 +9,9 @@
     if (!response.ok) throw new Error("site media unavailable");
     return response.json();
   }).then((data) => {
-    // The homepage's first photo can download while the rest of the page loads.
-    if (location.pathname === "/" || location.pathname === "/index.html") {
+    // Banner SSR already prioritizes its first photo. Keep the legacy preload
+    // only on pages without that snapshot; the intro photo is now below it.
+    if ((location.pathname === "/" || location.pathname === "/index.html") && !document.getElementById("ihear-home-banner")) {
       const hero = data?.items?.["home.hero"];
       if (hero?.src && hero.srcSet) {
         const link = document.createElement("link");

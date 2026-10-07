@@ -45,7 +45,8 @@ describe('YouTube URL boundaries', () => {
 });
 test('initial references preserve existing content; empty impact is empty', async () => {
   const result = await (await getPublic(new Request('https://example.com/api/media-galleries'))).json();
-  expect(result.items).toHaveLength(5);
+  expect(result.items).toHaveLength(6);
+  expect(result.items.map(g => g.id)).toEqual(['tutoring', 'outreach', 'home', 'stories', 'impact', 'home-banner']);
   expect(result.items.find(g => g.id === 'tutoring').items[0].image.src).toContain('tutoring-student');
   expect(result.items.find(g => g.id === 'impact').items).toEqual([]);
   expect(result.items.every(g => !('updatedBy' in g))).toBe(true);

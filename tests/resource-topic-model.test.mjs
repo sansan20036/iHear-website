@@ -3,7 +3,8 @@ import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
-import { migrateResourceDocument, validateResourceDocument, restoredResourceStatus, resourceTopicDefaults } from "../lib/resource-topic-model";
+import { initialResourceTopics, migrateResourceDocument, validateResourceDocument, restoredResourceStatus, resourceTopicDefaults } from "../lib/resource-topic-model";
+import { allocateResourceSlug, parseResourceTopicInput } from "../lib/resource-input";
 import { RESOURCE_SEEDS } from "../lib/resource-seed";
 import { parseResourceInput } from "../lib/resource-types";
 
@@ -49,6 +50,41 @@ test("new topic input defaults to draft, zero order and empty three-language int
     status: "draft", sortOrder: 0, description: { en: "", zhHant: "", zhHans: "" },
   });
   expect(resourceTopicDefaults({ title: { en: "Topic", zhHant: "", zhHans: "" }, slug: "topic", status: undefined }).status).toBe("draft");
+});
+
+test.each(["announcements", "calendar"])("general topic allocation reserves %s even when the system topic is absent", slug => {
+  expect(allocateResourceSlug(slug.toUpperCase(), "new-topic", [])).toBe(`${slug}-2`);
+  const occupied = [`${slug}-2`, `${slug}-3`];
+  expect(allocateResourceSlug(slug, "another-topic", occupied)).toBe(`${slug}-4`);
+  expect(occupied).toEqual([`${slug}-2`, `${slug}-3`]);
+});
+
+test("system seeds retain explicit homepage slugs and initialization preserves existing topic edits", () => {
+  const seeds = initialResourceTopics();
+  for (const id of ["announcements", "calendar"]) expect(seeds.find(topic => topic.id === id)).toMatchObject({ id, slug: id, status: "draft", version: 1 });
+  const source = migrateResourceDocument(legacy());
+  const calendar = source.topics.find(topic => topic.id === "calendar");
+  Object.assign(calendar, { title: { en: "An administrator's calendar", zhHant: "既有行事曆", zhHans: "" }, status: "published", version: 7 });
+  const before = structuredClone(source);
+  expect(migrateResourceDocument(source)).toEqual(before);
+  expect(source).toEqual(before);
+});
+
+test("file topic creation cannot replace homepage system topics or alter their stored fields", async () => {
+  directory = await mkdtemp(path.join(os.tmpdir(), "ihear-home-topic-slugs-"));
+  vi.stubEnv("IHEAR_FORCE_FILE_STORE", "1"); vi.stubEnv("IHEAR_TEST_DATA_DIR", directory);
+  const file = path.join(directory, "resource-links.json"), original = migrateResourceDocument(legacy());
+  await writeFile(file, JSON.stringify(original));
+  const store = await import("../lib/resource-store");
+  for (const [name, expected] of [["Announcements", "announcements-2"], ["Calendar", "calendar-2"]]) {
+    const topic = await store.createResourceTopic(parseResourceTopicInput({ title: { en: name, zhHant: "", zhHans: "" } }), "test-admin", []);
+    expect(topic.slug).toBe(expected);
+    expect(topic.id).not.toBe(expected.replace(/-2$/, ""));
+  }
+  const after = JSON.parse(await readFile(file, "utf8"));
+  expect(after.topics.slice(0, original.topics.length)).toEqual(original.topics);
+  expect(after.items).toEqual(original.items);
+  expect(migrateResourceDocument(after)).toEqual(after);
 });
 
 describe("whole-document data constraints", () => {

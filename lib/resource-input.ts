@@ -58,9 +58,9 @@ export function parseResourceItemInput(value: unknown, previous?: ResourceItem):
   return { ...common(body, previous as ResourceItemInput | undefined), category, topicId, type: type as ResourceItemType, url: url as string };
 }
 
-// Reserve existing page IDs even when their topic is absent. No DOM/UI behavior
+// Reserve existing page IDs and homepage system topics even when their topic is absent. No DOM/UI behavior
 // lives here; these rules only allocate stable, database-unique identifiers.
-const reservedSlugs = new Set(["resources", "main", "nav", "navtoggle", "navlinks", "langswitch", "resource-links", "resource-guides", "resource-articles", "resource-links-heading", "resource-articles-heading", "res-h"]);
+const reservedSlugs = new Set(["resources", "main", "nav", "navtoggle", "navlinks", "langswitch", "resource-links", "resource-guides", "resource-articles", "resource-links-heading", "resource-articles-heading", "res-h", "announcements", "calendar"]);
 export function allocateResourceSlug(english: string, id: string, occupied: Iterable<string>) {
   const base = english.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 120).replace(/-+$/g, "") || `topic-${id}`;
   const used = new Set([...reservedSlugs, ...occupied]);

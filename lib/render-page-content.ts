@@ -27,5 +27,5 @@ export function renderPageContent(html: string, page: string, store: PublicConte
   // public store is embedded; no editor identities or database credentials.
   const payload = JSON.stringify({ page, store, slots, metrics, metricText: metricResult.metricText }).replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
   return rendered.replace(/<html\b([^>]*?)\blang="[^"]*"/i, `<html$1lang="${locale === "en" ? "en" : locale === "zhHant" ? "zh-Hant" : "zh-Hans"}"`)
-    .replace(/<head([^>]*)>/i, opening => `${opening}\n<script id="ihear-published-content" type="application/json">${payload}</script>\n<script src="/assets/content-bootstrap.js?v=20260920-v2"></script>`);
+    .replace(/<head([^>]*)>/i, opening => `${opening}\n<script id="ihear-published-content" type="application/json">${payload}</script>\n<script src="/assets/content-bootstrap.js?v=20261007-home-controller-v1"></script>`);
 }

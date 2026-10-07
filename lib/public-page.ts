@@ -6,6 +6,8 @@ import { publicContentStore, readContentStore } from "./content-store";
 import { renderPageContent, requestContentLocale } from "./render-page-content";
 import { getCurrentSiteMetrics } from "./impact-store";
 import { publicImpactMilestone } from "./impact-types";
+import { loadHomeBanner } from "./home-banner";
+import { renderHomeBanner } from "./home-banner-render";
 
 export const PUBLIC_PAGES = ["/", "/about", "/programs", "/impact", "/team", "/submit-bio", "/stories", "/get-involved", "/academy", "/donate", "/resources", "/faq", "/contact"];
 
@@ -13,12 +15,14 @@ export async function servePublicPage(request: Request, page: string) {
   if (!PUBLIC_PAGES.includes(page)) return new NextResponse("Not found", { status: 404 });
   const locale = requestContentLocale(request);
   try {
-    const [template, content, metrics] = await Promise.all([
+    const [template, content, metrics, banner] = await Promise.all([
       readFile(path.join(process.cwd(), ".private", page === "/" ? "index.html" : `${page.slice(1)}.html`), "utf8"),
       readContentStore(page).then(publicContentStore),
       page === "/" ? getCurrentSiteMetrics().then(value => value ? publicImpactMilestone(value) : null) : Promise.resolve(undefined),
+      page === "/" ? loadHomeBanner() : Promise.resolve(undefined),
     ]);
-    const html = renderPageContent(template, page, content, locale, metrics);
+    let html = renderPageContent(template, page, content, locale, metrics);
+    if (banner) html = renderHomeBanner(html, banner, locale, request);
     return new NextResponse(html, { headers: { ...NO_STORE_HEADERS, "Content-Type": "text/html; charset=utf-8" } });
   } catch {
     // An unavailable data source must not expose old template text as current.

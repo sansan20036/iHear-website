@@ -23,7 +23,7 @@ const htmlFiles = [
 
 const passthroughFiles = ["robots.txt", "sitemap.xml", "CNAME", "favicon.ico"];
 const dynamicI18nKeys = new Set(["latest_label", "latest_period", "latest_headline", "latest_description", "latest_link", "stat_asof", "stat_countries_sub"]);
-const clientAssetVersion = "20260921-team-prefetch-v1";
+const clientAssetVersion = "20261007-home-cards-v1";
 const themeInitScript = `<script data-site-theme-init>(function(){var a={warm:1,ocean:1,sage:1,lavender:1,slate:1},t="warm";try{var s=localStorage.getItem("ihear:site-theme");if(a[s])t=s}catch(e){}document.documentElement.setAttribute("data-theme",t)})()</script>`;
 const themeBootstrapScript = `<script src="/api/site-theme/bootstrap" data-site-theme-bootstrap></script>`;
 // Hide only managed pictures before the first paint. Layout and no-JS images
@@ -60,7 +60,7 @@ function withClientScripts(html, file) {
     "\n"
   );
   const withoutExisting = withoutCloudflareBeacon.replace(
-    /\s*<script\s+src=["']\/?assets\/(?:site|auth|live-content|site-theme|site-layout|inline-edit|impact-milestones|site-metrics|site-media|team-profiles|avatar-background-removal|avatar-cropper|vendor\/browser-image-compression)\.js(?:\?[^"']*)?["']\s+defer><\/script>\s*/g,
+    /\s*<script\s+src=["']\/?assets\/(?:site|auth|live-content|home-banner|home-quick-cards|site-theme|site-layout|inline-edit|impact-milestones|site-metrics|site-media|team-profiles|avatar-background-removal|avatar-cropper|vendor\/browser-image-compression)\.js(?:\?[^"']*)?["']\s+defer><\/script>\s*/g,
     "\n"
   );
   const withoutThemeHead = withoutExisting
@@ -69,13 +69,14 @@ function withClientScripts(html, file) {
   const withoutLayoutHead = withoutThemeHead.replace(/\s*<script\s+src=["']\/api\/site-layout\/bootstrap\?page=[^"']+["']\s+data-site-layout-bootstrap><\/script>\s*/g, "\n");
 
   const withoutManagedStyles = withoutLayoutHead.replace(
-    /\s*<link\s+rel=["']stylesheet["']\s+href=["']\/?assets\/(?:theme|site|impact-milestones|team-profiles)\.css(?:\?[^"']*)?["']\s*\/?>\s*/g,
+    /\s*<link\s+rel=["']stylesheet["']\s+href=["']\/?assets\/(?:theme|site|impact-milestones|team-profiles|home-focus)\.css(?:\?[^"']*)?["']\s*\/?>\s*/g,
     "\n",
   );
   const managedStyles = [
     `  <link rel="stylesheet" href="/assets/theme.css?v=${clientAssetVersion}">`,
     `  <link rel="stylesheet" href="/assets/site.css?v=${clientAssetVersion}">`,
   ];
+  if (file === "index.html") managedStyles.push(`  <link rel="stylesheet" href="/assets/home-focus.css?v=${clientAssetVersion}">`);
   if (html.includes("data-impact-milestones")) {
     managedStyles.push(`  <link rel="stylesheet" href="/assets/impact-milestones.css?v=${clientAssetVersion}">`);
   }
@@ -113,6 +114,8 @@ function withClientScripts(html, file) {
   }
   if (file === "index.html") {
     scripts.push(`  <script src="/assets/site-metrics.js?v=${clientAssetVersion}" defer></script>`);
+    scripts.push(`  <script src="/assets/home-banner.js?v=${clientAssetVersion}" defer></script>`);
+    scripts.push(`  <script src="/assets/home-quick-cards.js?v=${clientAssetVersion}" defer></script>`);
   }
   if (html.includes("data-team-")) {
     scripts.push(`  <script src="/assets/team-profiles.js?v=${clientAssetVersion}" defer></script>`);

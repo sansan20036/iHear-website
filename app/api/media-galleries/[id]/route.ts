@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { NextResponse } from 'next/server';
 import { authorizeAdminRequest, isSameOrigin } from '../../../../lib/admin-auth';
 import { GalleryError, getGalleryAsset, listGalleries, mutateGallery, operationStatus } from '../../../../lib/media-gallery-store';
-import { emptyCaption, galleryAssetSlot, isGalleryId, isOperationId, type GalleryAsset, type GalleryItem } from '../../../../lib/media-gallery-types';
+import { emptyCaption, galleryAssetSlot, GALLERY_TITLE_LIMIT, isGalleryId, isOperationId, type GalleryAsset, type GalleryItem } from '../../../../lib/media-gallery-types';
 import { publicGalleries } from '../../../../lib/media-gallery-public';
 import { youtubeVideoId } from '../../../../assets/youtube';
 import { processSiteMediaImage, MULTIPART_MAX_BYTES, SiteMediaImageError } from '../../../../lib/site-media-image';
@@ -27,6 +27,22 @@ function localized(value: unknown, required = false): SiteMediaAlt {
     if (typeof input[key] !== 'string') throw new GalleryError('Invalid description');
     result[key] = input[key].trim();
     if (result[key].length > 300 || (required && result[key].length < 2)) throw new GalleryError(required ? 'Each photo description needs 2–300 characters in all three languages' : 'Caption must be 300 characters or fewer');
+  }
+  return result;
+}
+function localizedTitle(value: unknown, previous?: SiteMediaAlt | null): SiteMediaAlt | null {
+  if (value === null) return null;
+  const error = () => new GalleryError(`Title must contain en, zhHant and zhHans strings of ${GALLERY_TITLE_LIMIT} characters or fewer`);
+  if (!value || typeof value !== 'object') throw error();
+  const input = value as Record<string, unknown>;
+  const result = emptyCaption();
+  for (const key of ['en', 'zhHant', 'zhHans'] as const) {
+    if (typeof input[key] !== 'string') throw error();
+    // Preserve unchanged legacy translations, including titles accepted before
+    // the 120-character editing limit. A change in one locale must not rewrite another.
+    if (input[key] === previous?.[key]) { result[key] = previous[key]; continue; }
+    result[key] = input[key].trim();
+    if (result[key].length > GALLERY_TITLE_LIMIT) throw error();
   }
   return result;
 }
@@ -90,7 +106,9 @@ export async function POST(request: Request, context: Context) {
       if (!source || typeof source.id !== 'string' || source.id.length > 80 || typeof source.hidden !== 'boolean') throw new GalleryError('Invalid media item');
       const existing = current.items.find(i => i.id === source.id);
       if (!existing && source.id !== body.operationId) throw new GalleryError('New items must use their operation ID');
-      item = { id: source.id, kind: source.kind, hidden: source.hidden, caption: localized(source.caption) };
+      if (id === 'home-banner' && source.kind === 'youtube') throw new GalleryError('Home Banner supports photos only');
+      item = { id: source.id, kind: source.kind, hidden: source.hidden, caption: localized(source.caption),
+        title: Object.hasOwn(source, 'title') ? localizedTitle(source.title, existing?.title) : existing?.title ?? null };
       if (source.kind === 'youtube') {
         const videoId = youtubeVideoId(source.url);
         if (!videoId || file) throw new GalleryError('Enter a valid YouTube video URL');

@@ -2,7 +2,7 @@ import { mkdir, readFile, rename, unlink, writeFile, rmdir } from 'node:fs/promi
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import postgres from 'postgres';
-import { GALLERY_IDS, GALLERY_LIMIT, initialGallery, type Gallery, type GalleryAsset, type GalleryId, type GalleryItem } from './media-gallery-types';
+import { GALLERY_IDS, GALLERY_LIMIT, initialGallery, normalizeGallery, type Gallery, type GalleryAsset, type GalleryId, type GalleryItem } from './media-gallery-types';
 import { upsertTranslationStatesInTransaction } from './translation-state';
 
 export class GalleryError extends Error {
@@ -19,7 +19,7 @@ type Operation = { galleryId: GalleryId; actor: string; fingerprint: string };
 type Store = { galleries: Partial<Record<GalleryId, Gallery>>; assets: Record<string, GalleryAsset>; operations: Record<string, Operation> };
 const filePath = path.join(process.env.IHEAR_FORCE_FILE_STORE === '1' && process.env.IHEAR_TEST_DATA_DIR || path.join(process.cwd(), 'data'), 'media-galleries.json');
 const databaseUrl = process.env.IHEAR_FORCE_FILE_STORE === '1' ? '' : process.env.POSTGRES_URL || process.env.DATABASE_URL || '';
-const globalStore = globalThis as typeof globalThis & { ihearGallerySql?: ReturnType<typeof postgres>; ihearGallerySchema?: Promise<void> };
+const globalStore = globalThis as typeof globalThis & { ihearGallerySql?: ReturnType<typeof postgres>; ihearGallerySchemaV2?: Promise<void> };
 function client() {
   if (!databaseUrl) {
     if (process.env.NODE_ENV === 'production' && process.env.VERCEL) throw new GalleryError('Gallery storage is not configured', 503);
@@ -30,13 +30,24 @@ function client() {
 async function ready() {
   const sql = client();
   if (sql && !(process.env.NODE_ENV === 'production' && process.env.VERCEL)) {
-    globalStore.ihearGallerySchema ||= (async () => {
+    globalStore.ihearGallerySchemaV2 ||= (async () => {
       // Local PostgreSQL uses the same tracked schema; deployment runs migrations separately.
-      const ddl = await readFile(path.join(process.cwd(), 'db/migrations/019_media_galleries.sql'), 'utf8');
-      const exists = await sql`SELECT to_regclass('public.media_galleries') AS name`;
-      if (!exists[0].name) await sql.begin(async tx => { await tx.unsafe(ddl); });
-    })();
-    await globalStore.ihearGallerySchema;
+      const [ddl, upgrade] = await Promise.all([
+        readFile(path.join(process.cwd(), 'db/migrations/019_media_galleries.sql'), 'utf8'),
+        readFile(path.join(process.cwd(), 'db/migrations/024_home_banner_gallery.sql'), 'utf8'),
+      ]);
+      await sql.begin(async tx => {
+        await tx`SELECT pg_advisory_xact_lock(hashtext('ihear-media-gallery-schema'))`;
+        const exists = await tx`SELECT to_regclass('public.media_galleries') AS name`;
+        if (!exists[0].name) await tx.unsafe(ddl);
+        const constraints = await tx`SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint
+          WHERE conrelid='public.media_galleries'::regclass AND conname='media_galleries_id_check' AND contype='c'`;
+        // Migration 024 changes the check and seeds in one transaction. Once its
+        // check exists, an intentionally empty gallery must stay empty on restart.
+        if (!constraints[0]?.definition.includes("'home-banner'")) await tx.unsafe(upgrade);
+      });
+    })().catch(error => { globalStore.ihearGallerySchemaV2 = undefined; throw error; });
+    await globalStore.ihearGallerySchemaV2;
   }
   return sql;
 }
@@ -88,11 +99,23 @@ async function mutateFile<T>(fn: (store: Store) => T): Promise<T> {
 function fromRow(row: any): Gallery {
   return { id: row.id, version: Number(row.version), items: row.items, updatedAt: new Date(row.updated_at).toISOString(), updatedBy: row.updated_by };
 }
+function initializeHomeBanner(store: Store) {
+  // Absence means a pre-CP1 file. A persisted empty gallery is administrator data.
+  if (!Object.prototype.hasOwnProperty.call(store.galleries, 'home-banner')) store.galleries['home-banner'] = initialGallery('home-banner');
+}
 export async function listGalleries(): Promise<Gallery[]> {
   const sql = await ready();
-  if (!sql) { const store = await readStore(); return GALLERY_IDS.map(id => store.galleries[id] || initialGallery(id)); }
+  if (!sql) {
+    let store = await readStore();
+    if (!Object.prototype.hasOwnProperty.call(store.galleries, 'home-banner')) {
+      // Re-read under the writer lock so concurrent initialization cannot restore
+      // a seed over a gallery that another administrator has already cleared.
+      store = await mutateFile(current => { initializeHomeBanner(current); return current; });
+    }
+    return GALLERY_IDS.map(id => normalizeGallery(store.galleries[id] || initialGallery(id)));
+  }
   const rows = await sql`SELECT * FROM public.media_galleries ORDER BY id`;
-  return rows.map(fromRow);
+  return rows.map(row => normalizeGallery(fromRow(row)));
 }
 export async function getGalleryAsset(slot: string): Promise<GalleryAsset | null> {
   const sql = await ready();
@@ -128,7 +151,11 @@ function apply(gallery: Gallery, input: Mutation): Gallery {
   const index = items.findIndex(item => item.id === (input.item?.id || input.itemId));
   if (input.action === 'put') {
     if (!input.item) throw new GalleryError('Missing media item');
-    if (index < 0) items.push(input.item); else items[index] = input.item;
+    // Older clients omit title entirely. Preserve an existing title unless the
+    // caller explicitly supplied a replacement or null to clear it.
+    const item = input.item.title === undefined && index >= 0 && items[index].title !== undefined
+      ? { ...input.item, title: items[index].title } : input.item;
+    if (index < 0) items.push(item); else items[index] = item;
   } else {
     if (index < 0) throw new GalleryError('Media item no longer exists', 409);
     if (input.action === 'remove') items.splice(index, 1);
@@ -147,14 +174,15 @@ export async function mutateGallery(input: Mutation): Promise<{ gallery: Gallery
   };
   const sql = await ready();
   if (!sql) return mutateFile(store => {
+    initializeHomeBanner(store);
     const current = store.galleries[input.id] || initialGallery(input.id);
     const operation = store.operations[input.operationId];
-    if (operation) { checkReplay(operation); return { gallery: current, replayed: true }; }
+    if (operation) { checkReplay(operation); return { gallery: normalizeGallery(current), replayed: true }; }
     const gallery = apply(current, input);
     if (input.asset) store.assets[input.asset.asset.slot] = input.asset;
     store.galleries[input.id] = gallery;
     store.operations[input.operationId] = { galleryId: input.id, actor: input.actor, fingerprint: input.fingerprint };
-    return { gallery, replayed: false };
+    return { gallery: normalizeGallery(gallery), replayed: false };
   });
   return sql.begin(async tx => {
     // Serializes duplicate retries even if they target different galleries.
@@ -165,7 +193,7 @@ export async function mutateGallery(input: Mutation): Promise<{ gallery: Gallery
     const operations = await tx`SELECT * FROM public.media_gallery_operations WHERE id=${input.operationId}`;
     if (operations[0]) {
       checkReplay({ galleryId: operations[0].gallery_id, actor: operations[0].actor, fingerprint: operations[0].fingerprint });
-      return { gallery: current, replayed: true };
+      return { gallery: normalizeGallery(current), replayed: true };
     }
     const gallery = apply(current, input);
     if (input.asset) {
@@ -174,6 +202,6 @@ export async function mutateGallery(input: Mutation): Promise<{ gallery: Gallery
     }
     await tx`UPDATE public.media_galleries SET items=${tx.json(gallery.items as any)}, version=${gallery.version}, updated_by=${input.actor}, updated_at=NOW() WHERE id=${input.id}`;
     await tx`INSERT INTO public.media_gallery_operations(id,gallery_id,actor,fingerprint) VALUES (${input.operationId},${input.id},${input.actor},${input.fingerprint})`;
-    return { gallery, replayed: false };
+    return { gallery: normalizeGallery(gallery), replayed: false };
   });
 }
