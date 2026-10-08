@@ -1,45 +1,220 @@
-name: CI
+# INACTIVE LOCAL DRAFT. No push or workflow dispatch authorized by this file.
+# Intended future path on an isolated maintenance branch: .github/workflows/ci.yml
+name: Verify one historical encrypted backup without database access
 
 on:
   workflow_dispatch:
-  pull_request:
-  push:
-    branches: [main]
+    inputs:
+      reviewed_sha:
+        description: Full reviewed maintenance-branch commit SHA (not the release candidate SHA)
+        required: true
+        type: string
 
 permissions:
+  actions: read
   contents: read
+
+concurrency:
+  group: cp7-historical-backup-verification
+  cancel-in-progress: false
 
 jobs:
   verify:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'sansan20036/iHear-website' &&
+      github.ref == 'refs/heads/cp7/verify-old-backup' &&
+      inputs.reviewed_sha == github.sha
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      PG_IMAGE: postgres@sha256:f02121de6f74d30d8a94cd1d9584125e2178d7e6c377d8130112d4e52d867995
     steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24.11.1
-          cache: npm
-
-      - name: Pin npm used by the lockfile
-        run: npm install --global npm@11.6.2
-
-      - name: Install dependencies including native optional packages
-        run: npm ci --include=optional
-
-      - name: Install Playwright Chromium and system dependencies
-        run: npx playwright install --with-deps chromium
-
-      - name: Verify sharp on Linux
-        run: node -e "require('sharp')({ create:{ width:8,height:8,channels:3,background:'#263974' } }).webp().toBuffer().then(b=>{ if(!b.length) process.exit(1) })"
-
-      - name: Run complete project checks
-        run: npm run check
-
-      - name: Verify self-hosted compression library
+      - name: Prepare private temporary directory and pinned tooling
+        shell: bash
         run: |
-          test -s public/assets/vendor/browser-image-compression.js
-          test -s public/assets/avatar-background-removal.js
-          test -s public/assets/vendor/avatar-segmentation/selfie_segmentation.js
-          test -s public/assets/vendor/avatar-segmentation/selfie_segmentation.tflite
-          test -s public/assets/vendor/avatar-segmentation/selfie_segmentation_solution_simd_wasm_bin.wasm
+          set -euo pipefail
+          umask 077
+          private_dir="$(mktemp -d "$RUNNER_TEMP/cp7-old-backup.XXXXXXXX")"
+          printf 'CP7_PRIVATE_DIR=%s\n' "$private_dir" >> "$GITHUB_ENV"
+          timeout 120s docker pull "$PG_IMAGE" > "$private_dir/image-pull.log" 2>&1
+          cat > "$private_dir/expected.json" <<'PINNED_JSON'
+          {
+            "id": 11315705836,
+            "name": "ihear-postgres-backup-37235739344",
+            "size_in_bytes": 222184,
+            "digest": "sha256:1b913761e99d8ac335cb771d04a45a6f2bc5646551b6b40b011be696cd10bdb0",
+            "workflow_run": {
+              "id": 37235739344,
+              "head_sha": "fd6a93dd433da347ca4e5d412c25d6f5280fc57f",
+              "head_branch": "main"
+            }
+          }
+          PINNED_JSON
+          cat > "$private_dir/verify_artifact.py" <<'OFFLINE_PYTHON'
+          """Offline validation only. No network, DB, key access or decryption."""
+          import hashlib
+          import io
+          import json
+          import re
+          import stat
+          import sys
+          import zipfile
+          from pathlib import Path
+          
+          
+          def require(condition, code):
+              if not condition:
+                  raise ValueError(code)
+          
+          
+          def validate_metadata(actual, expected):
+              for key in ("id", "name", "digest", "size_in_bytes"):
+                  require(actual.get(key) == expected[key], "ARTIFACT_IDENTITY_MISMATCH")
+              require(actual.get("expired") is False, "ARTIFACT_EXPIRED")
+              for key in ("id", "head_sha", "head_branch"):
+                  require(actual.get("workflow_run", {}).get(key) == expected["workflow_run"][key], "RUN_IDENTITY_MISMATCH")
+          
+          
+          def inspect_zip(raw, expected_digest):
+              require(len(raw) <= 16 * 1024 * 1024, "ARCHIVE_SIZE_LIMIT")
+              require("sha256:" + hashlib.sha256(raw).hexdigest() == expected_digest, "ARCHIVE_DIGEST_MISMATCH")
+              with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+                  members = archive.infolist()
+                  require(len(members) == 2 and len({m.filename for m in members}) == 2, "MEMBER_COUNT")
+                  names = [m.filename for m in members]
+                  encrypted = [n for n in names if re.fullmatch(r"ihear-postgres-\d{8}T\d{6}Z\.dump\.enc", n)]
+                  require(len(encrypted) == 1 and "SHA256SUMS" in names, "MEMBER_NAMES")
+                  for member in members:
+                      require(not member.is_dir() and not stat.S_ISLNK(member.external_attr >> 16), "MEMBER_TYPE")
+                      require(member.file_size <= 16 * 1024 * 1024, "MEMBER_SIZE_LIMIT")
+                  require(archive.getinfo("SHA256SUMS").file_size <= 1024, "CHECKSUM_SIZE_LIMIT")
+                  encrypted_name = encrypted[0]
+                  checksum = archive.read("SHA256SUMS").decode("ascii").strip()
+                  match = re.fullmatch(r"([0-9a-f]{64}) [ *](?:\./)?(" + re.escape(encrypted_name) + r")", checksum)
+                  require(match is not None, "CHECKSUM_FORMAT")
+                  ciphertext = archive.read(encrypted_name)
+                  require(hashlib.sha256(ciphertext).hexdigest() == match.group(1), "CIPHERTEXT_DIGEST_MISMATCH")
+                  require(ciphertext.startswith(b"Salted__"), "OPENSSL_CONTAINER_FORMAT")
+              return ciphertext
+          
+          
+          def main():
+              root = Path(sys.argv[1]).resolve(strict=True)
+              expected = json.loads((root / "expected.json").read_text())
+              validate_metadata(json.loads((root / "metadata.json").read_text()), expected)
+              require((root / "artifact.zip").stat().st_size <= 16 * 1024 * 1024, "ARCHIVE_SIZE_LIMIT")
+              ciphertext = inspect_zip((root / "artifact.zip").read_bytes(), expected["digest"])
+              with (root / "ciphertext.enc").open("xb") as file:
+                  file.write(ciphertext)
+              print("Pinned artifact metadata and ciphertext checks passed.")
+          
+          
+          if __name__ == "__main__":
+              try:
+                  main()
+              except Exception:
+                  # No exception interpolation: archive names, bytes and paths are not logged.
+                  print("Pinned artifact validation failed.", file=sys.stderr)
+                  raise SystemExit(1)
+          OFFLINE_PYTHON
+
+      - name: Download only the fixed historical artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_PROMPT_DISABLED: '1'
+        run: |
+          set -euo pipefail
+          umask 077
+          ulimit -f 16384
+          timeout 30s gh api --method GET \
+            repos/sansan20036/iHear-website/actions/artifacts/11315705836 \
+            > "$CP7_PRIVATE_DIR/metadata.json" 2> "$CP7_PRIVATE_DIR/download.log"
+          python3 -B - "$CP7_PRIVATE_DIR" <<'VERIFY_METADATA'
+          import json, sys
+          from pathlib import Path
+          root = Path(sys.argv[1])
+          sys.path.insert(0, str(root))
+          from verify_artifact import validate_metadata
+          try:
+              validate_metadata(json.loads((root / 'metadata.json').read_text()), json.loads((root / 'expected.json').read_text()))
+          except Exception:
+              print('Pinned artifact metadata check failed.', file=sys.stderr)
+              raise SystemExit(1)
+          VERIFY_METADATA
+          timeout 60s gh api --method GET \
+            repos/sansan20036/iHear-website/actions/artifacts/11315705836/zip \
+            > "$CP7_PRIVATE_DIR/artifact.zip" 2>> "$CP7_PRIVATE_DIR/download.log"
+          python3 -B "$CP7_PRIVATE_DIR/verify_artifact.py" "$CP7_PRIVATE_DIR"
+
+      - name: Decrypt with existing Secret and inspect archive locally
+        shell: bash
+        env:
+          BACKUP_ENCRYPTION_PASSWORD: ${{ secrets.BACKUP_ENCRYPTION_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          ulimit -f 65536
+          test -n "$BACKUP_ENCRYPTION_PASSWORD" || { echo 'Existing backup Secret is unavailable.'; exit 1; }
+          if ! timeout 60s openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 \
+            -in "$CP7_PRIVATE_DIR/ciphertext.enc" \
+            -out "$CP7_PRIVATE_DIR/backup.dump" \
+            -pass env:BACKUP_ENCRYPTION_PASSWORD \
+            2> "$CP7_PRIVATE_DIR/decrypt.log"; then
+            echo 'Historical artifact decryption failed; Secret and artifact left unchanged.'
+            exit 1
+          fi
+          unset BACKUP_ENCRYPTION_PASSWORD
+          python3 -B - "$CP7_PRIVATE_DIR/backup.dump" <<'CUSTOM_DUMP_HEADER'
+          import sys
+          with open(sys.argv[1], 'rb') as dump:
+              if dump.read(5) != b'PGDMP':
+                  print('Decrypted file is not a PostgreSQL custom archive.', file=sys.stderr)
+                  raise SystemExit(1)
+          CUSTOM_DUMP_HEADER
+          container_name="cp7-old-backup-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          if ! timeout 60s docker run --rm --name "$container_name" \
+            --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --memory 256m --cpus 1 --pids-limit 64 \
+            --user "$(id -u):$(id -g)" \
+            --mount "type=bind,src=$CP7_PRIVATE_DIR/backup.dump,dst=/backup.dump,readonly" \
+            --entrypoint pg_restore "$PG_IMAGE" --list /backup.dump \
+            > "$CP7_PRIVATE_DIR/restore-list.txt" 2> "$CP7_PRIVATE_DIR/restore-list-error.txt"; then
+            echo 'Archive table-of-contents check failed; no database restore was attempted.'
+            exit 1
+          fi
+          test -s "$CP7_PRIVATE_DIR/restore-list.txt"
+          echo 'PASS: fixed artifact 11315705836 decrypts; PostgreSQL archive TOC parses.'
+          echo 'This does not prove full restoration, independent key custody, or CP7 release readiness.'
+
+      - name: Remove private working files and any stopped inspection container
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          container_name="cp7-old-backup-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup_status=0
+          if names="$(docker container ls -a --format '{{.Names}}' --filter "name=^/${container_name}$" 2>/dev/null)"; then
+            if [ "$names" = "$container_name" ]; then
+              docker rm -f "$container_name" >/dev/null 2>&1 || cleanup_status=1
+            fi
+          else
+            cleanup_status=1
+          fi
+          python3 -B <<'PRIVATE_CLEANUP' || cleanup_status=1
+          import os, shutil
+          from pathlib import Path
+          value = os.environ.get('CP7_PRIVATE_DIR')
+          if value:
+              path = Path(value)
+              parent = Path(os.environ['RUNNER_TEMP']).resolve(strict=True)
+              if path.is_symlink() or path.resolve().parent != parent or not path.name.startswith('cp7-old-backup.'):
+                  raise SystemExit('Refusing cleanup outside the task temporary directory.')
+              if path.exists():
+                  shutil.rmtree(path)
+          PRIVATE_CLEANUP
+          if [ "$cleanup_status" -ne 0 ]; then
+            echo 'Cleanup was incomplete; treat the run as failed and review runner disposal.'
+            exit 1
+          fi
