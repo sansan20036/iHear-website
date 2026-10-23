@@ -2823,6 +2823,46 @@ test("all source pages keep one h1 and avoid viewport overflow", async ({ page }
   }
 });
 
+test("academy buttons wrap long published labels instead of overflowing", async ({ page }) => {
+  test.setTimeout(120_000);
+  await mockApplication(page, { admin: false });
+  // The label published on 2026-10-11 overflowed 320px phones; also cover a label near the 120-character limit.
+  const published = "Explore iHear Academy Tutoring Service";
+  const nearLimit = "Explore the complete iHear Academy English communication tutoring service for families, schools and community partners";
+  for (const label of [published, nearLimit]) {
+    await page.unroute("**/api/content/get**");
+    await page.route("**/api/content/get**", (route) => route.fulfill({ json: { version: 3, updatedAt: "", locales: {
+      en: { pages: { "/academy": { "academy.acad.courses": label } }, itemUpdatedAt: {} },
+      zhHant: { pages: {}, itemUpdatedAt: {} },
+      zhHans: { pages: {}, itemUpdatedAt: {} },
+    } } }));
+    for (const width of [320, 340, 360, 390, 768, 1024, 1440]) {
+      await page.setViewportSize({ width, height: 800 });
+      await page.goto("/academy");
+      const button = page.locator('[data-editable-content="academy.acad.courses"]');
+      await expect(button).toHaveText(label);
+      await page.evaluate(() => document.fonts.ready);
+      const layout = await button.evaluate((node) => {
+        const card = node.closest(".academy-card").getBoundingClientRect(), box = node.getBoundingClientRect();
+        const email = document.querySelector('[data-editable-content="academy.acad.email"]').getBoundingClientRect();
+        const text = document.createRange();
+        text.selectNodeContents(node);
+        return {
+          overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+          insideCard: box.left >= card.left && box.right <= card.right,
+          clipped: node.scrollWidth > node.clientWidth,
+          lines: new Set(Array.from(text.getClientRects(), (rect) => Math.round(rect.top))).size,
+          besideEmail: Math.abs(box.top - email.top) < 2,
+        };
+      });
+      const { lines, besideEmail, ...fit } = layout, where = `${label.length} characters at ${width}px`;
+      expect(fit, where).toEqual({ overflow: 0, insideCard: true, clipped: false });
+      // Wrapping is only a narrow-screen fallback: from tablet width up the current label keeps one line beside the email button.
+      if (label === published && width >= 768) expect({ lines, besideEmail }, where).toEqual({ lines: 1, besideEmail: true });
+    }
+  }
+});
+
 test("skip link moves keyboard focus into the main content", async ({ page }) => {
   await mockApplication(page, { admin: false });
   await page.goto("/");
@@ -3011,5 +3051,22 @@ for (const width of [320,390]) {
    releaseNew();await expect(page.locator('[data-team-retry]').first()).toBeVisible();
    await page.locator('[data-team-retry]').first().click();await expect(page.locator('[data-profile-id="tutor-test"]')).toBeVisible();
   }finally{releaseNew()}
+ });
+ test('team management keeps its toggle while the public reload lands at '+width+'px',async({page})=>{
+  await page.setViewportSize({width,height:844});await mockApplication(page,{tutorFields:{isHidden:true}});
+  await page.goto('/team');
+  const toggle=page.locator('[data-team-toggle]'),hidden=page.locator('[data-profile-id="tutor-test"]');
+  await toggle.click();await expect(hidden).toBeVisible();
+  // Leaving management starts a public reload. Let it land after the toggle is located but
+  // before it is clicked, the gap locator.evaluate leaves open on slow runners.
+  const isReload=url=>url.pathname==='/api/team-profiles'&&url.search==='';
+  let release,requested;const gate=new Promise(resolve=>{release=resolve}),seen=new Promise(resolve=>{requested=resolve});
+  await page.route(isReload,async route=>{requested();await gate;await route.fallback()},{times:1});
+  await toggle.click();await expect(hidden).toHaveCount(0);await seen;
+  const button=await toggle.elementHandle(),reloaded=page.waitForResponse(response=>isReload(new URL(response.url())));
+  release();await (await reloaded).finished();await page.evaluate(()=>new Promise(resolve=>{setTimeout(resolve,100)}));
+  expect(await button.evaluate(node=>node.isConnected),'the reload must not replace the toggle being clicked').toBe(true);
+  expect(await button.evaluate(node=>{node.click();return Boolean(document.querySelector('[data-profile-id="tutor-test"]'))})).toBe(true);
+  await expect(hidden).toBeVisible();
  });
 }

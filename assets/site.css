@@ -517,6 +517,8 @@
     .academy-card h1,.academy-card h2{ font-size: clamp(1.7rem,2.6vw,2.3rem); margin-bottom:12px; }
     .academy-card > p{ color:var(--ink-soft); max-width:64ch; margin:0 auto 18px; }
     .academy-card .btn-row{ display:flex; gap:12px; justify-content:center; flex-wrap:wrap; }
+    /* Editors can lengthen these labels (up to 120 characters); wrap them instead of overflowing small phones. */
+    .academy-card .btn-row .btn{ white-space:normal; overflow-wrap:anywhere; max-width:100%; text-align:center; }
     .donor-note{ margin-top:34px; text-align:center; font-size:.95rem; opacity:.85; }
     .donor-note a{ color: var(--orange); font-weight:800; }
     @media (max-width:760px){

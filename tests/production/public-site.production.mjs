@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { expect, test as base } from "@playwright/test";
 import { installReadOnlyGuard, productionOrigin, cmsPages, academyPages } from "./read-only.mjs";
 import { assertResourceRendering } from "./resource-rendering.mjs";
@@ -277,13 +278,18 @@ test("Academy introduction leads to course details before an email inquiry", asy
   const response = await page.goto("/academy#academy", { waitUntil: "load" });
   expect(response.status()).toBe(200);
   await expect(page.locator("#academy-h")).toBeVisible();
+  // The course label is editable content: expect the published text, or the repository default.
+  const published = await (await page.request.get("/api/content/get?page=%2Facademy")).json();
+  const slot = JSON.parse(await readFile("data/content-slots.json", "utf8")).slots.find(item => item.page === "/academy" && item.key === "academy.acad.courses");
+  const courseLabel = locale => published.locales[locale]?.pages?.["/academy"]?.["academy.acad.courses"] ?? slot.values[locale];
   const courseLink = page.locator('[data-layout-link="academy.acad.courses.href"]');
   const menuToggle = page.locator("#navToggle");
   const mobileMenu = await menuToggle.isVisible();
   if (mobileMenu) await menuToggle.click();
-  for (const [language, label] of [["en", "Explore iHear Academy Courses"], ["zhCN", "了解 iHear Academy 课程"], ["zhTW", "了解 iHear Academy 課程"]]) {
+  for (const [language, locale] of [["en", "en"], ["zhCN", "zhHans"], ["zhTW", "zhHant"]]) {
     await page.locator(`#langSwitch button[data-lang="${language}"]`).click();
-    await expect(courseLink).toHaveText(label);
+    expect(courseLabel(locale), `${locale} course label`).toBeTruthy();
+    await expect(courseLink).toHaveText(courseLabel(locale));
     await expect(courseLink).toHaveAttribute("href", "/academy/courses/zh?entry=official");
   }
   if (mobileMenu) await menuToggle.click();

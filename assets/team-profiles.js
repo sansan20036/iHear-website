@@ -28,6 +28,7 @@
   const adminBar=document.createElement("div"),dialog=document.createElement("dialog"),sortDialog=document.createElement("dialog"),toast=document.createElement("div");
   adminBar.className="team-directory-admin";adminBar.hidden=true;adminBar.setAttribute("data-no-inline-edit","");
   leaderMount.parentElement.insertBefore(adminBar,leaderMount);
+  let adminBarMarkup="";
   dialog.className="team-profile-editor";dialog.setAttribute("data-no-inline-edit","");dialog.setAttribute("aria-modal","true");dialog.setAttribute("aria-labelledby","team-editor-title");document.body.appendChild(dialog);
   sortDialog.className="team-sort-dialog";sortDialog.setAttribute("data-no-inline-edit","");sortDialog.setAttribute("aria-modal","true");sortDialog.setAttribute("aria-labelledby","team-sort-title");document.body.appendChild(sortDialog);
   toast.className="team-profile-toast";toast.hidden=true;toast.setAttribute("role","status");toast.setAttribute("aria-live","polite");document.body.appendChild(toast);
@@ -179,9 +180,11 @@
       reconcile(tutorMount,tutorCard,visible(all("tutor")));
     }
     adminBar.hidden=!state.admin;
-    if(state.admin)adminBar.innerHTML=`<div><strong>${l().manager}</strong><span>${l().hint}</span></div><div class="team-admin-actions">
+    if(state.admin){const markup=`<div><strong>${l().manager}</strong><span>${l().hint}</span></div><div class="team-admin-actions">
       ${state.editMode?`<button class="team-admin-button" data-team-sort-az ${state.reordering||!state.adminSnapshot||state.tutors.length<2?"disabled":""}>${l().sortAlphabetically} (${state.tutors.length})</button><button class="team-admin-button accent" data-team-add ${!state.adminSnapshot?"disabled":""}>${l().add}</button>`:""}
       <button class="team-admin-button primary" data-team-toggle>${state.editMode?l().done:l().editMode}</button></div>`;
+      // Rebuilding an unchanged bar after a background reload would replace the button being clicked.
+      if(markup!==adminBarMarkup){adminBar.innerHTML=markup;adminBarMarkup=markup}}
     const retainedIds=new Set(state.tutors.map(item=>item.id));
     state.tutorOverrides.forEach((_mode,id)=>{if(!retainedIds.has(id))state.tutorOverrides.delete(id)});
     tutorDetails().forEach(applyTutorView);
