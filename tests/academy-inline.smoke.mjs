@@ -319,6 +319,28 @@ try {
     }
   });
 
+  await check('a publication from the central editor is what the page and its pencil editor show next', async () => {
+    const question = '課程使用哪種語言？可以先說明孩子的溝通需求嗎？';
+    const admin = await ownerContext.newPage();
+    await admin.goto(`${origin}/admin/academy`);
+    await admin.locator('details[data-academy-editor-block="faq.item2"] summary').click();
+    await admin.locator('[id="content.zhHant.faq.item2.question"]').fill(question);
+    await admin.locator('[data-academy-editor-review]').click();
+    await expect(admin.locator('.admin-academy-review')).toBeVisible();
+    await admin.locator('[data-academy-editor-publish]').click();
+    await expect(admin.locator('[data-academy-editor-saved]')).toBeVisible();
+    await admin.close();
+    await page.goto(zhUrl);
+    await expect(page.locator('body')).toHaveAttribute('data-academy-version', '5');
+    // The question also holds its ✎ button.
+    await expect(page.locator('[data-academy-field="faq.item2.question"]')).toContainText(question);
+    const { dialog, frame } = await openPencil(page, 'faq.item2');
+    await expect(frame.locator('[id="content.zhHant.faq.item2.question"]')).toHaveValue(question);
+    await shot(page, 'inline-pencil-reads-admin');
+    await page.locator('[data-academy-editor-close]').click();
+    await expect(dialog).toHaveCount(0);
+  });
+
   await check('another site cannot frame the editor', async () => {
     foreign = createServer((_request, response) => {
       response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
@@ -345,10 +367,11 @@ try {
     await framing.close();
   });
 
-  await check('publications from the pencil are audited, and nothing external or unexpected happened', async () => {
+  await check('every publication is audited, and nothing external or unexpected happened', async () => {
     const document = await localDocument(directory);
     expect(document.activity.map(entry => [entry.entityVersion, entry.actorEmail, entry.changedFields])).toEqual([
       [2, owner, ['zhHant.hero.cta']], [3, owner, ['pricing.USD.60.highschool']], [4, owner, ['en.tutors.point2.title']],
+      [5, owner, ['zhHant.faq.item2.question']],
     ]);
     expect(report.externalRequests).toEqual([]);
     expect(consoleProblems).toEqual([]);
