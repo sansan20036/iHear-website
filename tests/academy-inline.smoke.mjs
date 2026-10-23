@@ -122,7 +122,7 @@ try {
 
   await check('an administrator sees a pencil on every editable section, covering nothing', async () => {
     for (const [url, blocks] of [[zhUrl, zhBlocks], [enUrl, enBlocks]]) {
-      for (const width of [320, 390, 1440]) {
+      for (const width of [320, 390, 768, 1024, 1440]) {
         await page.setViewportSize({ width, height: 900 });
         await page.goto(url);
         await expect(page.locator('body')).toHaveAttribute('data-academy-admin', 'available');
@@ -224,6 +224,23 @@ try {
     await visitor.close();
   });
 
+  await check('an English pencil edit changes only the English page and leaves every Chinese field as it was', async () => {
+    const before = (await published()).config.content;
+    await page.goto(enUrl);
+    const { frame } = await openPencil(page, 'tutors.point2');
+    await expect(frame.locator('[id^="content.zhHant."], .admin-academy-prices')).toHaveCount(0);
+    await frame.locator('[id="content.en.tutors.point2.title"]').fill('The right match matters');
+    await publishInEditor(page, frame);
+    await expect(page.locator('body')).toHaveAttribute('data-academy-version', '4');
+    await expect(page.locator('[data-academy-field="tutors.point2.title"]')).toHaveText('The right match matters');
+    const after = (await published()).config.content;
+    expect(after.zhHant).toEqual(before.zhHant);
+    expect({ ...after.en, 'tutors.point2.title': before.en['tutors.point2.title'] }).toEqual(before.en);
+    await page.goto(zhUrl);
+    await expect(page.locator('[data-academy-field="tutors.point2.title"]')).toHaveText('適合孩子的配對');
+    await expect(page.locator('[data-academy-field="hero.cta"]')).toHaveText('立即預約諮詢');
+  });
+
   await check('closing the editor with an unsaved draft asks first, and discarding saves nothing', async () => {
     const question = page.locator('[data-academy-field="faq.item1.question"]');
     const details = page.locator('details[data-academy-block="faq.item1"]');
@@ -241,7 +258,7 @@ try {
     await expect(dialog).toHaveCount(0);
     await expect(page.locator('[data-academy-edit-block="faq.item1"]')).toBeFocused();
     await expect(question).not.toContainText('新的問題？');
-    expect((await published()).recordVersion).toBe(3);
+    expect((await published()).recordVersion).toBe(4);
   });
 
   await check('an expired sign-in removes the pencils and offers to sign in again instead of opening the editor', async () => {
@@ -281,21 +298,25 @@ try {
     await editorContext.close();
   });
 
-  await check('pencils and the editor work on a phone without covering text or widening the page', async () => {
-    await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto(zhUrl);
-    await expect(page.locator('.academy-edit-trigger')).toHaveCount(zhBlocks.length);
-    expect((await pencilLayout(page)).problems).toEqual([]);
-    await shot(page, 'inline-mobile-pencils');
-    const { dialog } = await openPencil(page, 'pricing.card');
-    const box = await dialog.boundingBox();
-    expect(box.x).toBeGreaterThanOrEqual(0);
-    expect(box.x + box.width).toBeLessThanOrEqual(390);
-    const frame = page.frames().find(item => new URL(item.url()).pathname === '/admin/academy');
-    expect(await frame.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-    await shot(page, 'inline-mobile-editor');
-    await page.locator('[data-academy-editor-close]').click();
-    await expect(dialog).toHaveCount(0);
+  await check('pencils and the editor work on phones and tablets without covering text or widening the page', async () => {
+    for (const [width, height] of [[390, 844], [768, 1024], [1024, 768]]) {
+      await page.setViewportSize({ width, height });
+      await page.goto(zhUrl);
+      await expect(page.locator('.academy-edit-trigger')).toHaveCount(zhBlocks.length);
+      expect((await pencilLayout(page)).problems, `${width}px`).toEqual([]);
+      if (width === 390) await shot(page, 'inline-mobile-pencils');
+      const { dialog } = await openPencil(page, 'pricing.card');
+      const box = await dialog.boundingBox();
+      expect(box.x).toBeGreaterThanOrEqual(0);
+      expect(box.x + box.width).toBeLessThanOrEqual(width);
+      expect(box.y + box.height, `${width}px`).toBeLessThanOrEqual(height);
+      const frame = page.frames().find(item => new URL(item.url()).pathname === '/admin/academy');
+      expect(await frame.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `${width}px`).toBe(true);
+      if (width === 390) await shot(page, 'inline-mobile-editor');
+      if (width === 768) await shot(page, 'inline-tablet-editor');
+      await page.locator('[data-academy-editor-close]').click();
+      await expect(dialog).toHaveCount(0);
+    }
   });
 
   await check('another site cannot frame the editor', async () => {
@@ -327,7 +348,7 @@ try {
   await check('publications from the pencil are audited, and nothing external or unexpected happened', async () => {
     const document = await localDocument(directory);
     expect(document.activity.map(entry => [entry.entityVersion, entry.actorEmail, entry.changedFields])).toEqual([
-      [2, owner, ['zhHant.hero.cta']], [3, owner, ['pricing.USD.60.highschool']],
+      [2, owner, ['zhHant.hero.cta']], [3, owner, ['pricing.USD.60.highschool']], [4, owner, ['en.tutors.point2.title']],
     ]);
     expect(report.externalRequests).toEqual([]);
     expect(consoleProblems).toEqual([]);

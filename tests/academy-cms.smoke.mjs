@@ -351,13 +351,29 @@ try {
     ]);
   });
 
-  await check('the editor fits phone screens and offers an English interface', async () => {
+  await check('the editor fits phones and tablets and offers an English interface', async () => {
     for (const width of [320, 390]) {
       await page.setViewportSize({ width, height: 900 });
       await page.goto(`${origin}/admin/academy`);
       await waitForEditor(page);
       expect(await noHorizontalOverflow(page)).toBe(true);
       if (width === 390) await shot(page, 'admin-mobile', { fullPage: true });
+    }
+    // Tablets, portrait and landscape: nothing is cut off and every control is a comfortable touch target.
+    const heights = selector => page.locator(selector).evaluateAll(nodes => nodes.map(node => node.getBoundingClientRect().height));
+    for (const [width, height] of [[768, 1024], [1024, 768]]) {
+      await page.setViewportSize({ width, height });
+      await page.goto(`${origin}/admin/academy`);
+      await waitForEditor(page);
+      expect(await noHorizontalOverflow(page), `${width}px`).toBe(true);
+      const prices = await heights('.admin-academy-price input:visible');
+      const buttons = await heights('.admin-academy-tabs button:visible, .admin-academy-actions > .admin-button:visible');
+      const sections = await heights('.admin-academy-block > summary:visible');
+      expect(prices).toHaveLength(8);
+      expect(buttons).toHaveLength(5);
+      expect(sections.length).toBeGreaterThan(0);
+      expect(Math.min(...prices, ...buttons, ...sections), `${width}px`).toBeGreaterThanOrEqual(44);
+      if (width === 768) await shot(page, 'admin-tablet');
     }
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.getByRole('button', { name: 'EN', exact: true }).click();
