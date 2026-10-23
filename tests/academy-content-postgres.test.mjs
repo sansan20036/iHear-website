@@ -77,7 +77,9 @@ afterAll(async () => {
   if (workspace && (await realpath(workspace)).startsWith(await realpath(os.tmpdir()))) await rm(workspace, { recursive: true, force: true });
 }, 30000);
 
-describe('Academy content migrations in a disposable PostgreSQL', () => {
+// These tests run the real migration runner as separate processes (up to three per
+// test); give them room on a busy machine or a slower CI runner.
+describe('Academy content migrations in a disposable PostgreSQL', { timeout: 60_000 }, () => {
   test('a database at the production schema (023) gains 025 and 026 with existing data preserved', async () => {
     expect(migrate('production_like', await migrationFolder('023')).applied.at(-1)).toBe('023_resource_topics.sql');
     // Existing administrator data and settings, as an operating site has them.
