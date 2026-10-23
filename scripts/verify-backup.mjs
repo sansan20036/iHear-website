@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { validateAcademyContentBackup } from "./academy-content-backup.mjs";
 
 import nextEnv from "@next/env";
 import postgres from "postgres";
@@ -168,6 +169,7 @@ try {
     ? tables.localized_content_overrides
     : [];
   const schemaMigrations = tables.schema_migrations;
+  validateAcademyContentBackup(tables);
   const teamPeople = backup.payload.version >= 2 ? tables.team_people : [];
   const teamProfiles = backup.payload.version >= 2 ? tables.team_profiles : [];
   const siteMediaAssets = backup.payload.version >= 4 ? tables.site_media_assets : [];

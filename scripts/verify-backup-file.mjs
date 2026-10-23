@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { validateAcademyContentBackup } from "./academy-content-backup.mjs";
 
 function checksum(value) {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -46,6 +47,7 @@ try {
   }
 
   const tables = backup.payload.tables || {};
+  validateAcademyContentBackup(tables);
   const required = [
     "impact_milestones",
     "impact_milestone_settings",

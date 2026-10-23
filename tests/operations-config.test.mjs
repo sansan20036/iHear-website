@@ -5,14 +5,35 @@ import { describe, expect, it } from "vitest";
 const read = async (path) => (await readFile(new URL(`../${path}`, import.meta.url), "utf8")).replace(/\r\n?/g, "\n");
 
 describe("production operations configuration", () => {
+  it("permits same-origin Academy embedding only on the exact editor route", async () => {
+    const { headers: rules } = JSON.parse(await read("vercel.json"));
+    expect(rules.map(rule => rule.source)).toEqual(["/(.*)", "/admin/media", "/admin/academy"]);
+    const headerMap = rule => Object.fromEntries(rule.headers.map(header => [header.key.toLowerCase(), header.value]));
+    const defaults = headerMap(rules[0]);
+    expect(defaults["x-frame-options"]).toBe("DENY");
+    expect(defaults["content-security-policy"]).toContain("frame-ancestors 'none';");
+    const media = headerMap(rules[1]);
+    const academy = headerMap(rules[2]);
+    expect(Object.keys(academy).sort()).toEqual(["content-security-policy", "x-frame-options"]);
+    expect(academy).toEqual(media);
+    expect(academy["x-frame-options"]).toBe("SAMEORIGIN");
+    expect(academy["content-security-policy"]).toBe(defaults["content-security-policy"].replace("frame-ancestors 'none';", "frame-ancestors 'self';"));
+    // The exact-route exception cannot enable framing on other admin or public pages.
+    for (const route of ["/", "/academy/courses", "/academy/courses/zh", "/admin", "/admin/academy/other", "/admin/accounts", "/api/auth/signin"]) {
+      expect(rules.slice(1).some(rule => rule.source === route)).toBe(false);
+    }
+  });
+
   it("does not bypass current-data page routes with legacy static HTML rewrites", async () => {
     const vercel = JSON.parse(await read("vercel.json"));
     expect((vercel.rewrites || []).filter(rule => /\.html(?:$|\?)/.test(rule.destination))).toEqual([]);
     const nextConfig = (await import("../next.config.mjs")).default;
-    expect(await nextConfig.rewrites()).toEqual([
-      { source: "/academy/courses", destination: "/academy/courses/index.html" },
-      { source: "/academy/courses/zh", destination: "/academy/courses/zh/index.html" },
-    ]);
+    // Course pages are request-time routes that read the published Academy
+    // content; no rewrite may serve their template HTML directly.
+    expect(nextConfig.rewrites ? await nextConfig.rewrites() : []).toEqual([]);
+    expect(nextConfig.outputFileTracingIncludes["/academy/courses"]).toEqual(["./.private/academy/index.html"]);
+    expect(nextConfig.outputFileTracingIncludes["/academy/courses/zh"]).toEqual(["./.private/academy/zh/index.html"]);
+    expect(nextConfig.outputFileTracingIncludes["/api/academy-content/preview"]).toEqual(["./.private/academy/index.html", "./.private/academy/zh/index.html"]);
     const redirects = await nextConfig.redirects();
     expect(redirects).toContainEqual({ source: "/about.html", destination: "/about", permanent: true });
     expect(redirects).toContainEqual({ source: "/academy/en", destination: "/academy/courses?entry=official", permanent: false });

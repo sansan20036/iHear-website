@@ -4,6 +4,7 @@
 data/*
 !data/content-slots.json
 !data/layout-slots.json
+!data/academy-fields.json
 backups/
 scheduling/
 node_modules/

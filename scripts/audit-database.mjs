@@ -4,6 +4,7 @@ import path from "node:path";
 import nextEnv from "@next/env";
 import postgres from "postgres";
 import { migrationChecksum } from "./migration-checksum.mjs";
+import { validateAcademyContentBackup } from "./academy-content-backup.mjs";
 
 const { loadEnvConfig } = nextEnv;
 loadEnvConfig(process.cwd());
@@ -487,7 +488,11 @@ try {
     SELECT
       COUNT(*) FILTER (
         WHERE char_length(key) NOT BETWEEN 1 AND 100
-          OR char_length(value) NOT BETWEEN 1 AND 500
+          OR char_length(value) NOT BETWEEN 1 AND (CASE
+            WHEN key = 'academy_content_v2' THEN 60000
+            WHEN key = 'academy_pricing_v1' THEN 8000
+            ELSE 500
+          END)
           OR record_version < 1
           OR char_length(updated_by) NOT BETWEEN 1 AND 320
       )::INTEGER AS invalid_fields,
@@ -497,6 +502,11 @@ try {
       (1 - COUNT(*) FILTER (WHERE key = 'site_theme'))::INTEGER AS missing_theme
     FROM site_settings
   `;
+
+  validateAcademyContentBackup({
+    site_settings: await sql`SELECT key, value, record_version FROM site_settings WHERE key = 'academy_content_v2'`,
+    schema_migrations: await sql`SELECT version FROM public.schema_migrations`,
+  });
 
   const counts = await sql`
     SELECT 'api_rate_limits' AS table_name, COUNT(*)::INTEGER AS row_count

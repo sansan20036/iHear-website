@@ -36,6 +36,11 @@ jobs:
       - name: Run complete project checks
         run: npm run check
 
+      - name: Verify isolated Academy PostgreSQL migrations and transactions
+        run: |
+          docker pull postgres:17-alpine
+          npm run test:academy:postgres
+
       - name: Verify self-hosted compression library
         run: |
           test -s public/assets/vendor/browser-image-compression.js

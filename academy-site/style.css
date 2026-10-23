@@ -97,3 +97,43 @@ html[lang="zh-Hant"]{scroll-padding-top:110px}
   :lang(zh-Hant) #price-detail{min-height:0}
   :lang(zh-Hant) .inquiry .button{width:100%}
 }
+
+/* Without published prices the price picker is hidden and only a notice remains. */
+body[data-academy-pricing="unavailable"] .price-interactive{display:none!important}
+.academy-pricing-unavailable{margin:18px 0;padding:14px 16px;border:1px solid var(--line);border-radius:10px;background:var(--tint);font-weight:700;line-height:1.6}
+
+/* Administrator tools. They are created only after the server confirms an administrator. */
+.academy-edit-trigger[hidden],.academy-editor-dialog [hidden],.academy-admin-toolbar [hidden]{display:none!important}
+.academy-edit-trigger{display:inline-flex;align-items:center;justify-content:center;gap:6px;vertical-align:middle;min-width:44px;min-height:44px;max-width:100%;margin:12px 0 6px;padding:5px 12px;border:1.5px solid var(--green);border-radius:999px;background:#fff;color:var(--green);font:700 .85rem/1.3 'DM Sans',Arial,sans-serif;letter-spacing:0;text-transform:none;white-space:normal;cursor:pointer;box-shadow:0 3px 12px #0c274510}
+summary .academy-edit-trigger{margin:0 0 0 10px}
+.academy-edit-trigger:hover{background:var(--mint)}
+.academy-edit-trigger:disabled{cursor:wait;opacity:.55}
+.academy-edit-trigger:focus-visible,.academy-editor-dialog button:focus-visible,.academy-editor-dialog a:focus-visible,.academy-admin-toolbar a:focus-visible,.academy-admin-toolbar button:focus-visible{outline:3px solid #167bce;outline-offset:3px}
+.academy-edit-icon{font-size:1.15rem;line-height:1}
+.academy-admin-toolbar{position:fixed;z-index:50;left:12px;right:12px;bottom:12px;max-width:760px;margin:0 auto;display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;padding:10px 14px;border:1px solid var(--line);border-radius:12px;background:#fff;color:var(--ink);font-size:.8rem;line-height:1.5;box-shadow:0 10px 40px #0c274533}
+.academy-admin-toolbar p{margin:0;flex:1 1 220px;min-width:0}
+.academy-admin-toolbar a{font-weight:700;padding:6px 0}
+.academy-admin-toolbar button{min-height:40px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink);padding:6px 12px;cursor:pointer;font:inherit}
+body:has(.academy-admin-toolbar){padding-bottom:120px}
+.academy-editor-dialog{width:min(1100px,calc(100vw - 32px));height:min(900px,calc(100dvh - 32px));max-width:none;max-height:none;margin:auto;padding:0;border:1px solid var(--line);border-radius:16px;background:#f5f7fb;color:var(--ink);box-shadow:0 24px 90px #0c274560;overflow:hidden}
+.academy-editor-dialog[open]{display:flex;flex-direction:column}
+.academy-editor-dialog::backdrop{background:#0c2745b3}
+.academy-editor-toolbar{display:flex;align-items:center;gap:14px;flex:0 0 auto;padding:15px 20px;border-bottom:1px solid var(--line);background:#fff}
+.academy-editor-toolbar h2{font-size:1.15rem;line-height:1.45;letter-spacing:0;margin:0 auto 0 0}
+.academy-editor-full{font-size:.8rem;white-space:nowrap;font-weight:700}
+.academy-editor-close,.academy-editor-retry{min-height:44px;border:1.5px solid var(--ink);border-radius:8px;padding:8px 14px;background:#fff;color:var(--ink);font-size:.85rem;font-weight:700;cursor:pointer}
+.academy-editor-close:disabled{opacity:.5;cursor:wait}
+.academy-editor-status{flex:0 0 auto;padding:12px 20px;margin:0;font-size:.9rem;color:var(--ink);background:#f5f7fb}
+.academy-editor-retry{align-self:flex-start;margin:0 20px 16px}
+.academy-editor-frame{display:block;flex:1 1 auto;width:100%;min-height:0;border:0;background:#f5f7fb}
+@media(max-width:760px){
+  .academy-admin-toolbar{left:8px;right:8px;bottom:8px;gap:4px 12px;padding:6px 10px}
+  /* On a phone the toolbar keeps only its controls and any status message. */
+  .academy-admin-toolbar [data-academy-admin-default]{display:none}
+  .academy-editor-dialog{width:calc(100vw - 12px);height:calc(100dvh - 12px);border-radius:10px}
+  .academy-editor-toolbar{display:grid;grid-template-columns:1fr auto;gap:6px 10px;padding:10px 12px}
+  .academy-editor-toolbar h2{font-size:1rem;grid-column:1;grid-row:1}
+  .academy-editor-full{font-size:.75rem;grid-column:1;grid-row:2;justify-self:start}
+  .academy-editor-close{grid-column:2;grid-row:1/3;padding:8px 10px}
+  .academy-editor-status{padding:10px 12px;font-size:.85rem}
+}

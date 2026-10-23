@@ -16,11 +16,13 @@ function ShellContent({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [embedded, setEmbedded] = useState(false);
   useEffect(() => {
-    setEmbedded(pathname === '/admin/media' && window.parent !== window && new URLSearchParams(window.location.search).get('embed') === '1');
+    setEmbedded(['/admin/media', '/admin/academy'].includes(pathname) && window.parent !== window && new URLSearchParams(window.location.search).get('embed') === '1');
   }, [pathname]);
   const text = copy[locale];
+  // Academy course pages are English and Traditional Chinese only, so this label has no Simplified form.
+  const academy = locale === "en" ? "Academy course pages" : "Academy 課程頁";
   const links = [
-    ["/admin", text.overview, "⌂"], ["/admin/content", text.content, "✎"], ["/admin/team", text.team, "👥"],
+    ["/admin", text.overview, "⌂"], ["/admin/content", text.content, "✎"], ["/admin/academy", academy, "$"], ["/admin/team", text.team, "👥"],
     ["/admin/impact", text.impact, "▥"], ["/admin/media", text.media, "▧"], ["/admin/resources", text.resources, "☷"], ["/admin/trash", text.trash, "♲"],
     ...(principal.role === "owner" ? [["/admin/admins", text.admins, "⚙"]] : []),
   ];

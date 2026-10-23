@@ -24,6 +24,9 @@ const nextConfig = {
     "/": ["./.private/index.html"],
     "/[publicPage]": ["./.private/*.html"],
     "/team": ["./.private/team.html"],
+    "/academy/courses": ["./.private/academy/index.html"],
+    "/academy/courses/zh": ["./.private/academy/zh/index.html"],
+    "/api/academy-content/preview": ["./.private/academy/index.html", "./.private/academy/zh/index.html"],
     "/api/site-media/[slot]": ["./node_modules/@img/**/*"],
     "/api/media-galleries/[id]": ["./node_modules/@img/**/*"],
   },
@@ -42,14 +45,9 @@ const nextConfig = {
       })),
     ];
   },
-  // Keep /academy as the CMS introduction. Visitors explicitly follow its
-  // course button to these standalone pages on the same Vercel website.
-  async rewrites() {
-    return [
-      { source: "/academy/courses", destination: "/academy/courses/index.html" },
-      { source: "/academy/courses/zh", destination: "/academy/courses/zh/index.html" },
-    ];
-  },
+  // Course HTML is served by request-time routes that read the published Academy
+  // content; /academy remains the separate CMS introduction. No static HTML
+  // rewrite may bypass the published prices.
 };
 
 export default nextConfig;

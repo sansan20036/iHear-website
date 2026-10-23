@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { validateAcademyContentBackup } from "./academy-content-backup.mjs";
 
 import nextEnv from "@next/env";
 import postgres from "postgres";
@@ -82,6 +83,7 @@ try {
     ? await sql`SELECT * FROM localized_translation_states ORDER BY resource_type, resource_scope, resource_id, field_key, locale`
     : [];
   const schemaMigrations = await sql`SELECT * FROM public.schema_migrations ORDER BY version`;
+  validateAcademyContentBackup({ site_settings: siteSettings, schema_migrations: schemaMigrations });
   const [galleryTable] = await sql`SELECT to_regclass('public.media_galleries') IS NOT NULL AS available`;
   const galleryTables = galleryTable.available ? {
     media_galleries: await sql`SELECT * FROM public.media_galleries ORDER BY id`,

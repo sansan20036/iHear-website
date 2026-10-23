@@ -38,6 +38,7 @@ const adminControls = [
   ".ihear-layout-trigger", ".gallery-manage", "[data-resource-manage]",
   "[data-team-toggle]", "[data-team-add]", "[data-team-sort-az]",
   "[data-team-drag]", 'a[href^="/admin"]',
+  ".academy-edit-trigger", ".academy-admin-toolbar", "#academy-content-editor", "body[data-academy-admin]",
 ].map(selector => `${selector}:visible`).join(", ");
 
 function responseFor(page, pathname) {

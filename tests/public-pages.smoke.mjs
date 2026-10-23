@@ -1,6 +1,8 @@
 // Exercise the actual built Next routes; only local, read-only HTTP requests.
 import { spawn } from 'node:child_process';
 import assert from 'node:assert/strict';
+import { mkdir, mkdtemp } from 'node:fs/promises';
+import path from 'node:path';
 const origin = 'http://127.0.0.1:3214';
 const pages = ['/', '/about', '/programs', '/impact', '/team', '/submit-bio', '/stories', '/get-involved', '/academy', '/donate', '/resources', '/faq', '/contact'];
 const academyPath = '/academy/courses';
@@ -46,8 +48,12 @@ async function checkAcademyPage(page, lang) {
   assert.equal(response.status, 200, page);
   assert.equal(response.url, url, `Clean Academy URL has no redirect: ${page}`);
   assert.match(response.headers.get('content-type') || '', /text\/html/i, page);
+  // Course pages carry the current published prices, so no cache may keep an older copy.
+  assert.match(response.headers.get('cache-control') || '', /no-store/, page);
+  assert.equal(response.headers.get('vercel-cdn-cache-control'), 'no-store', page);
   const html = await response.text();
   assert.equal(tags(html, 'html')[0]?.lang, lang, `Academy language: ${page}`);
+  assert.doesNotMatch(html, /data-academy-admin=|class="academy-edit-trigger|class="academy-admin-toolbar/, `No editing controls for visitors: ${page}`);
   assert.doesNotMatch(html, /chatgpt\.(?:site|com)|openai-sidetron|hide-editor\.js/i, `Academy is independent of GPT hosting: ${page}`);
   const scripts = tags(html, 'script');
   assert.doesNotMatch(scripts.map(script => script.src || '').join('\n'), /(?:\/api\/auth(?:\/|\b)|\/auth\.js(?:\?|$))/i, `Academy has no authentication scripts: ${page}`);
@@ -101,8 +107,10 @@ async function checkAcademyPage(page, lang) {
   for (const resource of resources) await checkAcademyAsset(resource, url);
 }
 
+await mkdir('output', { recursive: true });
+const isolatedData = await mkdtemp(path.resolve('output/public-smoke-'));
 const child = spawn(process.execPath, ['node_modules/next/dist/bin/next', 'start', '--hostname', '127.0.0.1', '--port', '3214'], {
-  env: { ...process.env, NODE_ENV: 'production', VERCEL: '', NETLIFY: '', CONTEXT: '', IHEAR_FORCE_FILE_STORE: '1' },
+  env: { ...process.env, NODE_ENV: 'production', VERCEL: '', NETLIFY: '', CONTEXT: '', POSTGRES_URL: '', DATABASE_URL: '', IHEAR_FORCE_FILE_STORE: '1', IHEAR_TEST_DATA_DIR: isolatedData },
   windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
 });
 let logs = '';
