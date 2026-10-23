@@ -72,6 +72,11 @@ async function checkAcademyPage(page, lang) {
   for (const section of ['subjects', 'approach', 'learners', 'tutors', 'pricing', 'purpose', 'faq', 'start']) {
     assert.match(html, new RegExp(`id=["']${section}["']`), `Complete Academy section ${section}: ${page}`);
   }
+  for (const price of ['NT$800', 'NT$1,000', 'NT$1,400', 'NT$7,200', 'NT$9,000', 'NT$12,600', 'US$25', 'US$34', 'US$45', 'US$225', 'US$306', 'US$405']) {
+    assert.ok(html.includes(price), `Academy price ${price}: ${page}`);
+  }
+  assert.doesNotMatch(html, /\$35\b|\$40\b|\$330\b|\$380\b|USD 35|USD 40|USD 330|USD 380|Save \$20|節省 USD/, `No previous Academy prices: ${page}`);
+  assert.match(html, new RegExp(`name="currency" value="${lang === 'zh-Hant' ? 'TWD' : 'USD'}" checked`), `Default Academy currency: ${page}`);
 
   const head = await fetch(url, { method: 'HEAD' });
   assert.equal(head.status, 200, `HEAD ${page}`);

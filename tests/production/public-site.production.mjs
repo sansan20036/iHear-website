@@ -217,6 +217,18 @@ for (const route of cmsPages) {
   });
 }
 
+// Ten sessions are 10% off; NT$ and US$ prices are set separately.
+const academyPrices = [
+  ["TWD", "45", "highschool", "NT$800", "NT$7,200"],
+  ["TWD", "45", "college", "NT$1,000", "NT$9,000"],
+  ["TWD", "60", "highschool", "NT$1,000", "NT$9,000"],
+  ["TWD", "60", "college", "NT$1,400", "NT$12,600"],
+  ["USD", "45", "highschool", "US$25", "US$225"],
+  ["USD", "45", "college", "US$34", "US$306"],
+  ["USD", "60", "highschool", "US$34", "US$306"],
+  ["USD", "60", "college", "US$45", "US$405"],
+];
+
 for (const route of academyPages) {
   test(`${route} complete Academy content and interactions`, async ({ page }) => {
     const lang = route.endsWith("/zh") ? "zh-Hant" : "en";
@@ -233,11 +245,16 @@ for (const route of academyPages) {
       await expect(links).toHaveCount(2);
       for (const link of await links.all()) await expect(link).toHaveAttribute("href", destination);
     }
-    for (const [tutor, plan, price] of [["highschool", "single", "$35"], ["highschool", "package", "$330"], ["college", "single", "$40"], ["college", "package", "$380"]]) {
+    await expect(page.locator('input[name="currency"]:checked')).toHaveValue(lang === "zh-Hant" ? "TWD" : "USD");
+    for (const [currency, minutes, tutor, single, tenSessions] of academyPrices) {
+      await page.locator(`input[name="currency"][value="${currency}"]`).check();
+      await page.locator(`input[name="duration"][value="${minutes}"]`).check();
       await page.locator(`input[name="tutor"][value="${tutor}"]`).check();
-      await page.locator(`input[name="plan"][value="${plan}"]`).check();
-      await expect(page.locator("#price")).toHaveText(price);
-      await expect(page.locator("#price-detail")).toContainText(lang === "zh-Hant" ? "導師" : "tutor");
+      for (const [plan, price] of [["single", single], ["package", tenSessions]]) {
+        await page.locator(`input[name="plan"][value="${plan}"]`).check();
+        await expect(page.locator("#price")).toHaveText(price);
+        await expect(page.locator("#price-detail")).toContainText(lang === "zh-Hant" ? "導師" : "tutor");
+      }
     }
     const faq = page.locator("#faq details").first();
     await faq.locator("summary").click();
