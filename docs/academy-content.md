@@ -45,9 +45,10 @@ title and meta description, tutor point numbers, and the price sentences themsel
 | `GET /api/admin/me` | Signed-in | 200 administrator, 401 no or expired session, 403 no role. |
 
 Writes require, in order: an `Origin` header equal to the site origin, an Auth.js
-Google session whose email resolves to a configured owner or an enabled database
-editor (checked on every request, so revocation is immediate), the admin rate limit,
-`application/json` of at most 256 KiB, and a complete valid document. Errors:
+Google session whose email resolves to an owner or an enabled database editor (see
+[Who can edit](#who-can-edit); checked on every request, so revocation is immediate),
+the admin rate limit, `application/json` of at most 256 KiB, and a complete valid
+document. Errors:
 401 `SIGN_IN_REQUIRED`, 403 `FORBIDDEN` or `ORIGIN_NOT_ALLOWED`, 409
 `CONTENT_VERSION_CONFLICT`, 428 `CONTENT_VERSION_REQUIRED`, 400 `CONTENT_INVALID_INPUT`
 (with `field` and `reason`), 413, 415, 429, 503 `CONTENT_UNAVAILABLE`.
@@ -60,6 +61,17 @@ Course pages are marked `data-academy-admin="available"` only when the server
 resolves the visitor as an administrator; only then does the page script check
 `/api/admin/me` and add the ✎ buttons. Visitors never contact admin routes. The mark
 grants nothing: the API checks access itself.
+
+## Who can edit
+
+- **Owners** come from the first of these that is set: `AUTH_OWNER_EMAILS`, then
+  `AUTH_ADMIN_EMAILS`, then the built-in list in `lib/admins.ts`. Only that one list
+  applies; the lists are never merged, so adding `AUTH_OWNER_EMAILS` replaces the
+  `AUTH_ADMIN_EMAILS` owners entirely. A variable that is set but empty gives no owners.
+  The production project sets only `AUTH_ADMIN_EMAILS` (checked 2026-10-24), so that
+  list defines its owners.
+- **Editors** are the enabled accounts in Admin accounts (`admin_accounts`), which
+  owners manage.
 
 ## Database
 
@@ -100,5 +112,6 @@ grants nothing: the API checks access itself.
 2. Rehearse 025 + 026 on a restored copy; confirm the seeded row equals the P0 prices.
 3. Apply migrations through the existing runner, then deploy; check both course pages
    (prices, FAQ, no ✎ for visitors) and `test:production`.
-4. Confirm the administrators who should edit (owners in `AUTH_OWNER_EMAILS`, editors
-   in Admin accounts) and have one of them publish a small change and revert it.
+4. Confirm the administrators who should edit (owners from the list described in
+   [Who can edit](#who-can-edit), currently `AUTH_ADMIN_EMAILS` in production; editors in
+   Admin accounts) and have one of them publish a small change and revert it.
