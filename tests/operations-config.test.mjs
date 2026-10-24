@@ -41,6 +41,14 @@ describe("production operations configuration", () => {
     expect(redirects).toContainEqual({ source: "/academy/courses/zh/index.html", destination: "/academy/courses/zh?entry=official", permanent: true });
     expect(redirects.some(rule => rule.source === "/academy/courses" || rule.source === "/academy/courses/zh")).toBe(false);
   });
+  it("makes the database audit look up every table it expects", async () => {
+    const audit = await read("scripts/audit-database.mjs");
+    const query = audit.match(/const tables = await sql`([\s\S]*?)`;/)?.[1] ?? "";
+    // A second, hand-kept list once left out resource_links, so the audit could never report healthy.
+    expect(query).toContain("table_name IN ${sql(expectedTables)}");
+    expect(audit.match(/const expectedTables = \[([\s\S]*?)\];/)?.[1]).toContain('"resource_links"');
+  });
+
   it("keeps health checks uncached and responses free of database details", async () => {
     const route = await read("app/api/health/route.ts");
     expect(route).toContain('"Vercel-CDN-Cache-Control": "no-store"');

@@ -165,28 +165,12 @@ const expectedTriggers = [
 ];
 
 try {
+  // Look up exactly the expected tables, so no table on the list can be reported missing by omission.
   const tables = await sql`
     SELECT table_schema, table_name
     FROM information_schema.tables
     WHERE
-      (table_schema = 'public' AND table_name IN (
-        'api_rate_limits',
-        'admin_accounts',
-        'admin_activity_log',
-        'impact_milestones',
-        'impact_milestone_settings',
-        'content_overrides',
-        'localized_content_overrides',
-        'localized_translation_states',
-        'schema_migrations',
-        'site_content_revisions',
-        'site_media_assets',
-        'site_media_variants',
-        'site_settings',
-        'site_layout_configs',
-        'team_people',
-        'team_profiles'
-      ))
+      (table_schema = 'public' AND table_name IN ${sql(expectedTables)})
       OR (table_schema = 'supabase_migrations' AND table_name = 'schema_migrations')
     ORDER BY table_schema, table_name
   `;
