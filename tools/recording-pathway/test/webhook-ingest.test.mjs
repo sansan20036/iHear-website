@@ -208,12 +208,15 @@ test('two workers racing on one filing job, with the lease running out, keep one
   const { store, drive } = await setup();
   await ingestWebhook({ ...delivery(completed(START + 70 * MIN, [video('f-video', START + MIN, START + 60 * MIN)]), START + 70 * MIN), store });
   let release;
-  drive.faults.holdUpload = new Promise(resolve => { release = resolve; });
+  let reached;
+  const atGate = new Promise(resolve => { reached = resolve; });
+  drive.faults.holdUpload = { gate: new Promise(resolve => { release = resolve; }), reached };
   const T = START + 71 * MIN;
   const claimA = store.claimJob({ workerId: 'A', now: T, leaseMs: 5 * MIN });
   const runningA = fileRecording({ store, drive, download: syntheticDownload, job: claimA.job, leaseVersion: claimA.leaseVersion, now: T, rootFolderId: ROOT });
-  // A stalls inside its upload. Its lease runs out, B takes the job and, finding A's upload
-  // session unusable, uploads its own copy.
+  // A has recorded its upload session and stalls inside the upload. Its lease runs out, B takes
+  // the job and, finding A's upload session unusable, uploads its own copy.
+  await atGate;
   drive.faults.reportExpiredOnce = 1;
   const claimB = store.claimJob({ workerId: 'B', now: T + 6 * MIN, leaseMs: 5 * MIN });
   assert.equal(claimB.leaseVersion, claimA.leaseVersion + 1);

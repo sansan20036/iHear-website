@@ -61,22 +61,29 @@ export function createClassroomStore({ lessons = [] } = {}) {
     const job = state.jobs.get(jobId);
     return !!job && job.status === 'running' && job.leaseVersion === leaseVersion;
   };
+  // Transactions run one after another, as row locks would make them, so an asynchronous
+  // callback never sees another transaction's half-finished draft.
+  let queue = Promise.resolve();
 
   return {
     faults,
     counters,
-    async transaction(fn) {
-      counters.transactions += 1;
-      if (faults.delayMs) await new Promise(resolve => { setTimeout(resolve, faults.delayMs); });
-      if (faults.failTransactions > 0) {
-        faults.failTransactions -= 1;
-        counters.failedTransactions += 1;
-        throw new Error('synthetic database failure');
-      }
-      const draft = structuredClone(state);
-      const result = fn(writer(draft));
-      state = draft;
-      return result;
+    transaction(fn) {
+      const run = queue.then(async () => {
+        counters.transactions += 1;
+        if (faults.delayMs) await new Promise(resolve => { setTimeout(resolve, faults.delayMs); });
+        if (faults.failTransactions > 0) {
+          faults.failTransactions -= 1;
+          counters.failedTransactions += 1;
+          throw new Error('synthetic database failure');
+        }
+        const draft = structuredClone(state);
+        const result = await fn(writer(draft));
+        state = draft;
+        return result;
+      });
+      queue = run.catch(() => undefined);
+      return run;
     },
     // Claim one job that is due, or whose previous lease ran out. Taking the lease bumps the
     // lease number, so the previous holder's later writes are refused.
@@ -166,8 +173,8 @@ export function createDrive({ chunkSize = 16 } = {}) {
     folderName(id) {
       return [...folders.entries()].find(([, value]) => value === id)?.[0].split('/').slice(1).join('/') ?? null;
     },
-    nameExists(folderId, name) {
-      return [...files.values()].some(file => !file.trashed && file.parentId === folderId && file.name === name);
+    listNames(folderId) {
+      return [...files.values()].filter(file => !file.trashed && file.parentId === folderId).map(file => file.name);
     },
     findByAppProperty(key, value) {
       return [...files.values()].filter(file => !file.trashed && file.appProperties[key] === value).map(file => ({ ...file }));
@@ -187,12 +194,14 @@ export function createDrive({ chunkSize = 16 } = {}) {
       }
       return true;
     },
+    // holdUpload = { gate, reached }: the next upload calls reached() and then waits for gate.
     async upload(uri, bytes) {
       const session = sessions.get(uri);
       if (faults.holdUpload) {
-        const gate = faults.holdUpload;
+        const hold = faults.holdUpload;
         faults.holdUpload = null;
-        await gate;
+        hold.reached?.();
+        await hold.gate;
       }
       while (session.received < bytes.length) {
         if (faults.crashAfterChunks === 0) {

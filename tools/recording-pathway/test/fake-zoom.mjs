@@ -378,9 +378,9 @@ async function perform(sim, room, action, t) {
       case 'START_RECORDING': {
         // The request and Zoom's answer to it are stored together; 202 only means "accepted".
         const ok = scenario.startBehaviour !== 'api_error';
-        await sim.store.transaction(tx => {
-          storeEvent(tx, { source: 'server', type: 'server.start_requested', lessonId: lesson.id, occurredAt: t, receivedAt: t, key: action.key, attempt: action.attempt });
-          storeEvent(tx, { source: 'server', type: 'server.start_response', lessonId: lesson.id, occurredAt: t, receivedAt: t, key: `${action.key}:response`, attempt: action.attempt, ok, httpStatus: ok ? 202 : 500 });
+        await sim.store.transaction(async tx => {
+          await storeEvent(tx, { source: 'server', type: 'server.start_requested', lessonId: lesson.id, occurredAt: t, receivedAt: t, key: action.key, attempt: action.attempt });
+          await storeEvent(tx, { source: 'server', type: 'server.start_response', lessonId: lesson.id, occurredAt: t, receivedAt: t, key: `${action.key}:response`, attempt: action.attempt, ok, httpStatus: ok ? 202 : 500 });
         });
         if (ok && scenario.startBehaviour !== 'silent') schedule(sim, t + 2_000, () => recordingOn(sim, room, t + 2_000));
         break;
