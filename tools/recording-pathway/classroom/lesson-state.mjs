@@ -38,7 +38,7 @@ export const TIMING = Object.freeze({
 const CONFIRMING_SOURCES = new Set(['zoom_webhook', 'zoom_api', 'host_sdk']);
 const SOURCE_RANK = { zoom_webhook: 0, zoom_api: 1, host_sdk: 2, server: 3, p1: 4 };
 const TYPE_ORDER = [
-  'server.recording_eligibility', 'server.consent_withdrawn', 'session.started', 'session.user_joined', 'host.user_added',
+  'server.consent_changed', 'server.recording_eligibility', 'server.consent_withdrawn', 'session.started', 'session.user_joined', 'host.user_added',
   'host.heartbeat', 'host.connection', 'api.snapshot', 'server.start_requested', 'server.start_response',
   'session.recording_started', 'session.recording_resumed', 'host.recording_status', 'session.recording_paused',
   'server.stop_requested', 'session.recording_stopped', 'host.participant_failover', 'session.user_left', 'host.user_removed',
@@ -76,7 +76,7 @@ function analyze(lesson, events, now) {
   const tutor = [...people.values()].find(entry => entry.role === 'tutor');
   const f = {
     sessions: new Map(), lastConfirmedAt: null, recording: [], startRequests: [], startResponses: [], stopRequests: [],
-    endRequests: [], eligibility: null, withdrawal: null, unknown: [], joinBlocked: 0, alerts: [], completed: new Map(),
+    endRequests: [], eligibility: null, consentChangedAt: null, withdrawal: null, unknown: [], joinBlocked: 0, alerts: [], completed: new Map(),
     completedAt: null, filings: new Map(), lastSnapshotAt: null, snapshotPresent: new Set(), performed: new Set(),
   };
   const session = id => {
@@ -139,6 +139,9 @@ function analyze(lesson, events, now) {
         break;
       case 'server.recording_eligibility':
         f.eligibility = { eligible: event.eligible === true, reason: event.reason, count: event.count ?? 0, at };
+        break;
+      case 'server.consent_changed':
+        f.consentChangedAt = latest(f.consentChangedAt, at);
         break;
       case 'server.consent_withdrawn':
         if (!f.withdrawal) f.withdrawal = { at };
@@ -395,7 +398,15 @@ export function planActions(lesson, events, now) {
   const want = (key, type, extra = {}) => {
     if (!f.performed.has(key)) actions.push({ key, type, lessonId: id, ...extra });
   };
-  if (!f.eligibility && state.phase.value !== 'ENDED' && now >= toMs(lesson.startsAt) - TIMING.waitingFromMs) want(`decide:${id}`, 'DECIDE_RECORDING');
+  // Recording is decided before it could start. Consent or the tutor's notice entered while
+  // nobody is in the room yet still counts, so a change then is decided again; once the lesson
+  // is live the decision stands, and consent completed during class never starts a recording.
+  if (state.phase.value !== 'ENDED' && now >= toMs(lesson.startsAt) - TIMING.waitingFromMs) {
+    if (!f.eligibility) want(`decide:${id}`, 'DECIDE_RECORDING');
+    else if (state.phase.value === 'WAITING' && f.consentChangedAt != null && f.consentChangedAt >= f.eligibility.at) {
+      want(`decide:${id}:${f.consentChangedAt}`, 'DECIDE_RECORDING');
+    }
+  }
   const tutor = state.attendance.find(entry => entry.role === 'tutor');
   const live = state.phase.value === 'LIVE';
   const recording = state.recording;
