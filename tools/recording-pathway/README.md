@@ -137,3 +137,15 @@ node --test tools/recording-pathway/test/pathway.test.mjs tools/recording-pathwa
 |---|---|
 | `node tools/recording-pathway/test-env/make-test-media.mjs` | 用 ffmpeg 產生合成影片 |
 | `node tools/recording-pathway/test-env/check-acceptance.mjs <上傳紀錄.csv>` | 檢查從 Google 下載的紀錄 |
+
+## P3 線上教室（合成原型）
+
+之後錄影改由每堂課的獨立雲端教室自動產生，P1 的命名規則（`Core.js`）照樣使用。這部分目前只有設計和合成原型：沒有連到 Zoom，也還沒放進網站。
+
+| 位置 | 內容 |
+|---|---|
+| [`docs/`](docs/) | 交接規格、管理員即時教室總覽、失敗處理規則、Zoom 帳號查核、MVP 驗收清單 |
+| `classroom/` | 入場與錄影資格、webhook 持久化與歸檔、課程狀態、總覽（都是純函式） |
+| `dryrun/` | `recording-webhook.mjs`（命名示範）、`live-dashboard.mjs`（2、5、10 堂同時上課的模擬） |
+
+全部測試：`node --test "tools/recording-pathway/test/*.test.mjs"`
