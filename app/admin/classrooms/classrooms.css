@@ -1,0 +1,41 @@
+.classroom-overview { --classroom-ok: #157047; --classroom-ok-bg: #e8f7ef; --classroom-warn: #8a5a00; --classroom-warn-bg: #fdf1d8; --classroom-bad: #a3261d; --classroom-bad-bg: #fbe4e1; }
+.classroom-synthetic { background:var(--classroom-warn-bg); color:var(--classroom-warn); border-radius:12px; padding:10px 14px; font-weight:700; }
+.classroom-counts { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin:14px 0 6px; }
+.classroom-count { display:flex; justify-content:space-between; align-items:baseline; gap:8px; padding:10px 14px; border-radius:12px; background:#fff; border:1px solid #e3e8ef; }
+.classroom-count strong { font-size:22px; }
+.classroom-count.classroom-anomaly strong { color:var(--classroom-bad); }
+.classroom-group h2 { font-size:17px; margin:20px 0 10px; }
+.classroom-cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(290px,1fr)); gap:12px; }
+.classroom-card { background:#fff; border:1px solid #e3e8ef; border-radius:14px; padding:12px 14px; display:flex; flex-direction:column; gap:8px; }
+.classroom-card.is-problem { border-color:var(--classroom-bad); }
+.classroom-card-head { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+.classroom-card dl { margin:0; display:grid; gap:4px; }
+.classroom-card dl div { display:grid; grid-template-columns:64px minmax(0,1fr); gap:8px; }
+.classroom-card dt { color:#5d6877; font-size:13px; }
+.classroom-card dd { margin:0; font-size:14px; overflow-wrap:anywhere; }
+.classroom-basis { color:#5d6877; font-size:12px; margin-left:4px; }
+.classroom-data { border-radius:999px; padding:2px 10px; font-size:12px; font-weight:800; white-space:nowrap; }
+.classroom-data.REALTIME { background:var(--classroom-ok-bg); color:var(--classroom-ok); }
+.classroom-data.DELAYED { background:var(--classroom-warn-bg); color:var(--classroom-warn); }
+.classroom-data.ANOMALY { background:var(--classroom-bad-bg); color:var(--classroom-bad); }
+.classroom-alerts { list-style:none; margin:0; padding:0; display:flex; flex-wrap:wrap; gap:4px; }
+.classroom-alerts li { font-size:13px; border-radius:6px; padding:1px 7px; background:#eef1f4; color:#5d6877; }
+.classroom-alerts li.error { background:var(--classroom-bad-bg); color:var(--classroom-bad); }
+.classroom-severity { font-size:12px; color:#5d6877; }
+.classroom-severity.error { color:var(--classroom-bad); font-weight:800; }
+.classroom-handled { margin:0 0 6px; font-size:13px; color:#157047; }
+.classroom-handled.is-earlier { color:#5d6877; }
+.classroom-unhandled { margin-top:4px; font-size:12px; font-weight:800; color:var(--classroom-bad); }
+.classroom-panel { margin-top:18px; }
+.classroom-form { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:10px; margin-bottom:10px; }
+.classroom-link { margin-top:12px; padding:10px 14px; border-radius:12px; background:var(--classroom-warn-bg); display:grid; gap:8px; }
+.classroom-link p { margin:0; font-weight:700; color:var(--classroom-warn); }
+.classroom-link code { overflow-wrap:anywhere; font-size:13px; }
+@media (max-width:720px) {
+  .classroom-counts { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  /* On a phone each record or lesson is one stacked block instead of a squeezed table row. */
+  .classroom-panel .admin-table, .classroom-panel .admin-table tbody, .classroom-panel .admin-table tr, .classroom-panel .admin-table td { display:block; width:100%; }
+  .classroom-panel .admin-table tr { border-bottom:1px solid #e3e8ef; padding:8px 0; }
+  .classroom-panel .admin-table td { border-bottom:0; padding:4px 12px; }
+}
+@media (max-width:390px) { .classroom-cards { grid-template-columns:1fr; } }

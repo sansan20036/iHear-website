@@ -44,6 +44,24 @@
 | L | 失敗處理的每條規則都有對應測試 | 見 [`recording-failure-rules.md`](recording-failure-rules.md) 和第 3 節 | RT-1 到 RT-7 | 合成通過 |
 | M | 2、5、10 堂的限制與費用已評估，未確認的事項已列出 | 見 [`live-classroom-dashboard.md`](live-classroom-dashboard.md) 第 8 節 | RT-9 | **未驗證**（等授權） |
 
+### 1.1 網站實作的合成驗收（2026-10-25，第 1 週本機）
+
+網站上的教室入口、教室總覽和 API 已經實作，用合成 provider 和本機資料夾代替 Zoom 和 Google Drive。以下只填「合成」結果；實測欄全部仍是**未驗證**。
+
+| 項目 | 測試 | 合成結果 |
+|---|---|---|
+| 學生用專屬連結、小老師用登入進教室；連結錯誤、沒有連結、別人的帳號、不在入場時間內，都會被擋下，也不發憑證；被擋的紀錄會進總覽 | `tests/classroom-api.test.mjs`、`tests/classroom.smoke.mjs` | 通過 |
+| 未同意錄影的學生照常進教室，整堂不錄 | `tests/classroom-api.test.mjs` | 通過 |
+| 有人進教室之前補齊同意，會重新判斷；小老師進來後才補齊，這堂不錄 | `tests/classroom-api.test.mjs`、`test/live-dashboard.test.mjs` | 通過 |
+| 錄影只在 Zoom 確認 session 開始、兩人都在之後才請求；只有 Zoom 確認後才顯示「錄影中」 | `tests/classroom-api.test.mjs`、`tests/classroom.smoke.mjs` | 通過 |
+| 錄影檔用 P1 的命名歸檔一次，重送不重複；webhook 回應後自動接著歸檔，不必開著總覽 | `tests/classroom-api.test.mjs`、`tests/classroom-postgres.test.mjs` | 通過 |
+| 課中撤回：立即停止、30 秒再停一次、60 秒結束 session，新的 session 不錄；未確認時列為錯誤，處置後記下是誰、怎麼處理 | `tests/classroom-api.test.mjs`、`tests/classroom.smoke.mjs` | 通過 |
+| 異常紀錄：問題再次發生或升級時，重新標示待處置；PostgreSQL 和本機檔案儲存的行為一致 | `tests/classroom-store.test.mjs`、`tests/classroom-postgres.test.mjs` | 通過 |
+| 只有 owner 能看總覽和操作；未登入和 editor 都被拒；回應 `no-store` | `tests/classroom-api.test.mjs`、`tests/classroom.smoke.mjs` | 通過 |
+| 總覽和資料庫裡沒有 email、專屬連結、憑證，也沒有故意植入的姓名、電話、IP | 同上，加上 `tests/classroom-postgres.test.mjs` | 通過 |
+| 手機尺寸的頁面不需要左右捲動 | `tests/classroom.smoke.mjs` | 通過（瀏覽器模擬手機尺寸，不是實機） |
+| Migration 027 套用、資料表都開啟 RLS、限制條件有效 | `tests/classroom-postgres.test.mjs` | 通過（本機一次性資料庫） |
+
 ## 2. 必要實測（取得授權後進行，只用測試身分，不用任何學生資料）
 
 ### 2.1 裝置

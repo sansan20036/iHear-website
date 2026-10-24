@@ -22,10 +22,12 @@ function ShellContent({ children }: { children: React.ReactNode }) {
   // Academy course pages are English and Traditional Chinese only, so this label has no Simplified form.
   const academy = locale === "en" ? "Academy course pages" : "Academy 課程頁";
   const calendar = locale === "en" ? "Homepage calendar" : locale === "zhHans" ? "首页行事历" : "首頁行事曆";
+  // The classroom overview is owner-only and, like the Academy pages, has no Simplified form.
+  const classrooms = locale === "en" ? "Classrooms" : "教室總覽";
   const links = [
     ["/admin", text.overview, "⌂"], ["/admin/content", text.content, "✎"], ["/admin/academy", academy, "$"], ["/admin/calendar", calendar, "📅"], ["/admin/team", text.team, "👥"],
     ["/admin/impact", text.impact, "▥"], ["/admin/media", text.media, "▧"], ["/admin/resources", text.resources, "☷"], ["/admin/trash", text.trash, "♲"],
-    ...(principal.role === "owner" ? [["/admin/admins", text.admins, "⚙"]] : []),
+    ...(principal.role === "owner" ? [["/admin/classrooms", classrooms, "▶"], ["/admin/admins", text.admins, "⚙"]] : []),
   ];
   const go = (href: string) => { setOpen(false); navigate(href); };
   return (
