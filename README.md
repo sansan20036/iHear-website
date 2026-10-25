@@ -74,10 +74,14 @@ can match repeats by the reference. The server never retries automatically.
 Changed answers or a page reload always start a new reference.
 
 `npm run test:api` includes `tests/academy-inquiry.test.mjs` with a mocked `fetch`
-and no network. `npm run test:academy-inquiry` runs the built site with every
-Resend setting blank, simulates each outcome in the browser and checks layouts
-from 320 to 1440px; it cannot send email. Production inspection only reads the
-form and never requests the API.
+and no network. `npm run test:academy-inquiry` runs the built site twice. With every
+Resend setting blank, it simulates each outcome in the browser, checks layouts from
+320 to 1440px and confirms that the real route refuses delivery. Then
+`tests/helpers/fake-resend.mjs`, loaded into the test server only, answers Resend
+calls in-process under Resend's documented idempotency rules. Both pages are checked
+end to end: the email's fields, a timeout after acceptance, a simultaneous duplicate,
+an unchanged resend, a refused request and a used-up quota. Nothing can leave the
+machine. Production inspection only reads the form and never requests the API.
 
 Going live needs separate approval for each step: create the Resend account and
 sending domain; add in Cloudflare exactly the DNS records Resend shows, by hand

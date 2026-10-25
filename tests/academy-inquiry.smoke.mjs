@@ -1,14 +1,14 @@
-// Built application with every Resend setting blank: no email can be sent.
-// Browser outcomes are simulated per request; the real route is checked to
-// refuse delivery while the request limit still works.
+// Built application, browser and real API route; no email can leave this machine.
+// Part 1 runs with every Resend setting blank: browser outcomes are simulated per
+// request, and the real route must refuse delivery. Part 2 loads
+// tests/helpers/fake-resend.mjs into the server, which answers Resend API calls
+// in-process, so the complete path from both pages to the email is exercised.
 import { spawn } from "node:child_process";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { chromium, expect } from "@playwright/test";
 
-// `next start` reports route request URLs as localhost, so the same-origin check
-// only recognizes pages opened on localhost (127.0.0.1 counts as a foreign origin).
-const origin = "http://localhost:3216";
 const shots = path.resolve("output/playwright/academy-inquiry");
 await mkdir(shots, { recursive: true });
 
@@ -44,6 +44,36 @@ const pages = {
 };
 const fieldNames = ["availability", "contactMethod", "email", "firstName", "gradeLevel", "lastName", "locale", "location", "message", "phone", "requestId", "sessionFormat", "startTime", "subject", "website"];
 
+// `next start` reports route request URLs as localhost, so the same-origin check
+// only recognizes pages opened on localhost (127.0.0.1 counts as a foreign origin).
+async function startServer(port, env = {}) {
+  const base = `http://localhost:${port}`;
+  const child = spawn(process.execPath, ["node_modules/next/dist/bin/next", "start", "--hostname", "localhost", "--port", String(port)], {
+    env: {
+      ...process.env, NODE_ENV: "production", VERCEL: "", NETLIFY: "", CONTEXT: "", IHEAR_FORCE_FILE_STORE: "1", NEXT_TELEMETRY_DISABLED: "1",
+      RATE_LIMIT_SECRET: "academy-inquiry-smoke-only", RESEND_API_KEY: "", ACADEMY_INQUIRY_FROM: "", ACADEMY_INQUIRY_TO: "", ...env,
+    },
+    windowsHide: true, stdio: ["ignore", "pipe", "pipe"],
+  });
+  let logs = "";
+  child.stdout.on("data", chunk => { logs += chunk; });
+  child.stderr.on("data", chunk => { logs += chunk; });
+  for (let attempt = 0; attempt < 120; attempt++) {
+    if (child.exitCode !== null) throw new Error(`Server exited: ${logs}`);
+    try { if ((await fetch(`${base}/academy/courses`)).ok) return { base, stop: () => child.kill() }; } catch { /* starting */ }
+    await new Promise(resolve => { setTimeout(resolve, 500); });
+  }
+  child.kill();
+  throw new Error(`Built server did not start: ${logs}`);
+}
+
+// Nothing outside the given local server may load: no Google Form, no Resend.
+async function isolatedContext(browser, base, external) {
+  const context = await browser.newContext();
+  await context.route(url => url.origin !== base, route => { external.push(route.request().url()); return route.abort(); });
+  return context;
+}
+
 async function fillValid(form, lang) {
   await form.locator('[name="firstName"]').fill(lang === "en" ? "Jordan" : "小明");
   await form.locator('[name="lastName"]').fill(lang === "en" ? "Chen" : "林");
@@ -74,10 +104,10 @@ async function simulate(page, outcomes, bodies) {
   });
 }
 
-async function open(context, lang, width) {
+async function open(context, base, lang, width) {
   const page = await context.newPage();
   await page.setViewportSize({ width, height: 900 });
-  await page.goto(`${origin}${pages[lang].path}?entry=official`);
+  await page.goto(`${base}${pages[lang].path}?entry=official`);
   const form = page.locator("form[data-inquiry-form]");
   // Playwright's toBeEnabled ignores <fieldset disabled>; read the DOM property.
   await expect(form.locator("fieldset")).toHaveJSProperty("disabled", false);
@@ -109,36 +139,21 @@ async function submitAndExpect(form, status, message, bodies) {
   await expect(status).not.toHaveText(/不會重複|no duplicate|won.t (?:be )?(?:sent|receive)/i);
 }
 
-const child = spawn(process.execPath, ["node_modules/next/dist/bin/next", "start", "--hostname", "localhost", "--port", "3216"], {
-  env: {
-    ...process.env, NODE_ENV: "production", VERCEL: "", NETLIFY: "", CONTEXT: "", IHEAR_FORCE_FILE_STORE: "1",
-    RATE_LIMIT_SECRET: "academy-inquiry-smoke-only", RESEND_API_KEY: "", ACADEMY_INQUIRY_FROM: "", ACADEMY_INQUIRY_TO: "",
-  },
-  windowsHide: true, stdio: ["ignore", "pipe", "pipe"],
-});
-let logs = "", browser;
-child.stdout.on("data", chunk => { logs += chunk; });
-child.stderr.on("data", chunk => { logs += chunk; });
 const step = async (name, run) => { await run(); console.log(`ok - ${name}`); };
+let browser, server;
 try {
-  let ready = false;
-  for (let attempt = 0; attempt < 120 && !ready; attempt++) {
-    if (child.exitCode !== null) throw new Error(`Server exited: ${logs}`);
-    try { ready = (await fetch(`${origin}/academy/courses`)).ok; } catch { /* starting */ }
-    if (!ready) await new Promise(resolve => { setTimeout(resolve, 500); });
-  }
-  if (!ready) throw new Error(`Built server did not start: ${logs}`);
-
   browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext();
-  // Nothing outside the local server may load: no Google Form, no Resend.
+
+  // Part 1: every Resend setting blank.
+  server = await startServer(3216);
+  const origin = server.base;
   const external = [];
-  await context.route(url => url.origin !== origin, route => { external.push(route.request().url()); return route.abort(); });
+  const context = await isolatedContext(browser, origin, external);
 
   for (const lang of ["en", "zh-Hant"]) {
     await step(`${lang}: layout, privacy notice and spam trap at 320–1440px`, async () => {
       for (const width of [320, 390, 768, 1440]) {
-        const { page, form } = await open(context, lang, width);
+        const { page, form } = await open(context, origin, lang, width);
         await form.scrollIntoViewIfNeeded();
         expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), `${lang} ${width}px overflow`).toBeLessThanOrEqual(1);
         const box = await form.boundingBox();
@@ -162,7 +177,7 @@ try {
 
     await step(`${lang}: missing answers are flagged before any request`, async () => {
       const bodies = [];
-      const { page, form, status } = await open(context, lang, 390);
+      const { page, form, status } = await open(context, origin, lang, 390);
       await simulate(page, [], bodies);
       await form.locator('button[type="submit"]').click();
       await expect(status).toHaveText(pages[lang].text.invalid);
@@ -189,7 +204,7 @@ try {
   await step("en: every server outcome shows its own message and keeps the reference only when the email may have been sent", async () => {
     const bodies = [];
     const { text } = pages.en;
-    const { page, form, status } = await open(context, "en", 1440);
+    const { page, form, status } = await open(context, origin, "en", 1440);
     await simulate(page, [
       { status: 502, json: { code: "DELIVERY_UNCONFIRMED" } },
       { status: 409, json: { code: "DELIVERY_IN_PROGRESS" } },
@@ -242,7 +257,7 @@ try {
   await step("zh-Hant: Chinese messages, reference reuse and success at 390px", async () => {
     const bodies = [];
     const { text } = pages["zh-Hant"];
-    const { page, form, status } = await open(context, "zh-Hant", 390);
+    const { page, form, status } = await open(context, origin, "zh-Hant", 390);
     await simulate(page, [
       { status: 502, json: { code: "DELIVERY_UNCONFIRMED" } },
       { status: 409, json: { code: "DELIVERY_IN_PROGRESS" } },
@@ -267,7 +282,7 @@ try {
 
   for (const lang of ["en", "zh-Hant"]) {
     await step(`${lang}: the real route refuses delivery without Resend settings`, async () => {
-      const { page, form, status } = await open(context, lang, 1440);
+      const { page, form, status } = await open(context, origin, lang, 1440);
       await fillValid(form, lang);
       const answer = page.waitForResponse(response => response.url() === `${origin}/api/academy-inquiry`);
       await form.locator('button[type="submit"]').click();
@@ -308,8 +323,149 @@ try {
   });
 
   expect(external, "No request may leave the local server").toEqual([]);
+  await context.close();
+  server.stop();
+  server = null;
+
+  // Part 2: the real route with a simulated Resend inside the server process.
+  const fakeDir = path.resolve("output/playwright/academy-inquiry-fake-resend");
+  await mkdir(fakeDir, { recursive: true });
+  const fakeControl = path.join(fakeDir, "control.json");
+  let fakeLog, sessions = 0;
+  const events = async () => (await readFile(fakeLog, "utf8")).split("\n").filter(Boolean).map(line => JSON.parse(line));
+  const queue = behaviors => writeFile(fakeControl, JSON.stringify(behaviors));
+  // Each server session stays within the request limit of 5 per 10 minutes and
+  // keeps its own event log for review.
+  async function fakeSession(run) {
+    fakeLog = path.join(fakeDir, `resend-session-${++sessions}.jsonl`);
+    await writeFile(fakeLog, "");
+    await queue([]);
+    server = await startServer(3219, {
+      NODE_OPTIONS: [process.env.NODE_OPTIONS, `--import=${pathToFileURL(path.resolve("tests/helpers/fake-resend.mjs")).href}`].filter(Boolean).join(" "),
+      FAKE_RESEND_LOG: fakeLog,
+      FAKE_RESEND_CONTROL: fakeControl,
+      RESEND_API_KEY: "re_synthetic_not_a_real_key",
+      ACADEMY_INQUIRY_FROM: "iHear Academy <academy@notify.example.org>",
+    });
+    // Never submit unless the simulated Resend is active in the server.
+    expect((await events()).some(event => event.type === "ready"), "fake Resend preload is active").toBe(true);
+    const outside = [];
+    const fakeContext = await isolatedContext(browser, server.base, outside);
+    try {
+      await run(fakeContext, server.base);
+    } finally {
+      await fakeContext.close();
+      server.stop();
+      server = null;
+    }
+    expect(outside, "No browser request may leave the local server").toEqual([]);
+    expect((await events()).filter(event => event.type === "blocked"), "The server made no other outside request").toEqual([]);
+  }
+
+  await fakeSession(async (fakeContext, base) => {
+    await step("simulated Resend: English and Chinese inquiries become the expected email, and a double submit sends once", async () => {
+      for (const lang of ["en", "zh-Hant"]) {
+        const before = (await events()).filter(event => event.type === "request").length;
+        const { page, form, status } = await open(fakeContext, base, lang, lang === "en" ? 1440 : 390);
+        await fillValid(form, lang);
+        await form.evaluate(node => { node.requestSubmit(); node.requestSubmit(); });
+        await expect(status).toContainText(pages[lang].text.success);
+        await expect(form.locator('[name="firstName"]')).toHaveValue("");
+        const requests = (await events()).filter(event => event.type === "request").slice(before);
+        expect(requests).toHaveLength(1);
+        const [{ key, authorization, body }] = requests;
+        const reference = key.replace(/^academy-inquiry\//, "");
+        expect(key).toMatch(/^academy-inquiry\/[a-f\d]{8}-[a-f\d]{4}-4[a-f\d]{3}-[89ab][a-f\d]{3}-[a-f\d]{12}$/);
+        expect(authorization).toBe("Bearer re_synthetic_not_a_real_key");
+        expect(Object.keys(body).sort()).toEqual(["from", "reply_to", "subject", "text", "to"]);
+        expect(body).toMatchObject({ from: "iHear Academy <academy@notify.example.org>", to: ["ihearprogram@gmail.com"], reply_to: "parent@example.com" });
+        const name = lang === "en" ? "Jordan Chen" : "小明 林";
+        expect(body.subject).toBe(`iHear Academy 課程詢問 / Course inquiry · ${name} · English communication · Ref ${reference.slice(0, 8)}`);
+        for (const line of [
+          `詢問編號 / Reference: ${reference}`,
+          `表單語言 / Form language: ${lang === "en" ? "英文 / English" : "繁體中文 / Traditional Chinese"}`,
+          `名字 / First name: ${lang === "en" ? "Jordan" : "小明"}`,
+          "電子信箱 / Email: parent@example.com",
+          "想了解的課程 / Subject: 英文口說與聽力 / English communication",
+          "Synthetic browser check only.",
+        ]) expect(body.text).toContain(line);
+        await page.close();
+      }
+      expect((await events()).filter(event => event.type === "accepted")).toHaveLength(2);
+    });
+
+    await step("simulated Resend: after a timeout, a simultaneous duplicate is refused and the unchanged resend delivers one email", async () => {
+      await queue(["accept-then-hang"]);
+      const { page, form, status } = await open(fakeContext, base, "en", 390);
+      await fillValid(form, "en");
+      await form.locator('[name="message"]').fill("Synthetic timeout check.");
+      let payload;
+      page.on("request", request => { if (request.url() === `${base}/api/academy-inquiry`) payload ??= request.postData(); });
+      const started = Date.now();
+      const answer = page.waitForResponse(response => response.url() === `${base}/api/academy-inquiry`, { timeout: 30000 });
+      await form.locator('button[type="submit"]').click();
+      // While Resend has accepted but not yet answered, the same inquiry arrives again.
+      await expect.poll(async () => (await events()).some(event => event.type === "inflight")).toBe(true);
+      const duplicate = await fetch(`${base}/api/academy-inquiry`, { method: "POST", headers: { "Content-Type": "application/json", Origin: base }, body: payload });
+      expect(duplicate.status).toBe(409);
+      expect(await duplicate.json()).toEqual({ code: "DELIVERY_IN_PROGRESS" });
+      // The server's own 10-second limit ends the first request, not the browser's.
+      const response = await answer;
+      expect(response.status()).toBe(502);
+      expect(await response.json()).toEqual({ code: "DELIVERY_UNCONFIRMED" });
+      expect(Date.now() - started).toBeGreaterThanOrEqual(9000);
+      expect(Date.now() - started).toBeLessThan(20000);
+      await expect(status).toContainText(pages.en.text.unconfirmed);
+      await shoot(page, "en-390-timeout-unconfirmed.png");
+      // Resending the unchanged answers reuses the reference, so Resend answers with the first result.
+      const resent = page.waitForRequest(request => request.url() === `${base}/api/academy-inquiry`);
+      const resentAnswer = page.waitForResponse(response => response.url() === `${base}/api/academy-inquiry`);
+      await form.locator('button[type="submit"]').click();
+      expect((await resent).postData()).toBe(payload);
+      expect((await resentAnswer).status()).toBe(200);
+      await expect(status).toContainText(pages.en.text.success);
+      const key = `academy-inquiry/${JSON.parse(payload).requestId}`;
+      const log = (await events()).filter(event => event.key === key);
+      expect(log.filter(event => event.type === "accepted")).toHaveLength(1);
+      expect(log.filter(event => event.type === "concurrent")).toHaveLength(1);
+      expect(log.filter(event => event.type === "replayed")).toHaveLength(1);
+      expect((await events()).filter(event => event.type === "accepted")).toHaveLength(3);
+      await page.close();
+    });
+  });
+
+  await fakeSession(async (fakeContext, base) => {
+    await step("simulated Resend: a refused request is not sent, and the retry uses a new reference", async () => {
+      await queue([{ status: 422, name: "validation_error" }]);
+      const { page, form, status } = await open(fakeContext, base, "zh-Hant", 1440);
+      await fillValid(form, "zh-Hant");
+      await form.locator('button[type="submit"]').click();
+      await expect(status).toContainText(pages["zh-Hant"].text.failed);
+      await form.locator('button[type="submit"]').click();
+      await expect(status).toContainText(pages["zh-Hant"].text.success);
+      const requests = (await events()).filter(event => event.type === "request");
+      expect(requests).toHaveLength(2);
+      expect(requests[0].key).not.toBe(requests[1].key);
+      const accepted = (await events()).filter(event => event.type === "accepted");
+      expect(accepted.map(event => event.key)).toEqual([requests[1].key]);
+      await page.close();
+    });
+
+    await step("simulated Resend: a used-up daily quota pauses the form without sending", async () => {
+      await queue([{ status: 429, name: "daily_quota_exceeded" }]);
+      const { page, form, status } = await open(fakeContext, base, "en", 768);
+      await fillValid(form, "en");
+      await form.locator('[name="message"]').fill("Synthetic quota check.");
+      await form.locator('button[type="submit"]').click();
+      await expect(status).toContainText(pages.en.text.unavailable);
+      await expect(form.locator('[name="message"]')).toHaveValue("Synthetic quota check.");
+      expect((await events()).filter(event => event.type === "accepted")).toHaveLength(1);
+      await page.close();
+    });
+  });
+
   console.log(`Academy inquiry browser checks passed. Screenshots: ${shots}`);
 } finally {
+  server?.stop();
   await browser?.close();
-  child.kill();
 }
