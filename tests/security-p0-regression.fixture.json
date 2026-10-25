@@ -1,0 +1,153 @@
+{
+  "baselineCommit": "a84576247769f0a027a1f5816d6e4baba40412ea",
+  "sourceHashes": {
+    "academy.html": "dc91fd8dc4c24233aeb1b9cb60078e76cd1ffc2d493e10cb2226d30b9b877559",
+    "academy-site/index.html": "5d4cc5a465d51e711a07ccdf0e70612b804674e11a7d0380e50a250c1feeb6f1",
+    "academy-site/zh/index.html": "1b82c937269a077707d9bbab966c1b2ab78a3c20df86e29fbaca82b47e7d9b82",
+    "academy-site/script.js": "1c08feddca8ef82f1126404add506a2dadb24caec8a40d90d388ecfaafb67204",
+    "academy-site/style.css": "9e8ec8bf63b512b6a2d0af5c37cde3ff72c0a12dbaa6c995fe166ec41aa7fcd4",
+    "academy-site/self-hosted-fonts.css": "a9eca8b14ceda6e15dc5e76268ac95d43978fd1f4366c84c900ccae62e71a8fa"
+  },
+  "prices": [
+    [
+      "TWD",
+      "45",
+      "highschool",
+      "NT$800",
+      "NT$7,200"
+    ],
+    [
+      "TWD",
+      "45",
+      "college",
+      "NT$1,000",
+      "NT$9,000"
+    ],
+    [
+      "TWD",
+      "60",
+      "highschool",
+      "NT$1,000",
+      "NT$9,000"
+    ],
+    [
+      "TWD",
+      "60",
+      "college",
+      "NT$1,400",
+      "NT$12,600"
+    ],
+    [
+      "USD",
+      "45",
+      "highschool",
+      "US$25",
+      "US$225"
+    ],
+    [
+      "USD",
+      "45",
+      "college",
+      "US$34",
+      "US$306"
+    ],
+    [
+      "USD",
+      "60",
+      "highschool",
+      "US$34",
+      "US$306"
+    ],
+    [
+      "USD",
+      "60",
+      "college",
+      "US$45",
+      "US$405"
+    ]
+  ],
+  "faq": {
+    "en": [
+      {
+        "question": "What does “peer tutoring” mean?",
+        "answer": "You learn with a student tutor who brings subject knowledge and a relatable perspective. Tutors help explain, practice, and build understanding. They are student tutors; the service does not replace classroom instruction or professional clinical care."
+      },
+      {
+        "question": "Who can enroll?",
+        "answer": "Learners of all ages are welcome, with a focus on K–12 students. College students and adults can also inquire about English communication and academic support. Enrollment depends on the subject, level, and a suitable tutor and schedule."
+      },
+      {
+        "question": "Where do sessions take place?",
+        "answer": "Sessions take place online via Zoom. Share your time zone and availability when you inquire. A computer or tablet with a stable internet connection, microphone, and camera supports participation."
+      },
+      {
+        "question": "Can you help English learners or students with communication needs?",
+        "answer": "Tell us about your learning and communication preferences so we can discuss a suitable match. iHear’s background in inclusive communication informs our approach. Tutoring is educational support, rather than speech-language therapy or clinical treatment. Eligible learners can also inquire about the free iHear Program."
+      },
+      {
+        "question": "How will I know what we’re working on?",
+        "answer": "Session progress notes can include skills practiced, strengths, areas for continued development, assigned practice, and the next-session focus. For groups, individual updates should include only the relevant student’s information."
+      },
+      {
+        "question": "Do you guarantee grades or test scores?",
+        "answer": "No. Progress depends on the learner’s starting point, participation, practice, and other factors. We focus on clear goals, useful feedback, and steady skill development."
+      },
+      {
+        "question": "Does SAT/PSAT tutoring cost more?",
+        "answer": "No. All available subjects, including SAT/PSAT, use the same one-on-one rates. High-school tutor: US$25 / NT$800 for 45 minutes, US$34 / NT$1,000 for 60 minutes. College tutor: US$34 / NT$1,000 for 45 minutes, US$45 / NT$1,400 for 60 minutes. Ten-session packages are 10% off: high-school tutor US$225 / NT$7,200 (45 minutes) or US$306 / NT$9,000 (60 minutes); college tutor US$306 / NT$9,000 (45 minutes) or US$405 / NT$12,600 (60 minutes). Subject and test-preparation availability depend on a qualified tutor match."
+      },
+      {
+        "question": "Is every iHear volunteer an Academy tutor?",
+        "answer": "The public team page represents the broader iHear Program. Academy tutoring requires a suitable subject and learner match, and current availability. Ask our team who is available for your goals."
+      },
+      {
+        "question": "How do paid lessons support the nonprofit program?",
+        "answer": "Academy revenue covers tutor compensation and learning support. Surplus is reinvested in the iHear Program’s free services. Paid enrollment is separate from the free program."
+      }
+    ],
+    "zh-Hant": [
+      {
+        "question": "孩子的英文程度，適合參加嗎？",
+        "answer": "可以先告訴我們孩子的年級、目前程度，以及想練習的內容。我們會依學習需求、導師能力與時段討論是否有合適的配對；實際開課安排需由團隊確認。"
+      },
+      {
+        "question": "上課會使用什麼語言？可以先說明溝通需求嗎？",
+        "answer": "請在詢問時告訴我們孩子習慣的語言與溝通方式，包括是否需要中文協助。團隊會在配對時確認導師可提供的支持與授課安排。"
+      },
+      {
+        "question": "課程在哪裡上？台灣的時間可以安排嗎？",
+        "answer": "課程透過 Zoom 線上進行。請提供所在時區及可上課的星期與時段，例如台灣時間（UTC+8），由團隊確認能否安排。上課需準備網路穩定的電腦或平板、麥克風與攝影機。"
+      },
+      {
+        "question": "「同儕輔導」是什麼？導師是誰？",
+        "answer": "由具備所授內容能力、經過培訓的高中生或大學生導師，陪孩子理解、練習與提問。導師以學生的視角提供學習支持；同儕輔導不取代學校正式教學。"
+      },
+      {
+        "question": "英文課業輔導會怎麼協助作業？",
+        "answer": "孩子可以帶著英文課的教材、作業或不懂的地方來討論。導師協助理解題意、釐清觀念並提供練習與回饋，讓孩子自己思考與完成作品。"
+      },
+      {
+        "question": "家長如何了解孩子學了什麼？",
+        "answer": "課後學習紀錄可包含當次練習內容、孩子的優勢、待加強之處、練習建議與下堂課重點。如對學習方向有疑問，也可以聯繫 iHear 團隊。"
+      },
+      {
+        "question": "費用怎麼計算？不同英文課程的價格一樣嗎？",
+        "answer": "本頁各項英文學習服務皆適用相同費率，費用依上課時間與導師而定，皆為一對一課程。高中生導師：45 分鐘 NT$800／US$25、60 分鐘 NT$1,000／US$34；大學生導師：45 分鐘 NT$1,000／US$34、60 分鐘 NT$1,400／US$45。十堂方案為九折：高中生導師 45 分鐘 NT$7,200／US$225、60 分鐘 NT$9,000／US$306；大學生導師 45 分鐘 NT$9,000／US$306、60 分鐘 NT$12,600／US$405。小班教學或其他時長請另外諮詢。"
+      },
+      {
+        "question": "會保證成績或學習成果嗎？",
+        "answer": "我們不保證特定成績或成果。學習進展會受到起點、參與情況、練習等因素影響；課程著重清楚的目標、具體回饋與持續練習。"
+      },
+      {
+        "question": "有聽力或溝通需求的孩子，可以詢問嗎？",
+        "answer": "歡迎先說明孩子的學習與溝通需求，以便討論合適的安排。Academy 提供教育與學習支持，不是語言治療或臨床服務；符合資格的學習者也可詢問免費的 iHear Program。"
+      }
+    ]
+  },
+  "courseLabels": {
+    "en": "Explore iHear Academy Courses",
+    "zhHant": "了解 iHear Academy 課程",
+    "zhHans": "了解 iHear Academy 课程"
+  },
+  "sourceHashFormat": "sha256 of UTF-8 text with CRLF normalized to LF only"
+}

@@ -10,6 +10,32 @@ export const AVATAR_IMAGE_MAX_BYTES = 500 * 1024;
 export const MULTIPART_MAX_BYTES = Math.floor(1.25 * 1024 * 1024);
 export const SITE_MEDIA_WIDTHS = [480, 800, 1200] as const;
 
+function assertWebPContainer(input: Buffer) {
+  const invalid = () => new SiteMediaImageError("The file contents are not a valid WebP image");
+  // MIME types are supplied by the client. Check the container before native
+  // format detection, so a mislabeled SVG or AVIF never reaches Sharp.
+  if (
+    input.byteLength < 20
+    || input.toString("latin1", 0, 4) !== "RIFF"
+    || input.toString("latin1", 8, 12) !== "WEBP"
+    || input.readUInt32LE(4) !== input.byteLength - 8
+    || !["VP8 ", "VP8L", "VP8X"].includes(input.toString("latin1", 12, 16))
+  ) {
+    throw invalid();
+  }
+
+  // RIFF chunks include an eight-byte header and padding for odd payload sizes.
+  // Reject truncation and trailing fragments; Sharp still validates the bitstream.
+  let offset = 12;
+  while (offset < input.byteLength) {
+    if (input.byteLength - offset < 8) throw invalid();
+    const chunkSize = input.readUInt32LE(offset + 4);
+    const nextOffset = offset + 8 + chunkSize + (chunkSize % 2);
+    if (nextOffset > input.byteLength) throw invalid();
+    offset = nextOffset;
+  }
+}
+
 async function encodeVariant(input: Buffer, width: number) {
   for (const quality of [82, 76, 70, 64]) {
     const result = await sharp(input, { limitInputPixels: 40_000_000, failOn: "error" })
@@ -40,6 +66,7 @@ export async function processSiteMediaImage(
   }
 
   const input = Buffer.from(await file.arrayBuffer());
+  assertWebPContainer(input);
   let metadata: Metadata;
   try {
     metadata = await sharp(input, { limitInputPixels: 40_000_000, failOn: "error" }).metadata();
