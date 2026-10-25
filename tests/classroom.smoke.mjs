@@ -74,14 +74,15 @@ try {
     await admin.goto(`${origin}/admin/classrooms`);
     await expect(admin.getByRole('heading', { name: '教室總覽', level: 1 })).toBeVisible();
     await expect(admin.getByRole('note')).toContainText('合成模式');
-    await expect(admin.locator('.admin-sidebar')).toContainText('教室總覽');
+    await expect(admin.locator('.admin-sidebar nav button', { hasText: '線上教室' })).toHaveCount(1);
+    await expect(admin.locator('.admin-sidebar nav button', { hasText: '總覽' })).toHaveCount(1);
     const added = await admin.evaluate(async email => (await fetch('/api/admin/accounts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email }) })).status, editor);
     expect(added).toBe(201);
     const editorContext = await context({ email: editor });
     const editorPage = watch(await editorContext.newPage());
     await editorPage.goto(`${origin}/admin/classrooms`);
     await expect(editorPage.getByText('需要擁有者權限。')).toBeVisible();
-    await expect(editorPage.locator('.admin-sidebar')).not.toContainText('教室總覽');
+    await expect(editorPage.locator('.admin-sidebar')).not.toContainText('線上教室');
     const overview = await editorPage.evaluate(async () => (await fetch('/api/admin/classrooms')).status);
     expect(overview).toBe(403);
     await editorContext.close();

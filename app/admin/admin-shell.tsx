@@ -23,7 +23,8 @@ function ShellContent({ children }: { children: React.ReactNode }) {
   const academy = locale === "en" ? "Academy course pages" : "Academy 課程頁";
   const calendar = locale === "en" ? "Homepage calendar" : locale === "zhHans" ? "首页行事历" : "首頁行事曆";
   // The classroom overview is owner-only and, like the Academy pages, has no Simplified form.
-  const classrooms = locale === "en" ? "Classrooms" : "教室總覽";
+  // The label must not contain 總覽, which names the overview link above.
+  const classrooms = locale === "en" ? "Classrooms" : "線上教室";
   const links = [
     ["/admin", text.overview, "⌂"], ["/admin/content", text.content, "✎"], ["/admin/academy", academy, "$"], ["/admin/calendar", calendar, "📅"], ["/admin/team", text.team, "👥"],
     ["/admin/impact", text.impact, "▥"], ["/admin/media", text.media, "▧"], ["/admin/resources", text.resources, "☷"], ["/admin/trash", text.trash, "♲"],
