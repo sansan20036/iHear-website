@@ -57,6 +57,25 @@ async function checkAcademyPage(page, lang) {
   assert.doesNotMatch(html, /chatgpt\.(?:site|com)|openai-sidetron|hide-editor\.js/i, `Academy is independent of GPT hosting: ${page}`);
   const scripts = tags(html, 'script');
   assert.doesNotMatch(scripts.map(script => script.src || '').join('\n'), /(?:\/api\/auth(?:\/|\b)|\/auth\.js(?:\?|$))/i, `Academy has no authentication scripts: ${page}`);
+  assert.equal(scripts.filter(script => script.src === `${academyAssets}/inquiry.js`).length, 1, `Academy inquiry behavior is deployed: ${page}`);
+  const inquiryForms = tags(html, 'form');
+  assert.equal(inquiryForms.length, 1, `One Academy inquiry form: ${page}`);
+  assert.equal(inquiryForms[0].action, '/api/academy-inquiry', `Academy sends to its own email API: ${page}`);
+  assert.equal(inquiryForms[0].method?.toLowerCase(), 'post', `Academy inquiry uses POST: ${page}`);
+  assert.equal(inquiryForms[0]['data-locale'], lang, `Academy inquiry locale: ${page}`);
+  const inquiryControls = [...tags(html, 'input'), ...tags(html, 'textarea'), ...tags(html, 'select')].filter(field => !['currency', 'duration', 'tutor', 'plan'].includes(field.name));
+  assert.deepEqual(inquiryControls.map(field => field.name).sort(), ['availability', 'contactMethod', 'email', 'firstName', 'gradeLevel', 'lastName', 'location', 'message', 'phone', 'sessionFormat', 'startTime', 'subject', 'website'], `Both languages keep the same inquiry fields: ${page}`);
+  assert.equal(inquiryControls.find(field => field.name === 'website')?.tabindex, '-1', `Spam trap stays out of the keyboard order: ${page}`);
+  assert.match(html, /id="inquiry-privacy"[\s\S]*ihearprogram@gmail\.com[\s\S]*Resend/, `Inquiry privacy notice names the recipient and email service: ${page}`);
+  assert.doesNotMatch(html, /href="mailto:[^"]*body=/, `The email-draft button is replaced by the form: ${page}`);
+  const registration = tags(html, 'a').filter(link => /forms\.gle|docs\.google\.com\/forms/.test(link.href || ''));
+  if (lang === 'zh-Hant') {
+    assert.deepEqual(registration.map(link => link.href), ['https://forms.gle/NoTSzGmf4nW2aWPT7'], 'Chinese page links to the English communication registration form');
+    assert.equal(registration[0].target, '_blank', 'Registration form opens in a new tab');
+    for (const protection of ['noopener', 'noreferrer']) assert.ok(registration[0].rel?.split(' ').includes(protection), `Registration link requires ${protection}`);
+  } else {
+    assert.equal(registration.length, 0, 'English page has only the inquiry form');
+  }
 
   const links = tags(html, 'link');
   const canonical = links.filter(link => link.rel === 'canonical');

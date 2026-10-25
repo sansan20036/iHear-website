@@ -9,9 +9,9 @@ Static iHear pages served by Next.js, with Auth.js / NextAuth.js Google sign-in.
 The existing CMS introduction remains at `/academy#academy`, served from
 `academy.html`. Its primary "了解 iHear Academy 課程" button opens the complete
 bilingual course website, public at `/academy/courses/zh` (Traditional Chinese)
-and `/academy/courses` (English). Inquiry buttons within that course website open
-prefilled email drafts. All pages use the same official Vercel host and need no
-ChatGPT account or site editor integration.
+and `/academy/courses` (English). Inquiry buttons within that course website lead
+to the course inquiry form at the end of each page. All pages use the same official
+Vercel host and need no ChatGPT account or site editor integration.
 
 The introduction's course button uses `/academy/courses/zh?entry=official` to avoid
 previous permanent redirects cached by some browsers. The former `/academy/en`
@@ -19,16 +19,72 @@ entry redirects to `/academy/courses?entry=official`. Canonical and hreflang met
 use the clean, query-free course URLs; the entry parameter only avoids stale browser
 redirect caches.
 
-Edit `academy-site/` or sync it from the adjacent local Academy project with
-`npm run sync:official` in that project's `site/` directory. During the normal build,
+Edit `academy-site/` directly. The adjacent local Academy project's `site/dist/`
+predates the current prices and the inquiry form, so do not run its
+`npm run sync:official` until it has been brought up to date. During the normal build,
 `scripts/prepare-academy.mjs` copies these portable static files to
 `public/academy/courses/` and adapts asset and language URLs for the clean routes.
 The generated asset directory stays at that location while `next.config.mjs` maps the
 course page entry routes. Do not edit generated `public/` files. After local verification,
-review, commit, and push the official repository to GitHub `main` for Vercel to publish;
-syncing local files alone does not publish the site. The CMS pages keep their
+review and commit. Pushing `main` does not publish the site: production releases are
+deployed separately, with approval. The CMS pages keep their
 current-data routes. Use `npm run test:public-pages` after a build to check the public
 CMS pages, both Academy languages, redirects, and assets.
+
+### Course inquiry form
+
+Both languages use the same fields and send JSON to the same-origin
+`POST /api/academy-inquiry` from `academy-site/inquiry.js`. First name, email and
+subject are required; phone becomes required when phone contact is chosen. The
+Chinese page also links, in a new tab, to the English communication registration
+[Google Form](https://forms.gle/NoTSzGmf4nW2aWPT7); Google may require sign-in.
+Visitors can use either form.
+
+The server checks the request origin and applies the existing request limit (5 per
+10 minutes per network address, counted under an HMAC in `api_rate_limits`). It
+rejects unknown fields, invalid choices and a filled hidden spam field, then sends
+a plain-text email through Resend to the fixed recipient `ihearprogram@gmail.com`,
+with the visitor's email as Reply-To. The site neither stores nor logs the answers,
+and no confirmation goes to the visitor, so visitors can never make the site email
+another address. The privacy notice on both pages states the purpose, recipients,
+retention and contact address; keep it accurate whenever this behavior changes.
+
+Server-only settings (see `.env.example`): `RESEND_API_KEY`, `ACADEMY_INQUIRY_FROM`
+(an address on the domain verified in Resend) and the optional `ACADEMY_INQUIRY_TO`
+(defaults to `ihearprogram@gmail.com`; set it only for a test inbox). Without them the
+API answers `503 EMAIL_UNAVAILABLE` without contacting Resend, and the page asks
+visitors to email instead.
+
+Each inquiry carries a random reference. It is the Resend `Idempotency-Key` and
+appears in the email subject (`Ref` and 8 characters) and body. Resend replays the
+first result only for the same key and an identical body within 24 hours, so the
+email text never includes the sending time. That narrows duplicates but cannot
+rule them out: the page never promises that a resend cannot arrive twice, and staff
+can match repeats by the reference. The server never retries automatically.
+
+| Resend answer | API code | May have been sent? | Browser |
+|---|---|---|---|
+| 2xx with an `id` | `ok` | Accepted | Success; form cleared |
+| 409 `concurrent_idempotent_requests` | `DELIVERY_IN_PROGRESS` (409) | Maybe | Keeps the reference; asks to wait about a minute |
+| 409 `invalid_idempotent_request` | `DELIVERY_FAILED` (502) | No | Next attempt uses a new reference |
+| Other 409, 5xx, timeout, network error, 2xx without `id` | `DELIVERY_UNCONFIRMED` (502) | Maybe | Keeps the reference; warns the team may receive it twice |
+| 400, 422, 429 `rate_limit_exceeded`, other 4xx | `DELIVERY_FAILED` (502) | No | Next attempt uses a new reference |
+| 401, 403, 429 daily or monthly quota | `EMAIL_UNAVAILABLE` (503) | No | Asks visitors to email instead |
+
+Changed answers or a page reload always start a new reference.
+
+`npm run test:api` includes `tests/academy-inquiry.test.mjs` with a mocked `fetch`
+and no network. `npm run test:academy-inquiry` runs the built site with every
+Resend setting blank, simulates each outcome in the browser and checks layouts
+from 320 to 1440px; it cannot send email. Production inspection only reads the
+form and never requests the API.
+
+Going live needs separate approval for each step: create the Resend account and
+sending domain; add in Cloudflare exactly the DNS records Resend shows, by hand
+(not its automatic Cloudflare setup); create a sending-only key restricted to that
+domain and add it to Vercel Production as a Sensitive variable; optionally send one
+email to a test inbox with `ACADEMY_INQUIRY_TO`; release; then Justine confirms one
+inquiry per language and the privacy notice wording.
 
 ## Local Preview
 

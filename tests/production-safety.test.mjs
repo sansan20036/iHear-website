@@ -5,7 +5,7 @@ import { assertResourceRendering } from "./production/resource-rendering.mjs";
 describe("production inspection read-only boundary", () => {
   const origin = "https://www.ihearus.org";
   it.each(["POST", "PUT", "PATCH", "DELETE", "OPTIONS"])("blocks %s before it reaches any server", method => {
-    for (const url of [`${origin}/api/resources`, "https://forms.gle/example"]) {
+    for (const url of [`${origin}/api/resources`, `${origin}/api/academy-inquiry`, "https://forms.gle/example"]) {
       expect(readOnlyDecision({ url, method })).toBe("non-read-method");
     }
   });
@@ -21,7 +21,7 @@ describe("production inspection read-only boundary", () => {
     }
   });
   it("allows Academy assets without allowing arbitrary paths or asset navigation", () => {
-    for (const path of ["style.css", "self-hosted-fonts.css", "script.js", "logo.png", "classroom.jpg", "fonts/xn7gYHE41ni1AdIRggexSg.woff2"]) {
+    for (const path of ["style.css", "self-hosted-fonts.css", "script.js", "inquiry.js", "logo.png", "classroom.jpg", "fonts/xn7gYHE41ni1AdIRggexSg.woff2"]) {
       const url = `${origin}/academy/courses/${path}`;
       expect(readOnlyDecision({ url, method: "GET" })).toBeNull();
       expect(readOnlyDecision({ url, method: "GET", navigation: true })).toBe("non-public-navigation");
@@ -29,6 +29,12 @@ describe("production inspection read-only boundary", () => {
     for (const path of ["admin", "index.html", "private.json", "../../admin", "fonts/../../private.json"]) {
       expect(readOnlyDecision({ url: `${origin}/academy/courses/${path}`, method: "GET" })).not.toBeNull();
     }
+  });
+  it("never inspects or submits the Academy inquiry email endpoint", () => {
+    for (const method of ["GET", "HEAD"]) {
+      expect(readOnlyDecision({ url: `${origin}/api/academy-inquiry`, method })).toBe("non-public-api");
+    }
+    expect(readOnlyDecision({ url: `${origin}/api/academy-inquiry`, method: "POST" })).toBe("non-read-method");
   });
   it("allows public data and HTTPS image reads, but rejects credentials and HTTP", () => {
     for (const url of [`${origin}/api/resources`, `${origin}/api/site-media/home.hero/image?v=123`, `${origin}/assets/site.css`, "https://i.ytimg.com/vi/example/hqdefault.jpg"]) {

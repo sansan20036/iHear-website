@@ -38,7 +38,6 @@
         "faq.item8",
         "faq.item9",
         "start",
-        "start.inquiry",
         "footer"
       ],
       "fields": [
@@ -1115,68 +1114,12 @@
           "default": "One confusing concept, a writing goal, or more confidence speaking English—we can start there."
         },
         {
-          "id": "start.body",
+          "id": "start.formBody",
           "block": "start",
           "tag": "p",
           "kind": "multiline",
           "maxLength": 2000,
-          "default": "Contact the iHear team to discuss subject availability, tutor fit, and next steps."
-        },
-        {
-          "id": "start.inquiry.title",
-          "block": "start.inquiry",
-          "tag": "h3",
-          "kind": "single",
-          "maxLength": 200,
-          "default": "Make your first message easy."
-        },
-        {
-          "id": "start.inquiry.intro",
-          "block": "start.inquiry",
-          "tag": "p",
-          "kind": "multiline",
-          "maxLength": 2000,
-          "default": "Include these details so we can help you find a match:"
-        },
-        {
-          "id": "start.inquiry.item1",
-          "block": "start.inquiry",
-          "tag": "li",
-          "kind": "single",
-          "maxLength": 200,
-          "default": "Student’s grade or age range"
-        },
-        {
-          "id": "start.inquiry.item2",
-          "block": "start.inquiry",
-          "tag": "li",
-          "kind": "single",
-          "maxLength": 200,
-          "default": "Subject, course level, or communication goal"
-        },
-        {
-          "id": "start.inquiry.item3",
-          "block": "start.inquiry",
-          "tag": "li",
-          "kind": "single",
-          "maxLength": 200,
-          "default": "Preferred session format and frequency"
-        },
-        {
-          "id": "start.inquiry.item4",
-          "block": "start.inquiry",
-          "tag": "li",
-          "kind": "single",
-          "maxLength": 200,
-          "default": "Time zone and available days/times"
-        },
-        {
-          "id": "start.inquiry.button",
-          "block": "start.inquiry",
-          "tag": "a",
-          "kind": "single",
-          "maxLength": 200,
-          "default": "Email a tutoring inquiry"
+          "default": "Send a quick inquiry and the iHear team will follow up to discuss subject availability, tutor fit, and next steps. Prefer email? Write to us directly."
         },
         {
           "id": "footer.tagline",
@@ -1232,7 +1175,6 @@
         "faq.item8",
         "faq.item9",
         "start",
-        "start.inquiry",
         "footer"
       ],
       "fields": [
@@ -2269,76 +2211,12 @@
           "default": "想更敢開口、把文章讀懂，或寫出更清楚的句子，都可以成為第一步。"
         },
         {
-          "id": "start.body",
+          "id": "start.formBody",
           "block": "start",
           "tag": "p",
           "kind": "multiline",
           "maxLength": 2000,
-          "default": "聯繫 iHear 團隊，一起確認適合的學習內容、導師與後續安排。"
-        },
-        {
-          "id": "start.inquiry.title",
-          "block": "start.inquiry",
-          "tag": "h3",
-          "kind": "single",
-          "maxLength": 200,
-          "default": "第一次詢問，可以這樣開始。"
-        },
-        {
-          "id": "start.inquiry.intro",
-          "block": "start.inquiry",
-          "tag": "p",
-          "kind": "multiline",
-          "maxLength": 2000,
-          "default": "提供以下資訊，讓我們更了解孩子的需求："
-        },
-        {
-          "id": "start.inquiry.item1",
-          "block": "start.inquiry",
-          "tag": "li",
-          "kind": "single",
-          "maxLength": 200,
-          "default": "學生年級或年齡"
-        },
-        {
-          "id": "start.inquiry.item2",
-          "block": "start.inquiry",
-          "tag": "li",
-          "kind": "single",
-          "maxLength": 200,
-          "default": "目前英文程度與學習目標"
-        },
-        {
-          "id": "start.inquiry.item3",
-          "block": "start.inquiry",
-          "tag": "li",
-          "kind": "single",
-          "maxLength": 200,
-          "default": "希望的上課形式與頻率"
-        },
-        {
-          "id": "start.inquiry.item4",
-          "block": "start.inquiry",
-          "tag": "li",
-          "kind": "single",
-          "maxLength": 200,
-          "default": "偏好的溝通語言或方式"
-        },
-        {
-          "id": "start.inquiry.item5",
-          "block": "start.inquiry",
-          "tag": "li",
-          "kind": "single",
-          "maxLength": 200,
-          "default": "所在時區、可上課的星期與時段"
-        },
-        {
-          "id": "start.inquiry.button",
-          "block": "start.inquiry",
-          "tag": "a",
-          "kind": "single",
-          "maxLength": 200,
-          "default": "寄信詢問英文課程"
+          "default": "填寫課程詢問表，iHear 團隊會與您聯繫，一起確認適合的學習內容、導師與後續安排。也歡迎直接寄信給我們。"
         },
         {
           "id": "footer.tagline",

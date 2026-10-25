@@ -262,10 +262,17 @@ for (const route of academyPages) {
     await faq.locator("summary").click();
     await expect(faq).toHaveAttribute("open", "");
     await expect(faq.locator("p")).toBeVisible();
-    const draft = new URL(await page.locator('a[href^="mailto:"][href*="body="]').getAttribute("href"));
-    expect(draft.pathname).toBe("ihearprogram@gmail.com");
-    expect(draft.searchParams.get("subject")).toContain("iHear Academy");
-    expect(draft.searchParams.get("body")).toBeTruthy();
+    // Inspect the inquiry form only; never fill it in or submit it. The
+    // read-only guard also blocks every request to its email endpoint.
+    const inquiry = page.locator("form[data-inquiry-form]");
+    await expect(inquiry).toHaveAttribute("action", "/api/academy-inquiry");
+    await expect(inquiry).toHaveAttribute("data-locale", lang);
+    // inquiry.js enables the fieldset; toBeEnabled would ignore <fieldset disabled>.
+    await expect(inquiry.locator("fieldset")).toHaveJSProperty("disabled", false);
+    await expect(inquiry.locator('button[type="submit"]')).toBeEnabled();
+    for (const name of ["firstName", "email", "subject"]) await expect(inquiry.locator(`[name="${name}"]`)).toHaveAttribute("required", "");
+    await expect(inquiry.locator("#inquiry-privacy")).toContainText("ihearprogram@gmail.com");
+    await expect(page.locator('a[href^="mailto:"][href*="body="]')).toHaveCount(0);
     await inspectImages(page);
     await expect(page.locator(adminControls)).toHaveCount(0);
     expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), "Academy must not overflow horizontally").toBeLessThanOrEqual(1);
@@ -275,7 +282,7 @@ for (const route of academyPages) {
   });
 }
 
-test("Academy introduction leads to course details before an email inquiry", async ({ page }) => {
+test("Academy introduction leads to course details and the inquiry form", async ({ page }) => {
   const response = await page.goto("/academy#academy", { waitUntil: "load" });
   expect(response.status()).toBe(200);
   await expect(page.locator("#academy-h")).toBeVisible();
@@ -302,11 +309,12 @@ test("Academy introduction leads to course details before an email inquiry", asy
   await expect(page.locator("#faq details")).toHaveCount(9);
   await page.locator('.hero a.button[href="#start"]').click();
   await expect(page.locator("#start")).toBeInViewport();
-  const draftLink = page.locator('a[href^="mailto:"][href*="body="]');
-  await expect(draftLink).toBeVisible();
-  const draft = new URL(await draftLink.getAttribute("href"));
-  expect(draft.pathname).toBe("ihearprogram@gmail.com");
-  expect(draft.searchParams.get("subject")).toContain("iHear Academy");
-  expect(draft.searchParams.get("body")).toContain("年級");
-  // Inspect the draft destination only; never launch an email client or send it.
+  const inquiry = page.locator("form[data-inquiry-form]");
+  await expect(inquiry).toBeVisible();
+  await expect(inquiry).toHaveAttribute("data-locale", "zh-Hant");
+  const registration = page.locator('a[href="https://forms.gle/NoTSzGmf4nW2aWPT7"]');
+  await expect(registration).toHaveCount(1);
+  await expect(registration).toHaveAttribute("target", "_blank");
+  await expect(registration).toHaveAttribute("rel", "noopener noreferrer");
+  // Inspect the form and the Google Form link only; never fill in, submit or open either.
 });
