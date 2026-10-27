@@ -29,12 +29,17 @@ describe("Academy field registry", () => {
   });
 
   test("each page keeps its own field list, defaults and the pricing FAQ split", () => {
-    expect(academyFields("en")).toHaveLength(144);
-    expect(academyFields("zhHant")).toHaveLength(140);
+    expect(academyFields("en")).toHaveLength(137);
+    expect(academyFields("zhHant")).toHaveLength(132);
     for (const locale of ["en", "zhHant"]) {
       const ids = academyFields(locale).map(field => field.id);
       expect(ids).toEqual(expect.arrayContaining(["pricing.card.tutor.highschool", "pricing.card.tutor.college", "faq.item7.answerLead", "faq.item7.answerNote"]));
       expect(ids).not.toContain("faq.item7.answer");
+      // The inquiry form replaced the mailto card: its text, fields and privacy notice must match
+      // the code, so none is editable. The paragraph beside it is a new field, so the text
+      // published for the old mailto version (start.body) does not hide the new wording.
+      expect(ids).toContain("start.formBody");
+      expect(ids.filter(id => id === "start.body" || id.startsWith("start.inquiry."))).toEqual([]);
       for (const field of academyFields(locale)) expect(field.default.length).toBeGreaterThan(0);
     }
     expect(academyFields("en").find(field => field.id === "subjects.title")).toMatchObject({ kind: "multiline", default: "Your goal.\nOur starting point." });
