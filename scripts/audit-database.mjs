@@ -463,8 +463,16 @@ try {
           OR public_url NOT LIKE 'https://%'
           OR char_length(storage_path) NOT BETWEEN 1 AND 500
       )::INTEGER AS invalid_variants,
+      -- Exactly the widths the site generates for the slot (expectedSiteMediaWidths in
+      -- lib/site-media-storage.ts): a team avatar has 480 and 800 only, every other image all three.
       (SELECT COUNT(*) FROM site_media_assets AS asset
-        WHERE (SELECT COUNT(*) FROM site_media_variants AS variant WHERE variant.slot = asset.slot) <> 3
+        WHERE ARRAY(
+          SELECT variant.width FROM site_media_variants AS variant
+          WHERE variant.slot = asset.slot ORDER BY variant.width
+        ) <> CASE
+          WHEN starts_with(asset.slot, 'team.') AND right(asset.slot, 7) = '.avatar' THEN ARRAY[480, 800]
+          ELSE ARRAY[480, 800, 1200]
+        END
       )::INTEGER AS incomplete_variant_sets
   `;
 

@@ -20,6 +20,7 @@
     "test:public-pages": "node tests/public-pages.smoke.mjs",
     "test:academy": "vitest run tests/academy-content-model.test.mjs tests/academy-content-page.test.mjs tests/academy-content-api.test.mjs tests/academy-content-local-store.test.mjs tests/academy-content-operations.test.mjs",
     "test:academy:postgres": "vitest run tests/academy-content-postgres.test.mjs",
+    "test:audit:postgres": "vitest run tests/database-audit-postgres.test.mjs",
     "test:academy:browser": "node tests/academy-cms.smoke.mjs && node tests/academy-inline.smoke.mjs",
     "academy:fields": "node scripts/generate-academy-fields.mjs",
     "serve:legacy": "node scripts/prepare-public.mjs && node server.js",

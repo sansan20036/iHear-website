@@ -49,6 +49,16 @@ describe("production operations configuration", () => {
     expect(audit.match(/const expectedTables = \[([\s\S]*?)\];/)?.[1]).toContain('"resource_links"');
   });
 
+  it("audits each image's widths against the ones the site generates for its slot", async () => {
+    const audit = await read("scripts/audit-database.mjs");
+    const storage = await read("lib/site-media-storage.ts");
+    // Team avatars are stored at 480 and 800 only; requiring three variants once flagged every one of them.
+    expect(storage).toContain('return slot.startsWith("team.") && slot.endsWith(".avatar")\n    ? [480, 800]\n    : [480, 800, 1200];');
+    expect(audit).toContain("WHEN starts_with(asset.slot, 'team.') AND right(asset.slot, 7) = '.avatar' THEN ARRAY[480, 800]");
+    expect(audit).toContain("ELSE ARRAY[480, 800, 1200]");
+    expect(audit).not.toContain("WHERE variant.slot = asset.slot) <> 3");
+  });
+
   it("keeps health checks uncached and responses free of database details", async () => {
     const route = await read("app/api/health/route.ts");
     expect(route).toContain('"Vercel-CDN-Cache-Control": "no-store"');
