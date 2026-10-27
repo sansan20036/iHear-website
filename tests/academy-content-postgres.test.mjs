@@ -99,10 +99,13 @@ describe('Academy content migrations in a disposable PostgreSQL', { timeout: 60_
     expect(await snapshot(sql)).toEqual(before);
 
     // 026 seeds exactly the P0 prices and the template text; 025's untouched seed
-    // with its superseded prices is removed and can never be shown.
+    // with its superseded prices is removed and can never be shown. 026 is fixed (it is in
+    // production's ledger) while the templates moved on (the inquiry form replaced the mailto
+    // card), so the seed is compared as the site reads it: fields removed since are ignored and
+    // fields added since take their template text, giving exactly today's defaults.
     const row = await settings(sql);
     expect(row).toMatchObject({ record_version: 1, updated_by: 'migration-026' });
-    expect(JSON.parse(row.value)).toEqual(defaultAcademyContent());
+    expect(readStoredAcademyContent(JSON.parse(row.value))).toEqual(defaultAcademyContent());
     expect(readStoredAcademyContent(JSON.parse(row.value)).pricing.rates).toEqual(P0_ACADEMY_RATES);
     expect(await settings(sql, 'academy_pricing_v1')).toBeUndefined();
 
