@@ -3,7 +3,7 @@
 // folder. Steps and acceptance criteria: docs/a1-drive-test-runbook.md.
 //
 //   node tools/recording-pathway/drive-test/run-a1.mjs <command> [--config <file>]
-//     init --account <test account> [--deny <account>...]
+//     init --account <test account> [--deny <account>...] [--browser-profile <dir>]
 //                makes the private folder (only you can read it) and the config, outside the repo
 //     auth       sign in (prints the consent URL; open it in the test account's browser profile)
 //     media      make the synthetic videos (ffmpeg; every frame says 合成測試影片／非真實錄影)
@@ -17,7 +17,7 @@
 //     "clientFile": "<private dir>\\client.json", "tokenFile": "<private dir>\\token.json",
 //     "workDir": "<dir for media and evidence>" }
 // Nothing here reads real recordings, and nothing writes outside the test folder.
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, open, readFile, rm, stat, writeFile } from 'node:fs/promises';
@@ -447,7 +447,11 @@ async function main() {
     const home = path.dirname(configFile);
     const secrets = path.join(home, 'private');
     const deny = process.argv.flatMap((arg, i) => (arg === '--deny' ? [process.argv[i + 1]] : [])).filter(Boolean);
-    const config = { expectedAccount: account, forbiddenAccounts: deny, clientFile: path.join(secrets, 'client.json'), tokenFile: path.join(secrets, 'token.json'), workDir: path.join(home, 'work') };
+    const config = {
+      expectedAccount: account, forbiddenAccounts: deny, clientFile: path.join(secrets, 'client.json'), tokenFile: path.join(secrets, 'token.json'), workDir: path.join(home, 'work'),
+      // The test account's own browser profile: the consent page opens there, never in the everyday browser.
+      ...(value('--browser-profile') ? { browserProfile: value('--browser-profile') } : {}),
+    };
     checkConfig(config);
     if (existsSync(configFile)) throw new Error(`${configFile} already exists; edit it or remove it first`);
     await ensurePrivateDir(home);
@@ -459,7 +463,16 @@ async function main() {
   const config = await loadConfig(configFile);
   if (command === 'auth') {
     await readClient(config.clientFile);
-    const granted = await authorize({ clientFile: config.clientFile, tokenFile: config.tokenFile, openUrl: url => console.log(`Open this URL in the test account's browser profile:\n${url}\n`) });
+    // With a browser profile configured, the consent page opens straight in it, so the URL (with
+    // the client id) does not need to be copied anywhere.
+    const chrome = ['C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe'].find(candidate => existsSync(candidate));
+    const openUrl = config.browserProfile && chrome
+      ? url => {
+        spawn(chrome, [`--user-data-dir=${config.browserProfile}`, '--new-window', url], { detached: true, stdio: 'ignore' }).unref();
+        console.log('The consent page is open in the test account\'s browser profile. Waiting for the answer (10 minutes at most)...');
+      }
+      : url => console.log(`Open this URL in the test account's browser profile:\n${url}\n`);
+    const granted = await authorize({ clientFile: config.clientFile, tokenFile: config.tokenFile, openUrl });
     console.log(`Signed in. Scope: ${granted.scope}. The token is saved in the private folder and is not shown.`);
   } else if (command === 'media') {
     const made = await makeMedia(path.join(config.workDir, 'media'));
