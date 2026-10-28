@@ -69,6 +69,8 @@
 
 ### 3.1 Google Drive（D1–D9）
 
+> 2026-10-28 更新：實際操作步驟、工具和 D1～D9 的驗收條件，以 [`a1-drive-test-runbook.md`](a1-drive-test-runbook.md) 為準，內容比下表更精確。
+
 **前提：**
 - 在**測試帳號**底下建立一個 Google Cloud 專案和 OAuth client：
   - 同意畫面設為 External、Testing，測試使用者只有測試帳號；
