@@ -42,6 +42,7 @@ const anomalies = await import("../app/api/admin/classrooms/anomalies/route");
 const reconcile = await import("../app/api/admin/classrooms/[lessonId]/reconcile/route");
 const joinRoute = await import("../app/api/classroom/[lessonId]/join/route");
 const hostRoute = await import("../app/api/classroom/[lessonId]/host-events/route");
+const statusRoute = await import("../app/api/classroom/[lessonId]/status/route");
 const webhook = await import("../app/api/recordings/zoom/webhook/route");
 const scheduledRoute = await import("../app/api/classroom/scheduled-tick/route");
 const { classroomStore } = await import("../lib/classroom-store");
@@ -85,6 +86,11 @@ async function createLesson(fields) {
 async function join(lessonId, { key, email } = {}) {
   signedIn(email);
   return read(await joinRoute.POST(post(`/api/classroom/${lessonId}/join`, key ? { key } : {}), params(lessonId)));
+}
+
+async function roomStatus(lessonId, { key, email } = {}, headers = {}) {
+  signedIn(email);
+  return read(await statusRoute.POST(post(`/api/classroom/${lessonId}/status`, key ? { key } : {}, headers), params(lessonId)));
 }
 
 async function hostReport(lessonId, report, email = TUTOR) {
@@ -252,6 +258,34 @@ describe("classroom access", () => {
     }
   });
 
+  test("both people can read the recording state with the same entry check; reading stores nothing and shows codes only", async () => {
+    at("2026-11-20T05:00:00Z");
+    const lesson = await createLesson({ code: "TEST-L11", time: "16:00", tutorCode: "TEST-T11", studentCode: "TEST-S11" });
+    expect(await roomStatus(lesson.lessonId, { key: lesson.key })).toMatchObject({ status: 403, body: { code: "OUTSIDE_JOIN_WINDOW" } });
+    at("2026-11-20T07:50:00Z");
+    const before = JSON.stringify(await classroomStore().eventsFor([lesson.lessonId]));
+    const student = await roomStatus(lesson.lessonId, { key: lesson.key });
+    expect(student).toMatchObject({ status: 200, body: { ok: true, recordingDecided: false, recordingAllowed: false, recording: { status: "NOT_REQUESTED" } } });
+    expect(student.headers.get("cache-control")).toContain("no-store");
+    expect(await roomStatus(lesson.lessonId, { email: TUTOR })).toMatchObject({ status: 200, body: { ok: true, recording: { status: "NOT_REQUESTED" } } });
+    expect(await roomStatus(lesson.lessonId, { key: "not-the-key" })).toMatchObject({ status: 403, body: { code: "NOT_ON_ROSTER" } });
+    expect(await roomStatus(lesson.lessonId, {})).toMatchObject({ status: 403, body: { code: "NOT_ON_ROSTER" } });
+    expect(await roomStatus(lesson.lessonId, { email: "someone@example.test" })).toMatchObject({ status: 403, body: { code: "NOT_ON_ROSTER" } });
+    expect(await roomStatus("L-00000000000000000000000000000000", { key: lesson.key })).toMatchObject({ status: 404, body: { code: "LESSON_NOT_FOUND" } });
+    expect((await roomStatus(lesson.lessonId, { key: lesson.key }, { origin: "https://evil.example" })).status).toBe(403);
+    // Unlike entering, reading the state leaves no trace: no event, no token, no provider call.
+    expect(JSON.stringify(await classroomStore().eventsFor([lesson.lessonId]))).toBe(before);
+    expect(await classroomStore().listJoinTokens(lesson.lessonId)).toEqual([]);
+    expect(await syntheticCalls(lesson.lessonId)).toEqual([]);
+    for (const value of [TUTOR, lesson.key, "token"]) expect(JSON.stringify(student.body)).not.toContain(value);
+    vi.stubEnv("CLASSROOM_PROVIDER", "");
+    try {
+      expect(await roomStatus(lesson.lessonId, { key: lesson.key })).toMatchObject({ status: 503, body: { code: "PROVIDER_UNAVAILABLE" } });
+    } finally {
+      vi.stubEnv("CLASSROOM_PROVIDER", "synthetic");
+    }
+  });
+
   test("only the lesson's signed-in tutor can report, and unknown reports are refused", async () => {
     at("2026-11-20T07:50:00Z");
     const lesson = await createLesson({ code: "TEST-L8", time: "16:00", tutorCode: "TEST-T8", studentCode: "TEST-S8" });
@@ -322,6 +356,8 @@ describe("a recorded lesson, synthetic end to end", () => {
     expect(card).toMatchObject({ group: "LIVE", recording: { status: "RECORDING", basis: "confirmed", source: "zoom_webhook" } });
     at("2026-11-20T07:57:00Z");
     expect(await hostReport(lesson.lessonId, { type: "heartbeat" })).toMatchObject({ status: 200, body: { recordingAllowed: true, recording: { status: "RECORDING" } } });
+    // The student is told too, from the same confirmed state.
+    expect(await roomStatus(lesson.lessonId, { key: lesson.key })).toMatchObject({ status: 200, body: { recording: { status: "RECORDING", basis: "confirmed" } } });
 
     at("2026-11-20T09:00:00Z");
     await zoom("session.recording_stopped", lesson, { recording_file: { recording_end: "2026-11-20T09:00:00Z" } });

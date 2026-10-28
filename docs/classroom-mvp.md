@@ -4,8 +4,10 @@ One-to-one lessons in a classroom on the website, cloud recording that starts on
 whole roster's consent is confirmed, filing of finished recordings through P1's naming rules,
 and a live overview for owners.
 
-**Week 1 is synthetic.** The provider is a synthetic stand-in for Zoom, and the recording
-destination is a local folder standing in for Google Drive. Consent records are synthetic
+**Everything here is synthetic.** No video service has been chosen: Tencent RTC, Agora and the
+Zoom Video SDK are all still candidates. The provider is a synthetic stand-in with no audio or
+video (its webhooks are shaped like Zoom's because the first design targeted Zoom), and the
+recording destination is a local folder standing in for Google Drive. Consent records are synthetic
 until Justine approves the consent policy. A synthetic pass shows that our own logic is
 right. It does not show real Zoom behaviour, delays, how many recordings can run at once,
 cost or device support; those are accepted separately against real Zoom.
@@ -14,16 +16,38 @@ cost or device support; those are accepted separately against real Zoom.
 
 | Path | Who | What |
 |---|---|---|
-| `/classroom/[lessonId]` | Student with the personal link (`?k=`); the lesson's tutor, signed in | Enter the classroom; the tutor's page reports a heartbeat and shows the recording state |
+| `/classroom/[lessonId]` | Student with the personal link (`?k=`); the lesson's tutor, signed in | Enter the classroom: lesson facts, the video stage, camera and microphone controls, the connection state and a recording badge for both people. The tutor's page reports a heartbeat and connection changes and shows the recording detail; the student's page shows whether the lesson is being recorded. In the synthetic setup a "simulation controls" panel plays the other person entering or leaving, a dropped or failed connection, and a blocked camera or missing microphone |
 | `/admin/classrooms` | Owners | Live overview, problem records with handling, adding lessons, synthetic consent |
 | `POST /api/classroom/[lessonId]/join` | Anyone; same origin, rate limited | Identity, roster and time window only, never consent; issues the provider token |
 | `POST /api/classroom/[lessonId]/host-events` | The lesson's tutor | Stores the report, runs the lesson's tick, answers whether recording is allowed |
+| `POST /api/classroom/[lessonId]/status` | The student with the personal link; the lesson's tutor, signed in; same origin, rate limited | The recording state for the people in the room, read every 15 s by the student's page. Same identity, roster and time-window check as entering; it stores nothing, issues nothing and answers with codes only |
 | `POST /api/recordings/zoom/webhook` | The provider, signed | Verifies, minimizes and stores the event with its jobs in one transaction, then answers; the lesson's tick runs after the response |
 | `GET`/`POST /api/admin/classrooms` | Owners | Overview (codes only, `mode` says when it is synthetic); add a lesson (the link is returned once) |
 | `POST /api/admin/classrooms/tick` | Owners | The periodic work, also run by the open overview every 15 s |
 | `POST /api/admin/classrooms/[lessonId]/reconcile` | Owners | "Check now" against the provider |
 | `POST /api/admin/classrooms/anomalies` | Owners | Record how a problem was handled |
 | `POST /api/admin/classrooms/consents` | Owners, synthetic setup only | Synthetic consent and tutor notice; `403 POLICY_PENDING` otherwise |
+
+## The video provider interface
+
+The classroom page talks to video only through `lib/classroom-media.ts`, so the chosen SDK
+becomes one more adapter and the page does not change:
+
+- `ClassroomMediaAdapter`: `join` (with the session token from the join check), `leave`,
+  `setDevice(camera | microphone, on)` and `subscribe` to connection, device and
+  other-person events. `capabilities.realMedia` says whether it carries real audio and video.
+- `createMediaAdapter(provider)` returns the synthetic adapter for `synthetic` and refuses
+  `tencent-rtc`, `agora` and `zoom-video-sdk` ("not built yet"); the page then says the video
+  is not connected. Any other name is refused as unknown.
+- `hostReportFor(event)` turns an adapter event into the tutor's existing report
+  (`Connected`, `Reconnecting`, `Closed`, `Fail`; joins and leaves only with a user key).
+- Recording is not part of it on purpose: only the server starts and stops recording, after the
+  consent check.
+
+The server side is `ClassroomProvider` in `lib/classroom-provider.ts` (session token, start and
+stop recording, end the session, remove someone, snapshot, download a byte range, delete a
+recording). Both sides use the same provider names. The synthetic adapter never asks the
+browser for a camera or microphone and never makes a network request.
 
 ## Where the rules live
 
@@ -68,6 +92,12 @@ Without `POSTGRES_URL`/`DATABASE_URL`, or with `IHEAR_FORCE_FILE_STORE=1`, the s
 
 Local run: `CLASSROOM_PROVIDER=synthetic CLASSROOM_DRIVE=local CLASSROOM_WEBHOOK_SECRET=local-only npm run dev:local`, then open `/admin/classrooms` with an owner session. The browser check (`tests/classroom.smoke.mjs`) uses test-only sessions and never a real Google sign-in.
 
+Demonstration: after a build, `npm run demo:classroom` starts the built site with disposable
+local storage and test-only sessions, sets up four lessons (recording; not recorded because the
+student has no consent; waiting to start; consent withdrawn in class) and opens the overview,
+the tutor's classroom and the student's classroom on a phone-sized window. Ctrl+C ends it.
+`IHEAR_DEMO_SECONDS=20 IHEAR_HEADED=0` runs it briefly without windows and leaves screenshots.
+
 ## Periodic work
 
 The tick (decide, start or stop recording, reconcile, file) runs on:
@@ -86,16 +116,24 @@ Calling the scheduled tick every minute needs a decision (Supabase `pg_cron` + `
 | Script | What |
 |---|---|
 | `npm run test:recording-pathway` | The shared rules and P1's pathway (`node --test`), including automatic filing: functions stopped at every step, a full Drive, retries, duplicates |
-| `npm run test:classroom` | Routes and the file store, synthetic, including a recorded lesson end to end, consent rules, the withdrawal stop and the scheduled tick |
+| `npm run test:classroom` | Routes and the file store, synthetic, including a recorded lesson end to end, consent rules, the withdrawal stop, the scheduled tick and the room's recording state; and the media adapter interface with its synthetic stand-in |
 | `npm run test:classroom:postgres` | Migration 027 and the PostgreSQL store on a disposable local PostgreSQL (Docker, `--pull=never`), the same store contract, and two workers racing on one filing |
-| `npm run test:classroom:browser` | The built site in a browser: owner and editor access, adding a lesson, student and tutor entry, the recording state, a withdrawal, handling a problem, phone layouts, no external requests. Run `npm run build` first. |
+| `npm run test:classroom:browser` | The built site in a browser: owner and editor access, adding a lesson, student and tutor entry, the recording state on both pages, a withdrawal, handling a problem, camera and microphone controls, a dropped and a failed connection shown on the overview, a blocked camera, phone layouts, no external requests and no camera or microphone request. Run `npm run build` first. |
 
 On Windows, `next build` with Turbopack can fail with "failed to create junction point ...
 (os error 80)". Delete `.next` and build again; it can take several attempts.
 
+## Before a real video SDK goes in
+
+- Choose the service (Tencent RTC, Agora or the Zoom Video SDK) after the vendors' written answers and the cross-region tests (kept outside the repo).
+- Write that service's browser adapter (`ClassroomMediaAdapter`): the real camera and microphone, the other person's picture and sound, their user key on joins and leaves, reconnects, mobile background and lock screen, and what the page says in a browser that cannot publish (for example an in-app browser).
+- Write its server provider (`ClassroomProvider`): session tokens in the service's format, server-only recording start and stop with the service's automatic recording off, removing a participant, ending the session, snapshots for reconciliation, byte-range downloads and deleting the service's copy.
+- Put the Zoom-shaped webhook checks (`verifyZoomRequest`, `minimizeZoomEvent`, the `zoom_*` source names and the `/api/recordings/zoom/webhook` route) behind the chosen provider. The stored event shapes and the P1 filing core stay as they are.
+- Accept it against the real service separately; synthetic passes prove only our own logic.
+
 ## Before production
 
-- Zoom provider and the Video SDK on the classroom page, accepted against real Zoom.
+- The chosen video service's adapter and provider on the classroom page, accepted against the real service.
 - Google Drive adapter (`drive.file`), accepted with a test account.
 - `vercel.json`: `/classroom` needs camera and microphone (all routes have them off today) and the SDK's domains in the CSP.
 - Backups and restore tooling include the classroom tables; the database audit expects them.

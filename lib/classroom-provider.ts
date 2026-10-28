@@ -4,13 +4,17 @@ import path from "node:path";
 
 // @ts-ignore - shared classroom logic, plain JavaScript tested with node --test.
 import { buildSessionTokenClaims, signSessionToken } from "../tools/recording-pathway/classroom/eligibility.mjs";
+import { MEDIA_PROVIDERS, type MediaProviderName } from "./classroom-media";
 import type { ClassroomLesson, ClassroomParticipant, RecordingFile } from "./classroom-store";
 
-// The video provider behind the classroom. Week 1 has only the synthetic provider: it accepts
-// the server's requests (start or stop recording, end the session, remove someone) the way
-// Zoom's REST API answers them, records each request, and leaves the "Zoom side" (webhooks,
-// snapshots) to the tests that play Zoom. It never runs in production. The Zoom provider is
-// added in week 2, once credentials are approved, and is verified against real Zoom separately.
+// The server side of the video provider behind the classroom; the browser side is
+// lib/classroom-media.ts, and both use the same provider names. No video service has been
+// chosen (Tencent RTC, Agora and the Zoom Video SDK are all still candidates), so only the
+// synthetic provider exists: it accepts the server's requests (start or stop recording, end the
+// session, remove someone), records each request, and leaves the provider's side (webhooks,
+// snapshots) to the tests. Its webhooks are Zoom-shaped because the first design targeted
+// Zoom. It never runs in production. A real provider implements this same type, and is
+// accepted against the real service separately.
 
 export type ProviderCall = { ok: boolean; httpStatus: number };
 export type ProviderSnapshot = {
@@ -23,8 +27,9 @@ export type ProviderSnapshot = {
 export type SessionToken = { token: string; issuedAt: number; expiresAt: number };
 
 export type ClassroomProvider = {
-  name: "synthetic";
+  name: MediaProviderName;
   webhookSecret: string | null;
+  // The token the browser's media adapter joins with; it names the participant by our id.
   sessionToken(input: { lesson: ClassroomLesson; participant: ClassroomParticipant; now: number }): SessionToken;
   startRecording(lesson: ClassroomLesson): Promise<ProviderCall>;
   stopRecording(lesson: ClassroomLesson): Promise<ProviderCall>;
@@ -99,7 +104,7 @@ export function classroomProvider(): ClassroomProvider {
     if (process.env.VERCEL_ENV === "production") throw new ClassroomProviderUnavailableError("The synthetic classroom provider never runs in production");
     return syntheticProvider();
   }
-  throw new ClassroomProviderUnavailableError(name === "zoom"
-    ? "The Zoom provider is added after Zoom credentials are approved"
+  throw new ClassroomProviderUnavailableError(MEDIA_PROVIDERS.includes(name as MediaProviderName) || name === "zoom"
+    ? `The ${name} provider is not built: no video service has been chosen yet`
     : "No classroom provider is configured");
 }

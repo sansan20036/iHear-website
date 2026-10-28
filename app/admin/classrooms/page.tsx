@@ -11,8 +11,8 @@ import "./classrooms.css";
 
 const copy = {
   en: {
-    title: "Classrooms", intro: "Live state of today's one-to-one lessons. Recording and filing only count as done when Zoom or P1 confirmed them.",
-    synthetic: "Synthetic mode: test data only, not connected to Zoom or Google Drive.", ownerOnly: "Owner access is required.",
+    title: "Classrooms", intro: "Live state of today's one-to-one lessons. Recording and filing only count as done when the video service or P1 confirmed them.",
+    synthetic: "Synthetic mode: test data only, not connected to a video service or Google Drive.", ownerOnly: "Owner access is required.",
     refreshed: "Updated", tickFailed: "The server's periodic work did not run on the last refresh; the overview may lag.",
     groups: { ANOMALY: "Problems", LIVE: "In progress", WAITING: "Waiting to start", ENDED: "Ended" } as Record<string, string>,
     empty: "No lessons today.", tutor: "Tutor", student: "Student", recording: "Recording", filing: "Filing", data: "Data", scheduled: "Scheduled", started: "Started",
@@ -25,8 +25,8 @@ const copy = {
     granted: "Consented", withdrawn: "Withdrawn", staffNotice: "Tutor notice acknowledged", setConsent: "Save",
   },
   zhHant: {
-    title: "教室總覽", intro: "今天各堂一對一課程的即時狀態。錄影與歸檔要有 Zoom 或 P1 的確認才算完成。",
-    synthetic: "合成模式：只有測試資料，沒有連到 Zoom 或 Google Drive。", ownerOnly: "需要擁有者權限。",
+    title: "教室總覽", intro: "今天各堂一對一課程的即時狀態。錄影與歸檔要有視訊服務或 P1 的確認才算完成。",
+    synthetic: "合成模式：只有測試資料，沒有連到視訊服務或 Google Drive。", ownerOnly: "需要擁有者權限。",
     refreshed: "更新時間", tickFailed: "上一次更新時，伺服器排程沒有執行，總覽可能落後。",
     groups: { ANOMALY: "異常", LIVE: "進行中", WAITING: "等待開始", ENDED: "已結束" } as Record<string, string>,
     empty: "今天沒有課程。", tutor: "小老師", student: "學生", recording: "錄影", filing: "歸檔", data: "資料", scheduled: "表定", started: "實際",
@@ -56,7 +56,9 @@ type Overview = { mode: string | null; dashboard: { generatedAt: string; groups:
 
 const GROUPS = ["ANOMALY", "LIVE", "WAITING", "ENDED"];
 const taipei = (iso: string | null) => (iso ? new Date(new Date(iso).getTime() + 8 * 3600_000).toISOString().slice(5, 16).replace("T", " ") : "—");
-const SOURCE = { zoom_webhook: "Zoom", host_sdk: "小老師端", zoom_api: "Zoom 查詢", zoom: "Zoom" } as Record<string, string>;
+// Where a confirmation came from. The source names inside the events still say zoom (the
+// synthetic provider plays Zoom-shaped events); the page names no vendor while none is chosen.
+const SOURCE = { zoom_webhook: "視訊服務", host_sdk: "小老師端", zoom_api: "視訊服務查詢", zoom: "視訊服務" } as Record<string, string>;
 const emptyLesson = { code: "", date: "", time: "", minutes: "60", tutorCode: "", tutorEmail: "", studentCode: "" };
 
 export default function ClassroomsPage() {

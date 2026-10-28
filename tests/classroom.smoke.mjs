@@ -35,8 +35,12 @@ function watch(page) {
   return page;
 }
 const claimsOf = token => JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8'));
+// The server rewrites the synthetic provider's file in place, so a read can catch it half
+// written; that read counts as "not yet" and the poll reads again.
 const calls = async lessonId => {
-  const state = JSON.parse(await readFile(path.join(directory, 'synthetic-zoom.json'), 'utf8').catch(() => '{"calls":[]}'));
+  const text = await readFile(path.join(directory, 'synthetic-zoom.json'), 'utf8').catch(() => '{"calls":[]}');
+  let state;
+  try { state = JSON.parse(text); } catch { return null; }
   return state.calls.filter(call => call.lessonId === lessonId).map(call => call.type);
 };
 
@@ -125,6 +129,12 @@ try {
   const studentContext = await context({ locale: 'zh-TW', viewport: { width: 390, height: 844 } });
   const student = watch(await studentContext.newPage());
   const tutorContext = await context({ email: tutor, locale: 'zh-TW' });
+  const countDeviceRequests = () => {
+    window.__deviceRequests = 0;
+    if (navigator.mediaDevices) navigator.mediaDevices.getUserMedia = async () => { window.__deviceRequests += 1; throw new Error('blocked in the test'); };
+  };
+  await studentContext.addInitScript(countDeviceRequests);
+  await tutorContext.addInitScript(countDeviceRequests);
   const tutorPage = watch(await tutorContext.newPage());
 
   await check('without the personal link or the tutor sign-in nobody gets in', async () => {
@@ -147,6 +157,11 @@ try {
     lesson.studentKey = claimsOf(joined.body.session.token).user_key;
     await expect(student.locator('.classroom-room-facts')).toContainText(`學生 ${lesson.studentCode}`);
     await expect(student.getByText('錄影會自動開始和停止')).toHaveCount(0);
+    // The student is told about recording too, and the stage says there is no real video.
+    await expect(student.locator('.classroom-room-badge')).toHaveText('未錄影');
+    await expect(student.locator('.classroom-room-notice')).toContainText('這堂課目前沒有錄影。');
+    await expect(student.locator('.classroom-room-connection')).toHaveText('已連線');
+    await expect(student.locator('.classroom-room-stage')).toContainText('測試教室沒有真實視訊。');
     expect(await noHorizontalOverflow(student)).toBe(true);
     await shot(student, '02-student-phone');
   });
@@ -160,7 +175,7 @@ try {
     await expect(tutorPage.getByText('這堂課可以錄影。')).toBeVisible();
   });
 
-  await check('recording is requested only after Zoom confirms the session and both people', async () => {
+  await check('recording is requested only after the provider confirms the session and both people', async () => {
     expect(await calls(lesson.id)).toEqual([]);
     await zoom('session.started', lesson, { start_time: new Date().toISOString() });
     await zoom('session.user_joined', lesson, zoomUser(lesson.tutorKey, 'UUID-BT1'));
@@ -169,16 +184,21 @@ try {
     await expect(card()).toContainText('已送出錄影啟動請求');
   });
 
-  await check("only Zoom's confirmation turns it into 錄影中, on the overview and the tutor's page", async () => {
+  await check("only the provider's confirmation turns it into 錄影中, on the overview and both classroom pages", async () => {
     await zoom('session.recording_started', lesson, { recording_file: { recording_start: new Date().toISOString() } });
     await refresh();
     await expect(card()).toContainText('錄影中');
-    await expect(card()).toContainText('（Zoom確認）');
+    await expect(card()).toContainText('（視訊服務確認）');
     // Before recording the tutor's page reports every 30 seconds; it learns of the start then.
     await expect(tutorPage.locator('.classroom-room-recording')).toContainText('錄影中', { timeout: 45000 });
     await expect(tutorPage.locator('.classroom-room-recording')).toContainText('已確認');
+    await expect(tutorPage.locator('.classroom-room-badge')).toHaveText('錄影中');
+    // The student's page reads the same state every 15 seconds.
+    await expect(student.locator('.classroom-room-notice')).toContainText('這堂課正在錄影。', { timeout: 30000 });
+    await expect(student.locator('.classroom-room-badge')).toHaveText('錄影中');
     await shot(admin, '03-overview-recording');
     await shot(tutorPage, '04-tutor-recording');
+    await shot(student, '04-student-recording');
   });
 
   await check('a withdrawal in class stops recording at once and shows on both pages', async () => {
@@ -189,6 +209,11 @@ try {
     await expect.poll(async () => { await refresh(); return calls(lesson.id); }, { timeout: 20000 }).toEqual(['recording.start', 'recording.stop']);
     await expect(card()).toContainText('課中撤回錄影同意');
     await expect(tutorPage.getByText('這堂課不錄影。')).toBeVisible({ timeout: 20000 });
+    // Until the provider confirms the stop the student is still told it may be recording; after
+    // the confirmation, that it is not.
+    await zoom('session.recording_stopped', lesson, { recording_file: { recording_end: new Date().toISOString() } });
+    await expect(student.locator('.classroom-room-badge')).toHaveText('未錄影', { timeout: 30000 });
+    await expect(student.locator('.classroom-room-notice')).toContainText('這堂課目前沒有錄影。');
   });
 
   await check('the problem is handled on the overview and recorded with who and what', async () => {
@@ -199,6 +224,47 @@ try {
     await expect(row).toContainText(`已處置：TEST: 已和小老師確認錄影停止（${owner}`);
     await expect(row).not.toContainText('待處置');
     await shot(admin, '05-overview-handled');
+  });
+
+  await check('camera and microphone controls and the simulated video service, with no real device used', async () => {
+    const tiles = tutorPage.locator('.classroom-room-stage');
+    await expect(tutorPage.locator('.classroom-room-connection')).toHaveText('已連線');
+    const mic = tutorPage.getByRole('button', { name: /^麥克風：/ });
+    const camera = tutorPage.getByRole('button', { name: /^攝影機：/ });
+    await expect(mic).toHaveAttribute('aria-pressed', 'false');
+    await mic.click();
+    await camera.click();
+    await expect(mic).toHaveAttribute('aria-pressed', 'true');
+    await expect(camera).toHaveText('攝影機：開');
+    await expect(tiles.locator('.self')).toContainText('攝影機開啟（模擬：沒有真實畫面）');
+    await expect(tiles.locator('.self')).toContainText('麥克風開啟');
+    await tutorPage.getByText('模擬控制（只在測試教室）').click();
+    await expect(tiles.locator('.remote')).toContainText('等待對方進入教室。');
+    await tutorPage.getByRole('button', { name: '對方進入', exact: true }).click();
+    await expect(tiles.locator('.remote')).toContainText('攝影機開啟（模擬：沒有真實畫面）');
+    await tutorPage.getByRole('button', { name: '攝影機被封鎖', exact: true }).click();
+    await expect(tutorPage.getByRole('alert').filter({ hasText: '攝影機被封鎖。請在瀏覽器的網站設定允許使用攝影機' })).toBeVisible();
+    await expect(camera).toBeDisabled();
+    await tutorPage.getByRole('button', { name: '裝置恢復', exact: true }).click();
+    await expect(camera).toBeEnabled();
+    await expect(camera).toHaveText('攝影機：關');
+
+    // A dropped connection is reported at once and shows on the overview; so does the recovery.
+    await tutorPage.getByRole('button', { name: '網路中斷', exact: true }).click();
+    await expect(tutorPage.locator('.classroom-room-problem', { hasText: '視訊連線中斷，正在重新連線…' })).toBeVisible();
+    await expect(mic).toBeDisabled();
+    await expect.poll(async () => { await refresh(); return card().textContent(); }, { timeout: 20000 }).toContain('重新連線中');
+    await shot(tutorPage, '07-tutor-reconnecting');
+    await tutorPage.getByRole('button', { name: '網路恢復', exact: true }).click();
+    await expect(tutorPage.locator('.classroom-room-connection')).toHaveText('已連線');
+    await expect.poll(async () => { await refresh(); return card().textContent(); }, { timeout: 20000 }).not.toContain('重新連線中');
+
+    await tutorPage.getByRole('button', { name: '連線失敗', exact: true }).click();
+    await expect(tutorPage.getByRole('alert').filter({ hasText: '視訊無法連線' })).toBeVisible();
+    await tutorPage.getByRole('button', { name: '重新連線', exact: true }).click();
+    await expect(tutorPage.locator('.classroom-room-connection')).toHaveText('已連線');
+    for (const page of [tutorPage, student]) expect(await page.evaluate(() => window.__deviceRequests)).toBe(0);
+    await shot(tutorPage, '08-tutor-controls');
   });
 
   await check('the tutor leaves; phone-sized pages never scroll sideways', async () => {

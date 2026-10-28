@@ -97,11 +97,9 @@ function blockedEvent(lessonId: string, reason: string, now: number): ClassroomE
   return { source: "server", type: "server.join_blocked", lessonId, reason, occurredAt: now, receivedAt: now, key: `server.join_blocked:${lessonId}:${now}:${randomUUID()}` };
 }
 
-export async function joinClassroom({ store, provider, lessonId, key, sessionEmail, now }: {
-  store: ClassroomStore; provider: ClassroomProvider; lessonId: string; key?: string | null; sessionEmail?: string | null; now: number;
-}) {
-  const lesson = await store.lesson(lessonId);
-  if (!lesson) return { status: 404, body: { error: "Lesson not found", code: "LESSON_NOT_FOUND" } };
+// The person behind a request: a student by the personal link, or the lesson's tutor by sign-in.
+// Entering the classroom and reading its status use the same check, which never looks at consent.
+function admitted(lesson: ClassroomLesson, key: string | null | undefined, sessionEmail: string | null | undefined, now: number) {
   const keyHash = key ? hashKey(key) : null;
   const participant = (keyHash && lesson.participants.find((entry) => entry.role === "student" && entry.joinKeyHash === keyHash))
     || (sessionEmail && lesson.participants.find((entry) => entry.role === "tutor" && entry.staffEmail === sessionEmail))
@@ -110,6 +108,15 @@ export async function joinClassroom({ store, provider, lessonId, key, sessionEma
     ? { verified: true, participantId: participant.id, method: participant.role === "tutor" ? "staff_login" : "join_link" }
     : null;
   const decision = getJoinEligibility({ lesson: forRules(lesson), participantId: participant?.id ?? "", identity, now });
+  return { participant, decision };
+}
+
+export async function joinClassroom({ store, provider, lessonId, key, sessionEmail, now }: {
+  store: ClassroomStore; provider: ClassroomProvider; lessonId: string; key?: string | null; sessionEmail?: string | null; now: number;
+}) {
+  const lesson = await store.lesson(lessonId);
+  if (!lesson) return { status: 404, body: { error: "Lesson not found", code: "LESSON_NOT_FOUND" } };
+  const { participant, decision } = admitted(lesson, key, sessionEmail, now);
   if (!decision.allowed) {
     await store.transaction((tx) => storeEvent(tx, blockedEvent(lesson.id, decision.reason, now)));
     return { status: 403, body: { error: "You cannot enter this classroom", code: decision.reason } };
@@ -137,6 +144,30 @@ function recordingDecision(events: ClassroomEvent[]) {
   return {
     decided: Boolean(decision),
     allowed: decision?.eligible === true && !events.some((event) => event.type === "server.consent_withdrawn"),
+  };
+}
+
+// What everyone in the room may see about recording, so the student is told as plainly as the
+// tutor whether the lesson is being recorded. It only reads: nothing is stored, no tick runs and
+// no token is issued, and it answers with codes and the recording state only.
+export async function classroomStatus({ store, lessonId, key, sessionEmail, now }: {
+  store: ClassroomStore; lessonId: string; key?: string | null; sessionEmail?: string | null; now: number;
+}) {
+  const lesson = await store.lesson(lessonId);
+  if (!lesson) return { status: 404, body: { error: "Lesson not found", code: "LESSON_NOT_FOUND" } };
+  const { decision } = admitted(lesson, key, sessionEmail, now);
+  if (!decision.allowed) return { status: 403, body: { error: "You cannot see this classroom", code: decision.reason } };
+  const events = await store.eventsFor([lessonId]);
+  const state = deriveLesson(forRules(lesson), events, now);
+  const recording = recordingDecision(events);
+  return {
+    status: 200,
+    body: {
+      ok: true,
+      recordingAllowed: recording.allowed,
+      recordingDecided: recording.decided,
+      recording: { status: state.recording.status, basis: state.recording.basis, label: RECORDING_LABELS[state.recording.status] ?? state.recording.status },
+    },
   };
 }
 

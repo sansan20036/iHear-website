@@ -54,13 +54,29 @@
 | 未同意錄影的學生照常進教室，整堂不錄 | `tests/classroom-api.test.mjs` | 通過 |
 | 有人進教室之前補齊同意，會重新判斷；小老師進來後才補齊，這堂不錄 | `tests/classroom-api.test.mjs`、`test/live-dashboard.test.mjs` | 通過 |
 | 錄影只在 Zoom 確認 session 開始、兩人都在之後才請求；只有 Zoom 確認後才顯示「錄影中」 | `tests/classroom-api.test.mjs`、`tests/classroom.smoke.mjs` | 通過 |
-| 錄影檔用 P1 的命名歸檔一次，重送不重複；webhook 回應後自動接著歸檔，不必開著總覽 | `tests/classroom-api.test.mjs`、`tests/classroom-postgres.test.mjs` | 通過 |
+| 錄影檔用 P1 的命名歸檔一次，重送不重複；webhook 回應後會接著嘗試歸檔（`after()` 盡力而為，可能被函式時限截斷；還沒有每分鐘排程之前，要靠開著的總覽或下一次觸發補做，2026-10-29 更正） | `tests/classroom-api.test.mjs`、`tests/classroom-postgres.test.mjs` | 通過 |
 | 課中撤回：立即停止、30 秒再停一次、60 秒結束 session，新的 session 不錄；未確認時列為錯誤，處置後記下是誰、怎麼處理 | `tests/classroom-api.test.mjs`、`tests/classroom.smoke.mjs` | 通過 |
 | 異常紀錄：問題再次發生或升級時，重新標示待處置；PostgreSQL 和本機檔案儲存的行為一致 | `tests/classroom-store.test.mjs`、`tests/classroom-postgres.test.mjs` | 通過 |
 | 只有 owner 能看總覽和操作；未登入和 editor 都被拒；回應 `no-store` | `tests/classroom-api.test.mjs`、`tests/classroom.smoke.mjs` | 通過 |
 | 總覽和資料庫裡沒有 email、專屬連結、憑證，也沒有故意植入的姓名、電話、IP | 同上，加上 `tests/classroom-postgres.test.mjs` | 通過 |
 | 手機尺寸的頁面不需要左右捲動 | `tests/classroom.smoke.mjs` | 通過（瀏覽器模擬手機尺寸，不是實機） |
 | Migration 027 套用、資料表都開啟 RLS、限制條件有效 | `tests/classroom-postgres.test.mjs` | 通過（本機一次性資料庫） |
+
+### 1.2 一對一教室 UI Prototype 的合成驗收（2026-10-29，本機）
+
+這一輪只做和視訊廠商無關的部分。視訊廠商還沒選定，所以只有合成的媒體接入介面：**沒有真實影像、聲音或錄影**，畫面只顯示狀態。實測欄全部仍是**未驗證**。
+
+| 項目 | 測試 | 合成結果 |
+|---|---|---|
+| 和廠商無關的媒體接入介面（`lib/classroom-media.ts`）：只有合成版；Tencent RTC、Agora、Zoom Video SDK 三個名字都會回「尚未接入」；合成版宣告自己沒有真實媒體 | `tests/classroom-media.test.mjs` | 通過 |
+| 連線狀態（連線中、已連線、重新連線中、已中斷、連線失敗）、攝影機和麥克風開關、裝置被封鎖或找不到時維持被封鎖 | `tests/classroom-media.test.mjs`、`tests/classroom.smoke.mjs` | 通過 |
+| 小老師端把連線變化立刻回報；網路中斷時總覽顯示「重新連線中」，恢復後消失；合成版不會編造「對方進入」的回報 | `tests/classroom-media.test.mjs`、`tests/classroom.smoke.mjs` | 通過 |
+| 學生端也看得到錄影狀態（未錄影、正在啟動、錄影中），和小老師端用同一份伺服器狀態；停止要等確認後才顯示「未錄影」 | `tests/classroom-api.test.mjs`、`tests/classroom.smoke.mjs` | 通過 |
+| 讀取錄影狀態用和入場相同的身分、名單、時間檢查；不寫入任何事件、不發憑證、不呼叫 provider，只回代碼和狀態 | `tests/classroom-api.test.mjs` | 通過 |
+| 教室頁從頭到尾沒有向瀏覽器要求攝影機或麥克風 | `tests/classroom.smoke.mjs` | 通過 |
+| 本機 Demo：四間不同狀態的教室（錄影中、不錄影、等待開始、課中撤回）加上總覽、小老師、學生三個視窗 | `tests/classroom.demo.mjs` | 可展示（不是驗收） |
+
+**這些合成結果只證明我方的頁面和邏輯正確，不證明任何視訊廠商的連線、畫質、錄影或裝置相容性。**
 
 ## 2. 必要實測（取得授權後進行，只用測試身分，不用任何學生資料）
 
