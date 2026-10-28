@@ -10,6 +10,7 @@
 相關文件：
 - [`live-classroom-dashboard.md`](live-classroom-dashboard.md)：管理員即時教室總覽
 - [`recording-failure-rules.md`](recording-failure-rules.md)：失敗處理規則
+- [`p1-auto-filing.md`](p1-auto-filing.md)：P1 自動歸檔的實作與合成驗收（2026-10-28）
 - [`zoom-account-check.md`](zoom-account-check.md)：Zoom 帳號查核
 - [`p3-mvp-acceptance.md`](p3-mvp-acceptance.md)：MVP 驗收清單
 

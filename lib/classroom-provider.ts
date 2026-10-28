@@ -31,7 +31,8 @@ export type ClassroomProvider = {
   endSession(lesson: ClassroomLesson): Promise<ProviderCall>;
   removeUser(lesson: ClassroomLesson, userKey: string): Promise<ProviderCall>;
   snapshot(lesson: ClassroomLesson): Promise<ProviderSnapshot | null>;
-  download(record: RecordingFile): Promise<Buffer>;
+  // One byte range [start, end) of a finished recording; the filing worker moves it in chunks.
+  download(record: RecordingFile, range: { start: number; end: number }): Promise<Buffer>;
   deleteRecording(record: { providerFileId: string | null }): Promise<ProviderCall>;
 };
 
@@ -85,8 +86,8 @@ function syntheticProvider(): ClassroomProvider {
     async snapshot(lesson) {
       return (await readSynthetic()).snapshots[lesson.id] ?? null;
     },
-    async download(record) {
-      return Buffer.alloc(Number(record.size) || 0, 7);
+    async download(record, { start, end }) {
+      return Buffer.alloc(Math.max(0, Math.min(end, Number(record.size) || 0) - start), 7);
     },
     deleteRecording: (record) => accepted("recording.delete", String(record.providerFileId)),
   };

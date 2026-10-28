@@ -10,7 +10,7 @@ import { deriveLesson, dueReconciliations, planActions } from "../tools/recordin
 import { buildDashboard, LABELS } from "../tools/recording-pathway/classroom/live-dashboard.mjs";
 import type { ClassroomDrive } from "./classroom-drive";
 import type { ClassroomProvider } from "./classroom-provider";
-import type { ClassroomEvent, ClassroomLesson, ClassroomStore } from "./classroom-store";
+import type { ClassroomEvent, ClassroomLesson, ClassroomStore, RecordingFile } from "./classroom-store";
 
 const RECORDING_LABELS: Record<string, string> = LABELS.recording;
 const ANOMALY_LABELS: Record<string, string> = LABELS.anomaly;
@@ -238,18 +238,37 @@ const groupByLesson = (lessons: ClassroomLesson[], events: ClassroomEvent[]) => 
   return map;
 };
 
+// The lessons the overview and the scheduled tick look after: those around now, and older ones
+// whose recordings are still on their way to Drive (blocked by a full Drive, say), so a filing
+// problem never drops out of sight before it is solved.
+async function lessonsInView(store: ClassroomStore, now: number) {
+  const around = await store.listLessons({ from: now - OVERVIEW_WINDOW_MS, to: now + OVERVIEW_WINDOW_MS });
+  const known = new Set(around.map((lesson) => lesson.id));
+  const filing = (await store.listOpenFilingLessonIds()).filter((id) => !known.has(id));
+  const older = (await Promise.all(filing.map((id) => store.lesson(id)))).filter((lesson): lesson is ClassroomLesson => Boolean(lesson));
+  return [...older, ...around];
+}
+
 // One pass of the server's work: decide and act for each lesson, re-check against the provider
 // when facts are late or missing, file finished recordings, and update the anomaly records.
 // Safe to run often and from several places: every action has a fixed key.
-export async function runClassroomTick({ store, provider, drive, now, lessonIds, workerId = "tick", heavyBudget = 20, maxJobs = 5 }: {
+//
+// Filing gets a time budget. Ticks that run inside a request (a heartbeat, the overview, a
+// webhook) keep it short; the scheduled tick gives it most of the function's time. A recording
+// that does not fit carries on in the next tick from the byte Drive confirmed.
+export async function runClassroomTick({ store, provider, drive, now, lessonIds, workerId = "tick", heavyBudget = 20, maxJobs = 5, filingBudgetMs = 10_000, filingSafetyMs = 5_000 }: {
   store: ClassroomStore; provider: ClassroomProvider; drive: ClassroomDrive; now: number; lessonIds?: string[]; workerId?: string; heavyBudget?: number; maxJobs?: number;
+  filingBudgetMs?: number; filingSafetyMs?: number;
 }) {
+  const startedAt = Date.now();
+  // The tick's own time: starts at `now` and moves with the real time spent.
+  const clock = () => now + (Date.now() - startedAt);
   const lessons = lessonIds
     ? (await Promise.all(lessonIds.map((id) => store.lesson(id)))).filter((lesson): lesson is ClassroomLesson => Boolean(lesson))
-    : await store.listLessons({ from: now - OVERVIEW_WINDOW_MS, to: now + OVERVIEW_WINDOW_MS });
+    : await lessonsInView(store, now);
   const ids = lessons.map((lesson) => lesson.id);
   let byLesson = groupByLesson(lessons, await store.eventsFor(ids));
-  const summary = { lessons: lessons.length, actions: 0, reconciliations: 0, jobs: 0 };
+  const summary = { lessons: lessons.length, actions: 0, reconciliations: 0, jobs: 0, continued: 0 };
   for (const lesson of lessons) {
     for (const action of planActions(forRules(lesson), byLesson.get(lesson.id) ?? [], now) as Action[]) {
       await perform({ store, provider, lesson, action, now });
@@ -267,14 +286,27 @@ export async function runClassroomTick({ store, provider, drive, now, lessonIds,
     }
     summary.reconciliations += 1;
   }
-  const results = await processJobs({
+  const results: { status?: string }[] = await processJobs({
     store,
-    now,
+    clock,
+    deadline: clock() + filingBudgetMs,
+    safetyMs: filingSafetyMs,
     workerId,
     max: maxJobs,
     handlers: {
-      file_recording: ({ job, leaseVersion, now: at }: { job: Record<string, unknown>; leaseVersion: number; now: number }) =>
-        fileRecording({ store, drive, download: (record: never) => provider.download(record), job, leaseVersion, now: at, rootFolderId: drive.rootFolderId }),
+      file_recording: ({ job, leaseVersion, clock: time, deadline, leaseMs }: { job: Record<string, unknown>; leaseVersion: number; clock: () => number; deadline: number; leaseMs: number }) =>
+        fileRecording({
+          store,
+          drive,
+          download: (record: RecordingFile, range: { start: number; end: number }) => provider.download(record, range),
+          job,
+          leaseVersion,
+          clock: time,
+          deadline,
+          leaseMs,
+          rootFolderId: drive.rootFolderId,
+          options: { safetyMs: filingSafetyMs },
+        }),
       delete_vendor_copy: async ({ job, leaseVersion }: { job: { id: string; providerFileId: string | null }; leaseVersion: number }) => {
         const result = await provider.deleteRecording(job);
         if (!result.ok) throw new Error(`vendor copy not deleted (${result.httpStatus})`);
@@ -284,6 +316,7 @@ export async function runClassroomTick({ store, provider, drive, now, lessonIds,
     },
   });
   summary.jobs = results.length;
+  summary.continued = results.filter((result) => result.status === "CONTINUE").length;
   byLesson = groupByLesson(lessons, await store.eventsFor(ids));
   for (const lesson of lessons) {
     const state = deriveLesson(forRules(lesson), byLesson.get(lesson.id) ?? [], now);
@@ -311,7 +344,7 @@ export async function reconcileLessonNow({ store, provider, drive, lessonId, now
 // What the administrators' overview shows: the four groups of cards (codes only), the anomaly
 // records with how they were handled, and the lessons in the window.
 export async function classroomOverview({ store, now }: { store: ClassroomStore; now: number }) {
-  const lessons = await store.listLessons({ from: now - OVERVIEW_WINDOW_MS, to: now + OVERVIEW_WINDOW_MS });
+  const lessons = await lessonsInView(store, now);
   const ids = lessons.map((lesson) => lesson.id);
   const [events, anomalies] = await Promise.all([store.eventsFor(ids), store.listAnomalies(ids)]);
   const codeOf = new Map(lessons.map((lesson) => [lesson.id, lesson.code]));

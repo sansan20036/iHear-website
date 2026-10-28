@@ -30,6 +30,7 @@ export const TIMING = Object.freeze({
   fileOverdueWarnMs: 30 * 60_000,
   fileOverdueErrorMs: 6 * 60 * 60_000,
   filingOverdueMs: 60 * 60_000,
+  filingStuckMs: 6 * 60 * 60_000,
   qualityAlertMs: 10 * 60_000,
   reconcileEveryMs: 60_000,
   clockSkewMs: 2 * 60_000,
@@ -77,7 +78,7 @@ function analyze(lesson, events, now) {
   const f = {
     sessions: new Map(), lastConfirmedAt: null, recording: [], startRequests: [], startResponses: [], stopRequests: [],
     endRequests: [], eligibility: null, consentChangedAt: null, withdrawal: null, unknown: [], joinBlocked: 0, alerts: [], completed: new Map(),
-    completedAt: null, filings: new Map(), lastSnapshotAt: null, snapshotPresent: new Set(), performed: new Set(),
+    completedAt: null, filings: new Map(), partOrderAt: null, lastSnapshotAt: null, snapshotPresent: new Set(), performed: new Set(),
   };
   const session = id => {
     const key = id || 'session';
@@ -162,7 +163,11 @@ function analyze(lesson, events, now) {
         f.joinBlocked += 1;
         break;
       case 'p1.filing':
-        f.filings.set(event.providerFileId, { status: event.status, at });
+        // A resumed filing is simply pending again.
+        f.filings.set(event.providerFileId, { status: event.status === 'RESUMED' ? 'PENDING' : event.status, reason: event.reason ?? null, at });
+        break;
+      case 'p1.part_order':
+        f.partOrderAt = earliest(f.partOrderAt, at);
         break;
       default:
         break;
@@ -309,13 +314,21 @@ function recordingOf(f, phase, now) {
 function filingOf(f) {
   const kept = [...f.completed.values()].filter(isKeptRecording);
   if (!kept.length) return { status: 'NONE', files: 0, stored: 0 };
-  const statuses = kept.map(file => f.filings.get(file.providerFileId)?.status ?? 'PENDING');
+  const entries = kept.map(file => f.filings.get(file.providerFileId) ?? { status: 'PENDING' });
+  const statuses = entries.map(entry => entry.status);
   const stored = statuses.filter(status => status === 'STORED').length;
   let status = 'PENDING';
   if (statuses.includes('FAILED')) status = 'FAILED';
+  else if (statuses.includes('BLOCKED')) status = 'BLOCKED';
   else if (stored === kept.length) status = 'STORED';
   else if (!statuses.includes('PENDING')) status = 'HELD';
-  return { status, files: kept.length, stored, basis: status === 'PENDING' ? 'requested' : 'confirmed' };
+  const filing = { status, files: kept.length, stored, basis: status === 'PENDING' ? 'requested' : 'confirmed' };
+  // Why filing is paused (Drive full, access revoked...) and since when.
+  if (status === 'BLOCKED') {
+    const blocked = entries.filter(entry => entry.status === 'BLOCKED').sort((a, b) => a.at - b.at)[0];
+    Object.assign(filing, { reason: blocked.reason, since: blocked.at });
+  }
+  return filing;
 }
 
 // When the recording should be on its way from Zoom's cloud.
@@ -373,6 +386,12 @@ function anomaliesOf({ f, phase, attendance, recording, filing, start, end, now 
     else if (waited >= TIMING.fileOverdueWarnMs) add('FILE_OVERDUE', 'warning', waitingSince + TIMING.fileOverdueWarnMs);
   }
   if (filing.status === 'FAILED') add('FILING_FAILED', 'error', f.completedAt);
+  if (filing.status === 'BLOCKED') add('FILING_BLOCKED', 'error', filing.since, { reason: filing.reason });
+  // Still not in Drive long after Zoom delivered it: the worker may not be running at all.
+  if (filing.status === 'PENDING' && f.completedAt != null && now - f.completedAt >= TIMING.filingOverdueMs) {
+    add('FILING_DELAYED', now - f.completedAt >= TIMING.filingStuckMs ? 'error' : 'warning', f.completedAt + TIMING.filingOverdueMs);
+  }
+  if (f.partOrderAt != null) add('PART_OUT_OF_ORDER', 'warning', f.partOrderAt);
   if (f.unknown.length) add('UNKNOWN_PARTICIPANT', 'error', f.unknown[0].at, { count: f.unknown.length });
   if (phase.value === 'LIVE' && (f.lastConfirmedAt == null || now - f.lastConfirmedAt > TIMING.staleAfterMs)) {
     add('STALE_DATA', 'warning', f.lastConfirmedAt ?? phase.since);

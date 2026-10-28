@@ -70,20 +70,23 @@ Local run: `CLASSROOM_PROVIDER=synthetic CLASSROOM_DRIVE=local CLASSROOM_WEBHOOK
 
 ## Periodic work
 
-There is no cron. The tick (decide, start or stop recording, reconcile, file) runs on:
+The tick (decide, start or stop recording, reconcile, file) runs on:
 
 - the tutor's heartbeat, every 30 s, or every 10 s while recording;
 - the open overview, every 15 s;
-- each stored webhook, after the response.
+- each stored webhook, after the response;
+- `GET /api/classroom/scheduled-tick` with `Authorization: Bearer <CRON_SECRET>` (503 without a secret of at least 32 characters). Nothing calls it yet.
 
-A per-minute cron needs a Vercel plan decision. Until then, the pilot keeps the overview open (see `classroom-pilot-monitoring.zh-TW.md`).
+Ticks inside a request give filing 10 s; the scheduled tick gives it 50 s of its 60 s. Recordings move to Drive in chunks, with the confirmed byte saved after each chunk, so a recording that does not fit carries on in the next tick, and a function stopped mid-way loses nothing. Lessons with filing still open stay in the overview and the scheduled tick after their day. Design, the Drive cases and the synthetic acceptance: `tools/recording-pathway/docs/p1-auto-filing.md`.
+
+Calling the scheduled tick every minute needs a decision (Supabase `pg_cron` + `pg_net`, or Vercel Pro; Hobby cron runs once a day at most). Until then, the pilot keeps the overview open (see `classroom-pilot-monitoring.zh-TW.md`).
 
 ## Tests
 
 | Script | What |
 |---|---|
-| `npm run test:recording-pathway` | The shared rules and P1's pathway (`node --test`) |
-| `npm run test:classroom` | Routes and the file store, synthetic, including a recorded lesson end to end, consent rules and the withdrawal stop |
+| `npm run test:recording-pathway` | The shared rules and P1's pathway (`node --test`), including automatic filing: functions stopped at every step, a full Drive, retries, duplicates |
+| `npm run test:classroom` | Routes and the file store, synthetic, including a recorded lesson end to end, consent rules, the withdrawal stop and the scheduled tick |
 | `npm run test:classroom:postgres` | Migration 027 and the PostgreSQL store on a disposable local PostgreSQL (Docker, `--pull=never`), the same store contract, and two workers racing on one filing |
 | `npm run test:classroom:browser` | The built site in a browser: owner and editor access, adding a lesson, student and tutor entry, the recording state, a withdrawal, handling a problem, phone layouts, no external requests. Run `npm run build` first. |
 
@@ -98,4 +101,5 @@ On Windows, `next build` with Turbopack can fail with "failed to create junction
 - Backups and restore tooling include the classroom tables; the database audit expects them.
 - The approved consent policy and versions; consent entry for real records.
 - Reissuing a student link and cancelling a lesson (not in week 1).
-- A decision on a per-minute cron.
+- A per-minute caller for the scheduled tick, and `CRON_SECRET` in Vercel.
+- Where recordings are stored and how much space that needs (a personal Google account has 15 GB).

@@ -104,6 +104,8 @@ CREATE TABLE IF NOT EXISTS public.classroom_jobs (
   lease_version INTEGER NOT NULL DEFAULT 0 CHECK (lease_version >= 0),
   available_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   error TEXT CHECK (error IS NULL OR char_length(error) <= 500),
+  -- Why the job is paused until an administrator acts (Drive full, access revoked...).
+  blocked_reason TEXT CHECK (blocked_reason IS NULL OR blocked_reason ~ '^[A-Z_]{3,40}$'),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -125,6 +127,8 @@ CREATE TABLE IF NOT EXISTS public.classroom_recording_files (
   recording_end TIMESTAMPTZ,
   planned_name TEXT,
   upload_session_uri TEXT,
+  -- What Drive has confirmed of the resumable upload; the next call carries on from here.
+  uploaded_bytes BIGINT NOT NULL DEFAULT 0 CHECK (uploaded_bytes >= 0),
   drive_file_id TEXT,
   filed_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

@@ -80,7 +80,7 @@ async function setup({ eligible = true } = {}) {
   return { store, drive: createDrive() };
 }
 const handlersFor = (store, drive, download = syntheticDownload) => ({
-  file_recording: ({ job, leaseVersion, now }) => fileRecording({ store, drive, download, job, leaseVersion, now, rootFolderId: ROOT }),
+  file_recording: ({ job, leaseVersion, now }) => fileRecording({ store, drive, download, job, leaseVersion, now, rootFolderId: ROOT, options: { chunkBytes: 16 } }),
   delete_vendor_copy: ({ job, leaseVersion }) => ({ status: store.completeJob({ jobId: job.id, leaseVersion }) ? 'DONE' : 'LEASE_LOST' }),
 });
 const filingEvents = store => store.events().filter(event => event.type === 'p1.filing');
@@ -217,7 +217,7 @@ test('two workers racing on one filing job, with the lease running out, keep one
   // A has recorded its upload session and stalls inside the upload. Its lease runs out, B takes
   // the job and, finding A's upload session unusable, uploads its own copy.
   await atGate;
-  drive.faults.reportExpiredOnce = 1;
+  drive.faults.reportGoneOnce = 1;
   const claimB = store.claimJob({ workerId: 'B', now: T + 6 * MIN, leaseMs: 5 * MIN });
   assert.equal(claimB.leaseVersion, claimA.leaseVersion + 1);
   const resultB = await fileRecording({ store, drive, download: syntheticDownload, job: claimB.job, leaseVersion: claimB.leaseVersion, now: T + 6 * MIN, rootFolderId: ROOT });
@@ -236,7 +236,7 @@ test('two workers racing on one filing job, with the lease running out, keep one
 test('a crash right after a successful upload is recovered without uploading again', async () => {
   const { store, drive } = await setup();
   await ingestWebhook({ ...delivery(completed(START + 70 * MIN, [video('f-video', START + MIN, START + 60 * MIN)]), START + 70 * MIN), store });
-  drive.faults.crashAfterFinish = 1;
+  drive.faults.crashAfterComplete = 1;
   const first = await processJobs({ store, now: START + 71 * MIN, workerId: 'worker-1', handlers: handlersFor(store, drive) });
   assert.equal(first[0].status, 'RETRY');
   assert.equal(store.fileRecord('f-video').status, 'PENDING');

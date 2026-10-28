@@ -143,7 +143,7 @@ describe('the shared filing logic on PostgreSQL', () => {
     const runningA = fileRecording({ store, drive, download: syntheticDownload, job: claimA.job, leaseVersion: claimA.leaseVersion, now: T, rootFolderId: ROOT });
     // A stalls inside its upload; its lease runs out and B takes the job with a new fencing number.
     await atGate;
-    drive.faults.reportExpiredOnce = 1;
+    drive.faults.reportGoneOnce = 1;
     const claimB = await store.claimJob({ workerId: 'B', now: T + 6 * MIN, leaseMs: 5 * MIN });
     expect(claimB.leaseVersion).toBe(claimA.leaseVersion + 1);
     const resultB = await fileRecording({ store, drive, download: syntheticDownload, job: claimB.job, leaseVersion: claimB.leaseVersion, now: T + 6 * MIN, rootFolderId: ROOT });

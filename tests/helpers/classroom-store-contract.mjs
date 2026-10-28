@@ -113,8 +113,9 @@ export function classroomStoreContract(name, getStore) {
       expect(await store.claimJob({ workerId: 'worker-b', now: T + 1000, leaseMs: 60_000 })).toBeNull();
       const b = await store.claimJob({ workerId: 'worker-b', now: T + 61_000, leaseMs: 60_000 });
       expect(b).toMatchObject({ leaseVersion: 2, job: { id: 'file:SYN-C-F1' } });
-      expect(await store.setUploadSession({ providerFileId: 'SYN-C-F1', jobId: a.job.id, leaseVersion: 1, uri: 'local-upload://stale' })).toBe(false);
-      expect(await store.setUploadSession({ providerFileId: 'SYN-C-F1', jobId: b.job.id, leaseVersion: 2, uri: 'local-upload://current' })).toBe(true);
+      const transfer = (job, leaseVersion, uri) => store.recordTransfer({ jobId: job.id, leaseVersion, providerFileId: 'SYN-C-F1', uri, uploadedBytes: 0, now: T + 62_000, leaseMs: 60_000 });
+      expect(await transfer(a.job, 1, 'local-upload://stale')).toBe(false);
+      expect(await transfer(b.job, 2, 'local-upload://current')).toBe(true);
       const finish = (leaseVersion, driveFileId) => store.finishFiling({
         jobId: 'file:SYN-C-F1', leaseVersion, providerFileId: 'SYN-C-F1',
         changes: { status: 'STORED', driveFileId, filedAt: T + 70_000 },
@@ -157,6 +158,50 @@ export function classroomStoreContract(name, getStore) {
       expect(await store.fileRecord('SYN-C-F2')).toMatchObject({ status: 'FAILED' });
       expect((await store.eventsFor([A])).map(entry => entry.key)).toContain('contract:gave-up');
       expect(await store.claimJob({ workerId: 'w', now: now + 24 * 3600_000, leaseMs: 60_000 })).toBeNull();
+    });
+
+    test('a chunked transfer renews the lease, counts attempts from its last progress, and carries on or waits out a block without using attempts', async () => {
+      const store = getStore();
+      const now = T + 10 * 24 * 3600_000;
+      await drain(store, now);
+      await store.transaction(async tx => {
+        await tx.insertFileRecord({ providerFileId: 'SYN-C-F3', lessonId: A, status: 'PENDING', provider: 'synthetic', extension: 'mp4', size: 300 });
+        await tx.insertJob({ id: 'file:SYN-C-F3', type: 'file_recording', lessonId: A, providerFileId: 'SYN-C-F3', availableAt: now });
+      });
+      expect(await store.listOpenFilingLessonIds()).toContain(A);
+      const claim = async at => store.claimJob({ workerId: 'w', now: at, leaseMs: 60_000 });
+      const first = await claim(now);
+      const transfer = (leaseVersion, uploadedBytes, at, events = []) => store.recordTransfer({ jobId: 'file:SYN-C-F3', leaseVersion, providerFileId: 'SYN-C-F3', uri: 'local-upload://f3', uploadedBytes, now: at, leaseMs: 60_000, events });
+      // Each saved chunk renews the lease: the job is not handed out while the worker keeps going.
+      expect(await transfer(first.leaseVersion, 100, now + 50_000)).toBe(true);
+      expect(await claim(now + 70_000)).toBeNull();
+      expect(await store.fileRecord('SYN-C-F3')).toMatchObject({ uploadSessionUri: 'local-upload://f3', uploadedBytes: 100 });
+      // Out of time: back in the queue at once, the attempt not counted.
+      expect(await store.rescheduleJob({ jobId: 'file:SYN-C-F3', leaseVersion: first.leaseVersion, availableAt: now + 80_000 })).toBe(true);
+      const second = await claim(now + 80_000);
+      expect(second.job).toMatchObject({ attempts: 1, blockedReason: null });
+      // A full Drive: blocked with a reason, the attempt refunded, the event stored once.
+      const blocked = { key: 'contract:blocked', type: 'p1.filing', source: 'p1', lessonId: A, occurredAt: now + 81_000, status: 'BLOCKED', reason: 'DRIVE_QUOTA' };
+      const block = leaseVersion => store.rescheduleJob({ jobId: 'file:SYN-C-F3', leaseVersion, availableAt: now + 31 * 60_000, refundAttempt: true, blockedReason: 'DRIVE_QUOTA', error: 'DRIVE_QUOTA: synthetic', events: [blocked] });
+      expect(await block(first.leaseVersion)).toBe(false);
+      expect(await block(second.leaseVersion)).toBe(true);
+      expect(await claim(now + 30 * 60_000)).toBeNull();
+      const third = await claim(now + 31 * 60_000);
+      expect(third.job).toMatchObject({ attempts: 1, blockedReason: 'DRIVE_QUOTA', error: 'DRIVE_QUOTA: synthetic' });
+      expect((await store.eventsFor([A])).filter(entry => entry.key === 'contract:blocked')).toHaveLength(1);
+      // Progress again: the block is cleared and the attempt count starts over.
+      const resumed = { key: 'contract:resumed', type: 'p1.filing', source: 'p1', lessonId: A, occurredAt: now + 31 * 60_000, status: 'RESUMED' };
+      expect(await transfer(third.leaseVersion, 200, now + 31 * 60_000, [resumed])).toBe(true);
+      expect(await store.failJob({ jobId: 'file:SYN-C-F3', leaseVersion: third.leaseVersion, now: now + 32 * 60_000, error: 'RATE_LIMITED: synthetic', maxAttempts: 1, retryAfterMs: 10 * 60_000 })).toBe(true);
+      // Not given up (the count was reset), and not retried before Retry-After.
+      expect(await claim(now + 41 * 60_000)).toBeNull();
+      const fourth = await claim(now + 42 * 60_000);
+      expect(fourth.job).toMatchObject({ id: 'file:SYN-C-F3', attempts: 1, blockedReason: null });
+      expect((await store.eventsFor([A])).map(entry => entry.key)).toContain('contract:resumed');
+      // Blocked or running, the lesson counts as still filing until the job is done.
+      expect(await store.listOpenFilingLessonIds()).toContain(A);
+      await store.completeJob({ jobId: fourth.job.id, leaseVersion: fourth.leaseVersion });
+      expect(await store.listOpenFilingLessonIds()).not.toContain(A);
     });
 
     test('simultaneous claims never hand out the same job twice', async () => {

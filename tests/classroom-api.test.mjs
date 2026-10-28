@@ -43,6 +43,7 @@ const reconcile = await import("../app/api/admin/classrooms/[lessonId]/reconcile
 const joinRoute = await import("../app/api/classroom/[lessonId]/join/route");
 const hostRoute = await import("../app/api/classroom/[lessonId]/host-events/route");
 const webhook = await import("../app/api/recordings/zoom/webhook/route");
+const scheduledRoute = await import("../app/api/classroom/scheduled-tick/route");
 const { classroomStore } = await import("../lib/classroom-store");
 
 // Planted in the synthetic Zoom payloads; none of them may be stored or shown.
@@ -359,6 +360,55 @@ describe("a recorded lesson, synthetic end to end", () => {
     for (const value of [TUTOR, lesson.key, createHash("sha256").update(lesson.key).digest("hex"), ...PLANTED]) expect(shown).not.toContain(value);
     const stored = await readFile(path.join(directory, "classroom.json"), "utf8");
     for (const value of PLANTED) expect(stored).not.toContain(value);
+  });
+
+  test("the scheduled tick files what no request got to, waits out a full Drive, and keeps the lesson in view until it is filed", async () => {
+    const SCHEDULED = "scheduled-tick-secret-test-only-0123456789";
+    const scheduled = async authorization => read(await scheduledRoute.GET(new Request(`${ORIGIN}/api/classroom/scheduled-tick`, { headers: authorization ? { authorization } : {} })));
+    vi.stubEnv("CRON_SECRET", "");
+    expect((await scheduled(`Bearer ${SCHEDULED}`)).status).toBe(503);
+    vi.stubEnv("CRON_SECRET", SCHEDULED);
+    expect((await scheduled("Bearer not-the-secret")).status).toBe(401);
+    expect((await scheduled()).status).toBe(401);
+
+    at("2026-11-22T07:50:00Z");
+    const lesson = { ...(await createLesson({ date: "2026-11-22", code: "TEST-L10", time: "16:00", tutorCode: "TEST-T10", studentCode: "TEST-S10" })), sessionId: "SYN-SESSION-10" };
+    expect((await setConsent("TEST-S10", "student")).status).toBe(200);
+    expect((await setConsent("TEST-T10", "tutor")).status).toBe(200);
+    at("2026-11-22T07:56:00Z");
+    await startLesson(lesson, ["UUID-T10", "UUID-S10"]);
+    at("2026-11-22T07:56:10Z");
+    await tick();
+
+    // The Drive is full, and the work after the webhook's answer never ran (the function stopped).
+    vi.stubEnv("CLASSROOM_DRIVE_LOCAL_QUOTA_BYTES", "100");
+    at("2026-11-22T09:05:00Z");
+    const video = { id: "SYN-FILE-V10", recording_type: "shared_screen_with_speaker_view", file_extension: "MP4", file_type: "MP4", file_size: 2048, status: "completed", recording_start: "2026-11-22T08:00:00Z", recording_end: "2026-11-22T09:00:00Z" };
+    expect((await zoom("session.recording_completed", lesson, { recording_files: [video] })).status).toBe(200);
+    afterResponse.length = 0;
+    expect(await scheduled(`Bearer ${SCHEDULED}`)).toMatchObject({ status: 200, body: { ok: true } });
+    let card = cardOf(await overview(), "TEST-L10");
+    expect(card.filing).toMatchObject({ status: "BLOCKED", reasonLabel: "雲端硬碟空間不足" });
+    expect(card.anomalies.map(entry => entry.code)).toContain("FILING_BLOCKED");
+    expect(await syntheticCalls("SYN-FILE-V10")).toEqual([]);
+
+    // Two days later the lesson is outside the overview's window, but it stays in view while blocked.
+    at("2026-11-24T12:00:00Z");
+    expect((await scheduled(`Bearer ${SCHEDULED}`)).status).toBe(200);
+    expect(cardOf(await overview(), "TEST-L10")?.filing.status).toBe("BLOCKED");
+
+    // Space is freed: the next scheduled tick files it, and Zoom's copy goes only after that.
+    vi.stubEnv("CLASSROOM_DRIVE_LOCAL_QUOTA_BYTES", "");
+    at("2026-11-24T12:31:00Z");
+    expect(await scheduled(`Bearer ${SCHEDULED}`)).toMatchObject({ status: 200, body: { ok: true } });
+    const drive = JSON.parse(await readFile(path.join(directory, "synthetic-drive", "index.json"), "utf8"));
+    const filed = Object.values(drive.files).filter(entry => !entry.trashed && entry.appProperties.providerFileId === "SYN-FILE-V10");
+    expect(filed).toMatchObject([{ name: "2026-11-22_TEST-S10_TEST-T10_P01.mp4", size: 2048 }]);
+    expect(await syntheticCalls("SYN-FILE-V10")).toEqual(["recording.delete"]);
+    // The anomaly record is closed by the tick that filed it, and the old lesson leaves the overview.
+    const record = (await classroomStore().listAnomalies([lesson.lessonId])).find(entry => entry.code === "FILING_BLOCKED");
+    expect(record).toMatchObject({ severity: "error", resolvedAt: Date.parse("2026-11-24T12:31:00Z") });
+    expect(cardOf(await overview(), "TEST-L10")).toBeNull();
   });
 
   test("a student without consent attends as usual; the whole lesson is simply not recorded", async () => {

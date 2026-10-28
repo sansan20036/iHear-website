@@ -64,6 +64,8 @@ export type ClassroomJob = {
   leaseVersion: number;
   availableAt: number;
   error?: string | null;
+  // Why the job is paused (Drive full, access revoked...), or null.
+  blockedReason?: string | null;
 };
 export type RecordingFile = Record<string, unknown> & {
   providerFileId: string;
@@ -71,6 +73,7 @@ export type RecordingFile = Record<string, unknown> & {
   status: "PENDING" | "SKIPPED" | "HOLD" | "STORED" | "QUARANTINED" | "FAILED";
   driveFileId?: string | null;
   uploadSessionUri?: string | null;
+  uploadedBytes?: number;
 };
 export type ClassroomAnomaly = {
   lessonId: string;
@@ -108,15 +111,18 @@ export type ClassroomStore = {
   kind: "postgres" | "file";
   transaction<T>(fn: (tx: ClassroomTransaction) => Promise<T>): Promise<T>;
   claimJob(input: { workerId: string; now: number; leaseMs: number }): Promise<{ job: ClassroomJob; leaseVersion: number } | null>;
-  failJob(input: { jobId: string; leaseVersion: number; now: number; error: string; maxAttempts: number; giveUp?: GiveUp }): Promise<boolean>;
+  failJob(input: { jobId: string; leaseVersion: number; now: number; error: string; maxAttempts: number; retryAfterMs?: number; giveUp?: GiveUp }): Promise<boolean>;
+  rescheduleJob(input: { jobId: string; leaseVersion: number; availableAt: number; refundAttempt?: boolean; blockedReason?: string | null; error?: string | null; events?: ClassroomEvent[] }): Promise<boolean>;
   completeJob(input: { jobId: string; leaseVersion: number }): Promise<boolean>;
-  setUploadSession(input: { providerFileId: string; jobId: string; leaseVersion: number; uri: string }): Promise<boolean>;
+  recordTransfer(input: { jobId: string; leaseVersion: number; providerFileId: string; uri: string | null; uploadedBytes: number; now: number; leaseMs: number; events?: ClassroomEvent[] }): Promise<boolean>;
   finishFiling(input: { jobId: string; leaseVersion: number; providerFileId: string; changes: Partial<RecordingFile>; events?: ClassroomEvent[]; jobs?: JobInput[] }): Promise<boolean>;
   fileRecord(id: string): Promise<RecordingFile | null>;
   lesson(id: string): Promise<ClassroomLesson | null>;
   withdrawalAt(id: string): Promise<number | null>;
   unknownJoinAt(id: string): Promise<number | null>;
   eventsFor(lessonIds: string[]): Promise<ClassroomEvent[]>;
+  // Lessons with a recording still on its way to Drive (pending, running or blocked).
+  listOpenFilingLessonIds(): Promise<string[]>;
   createLesson(lesson: ClassroomLesson): Promise<void>;
   listLessons(window: { from: number; to: number }): Promise<ClassroomLesson[]>;
   listConsents(codes: string[]): Promise<ClassroomConsent[]>;
@@ -133,7 +139,8 @@ export type ClassroomStore = {
 export class ClassroomLessonConflictError extends Error {}
 
 const FINAL_FILE_STATUSES = ["STORED", "QUARANTINED", "HOLD", "FAILED"];
-const backoffMs = (attempts: number) => Math.min(30 * 60_000, 30_000 * 2 ** Math.max(0, attempts - 1));
+// Never before Retry-After, when the service gave one.
+const backoffMs = (attempts: number, retryAfterMs = 0) => Math.max(retryAfterMs, Math.min(30 * 60_000, 30_000 * 2 ** Math.max(0, attempts - 1)));
 const clone = <T>(value: T): T => structuredClone(value);
 
 function newJob(job: JobInput): ClassroomJob {
@@ -149,6 +156,7 @@ function newJob(job: JobInput): ClassroomJob {
     leaseVersion: 0,
     availableAt: job.availableAt ?? 0,
     error: null,
+    blockedReason: null,
   };
 }
 
@@ -262,7 +270,7 @@ export function createFileClassroomStore(filePath: string): ClassroomStore {
       Object.assign(job, { status: "running", leaseOwner: workerId, leaseUntil: now + leaseMs, leaseVersion: job.leaseVersion + 1, attempts: job.attempts + 1 });
       return { job: clone(job), leaseVersion: job.leaseVersion };
     }),
-    failJob: ({ jobId, leaseVersion, now, error, maxAttempts, giveUp = {} }) => run((state) => {
+    failJob: ({ jobId, leaseVersion, now, error, maxAttempts, retryAfterMs = 0, giveUp = {} }) => run((state) => {
       if (!holds(state, jobId, leaseVersion)) return false;
       const job = state.jobs[jobId];
       Object.assign(job, { error: error.slice(0, 500), leaseOwner: null });
@@ -272,8 +280,24 @@ export function createFileClassroomStore(filePath: string): ClassroomStore {
         if (file && giveUp.fileChanges) Object.assign(file, clone(giveUp.fileChanges));
         for (const event of giveUp.events ?? []) state.events[event.key] ??= clone(event);
       } else {
-        Object.assign(job, { status: "pending", availableAt: now + backoffMs(job.attempts) });
+        Object.assign(job, { status: "pending", availableAt: now + backoffMs(job.attempts, retryAfterMs) });
       }
+      return true;
+    }),
+    // Back in the queue without counting the attempt: to carry on in the next call, or to look
+    // again later while the job is blocked.
+    rescheduleJob: ({ jobId, leaseVersion, availableAt, refundAttempt = false, blockedReason = null, error = null, events = [] }) => run((state) => {
+      if (!holds(state, jobId, leaseVersion)) return false;
+      const job = state.jobs[jobId];
+      Object.assign(job, {
+        status: "pending",
+        leaseOwner: null,
+        availableAt,
+        blockedReason,
+        error: error == null ? null : error.slice(0, 500),
+        attempts: refundAttempt ? Math.max(0, job.attempts - 1) : job.attempts,
+      });
+      for (const event of events) state.events[event.key] ??= clone(event);
       return true;
     }),
     completeJob: ({ jobId, leaseVersion }) => run((state) => {
@@ -281,9 +305,16 @@ export function createFileClassroomStore(filePath: string): ClassroomStore {
       Object.assign(state.jobs[jobId], { status: "done", leaseOwner: null });
       return true;
     }),
-    setUploadSession: ({ providerFileId, jobId, leaseVersion, uri }) => run((state) => {
-      if (!holds(state, jobId, leaseVersion) || !state.files[providerFileId]) return false;
-      state.files[providerFileId].uploadSessionUri = uri;
+    // Saved after every chunk: renews the lease, clears a block, and restarts the attempt count
+    // when bytes moved.
+    recordTransfer: ({ jobId, leaseVersion, providerFileId, uri, uploadedBytes, now, leaseMs, events = [] }) => run((state) => {
+      const file = state.files[providerFileId];
+      if (!holds(state, jobId, leaseVersion) || !file) return false;
+      const job = state.jobs[jobId];
+      if (uploadedBytes > Number(file.uploadedBytes ?? 0)) job.attempts = 0;
+      Object.assign(file, { uploadSessionUri: uri, uploadedBytes });
+      Object.assign(job, { leaseUntil: now + leaseMs, blockedReason: null });
+      for (const event of events) state.events[event.key] ??= clone(event);
       return true;
     }),
     finishFiling: ({ jobId, leaseVersion, providerFileId, changes, events = [], jobs = [] }) => run((state) => {
@@ -302,6 +333,9 @@ export function createFileClassroomStore(filePath: string): ClassroomStore {
     withdrawalAt: (id) => run((state) => readers(state).withdrawalAt(id), false),
     unknownJoinAt: (id) => run((state) => readers(state).unknownJoinAt(id), false),
     eventsFor: (lessonIds) => run((state) => clone(Object.values(state.events).filter((event) => lessonIds.includes(String(event.lessonId)))), false),
+    listOpenFilingLessonIds: () => run((state) => [...new Set(Object.values(state.jobs)
+      .filter((job) => job.type === "file_recording" && (job.status === "pending" || job.status === "running") && job.lessonId)
+      .map((job) => String(job.lessonId)))].sort(), false),
     createLesson: (lesson) => run((state) => {
       if (state.lessons.some((item) => item.id === lesson.id || item.code === lesson.code)) throw new ClassroomLessonConflictError("A lesson with this code already exists");
       state.lessons.push(clone(lesson));
@@ -376,6 +410,7 @@ function fromJobRow(row: Record<string, unknown>): ClassroomJob {
     leaseVersion: Number(row.lease_version),
     availableAt: asMs(row.available_at) ?? 0,
     error: row.error == null ? null : String(row.error),
+    blockedReason: row.blocked_reason == null ? null : String(row.blocked_reason),
   };
 }
 
@@ -393,6 +428,7 @@ const FILE_COLUMNS: Record<string, string> = {
   recordingEnd: "recording_end",
   plannedName: "planned_name",
   uploadSessionUri: "upload_session_uri",
+  uploadedBytes: "uploaded_bytes",
   driveFileId: "drive_file_id",
   filedAt: "filed_at",
 };
@@ -412,7 +448,7 @@ function fromFileRow(row: Record<string, unknown>): RecordingFile {
   const record: Record<string, unknown> = { providerFileId: String(row.provider_file_id) };
   for (const [field, column] of Object.entries(FILE_COLUMNS)) {
     const value = row[column];
-    record[field] = TIME_COLUMNS.has(column) ? asMs(value) : column === "size" ? Number(value ?? 0) : value ?? null;
+    record[field] = TIME_COLUMNS.has(column) ? asMs(value) : column === "size" || column === "uploaded_bytes" ? Number(value ?? 0) : value ?? null;
   }
   return record as RecordingFile;
 }
@@ -582,7 +618,7 @@ export function createPostgresClassroomStore(sql: postgres.Sql): ClassroomStore 
       const job = fromJobRow(row);
       return { job, leaseVersion: job.leaseVersion };
     },
-    failJob: ({ jobId, leaseVersion, now, error, maxAttempts, giveUp = {} }) => sql.begin(async (tx) => {
+    failJob: ({ jobId, leaseVersion, now, error, maxAttempts, retryAfterMs = 0, giveUp = {} }) => sql.begin(async (tx) => {
       const job = await holdsLease(tx, jobId, leaseVersion);
       if (!job) return false;
       if (job.attempts >= maxAttempts) {
@@ -592,10 +628,22 @@ export function createPostgresClassroomStore(sql: postgres.Sql): ClassroomStore 
       } else {
         await tx`
           UPDATE public.classroom_jobs
-          SET status = 'pending', lease_owner = NULL, error = ${error.slice(0, 500)}, available_at = ${new Date(now + backoffMs(job.attempts))}, updated_at = NOW()
+          SET status = 'pending', lease_owner = NULL, error = ${error.slice(0, 500)}, available_at = ${new Date(now + backoffMs(job.attempts, retryAfterMs))}, updated_at = NOW()
           WHERE id = ${jobId}
         `;
       }
+      return true;
+    }) as Promise<boolean>,
+    rescheduleJob: ({ jobId, leaseVersion, availableAt, refundAttempt = false, blockedReason = null, error = null, events = [] }) => sql.begin(async (tx) => {
+      if (!(await holdsLease(tx, jobId, leaseVersion))) return false;
+      await tx`
+        UPDATE public.classroom_jobs
+        SET status = 'pending', lease_owner = NULL, available_at = ${new Date(availableAt)}, blocked_reason = ${blockedReason},
+            error = ${error == null ? null : error.slice(0, 500)},
+            attempts = CASE WHEN ${refundAttempt}::boolean THEN GREATEST(0, attempts - 1) ELSE attempts END, updated_at = NOW()
+        WHERE id = ${jobId}
+      `;
+      await insertEvents(tx, events);
       return true;
     }) as Promise<boolean>,
     async completeJob({ jobId, leaseVersion }) {
@@ -606,17 +654,24 @@ export function createPostgresClassroomStore(sql: postgres.Sql): ClassroomStore 
       `;
       return rows.length > 0;
     },
-    async setUploadSession({ providerFileId, jobId, leaseVersion, uri }) {
-      const rows = await sql`
-        UPDATE public.classroom_recording_files AS file
-        SET upload_session_uri = ${uri}, updated_at = NOW()
-        FROM public.classroom_jobs AS job
-        WHERE file.provider_file_id = ${providerFileId}
-          AND job.id = ${jobId} AND job.status = 'running' AND job.lease_version = ${leaseVersion}
-        RETURNING file.provider_file_id
+    recordTransfer: ({ jobId, leaseVersion, providerFileId, uri, uploadedBytes, now, leaseMs, events = [] }) => sql.begin(async (tx) => {
+      if (!(await holdsLease(tx, jobId, leaseVersion))) return false;
+      const [file] = await tx`SELECT uploaded_bytes FROM public.classroom_recording_files WHERE provider_file_id = ${providerFileId} FOR UPDATE`;
+      if (!file) return false;
+      const progressed = uploadedBytes > Number(file.uploaded_bytes ?? 0);
+      await tx`
+        UPDATE public.classroom_recording_files SET upload_session_uri = ${uri}, uploaded_bytes = ${uploadedBytes}, updated_at = NOW()
+        WHERE provider_file_id = ${providerFileId}
       `;
-      return rows.length > 0;
-    },
+      await tx`
+        UPDATE public.classroom_jobs
+        SET lease_until = ${new Date(now + leaseMs)}, blocked_reason = NULL,
+            attempts = CASE WHEN ${progressed}::boolean THEN 0 ELSE attempts END, updated_at = NOW()
+        WHERE id = ${jobId}
+      `;
+      await insertEvents(tx, events);
+      return true;
+    }) as Promise<boolean>,
     finishFiling: ({ jobId, leaseVersion, providerFileId, changes, events = [], jobs = [] }) => sql.begin(async (tx) => {
       if (!(await holdsLease(tx, jobId, leaseVersion))) return false;
       const [file] = await tx`SELECT status FROM public.classroom_recording_files WHERE provider_file_id = ${providerFileId} FOR UPDATE`;
@@ -638,6 +693,14 @@ export function createPostgresClassroomStore(sql: postgres.Sql): ClassroomStore 
     async eventsFor(lessonIds) {
       if (!lessonIds.length) return [];
       return (await sql`SELECT data FROM public.classroom_events WHERE lesson_id IN ${sql(lessonIds)}`).map(fromEventRow);
+    },
+    async listOpenFilingLessonIds() {
+      const rows = await sql`
+        SELECT DISTINCT lesson_id FROM public.classroom_jobs
+        WHERE type = 'file_recording' AND status IN ('pending', 'running') AND lesson_id IS NOT NULL
+        ORDER BY lesson_id
+      `;
+      return rows.map((row) => String(row.lesson_id));
     },
     async createLesson(lesson) {
       try {

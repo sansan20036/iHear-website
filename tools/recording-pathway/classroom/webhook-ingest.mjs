@@ -1,32 +1,28 @@
-// Event intake and recording filing for the classroom (synthetic prototype).
+// Event intake for the classroom (synthetic prototype).
 //
 // Inside a webhook request we only verify it and persist a minimized event, together with any
 // follow-up jobs, in one transaction. The answer is 200 only after that commit; a storage
 // failure or timeout answers 503 so Zoom retries (Zoom retries 5xx and timeouts three times,
 // 5, 20 and 60 minutes apart, and never retries 4xx). Nothing is queued in memory: workers
-// claim the stored jobs later under a lease, so a crash at any point loses nothing.
-//
-// Filing a recording is idempotent even with workers racing and crashes after a successful
-// upload: the job lease carries a fencing number, uploads are found again by the Drive
-// appProperty providerFileId, an interrupted resumable upload is resumed instead of restarted,
-// and any duplicate copies converge to the earliest verified one.
+// claim the stored jobs later under a lease, so a crash at any point loses nothing. Filing the
+// recordings those jobs point to is in recording-filing.mjs.
 //
 // Payload field names follow Zoom's Video SDK webhook reference; check them field by field
 // against real deliveries before relying on them.
 //
-// The store and the Drive adapter may be synchronous (the in-memory test fakes) or
-// asynchronous (PostgreSQL and Google Drive in the website); every call is awaited.
+// The store may be synchronous (the in-memory test fake) or asynchronous (PostgreSQL in the
+// website); every call is awaited.
 import { createHmac, timingSafeEqual } from 'node:crypto';
 // A static import, so bundlers include P1's rules; Core.js stays a plain Apps Script file.
 import Core from '../apps-script/Core.js';
+import { filingEvent, runsPast } from './recording-filing.mjs';
+
+export { fileRecording, JOB_LEASE_MS, MAX_JOB_ATTEMPTS, processJobs, QUARANTINE_FOLDER } from './recording-filing.mjs';
 
 export const MAX_REQUEST_AGE_MS = 5 * 60 * 1000;
 export const STORE_BUDGET_MS = 2000;           // leaves room inside Zoom's 3-second limit
-export const JOB_LEASE_MS = 5 * 60 * 1000;
-export const MAX_JOB_ATTEMPTS = 5;
 // Only the combined lesson video is filed. To check against real Video SDK recordings.
 export const KEPT_RECORDING_TYPES = ['shared_screen_with_speaker_view'];
-export const QUARANTINE_FOLDER = '_待確認';
 const HELD_AT_ZOOM = ['AFTER_WITHDRAWAL', 'UNKNOWN_PARTICIPANT', 'NO_CONSENT', 'UNKNOWN_SESSION'];
 
 const RECORDING_EVENTS = {
@@ -251,14 +247,15 @@ export async function storeEvent(tx, event) {
   return inserted;
 }
 
-// Recorded at or after the moment protection started (a withdrawal, or someone unknown joining).
-const runsPast = (file, at) => at != null && (file.recordingEnd == null || file.recordingEnd > at);
-
 async function recordFiles(tx, event) {
   const lesson = event.lessonId ? await tx.lesson(event.lessonId) : null;
   const eligible = lesson ? (await tx.eligibility(lesson.id))?.eligible === true : false;
   const withdrawnAt = lesson ? await tx.withdrawalAt(lesson.id) : null;
   const unknownAt = lesson ? await tx.unknownJoinAt(lesson.id) : null;
+  // Parts are numbered in recording order within one notice. A notice that arrives after a later
+  // recording already has its numbers (Zoom retried it, say) keeps unique numbers, but the
+  // overview flags the lesson so someone can check the order.
+  const earlier = lesson ? (await tx.fileRecordsForLesson(lesson.id)).filter(entry => entry.plannedName && entry.recordingStart != null) : [];
   const files = [...event.files].sort((a, b) => (a.recordingStart ?? 0) - (b.recordingStart ?? 0) || a.providerFileId.localeCompare(b.providerFileId));
   for (const file of files) {
     if (await tx.fileRecord(file.providerFileId)) continue;
@@ -283,6 +280,9 @@ async function recordFiles(tx, event) {
     }
     record.plannedName = lesson ? await planName(tx, lesson, record) : null;
     await tx.insertFileRecord(record);
+    if (record.recordingStart != null && earlier.some(entry => entry.recordingStart > record.recordingStart)) {
+      await tx.insertEvent({ source: 'p1', type: 'p1.part_order', lessonId: lesson.id, providerFileId: record.providerFileId, occurredAt: event.receivedAt, receivedAt: event.receivedAt, key: `p1.part_order:${record.providerFileId}` });
+    }
     // Nothing recorded after a withdrawal or with someone unknown in the room, nothing without
     // consent and nothing from an unknown session is ever uploaded: it stays on hold at Zoom
     // until an administrator decides.
@@ -304,115 +304,3 @@ async function planName(tx, lesson, record) {
   return Core.fileName(base, Core.nextPart(planned, () => false, base, record.extension), record.extension);
 }
 
-function filingEvent(record, status, at) {
-  return {
-    source: 'p1',
-    type: 'p1.filing',
-    lessonId: record.lessonId,
-    providerFileId: record.providerFileId,
-    status,
-    occurredAt: at,
-    receivedAt: at,
-    key: `p1.filing:${record.providerFileId}:${status}`,
-  };
-}
-
-// Workers claim stored jobs one at a time under a lease. A worker that crashes simply loses its
-// lease; the job becomes claimable again when the lease runs out. After the last attempt a
-// filing job gives up and the recording is reported as FAILED.
-export async function processJobs({ store, now, workerId, handlers, leaseMs = JOB_LEASE_MS, max = 20 }) {
-  const results = [];
-  for (let i = 0; i < max; i++) {
-    const claim = await store.claimJob({ workerId, now, leaseMs });
-    if (!claim) break;
-    const { job, leaseVersion } = claim;
-    try {
-      results.push({ jobId: job.id, ...(await handlers[job.type]({ job, leaseVersion, now })) });
-    } catch (error) {
-      const giveUp = job.type === 'file_recording' ? { fileChanges: { status: 'FAILED' }, events: [filingEvent(job, 'FAILED', now)] } : {};
-      await store.failJob({ jobId: job.id, leaseVersion, now, error: String(error?.message || error), maxAttempts: MAX_JOB_ATTEMPTS, giveUp });
-      results.push({ jobId: job.id, status: 'RETRY' });
-    }
-  }
-  return results;
-}
-
-// One fenced write finishes a filing: the record's outcome, the P1 filing event the dashboard
-// reads and, once a copy is safely stored, the job that may delete Zoom's copy. It only
-// succeeds while the worker still holds the job's lease.
-function finish(store, record, job, leaseVersion, status, driveFileId, now) {
-  return store.finishFiling({
-    jobId: job.id,
-    leaseVersion,
-    providerFileId: record.providerFileId,
-    changes: { status, driveFileId, filedAt: now },
-    events: [filingEvent(record, status, now)],
-    jobs: status === 'STORED'
-      ? [{ id: `delete-vendor:${record.providerFileId}`, type: 'delete_vendor_copy', lessonId: record.lessonId, providerFileId: record.providerFileId }]
-      : [],
-  });
-}
-
-// The planned name, unless a file that is not ours already uses it: then the next free part.
-async function freeName(drive, folderId, plannedName, extension) {
-  const taken = new Set(await drive.listNames(folderId));
-  if (!taken.has(plannedName)) return plannedName;
-  const base = plannedName.replace(/_P\d{2,}\.[a-z0-9]+$/, '');
-  return Core.fileName(base, Core.nextPart([plannedName], name => taken.has(name), base, extension), extension);
-}
-
-// The copy that counts is the earliest verified one; every worker applies the same rule, so
-// any duplicates converge to one copy.
-async function verifiedCopies(drive, record) {
-  return (await drive.findByAppProperty('providerFileId', record.providerFileId))
-    .filter(file => file.size === record.size && (!record.md5 || file.md5 === record.md5))
-    .sort((a, b) => a.createdTime - b.createdTime || a.id.localeCompare(b.id));
-}
-
-export async function fileRecording({ store, drive, download, job, leaseVersion, now, rootFolderId }) {
-  const record = await store.fileRecord(job.providerFileId);
-  if (!record) throw new Error('unknown recording file');
-  if (['STORED', 'QUARANTINED', 'HOLD', 'FAILED'].includes(record.status)) {
-    await finish(store, record, job, leaseVersion, record.status, record.driveFileId, now);
-    return { status: 'ALREADY_DONE' };
-  }
-  // A withdrawal or an unknown participant reported after the recording was registered still
-  // applies.
-  const withdrawnAt = await store.withdrawalAt(record.lessonId);
-  if (runsPast(record, withdrawnAt) || runsPast(record, await store.unknownJoinAt(record.lessonId))) {
-    await finish(store, record, job, leaseVersion, 'HOLD', null, now);
-    return { status: 'HOLD' };
-  }
-  const quarantine = record.hold === 'CONSENT_WITHDRAWN' || withdrawnAt != null;
-  const outcome = quarantine ? 'QUARANTINED' : 'STORED';
-
-  // Already uploaded, for example by a worker that crashed after its upload but before writing
-  // to the database: adopt that copy, upload nothing.
-  let copies = await verifiedCopies(drive, record);
-  let mine = null;
-  if (!copies.length) {
-    const lesson = await store.lesson(record.lessonId);
-    const folderId = await drive.ensureFolder(rootFolderId, quarantine ? QUARANTINE_FOLDER : Core.monthlyFolderName(lesson.date));
-    let uri = record.uploadSessionUri;
-    if (!uri || !(await drive.sessionAlive(uri))) {
-      const name = await freeName(drive, folderId, record.plannedName, record.extension);
-      uri = await drive.startUpload({ name, parentId: folderId, size: record.size, appProperties: { providerFileId: record.providerFileId, lessonId: record.lessonId } });
-      if (!(await store.setUploadSession({ providerFileId: record.providerFileId, jobId: job.id, leaseVersion, uri }))) return { status: 'LEASE_LOST' };
-    }
-    const bytes = await download(record);
-    await drive.upload(uri, bytes);          // resumable: continues from what Drive already has
-    mine = await drive.finishUpload(uri);
-    copies = await verifiedCopies(drive, record);
-  }
-  if (!copies.length) throw new Error('uploaded copy failed verification');
-  const keep = copies[0];
-  if (await finish(store, record, job, leaseVersion, outcome, keep.id, now)) {
-    for (const copy of await drive.findByAppProperty('providerFileId', record.providerFileId)) if (copy.id !== keep.id) await drive.trash(copy.id);
-    return { status: outcome, driveFileId: keep.id };
-  }
-  // The fencing check failed: our lease ran out and another worker owns the job now. If that
-  // worker already stored a copy, the one we just uploaded is extra and goes to the trash.
-  const latest = await store.fileRecord(record.providerFileId);
-  if (mine && latest.driveFileId && latest.driveFileId !== mine) await drive.trash(mine);
-  return { status: 'LEASE_LOST' };
-}

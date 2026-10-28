@@ -46,7 +46,7 @@ type Card = {
   phase: { value: string; basis: string; label: string };
   tutor: Person | null; students: Person[];
   recording: { status: string; basis: string; basisLabel: string; source: string | null; label: string };
-  filing: { status: string; label: string };
+  filing: { status: string; label: string; reasonLabel?: string | null };
   anomalies: { code: string; severity: string; label: string }[];
   dataState: { value: string; label: string; lastConfirmedAt: string | null; ageSeconds: number | null };
 };
@@ -171,7 +171,7 @@ export default function ClassroomsPage() {
                   {card.tutor && <div><dt>{text.tutor}</dt><dd>{card.tutor.code}　{card.tutor.label}</dd></div>}
                   {card.students.map((student) => <div key={student.code}><dt>{text.student}</dt><dd>{student.code}　{student.label}</dd></div>)}
                   <div><dt>{text.recording}</dt><dd>{card.recording.label}{card.recording.basis === "confirmed" && card.recording.source ? <span className="classroom-basis">（{SOURCE[card.recording.source] ?? card.recording.source}確認）</span> : null}</dd></div>
-                  {card.filing.label && <div><dt>{text.filing}</dt><dd>{card.filing.label}</dd></div>}
+                  {card.filing.label && <div><dt>{text.filing}</dt><dd>{card.filing.label}{card.filing.reasonLabel ? `（${card.filing.reasonLabel}）` : null}</dd></div>}
                   <div><dt>{text.data}</dt><dd>{card.dataState.lastConfirmedAt ? taipei(card.dataState.lastConfirmedAt) : "—"}</dd></div>
                 </dl>
                 {card.anomalies.length > 0 && <ul className="classroom-alerts">{card.anomalies.map((item) => <li key={item.code} className={item.severity}>{item.label}</li>)}</ul>}
