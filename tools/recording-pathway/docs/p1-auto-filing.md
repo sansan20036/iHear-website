@@ -56,10 +56,10 @@
 | 情況 | 系統動作 | 總覽 |
 |---|---|---|
 | 成功 | 一份副本，名稱和資料夾正確，每個位元組都正確 | 已歸檔 |
-| 5xx 或網路中斷 | 退避後重試：30 秒起，每次加倍，最長 30 分鐘；從 Drive 已收到的位元組接著傳 | 歸檔中 |
-| 速率限制（429、403 `userRateLimitExceeded`） | 不早於 `Retry-After` 才重試 | 歸檔中 |
+| 5xx 或網路中斷 | 退避後重試：30 秒起，每次加倍，最長 30 分鐘；沿用同一個上傳 session，從 Drive 已收到的位元組接著傳 | 歸檔中 |
+| 速率限制（429、403 `userRateLimitExceeded`） | 不早於 `Retry-After` 才重試；因為是 4xx，下次開新的 session 從頭傳 | 歸檔中 |
 | 連續失敗 5 次 | `FAILED`，保留 Zoom 副本 | 歸檔失敗（`FILING_FAILED`，錯誤） |
-| 容量不足（上傳前檢查，或上傳中出現 403 `storageQuotaExceeded`） | **暫停（BLOCKED），不消耗重試次數**，保留 Zoom 副本，每 30 分鐘再檢查一次；有空間後自動繼續，中途斷掉的會沿用同一個上傳 session | 歸檔暫停（雲端硬碟空間不足）（`FILING_BLOCKED`，錯誤） |
+| 容量不足（上傳前檢查，或上傳中出現 403 `storageQuotaExceeded`） | **暫停（BLOCKED），不消耗重試次數**，保留 Zoom 副本，每 30 分鐘再檢查一次；有空間後自動繼續。上傳中途遇到的，該 session 作廢，之後開新的 session 從頭傳 | 歸檔暫停（雲端硬碟空間不足）（`FILING_BLOCKED`，錯誤） |
 | 授權失效（401、403 權限不足）或資料夾不見 | 同上，暫停到管理員處理好為止 | 原因分別顯示 |
 | 上傳 session 過期（Drive 一週後失效） | 開新的 session 從頭傳；舊的半成品不會變成檔案 | 歸檔中 |
 | Drive 只收了一部分，或 Zoom 少給一個位元組 | 一律以 Drive 確認的位元組為準，短少的那段重新下載 | — |
@@ -67,7 +67,9 @@
 | 重複檔案：上傳完成後當機、兩個 worker 搶同一筆工作、之前留下的多份 | 只保留最早一份核對過的，其餘移到垃圾桶；`STORED` 只記一次 | 已歸檔 |
 | 資料夾裡已經有別人的同名檔案 | 不動那份檔案，我方改用下一個分段編號 | — |
 
-Drive 和 Zoom 的 HTTP 回應如何分類（`classifyDriveResponse`、`classifyVendorResponse`），是依官方文件寫的，要等實測確認（見第 5 節）。
+Drive 和 Zoom 的 HTTP 回應如何分類（`classifyDriveResponse`、`classifyVendorResponse`），以及上傳 session 的狀態怎麼判讀（`driveUploadState`），都是依官方文件寫的，要等實測確認（見第 5 節）。
+
+**2026-10-28 依官方上傳指南修正：** 指南寫明「For any 4xx errors (including 403) during a resumable upload, restart the upload」。所以現在只要上傳 session 收到任何 4xx，就作廢這個 session，下次從頭傳；5xx 則沿用原 session 接續。官方文件逐條對照見 [`p1-integration-test-plan.md`](p1-integration-test-plan.md) 第 2 節。
 
 ## 4. 驗收結果（合成資料，2026-10-28）
 
@@ -133,7 +135,8 @@ Drive 和 Zoom 的 HTTP 回應如何分類（`classifyDriveResponse`、`classify
 | `classroom/recording-filing.mjs` | **新增**：分段搬移、時間預算、租約延長、失敗分類、Drive 與 Zoom 回應分類、worker 迴圈 |
 | `classroom/webhook-ingest.mjs` | 歸檔程式移到上面的新檔（原本的匯入方式不變）；新增分段順序檢查 |
 | `classroom/lesson-state.mjs`、`live-dashboard.mjs` | `BLOCKED`、`RESUMED`、`FILING_BLOCKED`、`FILING_DELAYED`、`PART_OUT_OF_ORDER`，以及暫停原因的文字 |
-| `test/recording-filing.test.mjs` | **新增**：24 個合成驗收測試 |
+| `test/recording-filing.test.mjs` | **新增**：26 個合成驗收測試 |
+| `dryrun/auto-filing-acceptance.mjs` | **新增**：12 個步驟的端到端驗收流程（合成），之後實測沿用同一份步驟 |
 | `test/fake-classroom-store.mjs` | Drive 模擬加上容量、分段上傳、搜尋延遲；新增 Zoom 下載模擬、模擬時鐘、「函式被停止」開關 |
 | `lib/classroom-store.ts`、`db/migrations/027_classroom_mvp.sql` | 新增 `recordTransfer`、`rescheduleJob`、`listOpenFilingLessonIds`；`failJob` 支援 `Retry-After`；新增兩個欄位 |
 | `lib/classroom-drive.ts`、`lib/classroom-provider.ts` | 本機 Drive 替身改成分段上傳，並可設定容量；下載改成依範圍 |

@@ -48,11 +48,13 @@ export const FAILURE = Object.freeze({
 const BLOCKING = new Set([FAILURE.DRIVE_QUOTA, FAILURE.DRIVE_AUTH, FAILURE.DRIVE_FOLDER_MISSING, FAILURE.VENDOR_AUTH]);
 
 export class FilingError extends Error {
-  constructor(code, message = code, { retryAfterMs = 0 } = {}) {
+  constructor(code, message = code, { retryAfterMs = 0, restartSession = false } = {}) {
     super(message);
     this.name = 'FilingError';
     this.code = code;
     this.retryAfterMs = retryAfterMs;
+    // The upload session is spent: the next attempt starts a new one.
+    this.restartSession = restartSession;
   }
 }
 
@@ -63,10 +65,17 @@ const retryAfterMsOf = value => {
   return Number.isFinite(at) ? Math.max(0, at - Date.now()) : 0;
 };
 
-// Google Drive API v3 answers, as its "Resolve errors" guide describes them. To be checked
-// against real answers once a test account is approved. `operation` is 'session' for requests
-// to an upload session URI, otherwise anything else.
-export function classifyDriveResponse({ status, reason = '', retryAfter = null, operation = 'other' }) {
+// Google Drive API v3 answers, as its "Resolve errors" and upload guides describe them. To be
+// checked against real answers once a test account is approved. `operation` is 'session' for
+// requests to an upload session URI, otherwise anything else. The upload guide: "For any 4xx
+// errors (including 403) during a resumable upload, restart the upload", so a 4xx on a session
+// also says to start a new session.
+export function classifyDriveResponse(input) {
+  const failure = driveFailure(input);
+  return { ...failure, restartSession: input.operation === 'session' && input.status >= 400 && input.status < 500 };
+}
+
+function driveFailure({ status, reason = '', retryAfter = null, operation = 'other' }) {
   const retryAfterMs = retryAfterMsOf(retryAfter);
   if (!status) return { code: FAILURE.TRANSIENT, retryAfterMs };
   if (status === 401) return { code: FAILURE.DRIVE_AUTH, retryAfterMs };
@@ -80,6 +89,24 @@ export function classifyDriveResponse({ status, reason = '', retryAfter = null, 
   if (status === 429) return { code: FAILURE.RATE_LIMITED, retryAfterMs };
   if (status >= 500) return { code: FAILURE.TRANSIENT, retryAfterMs };
   return { code: FAILURE.INVALID, retryAfterMs };
+}
+
+// What a resumable session holds, from Drive's answer to a status query (an empty PUT with
+// "Content-Range: bytes */size") or to a chunk. From the upload guide: 308 means continue, and
+// its Range header is inclusive ("bytes=0-42" means 43 bytes were received); a 308 without
+// Range means nothing was received; 200 or 201 means the file is complete; a 4xx means the
+// session is spent (404: it expired). A 5xx or no answer is thrown, to be retried.
+export function driveUploadState({ status, range = null, fileId = null }) {
+  if (status === 200 || status === 201) return { state: 'complete', fileId };
+  if (status === 308) {
+    if (!range) return { state: 'active', received: 0 };
+    const match = /^bytes=0-(\d+)$/.exec(String(range).trim());
+    if (!match) throw new FilingError(FAILURE.INVALID, 'Drive answered an unexpected Range header');
+    return { state: 'active', received: Number(match[1]) + 1 };
+  }
+  const failure = classifyDriveResponse({ status, operation: 'session' });
+  if (failure.restartSession) return { state: 'gone' };
+  throw new FilingError(failure.code, 'Drive answered ' + status, failure);
 }
 
 // Zoom recording download answers. To be checked against real downloads, including whether
@@ -256,7 +283,14 @@ async function transfer({ store, drive, download, job, leaseVersion, record, fol
     const end = Math.min(record.size, offset + chunkBytes);
     const bytes = await download(record, { start: offset, end });
     if (bytes.length !== end - offset) throw new FilingError(FAILURE.TRANSIENT, `short read from Zoom: ${bytes.length} of ${end - offset} bytes`);
-    const answer = await drive.uploadChunk(uri, { offset, bytes, total: record.size });
+    let answer;
+    try {
+      answer = await drive.uploadChunk(uri, { offset, bytes, total: record.size });
+    } catch (error) {
+      // After a 4xx Drive's guide says to restart the upload: forget this session.
+      if (error?.restartSession) await store.recordTransfer({ jobId: job.id, leaseVersion, providerFileId: record.providerFileId, uri: null, uploadedBytes: 0, now: time(), leaseMs, events: [] });
+      throw error;
+    }
     // Drive may keep fewer bytes than were sent, or report where another worker already got to:
     // always continue from what Drive confirms. If it keeps confirming no progress, stop this
     // attempt instead of sending the same bytes until the deadline.

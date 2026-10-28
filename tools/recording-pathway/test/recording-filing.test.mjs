@@ -8,7 +8,7 @@
 // PostgreSQL or Vercel themselves.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyDriveResponse, classifyVendorResponse, FAILURE, fileRecording, MAX_JOB_ATTEMPTS, processJobs } from '../classroom/recording-filing.mjs';
+import { classifyDriveResponse, classifyVendorResponse, driveUploadState, FAILURE, fileRecording, MAX_JOB_ATTEMPTS, processJobs } from '../classroom/recording-filing.mjs';
 import { ingestWebhook, signZoomRequest, storeEvent } from '../classroom/webhook-ingest.mjs';
 import { deriveLesson } from '../classroom/lesson-state.mjs';
 import { lessonCard } from '../classroom/live-dashboard.mjs';
@@ -418,21 +418,48 @@ test('Drive full before the upload: blocked without using attempts, Zoom keeps i
   assert.ok(w.store.events().some(event => event.type === 'p1.filing' && event.status === 'RESUMED'));
 });
 
-test('Drive fills up mid-upload: blocked, then the same upload session carries on', async () => {
+test("Drive fills up mid-upload: blocked, then a new session starts over, as Drive's guide asks after a 4xx", async () => {
   const w = await world({ quotaLimit: 10_000, msPerByte: 50 });
   const file = video('f-video', 1, 59, 10 * CHUNK);
   await deliver(w, completed('L-TEST-001', 'sess-1', [file], w.clock.now()));
   assert.equal((await invoke(w, { budgetMs: 40_000 }))[0].status, 'CONTINUE');
+  const sentBefore = w.drive.counters.bytesUploaded;
   w.drive.faults.otherUsage = 10_000 - 100;            // other files fill the Drive
   w.clock.advance(MIN);
   const [blocked] = await invoke(w, { budgetMs: 40_000 });
   assert.deepEqual([blocked.status, blocked.reason], ['BLOCKED', FAILURE.DRIVE_QUOTA]);
+  assert.deepEqual([w.store.fileRecord('f-video').uploadSessionUri, w.store.fileRecord('f-video').uploadedBytes], [null, 0], 'the spent session is forgotten');
   w.drive.faults.otherUsage = 0;
   w.clock.advance(31 * MIN);
   await runUntilSettled(w, { budgetMs: 40_000 });
   assertStoredOnce(w, file);
-  assert.equal(w.drive.counters.sessionsStarted, 1);
-  assert.equal(w.drive.counters.bytesUploaded, file.file_size, 'nothing was sent twice');
+  assert.equal(w.drive.counters.sessionsStarted, 2);
+  assert.equal(w.drive.counters.bytesUploaded, sentBefore + file.file_size, 'the new session sent the whole file');
+});
+
+test("after a 4xx on a chunk the session is dropped and the upload starts over; after a 5xx it is resumed", async () => {
+  for (const [code, sessions] of [[FAILURE.RATE_LIMITED, 2], [FAILURE.TRANSIENT, 1]]) {
+    const w = await world({ msPerByte: 50 });
+    const file = video('f-video', 1, 59, 8 * CHUNK);
+    await deliver(w, completed('L-TEST-001', 'sess-1', [file], w.clock.now()));
+    assert.equal((await invoke(w, { budgetMs: 40_000 }))[0].status, 'CONTINUE');
+    w.drive.failNext('uploadChunk', code);
+    assert.equal((await invoke(w, { budgetMs: 40_000 }))[0].reason, code);
+    w.clock.advance(31 * MIN);
+    await runUntilSettled(w, { budgetMs: 40_000 });
+    assertStoredOnce(w, file);
+    assert.equal(w.drive.counters.sessionsStarted, sessions, code);
+  }
+});
+
+test("a session's state is read from Drive's answer as its upload guide describes", () => {
+  assert.deepEqual(driveUploadState({ status: 308, range: 'bytes=0-42' }), { state: 'active', received: 43 }, 'Range is inclusive');
+  assert.deepEqual(driveUploadState({ status: 308 }), { state: 'active', received: 0 }, 'no Range: nothing received');
+  assert.deepEqual(driveUploadState({ status: 200, fileId: 'drive-1' }), { state: 'complete', fileId: 'drive-1' });
+  assert.deepEqual(driveUploadState({ status: 201, fileId: 'drive-1' }), { state: 'complete', fileId: 'drive-1' });
+  for (const status of [400, 401, 403, 404, 410, 429]) assert.deepEqual(driveUploadState({ status }), { state: 'gone' }, `${status}: start a new session`);
+  assert.throws(() => driveUploadState({ status: 503 }), error => error.code === FAILURE.TRANSIENT && !error.restartSession);
+  assert.throws(() => driveUploadState({ status: 308, range: 'bytes=10-42' }), error => error.code === FAILURE.INVALID);
 });
 
 test('revoked Drive access or a missing folder blocks filing with its own reason until it is fixed', async () => {
@@ -502,7 +529,10 @@ test("Drive's and Zoom's answers map to what the worker does next", () => {
   assert.ok(classifyDriveResponse({ status: 403, reason: 'dailyLimitExceeded' }).retryAfterMs >= 60 * MIN);
   assert.equal(drive({ status: 403, reason: 'insufficientFilePermissions' }), FAILURE.DRIVE_AUTH);
   assert.equal(drive({ status: 401 }), FAILURE.DRIVE_AUTH);
-  assert.deepEqual(classifyDriveResponse({ status: 429, retryAfter: '120' }), { code: FAILURE.RATE_LIMITED, retryAfterMs: 120_000 });
+  assert.deepEqual(classifyDriveResponse({ status: 429, retryAfter: '120' }), { code: FAILURE.RATE_LIMITED, retryAfterMs: 120_000, restartSession: false });
+  // On an upload session any 4xx means starting a new session; a 5xx means resuming it.
+  for (const status of [400, 401, 403, 404, 429]) assert.equal(classifyDriveResponse({ status, operation: 'session' }).restartSession, true, String(status));
+  assert.equal(classifyDriveResponse({ status: 503, operation: 'session' }).restartSession, false);
   assert.equal(drive({ status: 404, operation: 'session' }), FAILURE.SESSION_GONE);
   assert.equal(drive({ status: 410, operation: 'session' }), FAILURE.SESSION_GONE);
   assert.equal(drive({ status: 404 }), FAILURE.DRIVE_FOLDER_MISSING);

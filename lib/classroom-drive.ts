@@ -105,7 +105,11 @@ export function createLocalDrive(directory: string, { quotaLimit = null }: { quo
       if (!session) throw new FilingError(FAILURE.SESSION_GONE, "upload session not found");
       if (session.fileId) return { received: session.received, fileId: session.fileId };
       if (offset !== session.received) return { received: session.received, fileId: null };
-      if (quotaLimit != null && usage(index) + session.received + bytes.length > quotaLimit) throw new FilingError(FAILURE.DRIVE_QUOTA, "the local Drive stand-in is full");
+      if (quotaLimit != null && usage(index) + session.received + bytes.length > quotaLimit) {
+        // As Drive's upload guide says, a 4xx ends the session; the upload starts again later.
+        delete index.sessions[uri];
+        throw new FilingError(FAILURE.DRIVE_QUOTA, "the local Drive stand-in is full", { restartSession: true });
+      }
       await appendFile(sessionPath(uri), bytes);
       session.received += bytes.length;
       if (session.received < total) return { received: session.received, fileId: null };

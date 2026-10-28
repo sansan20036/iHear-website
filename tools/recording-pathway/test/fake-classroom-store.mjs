@@ -285,14 +285,27 @@ export function createDrive({ quotaLimit = null, clock = null, msPerByte = 0 } =
         hold.reached?.();
         await hold.gate;
       }
-      planned('uploadChunk');
+      // As Drive's upload guide says, a 4xx on a session (a full Drive, a rate limit...) ends it:
+      // the upload has to start again in a new session. A 5xx leaves it to be resumed.
+      const spent = error => {
+        if (error.code !== FAILURE.TRANSIENT) {
+          error.restartSession = true;
+          session.gone = true;
+        }
+        return error;
+      };
+      try {
+        planned('uploadChunk');
+      } catch (error) {
+        throw spent(error);
+      }
       if (faults.crashAfterChunks === 0) {
         faults.crashAfterChunks = null;
         throw new Error('synthetic crash during upload');
       }
       if (session.fileId) return { received: session.received, fileId: session.fileId };
       if (offset !== session.received) return { received: session.received, fileId: null };
-      if (quotaLimit != null && usage() + session.received + bytes.length > quotaLimit) throw new FilingError(FAILURE.DRIVE_QUOTA, 'synthetic storageQuotaExceeded');
+      if (quotaLimit != null && usage() + session.received + bytes.length > quotaLimit) throw spent(new FilingError(FAILURE.DRIVE_QUOTA, 'synthetic storageQuotaExceeded'));
       let kept = bytes;
       if (faults.keepPartialOnce > 0 && bytes.length > 1) {
         faults.keepPartialOnce -= 1;
