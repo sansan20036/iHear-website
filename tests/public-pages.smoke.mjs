@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp } from 'node:fs/promises';
 import path from 'node:path';
 const origin = 'http://127.0.0.1:3214';
-const pages = ['/', '/about', '/programs', '/impact', '/team', '/submit-bio', '/stories', '/get-involved', '/academy', '/donate', '/resources', '/faq', '/contact'];
+const pages = ['/', '/about', '/programs', '/impact', '/team', '/submit-bio', '/stories', '/get-involved', '/academy', '/donate', '/resources', '/faq', '/contact', '/events'];
 const academyPath = '/academy/courses';
 const academyAssets = '/academy/courses';
 const academyCanonical = `https://www.ihearus.org${academyPath}`;

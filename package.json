@@ -52,7 +52,7 @@
     "test:resource-topics-public": "node tests/resource-topics-public.smoke.mjs",
     "test:calendar": "vitest run tests/home-calendar.test.mjs",
     "test:calendar:postgres": "vitest run tests/home-calendar-postgres.test.mjs",
-    "test:calendar:browser": "node tests/home-calendar.smoke.mjs"
+    "test:calendar:browser": "node tests/home-calendar.smoke.mjs && node tests/home-calendar-views.smoke.mjs"
   },
   "dependencies": {
     "@google-cloud/translate": "^10.0.1",

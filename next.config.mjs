@@ -10,6 +10,7 @@ const htmlRoutes = [
   ["resources", "resources.html"],
   ["faq", "faq.html"],
   ["contact", "contact.html"],
+  ["events", "events.html"],
 ];
 
 /** @type {import('next').NextConfig} */

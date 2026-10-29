@@ -7,7 +7,7 @@ import { renderPageContent, requestContentLocale } from "./render-page-content";
 import { getCurrentSiteMetrics } from "./impact-store";
 import { publicImpactMilestone } from "./impact-types";
 
-export const PUBLIC_PAGES = ["/", "/about", "/programs", "/impact", "/team", "/submit-bio", "/stories", "/get-involved", "/academy", "/donate", "/resources", "/faq", "/contact"];
+export const PUBLIC_PAGES = ["/", "/about", "/programs", "/impact", "/team", "/submit-bio", "/stories", "/get-involved", "/academy", "/donate", "/resources", "/faq", "/contact", "/events"];
 
 export async function servePublicPage(request: Request, page: string) {
   if (!PUBLIC_PAGES.includes(page)) return new NextResponse("Not found", { status: 404 });

@@ -20,6 +20,7 @@ const htmlFiles = [
   "resources.html",
   "faq.html",
   "contact.html",
+  "events.html",
 ];
 
 const passthroughFiles = ["robots.txt", "sitemap.xml", "CNAME", "favicon.ico"];
@@ -187,7 +188,7 @@ function verifyContentBuild(html, file, identities) {
 
 const sourceHtmlFiles = (await readdir(root)).filter((file) => file.endsWith(".html")).sort();
 if (JSON.stringify(sourceHtmlFiles) !== JSON.stringify([...htmlFiles].sort())) {
-  throw new Error(`Expected exactly the 13 managed HTML pages; found: ${sourceHtmlFiles.join(", ")}`);
+  throw new Error(`Expected exactly the ${htmlFiles.length} managed HTML pages; found: ${sourceHtmlFiles.join(", ")}`);
 }
 
 await rm(publicDir, { recursive: true, force: true });
