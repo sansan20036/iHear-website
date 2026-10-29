@@ -126,7 +126,7 @@ Drive 和 Zoom 的 HTTP 回應如何分類（`classifyDriveResponse`、`classify
 2. **Google Drive 測試授權：** 用既有的測試帳號，以 `drive.file` 權限實作並驗收 Drive adapter，涵蓋分段上傳、查詢進度、session 過期、搜尋延遲。
 3. **Zoom Video SDK 帳號與憑證：** 屬於另外計費的 Build Platform。用來實測通知欄位、Range 下載、自動刪除天數、刪除 API。
 4. **錄影存放位置與空間方案：** 由 Justine 或 iHear 決定用哪一個帳號或共用雲端硬碟，以及需要多少容量。
-5. **Migration 027：** 本分支在 027 加了兩個欄位：`classroom_jobs.blocked_reason` 和 `classroom_recording_files.uploaded_bytes`。027 還沒有在任何正式環境執行過，要等 P3 核准後依既有程序上線。
+5. **Migration 028（原 027，10/30 改號，027 給首頁行事曆）：** 本分支在 028 加了兩個欄位：`classroom_jobs.blocked_reason` 和 `classroom_recording_files.uploaded_bytes`。027 還沒有在任何正式環境執行過，要等 P3 核准後依既有程序上線。
 
 ## 7. 檔案
 
@@ -138,7 +138,7 @@ Drive 和 Zoom 的 HTTP 回應如何分類（`classifyDriveResponse`、`classify
 | `test/recording-filing.test.mjs` | **新增**：26 個合成驗收測試 |
 | `dryrun/auto-filing-acceptance.mjs` | **新增**：12 個步驟的端到端驗收流程（合成），之後實測沿用同一份步驟 |
 | `test/fake-classroom-store.mjs` | Drive 模擬加上容量、分段上傳、搜尋延遲；新增 Zoom 下載模擬、模擬時鐘、「函式被停止」開關 |
-| `lib/classroom-store.ts`、`db/migrations/027_classroom_mvp.sql` | 新增 `recordTransfer`、`rescheduleJob`、`listOpenFilingLessonIds`；`failJob` 支援 `Retry-After`；新增兩個欄位 |
+| `lib/classroom-store.ts`、`db/migrations/028_classroom_mvp.sql` | 新增 `recordTransfer`、`rescheduleJob`、`listOpenFilingLessonIds`；`failJob` 支援 `Retry-After`；新增兩個欄位 |
 | `lib/classroom-drive.ts`、`lib/classroom-provider.ts` | 本機 Drive 替身改成分段上傳，並可設定容量；下載改成依範圍 |
 | `lib/classroom-service.ts` | tick 的歸檔時間預算；仍在歸檔中的舊課程留在總覽 |
 | `app/api/classroom/scheduled-tick/route.ts` | **新增**：排程用的 tick 路由 |

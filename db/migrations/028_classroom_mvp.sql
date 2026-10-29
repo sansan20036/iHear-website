@@ -159,9 +159,10 @@ CREATE TABLE IF NOT EXISTS public.classroom_anomalies (
   )
 );
 
+-- Keeps 027's 'calendar' (the homepage calendar, applied first) and adds 'classroom'.
 ALTER TABLE public.admin_activity_log DROP CONSTRAINT IF EXISTS admin_activity_log_entity_type_check;
 ALTER TABLE public.admin_activity_log ADD CONSTRAINT admin_activity_log_entity_type_check
-  CHECK (entity_type IN ('team', 'impact', 'admin', 'resource', 'academy', 'classroom'));
+  CHECK (entity_type IN ('team', 'impact', 'admin', 'resource', 'academy', 'calendar', 'classroom'));
 
 ALTER TABLE public.classroom_lessons ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.classroom_participants ENABLE ROW LEVEL SECURITY;

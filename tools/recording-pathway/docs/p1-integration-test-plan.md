@@ -37,7 +37,7 @@
 | 舊的 P1 原型分支 `b0c9b0f` | 是同步版、已過時的副本；之後以 `6d1912a` 為準，不要再從舊分支開發 |
 | 資料模型 | Migration 027 在本機 PostgreSQL 17 上，跑完檔案型與 PostgreSQL 兩套共同規約（13 項），全部通過。新增的兩個欄位、事件來源 `p1`、檔案狀態、暫停原因與異常代碼，都符合 027 的 CHECK 條件 |
 | RLS | 027 對 9 張 classroom 表都開啟 Row Level Security，而且沒有任何 policy，所以只有伺服器能存取。`schema_migrations` 也開啟 RLS。025、026 沒有新建資料表 |
-| 編號 | 正式 main（`bd91928`）的 migration 到 026 為止，027 沒有衝突 |
+| 編號 | 正式 main（`bd91928`）的 migration 到 026 為止。10/30 起 027 是首頁行事曆（`feat/home-calendar`），教室改為 028 |
 | Migration 鎖定 | `migrate-database.mjs` 會記錄每個 migration 的 checksum，之後檔案一改就拒絕執行。**027 一旦在任何會保留的資料庫執行過，就不能再改，只能新增 028。** 依紀錄，027 只在用完即刪的測試資料庫跑過（推測沒有其他地方執行過；正式資料庫這次沒有查） |
 | 資料庫稽核 | `audit-database.mjs` 會比對本機的 migration 檔和資料庫紀錄。含有 027 的程式如果先合併、但 027 還沒執行，稽核會回報「027 not tracked」。**027 和程式碼要在同一次發布上線**；備份與稽核的資料表清單也要一併加上 classroom 表 |
 | 合併進正式 main | 直接合併有 10 個衝突，因為 P3 的基底是 P2 上線前的 `cf0cc1d`。如果只套用 classroom 相關的 commit（從 `cf0cc1d` 到 `6d1912a`），只剩 `package.json` 的測試指令清單 1 處衝突，兩邊合併即可。發布前要把 classroom 的 commit rebase 到當時的 main 上 |

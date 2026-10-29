@@ -67,7 +67,7 @@ tutor-notice change. Once anyone is in, it stands for the rest of the lesson.
 
 ## Data
 
-Migration `027_classroom_mvp.sql`, not applied to production:
+Migration `028_classroom_mvp.sql` (027 is the homepage calendar, `feat/home-calendar`), not applied to production:
 
 - `classroom_lessons`, `classroom_participants`: codes only. Tutors are matched by their sign-in e-mail; for students only the hash of the personal link is kept.
 - `classroom_consents`, `classroom_staff_notices`: synthetic until the consent policy is approved.
@@ -117,7 +117,7 @@ Calling the scheduled tick every minute needs a decision (Supabase `pg_cron` + `
 |---|---|
 | `npm run test:recording-pathway` | The shared rules and P1's pathway (`node --test`), including automatic filing: functions stopped at every step, a full Drive, retries, duplicates |
 | `npm run test:classroom` | Routes and the file store, synthetic, including a recorded lesson end to end, consent rules, the withdrawal stop, the scheduled tick and the room's recording state; and the media adapter interface with its synthetic stand-in |
-| `npm run test:classroom:postgres` | Migration 027 and the PostgreSQL store on a disposable local PostgreSQL (Docker, `--pull=never`), the same store contract, and two workers racing on one filing |
+| `npm run test:classroom:postgres` | Migration 028 and the PostgreSQL store on a disposable local PostgreSQL (Docker, `--pull=never`), the same store contract, and two workers racing on one filing |
 | `npm run test:classroom:browser` | The built site in a browser: owner and editor access, adding a lesson, student and tutor entry, the recording state on both pages, a withdrawal, handling a problem, camera and microphone controls, a dropped and a failed connection shown on the overview, a blocked camera, phone layouts, no external requests and no camera or microphone request. Run `npm run build` first. |
 
 On Windows, `next build` with Turbopack can fail with "failed to create junction point ...

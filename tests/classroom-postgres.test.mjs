@@ -10,7 +10,7 @@ import { fileRecording, ingestWebhook, signZoomRequest, storeEvent } from '../to
 import { createDrive, syntheticDownload } from '../tools/recording-pathway/test/fake-classroom-store.mjs';
 import { classroomStoreContract, contractLesson } from './helpers/classroom-store-contract.mjs';
 
-// Migration 027 and the PostgreSQL classroom store on a localhost-only disposable PostgreSQL,
+// Migration 028 and the PostgreSQL classroom store on a localhost-only disposable PostgreSQL,
 // created and removed by this test. It never loads .env, uses an inherited database URL or
 // connects to a hosted database. Synthetic data only.
 const container = `ihear-classroom-${randomUUID()}`;
@@ -62,9 +62,9 @@ afterAll(async () => {
   if (workspace && (await realpath(workspace)).startsWith(await realpath(os.tmpdir()))) await rm(workspace, { recursive: true, force: true });
 }, 30000);
 
-describe('migration 027', () => {
+describe('migration 028', () => {
   test('applies after the existing migrations, with row level security on every classroom table', async () => {
-    expect(migration.applied.at(-1)).toBe('027_classroom_mvp.sql');
+    expect(migration.applied.at(-1)).toBe('028_classroom_mvp.sql');
     const tables = await sql`
       SELECT c.relname AS name, c.relrowsecurity AS rls FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
       WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relname LIKE 'classroom\\_%' ORDER BY c.relname
@@ -82,6 +82,11 @@ describe('migration 027', () => {
     await sql`
       INSERT INTO public.admin_activity_log (id, actor_email, actor_role, action, entity_type, entity_id)
       VALUES (${randomUUID()}, 'owner@example.test', 'owner', 'classroom.lesson_created', 'classroom', 'L-constraint')
+    `;
+    // 028 redefines the activity types after 027 (the homepage calendar): calendar entries stay allowed.
+    await sql`
+      INSERT INTO public.admin_activity_log (id, actor_email, actor_role, action, entity_type, entity_id)
+      VALUES (${randomUUID()}, 'owner@example.test', 'owner', 'calendar.events.updated', 'calendar', 'home_calendar_v1')
     `;
     await sql`INSERT INTO public.classroom_lessons (id, code, lesson_date, starts_at, ends_at, created_by) VALUES ('L-constraint', 'TEST-K', '2026-11-20', '2026-11-20T08:00:00Z', '2026-11-20T09:00:00Z', 'owner@example.test')`;
     const participant = (role, email, hash) => sql`

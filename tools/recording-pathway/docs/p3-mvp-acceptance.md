@@ -60,7 +60,7 @@
 | 只有 owner 能看總覽和操作；未登入和 editor 都被拒；回應 `no-store` | `tests/classroom-api.test.mjs`、`tests/classroom.smoke.mjs` | 通過 |
 | 總覽和資料庫裡沒有 email、專屬連結、憑證，也沒有故意植入的姓名、電話、IP | 同上，加上 `tests/classroom-postgres.test.mjs` | 通過 |
 | 手機尺寸的頁面不需要左右捲動 | `tests/classroom.smoke.mjs` | 通過（瀏覽器模擬手機尺寸，不是實機） |
-| Migration 027 套用、資料表都開啟 RLS、限制條件有效 | `tests/classroom-postgres.test.mjs` | 通過（本機一次性資料庫） |
+| Migration 028（原 027）套用、資料表都開啟 RLS、限制條件有效 | `tests/classroom-postgres.test.mjs` | 通過（本機一次性資料庫） |
 
 ### 1.2 一對一教室 UI Prototype 的合成驗收（2026-10-29，本機）
 
