@@ -121,7 +121,10 @@ export async function joinClassroom({ store, provider, lessonId, key, sessionEma
     await store.transaction((tx) => storeEvent(tx, blockedEvent(lesson.id, decision.reason, now)));
     return { status: 403, body: { error: "You cannot enter this classroom", code: decision.reason } };
   }
-  const token = provider.sessionToken({ lesson: forRules(lesson) as ClassroomLesson, participant: participant!, now });
+  const rules = forRules(lesson) as ClassroomLesson;
+  const token = provider.prepareJoin
+    ? await provider.prepareJoin({ lesson: rules, participant: participant!, now })
+    : { kind: "sdk" as const, ...provider.sessionToken({ lesson: rules, participant: participant!, now }) };
   await store.recordJoinToken({ tokenHash: hashKey(token.token), lessonId: lesson.id, participantId: participant!.id, issuedAt: token.issuedAt, expiresAt: token.expiresAt });
   return {
     status: 200,
@@ -131,7 +134,10 @@ export async function joinClassroom({ store, provider, lessonId, key, sessionEma
       lesson: { code: lesson.code, startsAt: lesson.startsAt, endsAt: lesson.endsAt },
       role: participant!.role,
       participantCode: participant!.code,
-      session: { token: token.token, expiresAt: new Date(token.expiresAt).toISOString() },
+      // The token goes only to the media adapter. LCIC's address carries its own login.
+      session: token.kind === "embed"
+        ? { kind: "embed", embedUrl: token.embedUrl, recordingDisabled: token.recordingDisabled, expiresAt: new Date(token.expiresAt).toISOString() }
+        : { kind: "sdk", token: token.token, ...(token.sessionName ? { sessionName: token.sessionName } : {}), expiresAt: new Date(token.expiresAt).toISOString() },
     },
   };
 }
@@ -139,7 +145,7 @@ export async function joinClassroom({ store, provider, lessonId, key, sessionEma
 // Whether the lesson may be recorded right now, from what the server decided: the whole
 // roster's consent and no withdrawal since. The tutor's page stops recording when it is not
 // allowed, and says "not decided yet" rather than "not recorded" before the decision.
-function recordingDecision(events: ClassroomEvent[]) {
+export function recordingDecision(events: ClassroomEvent[]) {
   const decision = events.filter((event) => event.type === "server.recording_eligibility").sort((a, b) => a.occurredAt - b.occurredAt).pop();
   return {
     decided: Boolean(decision),

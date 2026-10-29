@@ -17,15 +17,14 @@ function recorded(adapter) {
 }
 
 describe("the provider-neutral media adapter", () => {
-  test("only the synthetic stand-in exists; the three candidates say they are not built yet, and it never claims real media", () => {
-    expect(MEDIA_PROVIDERS).toEqual(["synthetic", "tencent-rtc", "agora", "zoom-video-sdk"]);
+  test("the synthetic stand-in never claims real media; the two candidates have adapters; others are unknown", () => {
+    expect(MEDIA_PROVIDERS).toEqual(["synthetic", "zoom-video-sdk", "tencent-lcic"]);
     const synthetic = createMediaAdapter("synthetic", { connectDelayMs: 0 });
     expect(synthetic).toBeInstanceOf(SyntheticMediaAdapter);
-    expect(synthetic.capabilities).toEqual({ realMedia: false, screenShare: false });
-    for (const provider of ["tencent-rtc", "agora", "zoom-video-sdk"]) {
-      expect(() => createMediaAdapter(provider)).toThrow(MediaAdapterUnavailableError);
-      expect(() => createMediaAdapter(provider)).toThrow(/not built yet/);
-    }
+    expect(synthetic.capabilities).toEqual({ realMedia: false, screenShare: false, observable: true });
+    expect(createMediaAdapter("zoom-video-sdk").provider).toBe("zoom-video-sdk");
+    expect(createMediaAdapter("tencent-lcic").provider).toBe("tencent-lcic");
+    for (const provider of ["tencent-rtc", "agora", ""]) expect(() => createMediaAdapter(provider)).toThrow(MediaAdapterUnavailableError);
     expect(() => createMediaAdapter("")).toThrow(/Unknown video provider/);
   });
 

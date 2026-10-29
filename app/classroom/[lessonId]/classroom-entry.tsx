@@ -6,6 +6,40 @@ import {
   createMediaAdapter, hostReportFor, MediaAdapterUnavailableError, SYNTHETIC_SCENARIOS, SyntheticMediaAdapter,
   type ClassroomMediaAdapter, type ConnectionState, type DeviceKind, type DeviceState, type MediaEvent, type SyntheticScenario,
 } from "../../../lib/classroom-media";
+import { classroomDeviceOf, deviceLimits, type CapabilityName, type ClassroomDevice } from "../../../lib/classroom-capabilities";
+
+// The vendor-specific parts of the room (2026-10-30): Zoom draws its video in our page; LCIC is
+// Tencent's own classroom page in an iframe. Notes per device come from lib/classroom-capabilities
+// (vendor documentation, not yet tried on real devices).
+const VENDOR_PROVIDERS = new Set(["zoom-video-sdk", "tencent-lcic"]);
+const vendorCopy = {
+  zh: {
+    limitsTitle: "這台裝置的限制",
+    device: { desktop: "電腦", tablet: "平板", phone: "手機" } as Record<ClassroomDevice, string>,
+    unknown: "（未確認）",
+    limits: {
+      video: "視訊在這台裝置上的效果未確認", documents: "教材（PDF、PPT）只能用分享畫面觀看，或效果未確認",
+      whiteboard: "白板只能觀看、不能在上面畫，或效果未確認", screenShare: "不能從這台裝置分享畫面",
+      fileTransfer: "傳送檔案的方式未確認", recording: "錄影在開課時就決定，上課中無法由系統停止（未確認）",
+    } as Record<CapabilityName, string>,
+    lcicNote: "以下是騰訊的教室畫面：鏡頭、麥克風、教材和白板都在裡面操作。連線狀態也顯示在騰訊的畫面內。",
+    lcicRecordingOff: "這堂課的教室建立時不錄影。",
+    zoomVideo: "Zoom 視訊畫面",
+  },
+  en: {
+    limitsTitle: "Limits on this device",
+    device: { desktop: "Computer", tablet: "Tablet", phone: "Phone" } as Record<ClassroomDevice, string>,
+    unknown: " (not confirmed)",
+    limits: {
+      video: "Video on this device is not confirmed", documents: "Materials (PDF, PPT) only through a shared screen, or not confirmed",
+      whiteboard: "The whiteboard is view-only here, or not confirmed", screenShare: "This device cannot share its screen",
+      fileTransfer: "Sending files is not confirmed", recording: "Recording is decided when the class opens and cannot be stopped by iHear mid-class (not confirmed)",
+    } as Record<CapabilityName, string>,
+    lcicNote: "Below is Tencent's classroom: the camera, microphone, materials and whiteboard are all inside it, and so is the connection status.",
+    lcicRecordingOff: "This class was opened without recording.",
+    zoomVideo: "Zoom video",
+  },
+};
 
 // What a student or a tutor sees: one button to enter, a plain reason when they cannot, and once
 // inside, the lesson's facts, the video stage with camera and microphone controls, and whether
@@ -196,7 +230,9 @@ export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: stri
   const [media, setMedia] = useState<Media>(initialMedia);
   const [simulator, setSimulator] = useState<SyntheticMediaAdapter | null>(null);
   // The provider's session token. It is never shown; it goes only to the media adapter.
-  const session = useRef<{ token: string; expiresAt: string } | null>(null);
+  const session = useRef<{ kind?: "sdk" | "embed"; token?: string; sessionName?: string; embedUrl?: string; recordingDisabled?: boolean; expiresAt: string } | null>(null);
+  const vendorStage = useRef<HTMLDivElement | null>(null);
+  const [device, setDevice] = useState<ClassroomDevice>("desktop");
   const adapter = useRef<ClassroomMediaAdapter | null>(null);
   const connection = useRef<ConnectionState>("idle");
   const text = copy[locale];
@@ -207,6 +243,7 @@ export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: stri
   useEffect(() => {
     setLocale(initialLocale());
     setJoinKey(new URLSearchParams(window.location.search).get("k"));
+    setDevice(classroomDeviceOf(navigator.userAgent, navigator.maxTouchPoints));
   }, []);
   useEffect(() => {
     document.documentElement.lang = locale === "en" ? "en" : "zh-Hant";
@@ -296,8 +333,15 @@ export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: stri
         if (body) void report(body);
       }
     });
+    if (vendorStage.current && current.mount) current.mount(vendorStage.current);
     if (session.current) {
-      void current.join({ sessionToken: session.current.token, lessonCode: joined.lesson.code, participantCode: joined.participantCode, role: joined.role });
+      current.join({
+        sessionToken: session.current.token ?? "", sessionName: session.current.sessionName, embedUrl: session.current.embedUrl,
+        lessonCode: joined.lesson.code, participantCode: joined.participantCode, role: joined.role,
+      }).catch((error: unknown) => {
+        // A vendor that cannot load (the Zoom package before the trial) says "not connected".
+        if (error instanceof MediaAdapterUnavailableError) setMedia((state) => ({ ...state, available: false }));
+      });
     }
     return () => {
       unsubscribe();
@@ -376,7 +420,10 @@ export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: stri
   async function reconnect() {
     const current = adapter.current;
     if (!current || !session.current || !joined) return;
-    await current.join({ sessionToken: session.current.token, lessonCode: joined.lesson.code, participantCode: joined.participantCode, role: joined.role });
+    await current.join({
+      sessionToken: session.current.token ?? "", sessionName: session.current.sessionName, embedUrl: session.current.embedUrl,
+      lessonCode: joined.lesson.code, participantCode: joined.participantCode, role: joined.role,
+    }).catch(() => undefined);
   }
 
   async function leave() {
@@ -434,7 +481,24 @@ export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: stri
             <span className={`classroom-room-badge ${badge}`} role="status" aria-label={`${text.recording}：${text.badge[badge]}`}>{text.badge[badge]}</span>
           </div>
 
-          <section className="classroom-room-stage" aria-label={text.stage}>
+          {VENDOR_PROVIDERS.has(joined.provider) && (() => {
+            const limits = deviceLimits(joined.provider, device);
+            const v = vendorCopy[locale];
+            return (
+              <>
+                {joined.provider === "tencent-lcic" && <p className="classroom-room-note" role="note">{v.lcicNote}{session.current?.recordingDisabled ? ` ${v.lcicRecordingOff}` : ""}</p>}
+                <div className={`classroom-vendor-stage ${joined.provider}`} ref={vendorStage} aria-label={joined.provider === "zoom-video-sdk" ? v.zoomVideo : text.stage} data-provider={joined.provider} />
+                {limits.length > 0 && (
+                  <details className="classroom-room-card classroom-room-limits" data-device={device}>
+                    <summary>{v.limitsTitle}（{v.device[device]}）</summary>
+                    <ul>{limits.map(limit => <li key={limit.name} data-capability={limit.name} data-level={limit.level}>{v.limits[limit.name]}{limit.level === "unknown" ? v.unknown : ""}</li>)}</ul>
+                  </details>
+                )}
+              </>
+            );
+          })()}
+
+          {joined.provider !== "tencent-lcic" && <section className="classroom-room-stage" aria-label={text.stage}>
             <div className="classroom-room-tile remote">
               <p className="classroom-room-tile-name">{otherName}</p>
               {!media.available ? <p>{text.notConnected}</p>
@@ -456,7 +520,7 @@ export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: stri
               <p className="classroom-room-tile-sub">{micText}</p>
             </div>
             {simulator && <p className="classroom-room-stage-note">{text.noVideo}</p>}
-          </section>
+          </section>}
 
           {media.available && media.connection === "reconnecting" && <p className="classroom-room-problem" role="status">{text.reconnecting}</p>}
           {media.available && media.connection === "failed" && (
@@ -471,7 +535,7 @@ export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: stri
           })}
 
           <div className="classroom-room-controls" role="toolbar" aria-label={text.controls}>
-            {(["microphone", "camera"] as const).map((kind) => {
+            {joined.provider !== "tencent-lcic" && (["microphone", "camera"] as const).map((kind) => {
               const state = media.devices[kind];
               const blocked = state === "denied" || state === "unavailable";
               return (

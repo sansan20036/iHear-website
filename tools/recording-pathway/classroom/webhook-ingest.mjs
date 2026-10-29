@@ -21,8 +21,9 @@ export { fileRecording, JOB_LEASE_MS, MAX_JOB_ATTEMPTS, processJobs, QUARANTINE_
 
 export const MAX_REQUEST_AGE_MS = 5 * 60 * 1000;
 export const STORE_BUDGET_MS = 2000;           // leaves room inside Zoom's 3-second limit
-// Only the combined lesson video is filed. To check against real Video SDK recordings.
-export const KEPT_RECORDING_TYPES = ['shared_screen_with_speaker_view'];
+// Only the combined lesson video is filed: Zoom's combined view, and LCIC's mixed recording (one
+// file per class). To check against real recordings of each.
+export const KEPT_RECORDING_TYPES = ['shared_screen_with_speaker_view', 'lcic_mixed'];
 const HELD_AT_ZOOM = ['AFTER_WITHDRAWAL', 'UNKNOWN_PARTICIPANT', 'NO_CONSENT', 'UNKNOWN_SESSION'];
 
 const RECORDING_EVENTS = {
@@ -145,6 +146,12 @@ function withTimeout(promise, ms) {
   let timer;
   const timeout = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('store timeout')), ms); });
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+// Stores facts another vendor's intake already verified and minimized (lcic-callback.mjs), with
+// the same transaction, dedupe and follow-up jobs as Zoom's.
+export function ingestFacts({ store, facts, budgetMs = STORE_BUDGET_MS }) {
+  return persist(store, facts, budgetMs);
 }
 
 async function persist(store, events, budgetMs) {
