@@ -21,8 +21,9 @@ function ShellContent({ children }: { children: React.ReactNode }) {
   const text = copy[locale];
   // Academy course pages are English and Traditional Chinese only, so this label has no Simplified form.
   const academy = locale === "en" ? "Academy course pages" : "Academy 課程頁";
+  const calendar = locale === "en" ? "Homepage calendar" : locale === "zhHans" ? "首页行事历" : "首頁行事曆";
   const links = [
-    ["/admin", text.overview, "⌂"], ["/admin/content", text.content, "✎"], ["/admin/academy", academy, "$"], ["/admin/team", text.team, "👥"],
+    ["/admin", text.overview, "⌂"], ["/admin/content", text.content, "✎"], ["/admin/academy", academy, "$"], ["/admin/calendar", calendar, "📅"], ["/admin/team", text.team, "👥"],
     ["/admin/impact", text.impact, "▥"], ["/admin/media", text.media, "▧"], ["/admin/resources", text.resources, "☷"], ["/admin/trash", text.trash, "♲"],
     ...(principal.role === "owner" ? [["/admin/admins", text.admins, "⚙"]] : []),
   ];

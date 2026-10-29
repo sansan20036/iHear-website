@@ -483,6 +483,7 @@ try {
           OR char_length(value) NOT BETWEEN 1 AND (CASE
             WHEN key = 'academy_content_v2' THEN 60000
             WHEN key = 'academy_pricing_v1' THEN 8000
+            WHEN key = 'home_calendar_v1' THEN 400000
             ELSE 500
           END)
           OR record_version < 1

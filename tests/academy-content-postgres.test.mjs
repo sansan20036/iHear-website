@@ -90,7 +90,7 @@ describe('Academy content migrations in a disposable PostgreSQL', { timeout: 60_
       (${randomUUID()}, 'editor@example.test', 'editor', 'resource.updated', 'resource', 'guide-1', ARRAY['title'])`;
     const before = await snapshot(sql);
 
-    const run = migrate('production_like', await migrationFolder('999'));
+    const run = migrate('production_like', await migrationFolder('026'));
     expect(run.applied).toEqual(['025_academy_pricing.sql', '026_academy_content_v2.sql']);
     for (const file of run.applied) {
       const [recorded] = await sql`SELECT name, checksum FROM schema_migrations WHERE version = ${file.slice(0, 3)}`;
@@ -109,7 +109,7 @@ describe('Academy content migrations in a disposable PostgreSQL', { timeout: 60_
     expect(readStoredAcademyContent(JSON.parse(row.value)).pricing.rates).toEqual(P0_ACADEMY_RATES);
     expect(await settings(sql, 'academy_pricing_v1')).toBeUndefined();
 
-    const repeat = migrate('production_like', await migrationFolder('999'));
+    const repeat = migrate('production_like', await migrationFolder('026'));
     expect(repeat.applied).toEqual([]);
     expect(await settings(sql)).toEqual(row);
   });
@@ -124,7 +124,7 @@ describe('Academy content migrations in a disposable PostgreSQL', { timeout: 60_
     await edited`UPDATE site_settings SET value = ${JSON.stringify(changed)}, record_version = 2, updated_by = 'editor@example.test' WHERE key = 'academy_pricing_v1'`;
     const kept = await settings(edited, 'academy_pricing_v1');
 
-    expect(migrate('edited_v1', await migrationFolder('999')).applied).toEqual(['026_academy_content_v2.sql']);
+    expect(migrate('edited_v1', await migrationFolder('026')).applied).toEqual(['026_academy_content_v2.sql']);
     // Never converted automatically: superseded prices must not replace P0 prices.
     expect(await settings(edited, 'academy_pricing_v1')).toEqual(kept);
     expect(JSON.parse((await settings(edited)).value).pricing.rates).toEqual(P0_ACADEMY_RATES);

@@ -216,3 +216,19 @@ body:has(.admin-app) > :is(.site-theme-trigger,.ihear-layout-trigger,.ihear-inli
   .admin-academy-actions>.admin-button { flex:1 1 40%; }
   .admin-academy-published>.admin-button { flex:1 1 40%; }
 }
+/* Homepage calendar (/admin/calendar) */
+.admin-calendar-zone { margin-top:6px !important; font-size:14px; }
+.admin-calendar-form { margin-bottom:20px; }
+.admin-calendar-form .admin-form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; margin:14px 0 18px; }
+.admin-calendar-wide,.admin-calendar-allday { grid-column:1 / -1; }
+.admin-calendar-problem { color:var(--admin-danger); font-weight:700; }
+.admin-calendar-group { margin-bottom:20px; }
+.admin-calendar-group summary { cursor:pointer; list-style:revert; }
+.admin-calendar-group summary h2 { display:inline; }
+.admin-calendar-list { display:grid; gap:12px; margin-top:14px; }
+.admin-calendar-event h3 { margin:6px 0 4px; }
+.admin-calendar-when { display:flex; flex-wrap:wrap; gap:4px 12px; color:var(--admin-navy); }
+.admin-calendar-when span { color:var(--admin-muted); font-weight:700; }
+.admin-calendar-description { white-space:pre-line; margin:4px 0 8px; }
+.admin-calendar-confirm p { color:var(--admin-ink) !important; font-weight:700; }
+@media (max-width:640px){ .admin-calendar-form .admin-form-grid { grid-template-columns:1fr; } }

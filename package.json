@@ -10,7 +10,7 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit --incremental false",
-    "test": "npm run test:api && npm run test:operations && npm run test:academy && npm run test:e2e",
+    "test": "npm run test:api && npm run test:operations && npm run test:academy && npm run test:calendar && npm run test:e2e",
     "test:api": "vitest run tests/team-public.test.mjs tests/image-intake.test.mjs tests/text-language-guard.test.mjs tests/translation-core.test.mjs tests/translation-api.test.mjs tests/api-routes.test.mjs tests/team-api.test.mjs tests/team-sort.test.mjs tests/team-store-postgres.test.mjs tests/team-visibility-store.test.mjs tests/admin-console-api.test.mjs tests/rate-limit.test.mjs tests/site-media-api.test.mjs tests/site-media-image.test.mjs tests/site-theme-api.test.mjs tests/site-layout-api.test.mjs tests/media-galleries.test.mjs tests/resources-api.test.mjs tests/resource-topic-model.test.mjs tests/resource-topic-api.test.mjs tests/academy-inquiry.test.mjs",
     "test:operations": "vitest run tests/operations-config.test.mjs tests/production-safety.test.mjs",
     "test:e2e": "node scripts/prepare-public.mjs && playwright test",
@@ -49,7 +49,10 @@
     "test:resource-schema": "vitest run tests/resource-topics-postgres.test.mjs",
     "test:resource-api-postgres": "vitest run tests/resource-topic-api-postgres.test.mjs",
     "test:resource-topics-admin": "node tests/resource-topics-admin.smoke.mjs",
-    "test:resource-topics-public": "node tests/resource-topics-public.smoke.mjs"
+    "test:resource-topics-public": "node tests/resource-topics-public.smoke.mjs",
+    "test:calendar": "vitest run tests/home-calendar.test.mjs",
+    "test:calendar:postgres": "vitest run tests/home-calendar-postgres.test.mjs",
+    "test:calendar:browser": "node tests/home-calendar.smoke.mjs"
   },
   "dependencies": {
     "@google-cloud/translate": "^10.0.1",
