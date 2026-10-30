@@ -4,10 +4,11 @@
 // tunnel headers, the env file is checked, logs carry paths only, and stopping ends access. The
 // synthetic provider stands in for the vendor here; no account, key or outside address is used.
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { chromium, expect } from '@playwright/test';
 
 const pub = 3312, loc = 3313;
@@ -34,7 +35,8 @@ function raw(port, method, pathname, headers = {}, body) {
     sent.end();
   });
 }
-const refused = (args) => spawnSync(process.execPath, ['tools/classroom-trial/trial-server.mjs', ...args], { encoding: 'utf8', windowsHide: true, timeout: 60_000 });
+const SERVER = path.resolve('tools/classroom-trial/trial-server.mjs');
+const refused = (args, cwd = process.cwd()) => spawnSync(process.execPath, [SERVER, ...args], { cwd, encoding: 'utf8', windowsHide: true, timeout: 60_000 });
 
 try {
   await check('the env file may hold only the vendor settings, from outside the repository', async () => {
@@ -45,6 +47,55 @@ try {
     expect(refused(['--env', outside]).stderr).toContain('not POSTGRES_URL');
     expect(refused(['--env', 'package.json']).stderr).toContain('outside the repository');
     expect(refused([]).stderr).toContain('Give --env');
+  });
+
+  await check('the env file is read without showing any value, and only from a safe place', async () => {
+    const outside = path.join(work, 'keys.env');
+    const key = 'TESTcheckKey0123456789', secretValue = 'TESTcheckSecret0123456789abcdef', pasted = 'TESTpastedOnItsOwnLine0123456789';
+    const placeholders = 'ZOOM_VIDEO_SDK_API_KEY=TESTapiKeyValue\nZOOM_VIDEO_SDK_API_SECRET=TESTapiSecretValue\nZOOM_VIDEO_SDK_WEBHOOK_SECRET=TESTwebhookValue\n';
+    // A value pasted on a line of its own: the error gives the line number, never the line.
+    await writeFile(outside, `CLASSROOM_PROVIDER=zoom-video-sdk\n${pasted}\n`);
+    const badLine = refused(['--env', outside, '--check']);
+    expect(badLine.stderr).toContain('Line 2 of the env file is not NAME=value');
+    expect(`${badLine.stdout}${badLine.stderr}`).not.toContain(pasted);
+    // Empty fields stop the server before anything starts.
+    await writeFile(outside, `CLASSROOM_PROVIDER=zoom-video-sdk\nZOOM_VIDEO_SDK_KEY=\nZOOM_VIDEO_SDK_SECRET=\n${placeholders}`);
+    expect(refused(['--env', outside, '--check']).stderr).toContain('Fill in ZOOM_VIDEO_SDK_KEY, ZOOM_VIDEO_SDK_SECRET');
+    // --check names each setting and says it is filled, never more; Notepad's byte-order mark,
+    // Windows line ends, quotes and spaces around a value are all tolerated.
+    await writeFile(outside, `﻿CLASSROOM_PROVIDER=zoom-video-sdk\r\nZOOM_VIDEO_SDK_KEY= "${key}" \r\nZOOM_VIDEO_SDK_SECRET='${secretValue}'\r\n${placeholders.replaceAll('\n', '\r\n')}`);
+    const ready = refused(['--env', outside, '--check']);
+    expect(ready.status).toBe(0);
+    expect(ready.stdout).toContain('ZOOM_VIDEO_SDK_KEY: filled\n');
+    expect(ready.stdout).toContain('ZOOM_VIDEO_SDK_SECRET: filled\n');
+    expect(ready.stdout).toContain('The env file is ready. Nothing was started.');
+    for (const value of [key, secretValue, 'TESTapiKeyValue', 'TESTapiSecretValue', 'TESTwebhookValue']) expect(`${ready.stdout}${ready.stderr}`).not.toContain(value);
+    // The same value in two fields (one pasted twice) is caught, still without showing it.
+    await writeFile(outside, `CLASSROOM_PROVIDER=zoom-video-sdk\nZOOM_VIDEO_SDK_KEY=${key}\nZOOM_VIDEO_SDK_SECRET=${key}\n${placeholders}`);
+    const twice = refused(['--env', outside, '--check']);
+    expect(twice.status).toBe(1);
+    expect(twice.stdout).toContain('ZOOM_VIDEO_SDK_KEY and ZOOM_VIDEO_SDK_SECRET hold the same value');
+    expect(`${twice.stdout}${twice.stderr}`).not.toContain(key);
+    // Not from OneDrive, which copies its files to the cloud.
+    const synced = path.join(work, 'OneDrive - Test', 'keys.env');
+    await mkdir(path.dirname(synced), { recursive: true });
+    await writeFile(synced, 'CLASSROOM_PROVIDER=zoom-video-sdk\n');
+    expect(refused(['--env', synced, '--check']).stderr).toContain('must not be in a OneDrive folder');
+    // Not from a site folder holding .env.local, which Next.js would load by itself.
+    const site = path.join(work, 'site');
+    await mkdir(site, { recursive: true });
+    await writeFile(path.join(site, '.env.local'), 'POSTGRES_URL=postgres://example.invalid/db\n');
+    expect(refused(['--env', outside, '--check'], site).stderr).toContain('Next.js would load .env.local');
+    // The safety net: whatever the server's process prints, an error's stack included, shows no value.
+    const envFileUrl = JSON.stringify(pathToFileURL(path.resolve('tools/classroom-trial/env-file.mjs')).href);
+    const probe = `const { hideInOutput } = await import(${envFileUrl});
+hideInOutput({ CLASSROOM_PROVIDER: 'zoom-video-sdk', ZOOM_VIDEO_SDK_SECRET: '${secretValue}' });
+console.log('before ${secretValue} after');
+console.error(new Error('failed with ${secretValue}'));`;
+    const printed = spawnSync(process.execPath, ['--input-type=module', '-e', probe], { encoding: 'utf8', windowsHide: true, timeout: 30_000 });
+    expect(printed.stdout).toContain('before [hidden] after');
+    expect(printed.stderr).toContain('failed with [hidden]');
+    expect(`${printed.stdout}${printed.stderr}`).not.toContain(secretValue);
   });
 
   await check('the tunnel command points only at the public port and always names the testers (dry run, nothing opened)', async () => {

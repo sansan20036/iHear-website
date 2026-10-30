@@ -17,11 +17,13 @@
 // Usage (from the repository root, after `next build`):
 //   node tools/classroom-trial/trial-server.mjs --env <file outside the repo>
 //   node tools/classroom-trial/trial-server.mjs --provider synthetic        (local rehearsal only)
+//   node tools/classroom-trial/trial-server.mjs --env <file> --check        (is the file ready? names only; starts nothing)
 // Options: --data <folder> --public-port 3310 --local-port 3311
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer, request as httpRequest } from 'node:http';
 import path from 'node:path';
+import { checkSiteFolder, describeVendorEnv, hideInOutput, readVendorEnv } from './env-file.mjs';
 
 const args = Object.fromEntries(process.argv.slice(2).reduce((pairs, value, index, all) => (value.startsWith('--') ? [...pairs, [value.slice(2), all[index + 1]?.startsWith('--') ? 'true' : all[index + 1] ?? 'true']] : pairs), []));
 const root = process.cwd();
@@ -29,30 +31,29 @@ const publicPort = Number(args['public-port'] ?? 3310);
 const localPort = Number(args['local-port'] ?? 3311);
 if (![publicPort, localPort].every(port => Number.isInteger(port) && port >= 1024) || publicPort === localPort) throw new Error('Use two different ports from 1024 up');
 
-// The only settings the env file may hold: the classroom provider and its vendor keys.
-const VENDOR_KEYS = new Set([
-  'CLASSROOM_PROVIDER',
-  'ZOOM_VIDEO_SDK_KEY', 'ZOOM_VIDEO_SDK_SECRET', 'ZOOM_VIDEO_SDK_API_KEY', 'ZOOM_VIDEO_SDK_API_SECRET', 'ZOOM_VIDEO_SDK_WEBHOOK_SECRET',
-  'LCIC_SDK_APP_ID', 'TENCENTCLOUD_SECRET_ID', 'TENCENTCLOUD_SECRET_KEY', 'LCIC_CALLBACK_KEY', 'LCIC_API_HOST',
-]);
 function vendorSettings() {
+  // No .env.local or the like in the site folder: Next.js would load it after the shell is cleared.
+  checkSiteFolder(root);
   if (args.provider === 'synthetic') return { CLASSROOM_PROVIDER: 'synthetic' };
   if (!args.env) throw new Error('Give --env <file outside the repository> with the trial keys (or --provider synthetic for a local rehearsal)');
-  const file = path.resolve(args.env);
-  if (!path.relative(root, file).startsWith('..')) throw new Error('The env file must be outside the repository');
-  const settings = {};
-  for (const line of readFileSync(file, 'utf8').split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-    const match = /^([A-Z0-9_]+)=(.*)$/.exec(trimmed);
-    if (!match) throw new Error('The env file has a line that is not NAME=value');
-    if (!VENDOR_KEYS.has(match[1])) throw new Error(`The env file may hold only the classroom's vendor settings, not ${match[1]}`);
-    settings[match[1]] = match[2].replace(/^"(.*)"$/, '$1');
-  }
-  if (!['zoom-video-sdk', 'tencent-lcic'].includes(settings.CLASSROOM_PROVIDER)) throw new Error('CLASSROOM_PROVIDER must be zoom-video-sdk or tencent-lcic');
-  return settings;
+  return readVendorEnv(args.env, root);
 }
-const vendor = vendorSettings();
+let vendor;
+try {
+  vendor = vendorSettings();
+} catch (error) {
+  // The message alone: these name a setting or a line number, and nothing else is shown.
+  console.error(error.message);
+  process.exit(1);
+}
+hideInOutput(vendor);
+// --check: whether the env file is ready, by setting name only.
+if (args.check) {
+  const summary = vendor.CLASSROOM_PROVIDER === 'synthetic' ? { lines: ['CLASSROOM_PROVIDER: synthetic'], ok: true } : describeVendorEnv(vendor);
+  for (const line of summary.lines) console.log(line);
+  console.log(summary.ok ? 'The env file is ready. Nothing was started.' : 'Fix the settings above in the env file. Nothing was started.');
+  process.exit(summary.ok ? 0 : 1);
+}
 
 // Nothing from the shell reaches the site except what is set here.
 for (const name of Object.keys(process.env)) {
