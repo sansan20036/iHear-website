@@ -1,0 +1,545 @@
+<!doctype html>
+<!--
+  Zoom 連線診斷（第一階段）, 2026-10-31.
+  A single file that opens from disk, with no server, account, key or tunnel. It checks whether
+  this computer's network reaches what the Zoom Video SDK 2.6.0 needs, from mainland China in
+  particular, and says so in Traditional Chinese. Nothing is sent anywhere until "開始測試" is
+  pressed, and the page's own Content-Security-Policy lets it reach only the addresses listed
+  below. No name, email or IP address is collected; the results stay on screen for the tester
+  to copy.
+
+  What it can and cannot tell:
+  - A request whose answer the page does not read ("no-cors") succeeds whenever an HTTPS
+    connection to that host completes with any answer, so it measures reachability without CORS.
+  - A request that reads the answer ("cors") also downloads and checks the SDK files against the
+    official package's size and SHA-256. When that read fails but the plain request worked, the
+    cause is a browser rule (CORS), never counted as blocking.
+  - A browser cannot see why a connection failed (DNS, refused, reset, TLS). The page says so and
+    lists the possible causes; it never concludes "blocked". As a reference, it asks a public DNS
+    service in mainland China (Alibaba Cloud's documented JSON lookup) what each name resolves to.
+  - Reaching these addresses does not show that a Zoom call works. That is phase 2, with people.
+
+  Test hook: ?timeout=N shortens the per-request wait to N seconds (1-60).
+-->
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src https://source.zoom.us https://jssdk.zoomus.cn https://zoom.us https://*.zoom.us https://trycloudflare.com https://dns.alidns.com; base-uri 'none'; form-action 'none'">
+<link rel="icon" href="data:,">
+<title>Zoom 連線診斷</title>
+<style>
+  :root {
+    --ink: #1d2733; --muted: #5b6876; --line: #d9dee4; --paper: #ffffff; --page: #f5f6f8;
+    --ok: #1d7a46; --ok-bg: #e7f5ec; --bad: #b3261e; --bad-bg: #fbeaea; --warn: #8a5a00; --warn-bg: #fdf3dc;
+    --unknown: #43506b; --unknown-bg: #eceff5; --accent: #1f5fbf;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--page); color: var(--ink); font: 16px/1.6 system-ui, -apple-system, "Segoe UI", "Microsoft JhengHei", "PingFang TC", "Noto Sans TC", sans-serif; }
+  main { max-width: 960px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 1.5rem; margin: 0 0 8px; }
+  h2 { font-size: 1.15rem; margin: 28px 0 10px; }
+  .lead { margin: 0 0 12px; }
+  .notes { margin: 0 0 12px; padding-left: 1.2em; color: var(--muted); }
+  .notes strong { color: var(--ink); }
+  details { background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; margin: 12px 0 16px; }
+  details ul { margin: 8px 0 4px; padding-left: 1.2em; font-size: .92rem; color: var(--muted); word-break: break-all; }
+  .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+  button { font: inherit; border-radius: 8px; padding: 10px 20px; cursor: pointer; border: 1px solid var(--accent); }
+  #start { background: var(--accent); color: #fff; font-weight: 600; }
+  #start:disabled { opacity: .6; cursor: progress; }
+  #copy { background: var(--paper); color: var(--accent); }
+  #progress, #copied { color: var(--muted); }
+  section { background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 4px 16px 16px; margin-top: 20px; }
+  #summary { list-style: none; padding: 0; margin: 0; }
+  #summary li { padding: 8px 0; border-bottom: 1px solid var(--line); }
+  #summary li:last-child { border-bottom: 0; }
+  .caveat { background: var(--warn-bg); color: var(--warn); border-radius: 6px; padding: 10px 12px; margin: 12px 0 0; }
+  .table-wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; min-width: 640px; font-size: .94rem; }
+  th, td { text-align: left; vertical-align: top; padding: 8px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 600; white-space: nowrap; }
+  td.time { white-space: nowrap; }
+  .badge { display: inline-block; border-radius: 999px; padding: 1px 10px; font-size: .85rem; font-weight: 600; white-space: nowrap; }
+  .s-success { background: var(--ok-bg); color: var(--ok); }
+  .s-fail, .s-timeout, .s-mismatch { background: var(--bad-bg); color: var(--bad); }
+  .s-unstable, .s-http-error { background: var(--warn-bg); color: var(--warn); }
+  .s-cors, .s-indeterminate, .s-waiting, .s-running { background: var(--unknown-bg); color: var(--unknown); }
+  .ref { color: var(--muted); font-size: .85rem; }
+  .why { color: var(--muted); font-size: .88rem; margin-top: 4px; }
+  textarea { width: 100%; font: .88rem/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace; border: 1px solid var(--line); border-radius: 6px; padding: 10px; margin: 4px 0 10px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Zoom 視訊連線診斷（第一階段）</h1>
+  <p class="lead">檢查這台電腦目前的網路，能不能連到 Zoom 視訊（Video SDK 2.6.0）需要的網址。</p>
+  <ul class="notes">
+    <li>按下「開始測試」之前，本頁<strong>不會連上任何網路</strong>。</li>
+    <li>不需要帳號、密碼，也不用安裝任何程式。<strong>不收集姓名、Email 或 IP</strong>，結果只顯示在這個畫面上。</li>
+    <li>請用平常上網的方式測試，<strong>測試前關閉 VPN 或代理</strong>。本工具不使用、也不需要 VPN。</li>
+    <li>結果只代表能不能連到這些網址，<strong>不代表 Zoom 視訊一定能正常通話</strong>。</li>
+  </ul>
+  <details>
+    <summary>按下開始後，本頁會連到的網址</summary>
+    <ul id="destinations"></ul>
+  </details>
+  <div class="actions">
+    <button id="start" type="button">開始測試</button>
+    <span id="progress" role="status" aria-live="polite"></span>
+  </div>
+
+  <section id="summary-section" hidden>
+    <h2>判讀</h2>
+    <ul id="summary"></ul>
+    <p class="caveat">這些結果只表示這台電腦的網路能不能連到上面的網址。即使全部成功，也不代表 Zoom 視訊一定能正常通話；能不能通話、畫面和聲音好不好，要等第二階段真人測試才知道。</p>
+    <details>
+      <summary>中國大陸公共 DNS（阿里雲）查詢結果（參考）</summary>
+      <p class="why">這台電腦的瀏覽器可能用別的 DNS；這裡只供判斷問題出在 DNS 還是連線階段時參考。</p>
+      <ul id="dns"></ul>
+    </details>
+  </section>
+
+  <section id="details-section" hidden>
+    <h2>明細</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>測試項目</th><th>結果</th><th>耗時</th><th>說明</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="text-section" hidden>
+    <h2>可以複製的結果</h2>
+    <p class="why">請按「複製結果」，把整段文字貼回給 iHear。裡面沒有姓名、Email 或 IP。</p>
+    <textarea id="text" readonly rows="18" aria-label="可以複製的結果"></textarea>
+    <div class="actions">
+      <button id="copy" type="button">複製結果</button>
+      <span id="copied" role="status" aria-live="polite"></span>
+    </div>
+  </section>
+</main>
+<script>
+'use strict';
+(function () {
+  const SDK_VERSION = '2.6.0';
+  const TOOL_VERSION = '2026-10-31';
+  // Two files of the official @zoom/videosdk 2.6.0 package. Both Zoom CDNs served them byte for
+  // byte (size and SHA-256 checked against the npm package) on 2026-10-31.
+  const FILES = {
+    manifest: { name: 'manifest.json', size: 13108, sha256: '374d5969b651d46716d84e4eb12d060fb5399ece38f5db96d89b4d78f08a3121' },
+    media: { name: 'js_media.min.js', size: 1718812, sha256: 'd4554e3f65de4527bdefd6f5944f2df07035bc6679368769d7613c7b0650c908' },
+  };
+  const CDNS = [
+    { group: 'global', label: 'Zoom 全球版 SDK 檔案', host: 'source.zoom.us' },
+    { group: 'china', label: 'Zoom 中國版 SDK 檔案', host: 'jssdk.zoomus.cn' },
+  ];
+  // Zoom servers the real SDK used when it joined a session from Taiwan on 2026-10-30. Someone in
+  // mainland China may be given different ones, so these are a reference only.
+  const DATA_CENTERS = [
+    'dcsznginx-prod-colo-sin.sin.zoom.us', 'dcsznginx-prod-colo-sjc.sjc.zoom.us', 'dcsznginx-prod-colo-iad.iad.zoom.us', 'dcsznginx-prod-colo-mel.mel.zoom.us',
+    'dcsznginx-prod-aws-ct.cloud.zoom.us', 'dcsznginx-prod-aws-ff.cloud.zoom.us', 'dcsznginx-prod-aws-mb.cloud.zoom.us', 'dcsznginx-prod-aws-sp.cloud.zoom.us',
+  ];
+  const SIGNALING = ['rwcsjc2.sjc.zoom.us', 'rwciad2.iad.zoom.us'];
+  // Alibaba Cloud public DNS, JSON lookup (documented; answers with Access-Control-Allow-Origin: *).
+  const DNS_LOOKUP = 'https://dns.alidns.com/resolve';
+
+  const hook = Number(new URLSearchParams(location.search).get('timeout'));
+  const PROBE_SECONDS = hook >= 1 && hook <= 60 ? hook : 15;
+  const DOWNLOAD_SECONDS = hook >= 1 && hook <= 60 ? hook * 4 : 90;
+  const lib = host => `https://${host}/videosdk/${SDK_VERSION}/lib/`;
+
+  const ITEMS = [];
+  for (const cdn of CDNS) {
+    ITEMS.push({ id: `${cdn.group}-manifest`, group: cdn.group, kind: 'file', host: cdn.host, url: lib(cdn.host) + FILES.manifest.name, file: FILES.manifest, attempts: 3, seconds: PROBE_SECONDS,
+      label: `${cdn.label}：${FILES.manifest.name}（小檔案，連 3 次）` });
+    ITEMS.push({ id: `${cdn.group}-media`, group: cdn.group, kind: 'file', host: cdn.host, url: lib(cdn.host) + FILES.media.name, file: FILES.media, attempts: 1, seconds: DOWNLOAD_SECONDS,
+      label: `${cdn.label}：${FILES.media.name}（主要檔案 1.7 MB，完整下載 1 次）` });
+  }
+  // Joining starts here: the official SDK called this address when it joined a real session on
+  // 2026-10-30, and it answers a plain request directly (200, no redirect). zoom.us/ itself
+  // redirects to www.zoom.com, outside this page's list.
+  ITEMS.push({ id: 'join', group: 'join', kind: 'probe', host: 'zoom.us', url: 'https://zoom.us/wc/lsdk', attempts: 3, seconds: PROBE_SECONDS, label: 'Zoom 入場服務 zoom.us/wc/lsdk（連 3 次）' });
+  for (const host of DATA_CENTERS) ITEMS.push({ id: `dc-${host}`, group: 'dc', kind: 'probe', reference: true, host, url: `https://${host}/`, attempts: 1, seconds: PROBE_SECONDS, label: `Zoom 資料中心 ${host}` });
+  for (const host of SIGNALING) ITEMS.push({ id: `rwc-${host}`, group: 'signaling', kind: 'probe', reference: true, host, url: `https://${host}/`, attempts: 1, seconds: PROBE_SECONDS, label: `Zoom 即時連線伺服器 ${host}` });
+  ITEMS.push({ id: 'whiteboard', group: 'whiteboard', kind: 'probe', reference: true, host: 'us06st1.zoom.us', url: 'https://us06st1.zoom.us/', attempts: 2, seconds: PROBE_SECONDS, label: 'Zoom 白板檔案主機 us06st1.zoom.us（連 2 次）' });
+  ITEMS.push({ id: 'cloudflare', group: 'cloudflare', kind: 'probe', reference: true, host: 'trycloudflare.com', url: 'https://trycloudflare.com/', attempts: 3, seconds: PROBE_SECONDS, label: 'Cloudflare trycloudflare.com（連 3 次；與 Zoom 無關）' });
+
+  const STATUS_TEXT = {
+    waiting: '等待中', running: '測試中', success: '成功', fail: '失敗', timeout: '逾時', unstable: '不穩定',
+    cors: '無法判定', 'http-error': '有回應但沒有檔案', mismatch: '內容不符', indeterminate: '無法判定',
+  };
+  const CAUSES = {
+    fail: '瀏覽器沒有完成 HTTPS 連線。可能原因：網路限制或封鎖、DNS 解析失敗、伺服器暫時沒有回應、公司或學校的防火牆、瀏覽器擴充套件（例如廣告阻擋）。瀏覽器不會說明是哪一種，本工具無法分辨。',
+    timeout: '等太久沒有回應。可能原因：網路很慢或不穩、連線在途中被丟棄（網路限制常見的情況）、伺服器沒有回應。',
+    unstable: '有時連得上、有時連不上。可能原因：網路不穩，或連線受到干擾。',
+    cors: '連得到伺服器，但瀏覽器不讓本頁讀取內容（跨網域限制，CORS）。這是瀏覽器的安全規則，不代表被封鎖；只是內容無法驗證。',
+    'http-error': '連得到伺服器，但伺服器沒有提供這個檔案。可能原因：檔案版本下架、地區限制、伺服器設定。不代表網路連不上。',
+    mismatch: '下載到的內容和官方檔案不同，不能當作可用。可能原因：網路業者或中間設備改寫內容、快取錯誤、官方更新了檔案。',
+  };
+
+  const $ = id => document.getElementById(id);
+  const ms = value => `${Math.round(value)} ms`;
+  const seconds = value => `${(value / 1000).toFixed(1)} 秒`;
+  const pause = wait => new Promise(resolve => { setTimeout(resolve, wait); });
+
+  // One request with its own deadline; the cache is never used, and no cookies or referrer are sent.
+  async function timed(url, options, limitSeconds, read) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), limitSeconds * 1000);
+    const started = performance.now();
+    try {
+      const response = await fetch(url, Object.assign({ cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer', signal: controller.signal }, options));
+      const body = read ? await response.arrayBuffer() : null;
+      return { ok: true, response, body, ms: performance.now() - started };
+    } catch (error) {
+      return { ok: false, timeout: controller.signal.aborted, error: error && error.name, ms: performance.now() - started };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async function sha256(buffer) {
+    if (!(window.crypto && crypto.subtle)) return null;
+    const digest = await crypto.subtle.digest('SHA-256', buffer);
+    return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+  }
+
+  // A reachability check: any HTTPS answer counts, and the page does not need to read it. Every
+  // address here answers directly (no redirect): a "no-cors" request cannot stop at a redirect,
+  // and following one off this page's list would look like a failure.
+  async function probeOnce(item) {
+    const result = await timed(item.url, { mode: 'no-cors' }, item.seconds, false);
+    if (result.ok) return { outcome: 'reached', ms: result.ms };
+    return { outcome: result.timeout ? 'timeout' : 'network', ms: result.ms };
+  }
+
+  // A file check: read the file and compare it with the official package. If reading fails, a
+  // plain request to the same address tells a browser rule (CORS) from a connection failure.
+  async function fileOnce(item) {
+    const result = await timed(item.url, { mode: 'cors' }, item.seconds, true);
+    if (result.ok) {
+      const status = result.response.status;
+      if (status !== 200) return { outcome: 'http-error', status, ms: result.ms };
+      const size = result.body.byteLength;
+      const digest = await sha256(result.body);
+      const same = digest === null ? size === item.file.size : digest === item.file.sha256 && size === item.file.size;
+      return { outcome: same ? (digest === null ? 'size-only' : 'verified') : 'mismatch', size, ms: result.ms };
+    }
+    if (result.timeout) return { outcome: 'timeout', ms: result.ms };
+    const plain = await timed(item.url, { mode: 'no-cors' }, PROBE_SECONDS, false);
+    return { outcome: plain.ok ? 'cors' : plain.timeout ? 'timeout' : 'network', ms: result.ms };
+  }
+
+  // Many attempts become one verdict, the most telling problem first.
+  function verdictOf(item, attempts) {
+    const good = attempts.filter(attempt => ['reached', 'verified', 'size-only'].includes(attempt.outcome)).length;
+    const count = outcome => attempts.filter(attempt => attempt.outcome === outcome).length;
+    let status;
+    if (count('mismatch')) status = 'mismatch';
+    else if (good === attempts.length) status = 'success';
+    else if (good > 0) status = 'unstable';
+    else if (count('http-error')) status = 'http-error';
+    else if (count('cors')) status = 'cors';
+    else if (count('timeout') === attempts.length) status = 'timeout';
+    else if (count('network') + count('timeout') === attempts.length) status = 'fail';
+    else status = 'indeterminate';
+    return { status, good, total: attempts.length };
+  }
+
+  function timingText(item, attempts) {
+    if (item.kind === 'file' && item.attempts === 1) {
+      const attempt = attempts[0];
+      if (attempt.size) return `${seconds(attempt.ms)}（約 ${Math.round(attempt.size / 1024 / (attempt.ms / 1000))} KB/秒）`;
+      return seconds(attempt.ms);
+    }
+    return attempts.map(attempt => ms(attempt.ms)).join('、');
+  }
+
+  function explanation(item, verdict, attempts, dns) {
+    const parts = [];
+    if (verdict.status === 'success' && item.kind === 'file') {
+      parts.push(attempts.some(attempt => attempt.outcome === 'size-only')
+        ? `下載完整（${attempts[0].size} 位元組，大小與官方相同）；這個瀏覽器無法比對內容雜湊。`
+        : `下載完整，內容與官方 ${SDK_VERSION} 版一致（SHA-256 相符）。`);
+    } else if (verdict.status === 'success') {
+      parts.push('HTTPS 可以連線。');
+    } else if (verdict.status === 'unstable') {
+      parts.push(`${verdict.total} 次中 ${verdict.good} 次成功。${CAUSES.unstable}`);
+    } else if (verdict.status === 'http-error') {
+      const statuses = attempts.filter(attempt => attempt.status).map(attempt => attempt.status);
+      parts.push(`伺服器回應 HTTP ${statuses.join('、')}。${CAUSES['http-error']}`);
+    } else if (CAUSES[verdict.status]) {
+      parts.push(CAUSES[verdict.status]);
+    } else {
+      parts.push('結果無法判定。');
+    }
+    // The DNS reference helps only where the connection itself failed; a server that answered was reached.
+    if (dns && ['fail', 'timeout', 'unstable'].includes(verdict.status)) parts.push(`（參考）${dnsSentence(dns)}`);
+    return parts.join(' ');
+  }
+
+  // A public DNS service in mainland China, as a reference only: the browser may use another.
+  async function lookUp(host) {
+    const result = await timed(`${DNS_LOOKUP}?name=${encodeURIComponent(host)}&type=1`, { mode: 'cors' }, PROBE_SECONDS, true);
+    if (!result.ok || result.response.status !== 200) return { state: 'unavailable' };
+    try {
+      const answer = JSON.parse(new TextDecoder().decode(result.body));
+      const addresses = (answer.Answer || []).filter(record => record.type === 1).map(record => record.data);
+      if (answer.Status === 3) return { state: 'nxdomain' };
+      if (answer.Status === 0 && addresses.length) return { state: 'resolved', addresses };
+      return { state: 'no-answer', code: answer.Status };
+    } catch (error) {
+      return { state: 'unavailable' };
+    }
+  }
+  // One line per name, in the order of the tests.
+  function dnsLines(dnsByHost) {
+    return [...new Set(ITEMS.map(item => item.host))].map(host => {
+      const dns = dnsByHost.get(host) || { state: 'unavailable' };
+      return `${host}：${dns.state === 'resolved' ? dns.addresses.join('、') : dns.state === 'nxdomain' ? '查無此網址' : dns.state === 'no-answer' ? '沒有位址' : '查詢失敗'}`;
+    });
+  }
+  function dnsSentence(dns) {
+    if (dns.state === 'resolved') return `中國大陸公共 DNS（阿里雲）查得到這個網址（${dns.addresses.slice(0, 3).join('、')}），問題比較可能在連線階段，而不是 DNS。`;
+    if (dns.state === 'nxdomain') return '中國大陸公共 DNS（阿里雲）查不到這個網址，問題可能在 DNS。';
+    if (dns.state === 'no-answer') return '中國大陸公共 DNS（阿里雲）沒有回傳位址，問題可能在 DNS。';
+    return '中國大陸公共 DNS（阿里雲）的查詢沒有成功，DNS 狀況無法判定。';
+  }
+
+  // The page, row by row.
+  const rows = new Map();
+  function renderRows() {
+    const body = $('rows');
+    body.textContent = '';
+    for (const item of ITEMS) {
+      const row = document.createElement('tr');
+      row.dataset.item = item.id;
+      row.dataset.status = 'waiting';
+      const name = document.createElement('td');
+      name.textContent = item.label;
+      if (item.reference) {
+        const note = document.createElement('div');
+        note.className = 'ref';
+        note.textContent = item.group === 'cloudflare' ? '參考項目，不用來判斷 Zoom'
+          : item.group === 'whiteboard' ? '參考項目：本帳號白板所用的檔案主機'
+          : '參考項目：從台灣測試時 Zoom 分配到的伺服器；在中國大陸可能分配到其他伺服器';
+        name.appendChild(note);
+      }
+      const state = document.createElement('td');
+      const badge = document.createElement('span');
+      badge.className = 'badge s-waiting';
+      badge.textContent = STATUS_TEXT.waiting;
+      state.appendChild(badge);
+      const time = document.createElement('td');
+      time.className = 'time';
+      const why = document.createElement('td');
+      row.append(name, state, time, why);
+      body.appendChild(row);
+      rows.set(item.id, { row, badge, time, why });
+    }
+  }
+  function show(item, status, timeText, whyText) {
+    const cells = rows.get(item.id);
+    cells.row.dataset.status = status;
+    cells.badge.className = `badge s-${status}`;
+    cells.badge.textContent = STATUS_TEXT[status];
+    cells.time.textContent = timeText || '';
+    cells.why.textContent = whyText || '';
+  }
+
+  async function runItem(item, dnsByHost, done) {
+    show(item, 'running');
+    const attempts = [];
+    for (let index = 0; index < item.attempts; index += 1) {
+      attempts.push(item.kind === 'file' ? await fileOnce(item) : await probeOnce(item));
+      if (index + 1 < item.attempts) await pause(400);
+    }
+    const verdict = verdictOf(item, attempts);
+    const result = { item, attempts, verdict, timing: timingText(item, attempts), why: explanation(item, verdict, attempts, dnsByHost.get(item.host)) };
+    show(item, verdict.status, result.timing, result.why);
+    done(result);
+    return result;
+  }
+
+  // At most `limit` at a time, in order.
+  async function inTurn(list, limit, work) {
+    const results = new Array(list.length);
+    let next = 0;
+    const lanes = Array.from({ length: Math.min(limit, list.length) }, async () => {
+      while (next < list.length) {
+        const index = next;
+        next += 1;
+        results[index] = await work(list[index]);
+      }
+    });
+    await Promise.all(lanes);
+    return results;
+  }
+
+  // The answers people read first, from the rows.
+  function summarize(results, dnsByHost) {
+    const by = id => results.find(result => result.item.id === id);
+    const group = name => results.filter(result => result.item.group === name);
+    const lines = [];
+    const dnsWorks = [...dnsByHost.values()].some(dns => dns.state !== 'unavailable');
+    const anything = results.some(result => result.verdict.good > 0);
+    if (!dnsWorks && !anything) {
+      lines.push({ group: 'overall', verdict: 'offline', text: '無法判讀：所有網址和中國大陸的對照服務都連不上，這台電腦可能沒有連上網路。請確認可以正常上網後再測一次。' });
+      return lines;
+    }
+    for (const cdn of CDNS) {
+      const manifest = by(`${cdn.group}-manifest`).verdict, media = by(`${cdn.group}-media`).verdict;
+      const both = [manifest.status, media.status];
+      let verdict, text;
+      if (both.includes('mismatch')) { verdict = 'mismatch'; text = '下載到的內容和官方檔案不同，不能當作可用（需要再確認）。'; }
+      else if (both.every(status => status === 'success')) { verdict = 'ok'; text = `可以下載，內容與官方 ${SDK_VERSION} 版一致。`; }
+      else if (both.every(status => status === 'fail' || status === 'timeout')) { verdict = 'unreachable'; text = '連不上，檔案無法下載（原因見明細，本工具不判定是否被封鎖）。'; }
+      else if (both.includes('cors')) { verdict = 'indeterminate'; text = '無法判定：連得到伺服器，但瀏覽器不讓本頁讀取內容（不代表被封鎖）。'; }
+      else if (both.includes('http-error')) { verdict = 'http-error'; text = '連得到伺服器，但沒有提供檔案（見明細）。'; }
+      else { verdict = 'partial'; text = '部分成功或時好時壞（見明細）。'; }
+      lines.push({ group: cdn.group, verdict, text: `${cdn.label}（${cdn.host}）：${text}` });
+    }
+    const join = by('join').verdict;
+    lines.push({ group: 'join', verdict: join.status === 'success' ? 'ok' : join.status === 'unstable' ? 'partial' : 'unreachable',
+      text: `Zoom 入場服務（zoom.us）：${join.status === 'success' ? 'HTTPS 可以連線。' : join.status === 'unstable' ? `時好時壞（${join.total} 次中 ${join.good} 次成功）。` : '連不上（見明細）。'}` });
+    const dcs = group('dc');
+    const dcGood = dcs.filter(result => result.verdict.status === 'success').length;
+    lines.push({ group: 'dc', verdict: `${dcGood}/${dcs.length}`, text: `Zoom 資料中心（參考）：${dcs.length} 個中有 ${dcGood} 個可以連線。` });
+    const signaling = group('signaling');
+    const signalingGood = signaling.filter(result => result.verdict.status === 'success').length;
+    lines.push({ group: 'signaling', verdict: `${signalingGood}/${signaling.length}`, text: `Zoom 即時連線伺服器（參考）：${signaling.length} 個中有 ${signalingGood} 個可以連線。` });
+    const board = by('whiteboard').verdict;
+    lines.push({ group: 'whiteboard', verdict: board.status === 'success' ? 'ok' : board.status, text: `Zoom 白板檔案主機（參考）：${board.status === 'success' ? '可以連線。' : `${STATUS_TEXT[board.status]}（見明細）。`}` });
+    const cloudflare = by('cloudflare').verdict;
+    lines.push({ group: 'cloudflare', verdict: cloudflare.status === 'success' ? 'ok' : cloudflare.status,
+      text: `Cloudflare trycloudflare.com（參考，與 Zoom 無關）：${cloudflare.status === 'success' ? '可以連線。' : `${STATUS_TEXT[cloudflare.status]}（見明細）。`}` });
+    if (!dnsWorks) lines.push({ group: 'dns', verdict: 'unavailable', text: '中國大陸公共 DNS（阿里雲）的對照查詢都沒有成功，所以 DNS 欄位無法判定；其他結果仍然有效。' });
+    return lines;
+  }
+
+  function browserText() {
+    const data = navigator.userAgentData;
+    if (data && data.brands && data.brands.length) {
+      const brand = data.brands.find(entry => !/Not.?A.?Brand|Chromium/i.test(entry.brand)) || data.brands.find(entry => /Chromium/i.test(entry.brand)) || data.brands[0];
+      return `${brand.brand} ${brand.version}；系統：${data.platform || '未知'}`;
+    }
+    const agent = navigator.userAgent;
+    const browser = (/Edg\/(\d+)/.exec(agent) && `Edge ${/Edg\/(\d+)/.exec(agent)[1]}`) || (/Firefox\/(\d+)/.exec(agent) && `Firefox ${/Firefox\/(\d+)/.exec(agent)[1]}`)
+      || (/Chrome\/(\d+)/.exec(agent) && `Chrome ${/Chrome\/(\d+)/.exec(agent)[1]}`) || (/Version\/(\d+).*Safari/.exec(agent) && `Safari ${/Version\/(\d+)/.exec(agent)[1]}`) || '未知';
+    const system = /Windows/.test(agent) ? 'Windows' : /Mac OS X/.test(agent) ? 'macOS' : /Android/.test(agent) ? 'Android' : /iPhone|iPad/.test(agent) ? 'iOS' : /Linux/.test(agent) ? 'Linux' : '未知';
+    return `${browser}；系統：${system}`;
+  }
+  function stamp(date) {
+    const two = value => String(value).padStart(2, '0');
+    const offset = -date.getTimezoneOffset();
+    const sign = offset >= 0 ? '+' : '-';
+    return `${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())} ${two(date.getHours())}:${two(date.getMinutes())}（UTC${sign}${two(Math.floor(Math.abs(offset) / 60))}:${two(Math.abs(offset) % 60)}）`;
+  }
+
+  function plainText(started, results, lines, dnsByHost) {
+    const out = [];
+    out.push('Zoom 視訊連線診斷（第一階段）結果');
+    out.push(`測試時間：${stamp(started)}`);
+    out.push(`瀏覽器：${browserText()}`);
+    out.push(`工具版本：${TOOL_VERSION}；Zoom Video SDK ${SDK_VERSION} 檔案`);
+    out.push('');
+    out.push('【判讀】');
+    for (const line of lines) out.push(`- ${line.text}`);
+    out.push('');
+    out.push('【明細】');
+    for (const result of results) {
+      out.push(`[${STATUS_TEXT[result.verdict.status]}] ${result.item.label}${result.item.reference ? '（參考）' : ''}`);
+      out.push(`    耗時：${result.timing || '－'}`);
+      out.push(`    說明：${result.why}`);
+    }
+    out.push('');
+    out.push('【中國大陸公共 DNS（阿里雲）查詢，參考】');
+    for (const line of dnsLines(dnsByHost)) out.push(`- ${line}`);
+    out.push('');
+    out.push('說明：本結果不含姓名、Email 或 IP，只代表這台電腦的網路能不能連到這些網址，不代表 Zoom 視訊一定能正常通話。');
+    return out.join('\n');
+  }
+
+  async function run() {
+    const startButton = $('start');
+    startButton.disabled = true;
+    $('summary-section').hidden = true;
+    $('text-section').hidden = true;
+    $('details-section').hidden = false;
+    renderRows();
+    document.body.dataset.state = 'running';
+    const started = new Date();
+    let finished = 0;
+    const progress = () => { $('progress').textContent = `測試中…已完成 ${finished} / ${ITEMS.length} 項`; };
+    progress();
+    // The DNS reference first: one lookup per name, a few at a time.
+    const hosts = [...new Set(ITEMS.map(item => item.host))];
+    const dnsByHost = new Map();
+    await inTurn(hosts, 4, async host => { dnsByHost.set(host, await lookUp(host)); });
+    const done = () => { finished += 1; progress(); };
+    // The SDK files one after another, so the downloads do not share the line; the other
+    // addresses meanwhile, four at a time.
+    const files = ITEMS.filter(item => item.kind === 'file');
+    const probes = ITEMS.filter(item => item.kind === 'probe');
+    const [fileResults, probeResults] = await Promise.all([
+      inTurn(files, 1, item => runItem(item, dnsByHost, done)),
+      inTurn(probes, 4, item => runItem(item, dnsByHost, done)),
+    ]);
+    const results = ITEMS.map(item => fileResults.concat(probeResults).find(result => result.item === item));
+    const lines = summarize(results, dnsByHost);
+    const summary = $('summary');
+    summary.textContent = '';
+    for (const line of lines) {
+      const entry = document.createElement('li');
+      entry.dataset.group = line.group;
+      entry.dataset.verdict = line.verdict;
+      entry.textContent = line.text;
+      summary.appendChild(entry);
+    }
+    const dnsList = $('dns');
+    dnsList.textContent = '';
+    for (const line of dnsLines(dnsByHost)) {
+      const entry = document.createElement('li');
+      entry.textContent = line;
+      dnsList.appendChild(entry);
+    }
+    $('summary-section').hidden = false;
+    $('text').value = plainText(started, results, lines, dnsByHost);
+    $('text-section').hidden = false;
+    $('progress').textContent = `測試完成，共 ${ITEMS.length} 項。`;
+    startButton.textContent = '再測一次';
+    startButton.disabled = false;
+    document.body.dataset.state = 'done';
+  }
+
+  async function copyText() {
+    const box = $('text');
+    let copied = false;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) { await navigator.clipboard.writeText(box.value); copied = true; }
+    } catch (error) { copied = false; }
+    if (!copied) {
+      box.focus();
+      box.select();
+      try { copied = document.execCommand('copy'); } catch (error) { copied = false; }
+    }
+    $('copied').textContent = copied ? '已複製，可以貼到訊息裡。' : '無法自動複製：請在上方文字框按 Ctrl+A 全選，再按 Ctrl+C 複製。';
+  }
+
+  const list = $('destinations');
+  for (const url of [...new Set(ITEMS.map(item => item.url).concat(`${DNS_LOOKUP}（查詢上面每個網址的 DNS）`))]) {
+    const entry = document.createElement('li');
+    entry.textContent = url;
+    list.appendChild(entry);
+  }
+  $('start').addEventListener('click', () => { run(); });
+  $('copy').addEventListener('click', () => { copyText(); });
+  document.body.dataset.state = 'ready';
+  if (navigator.onLine === false) $('progress').textContent = '這台電腦目前顯示沒有連上網路，請先連上網路再測試。';
+}());
+</script>
+</body>
+</html>
