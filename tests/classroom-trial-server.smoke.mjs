@@ -5,7 +5,7 @@
 // synthetic provider stands in for the vendor here; no account, key or outside address is used.
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
-import { request as httpRequest } from 'node:http';
+import { createServer, request as httpRequest } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -100,8 +100,9 @@ console.error(new Error('failed with ${secretValue}'));`;
 
   await check('the tunnel command points only at the public port and always names the testers (dry run, nothing opened)', async () => {
     const tunnel = args => spawnSync(process.execPath, ['tools/classroom-trial/start-tunnel.mjs', ...args, '--dry-run'], { encoding: 'utf8', windowsHide: true });
-    expect(tunnel(['--allowed-mail', 'tester.one@example.org', '--allowed-mail', 'tester.two@example.org']).stdout.trim())
-      .toBe('cloudflared tunnel --no-autoupdate --url http://127.0.0.1:3310 --allowed-mail tester.one@example.org --allowed-mail tester.two@example.org');
+    const dry = tunnel(['--allowed-mail', 'tester.one@example.org', '--allowed-mail', 'tester.two@example.org']).stdout.trim().split('\n');
+    expect(dry[0]).toBe('cloudflared tunnel --no-autoupdate --url http://127.0.0.1:3310 --allowed-mail tester.one@example.org --allowed-mail tester.two@example.org');
+    expect(dry[1]).toMatch(/^cloudflared to run: .+ \((version \d{4}\.\d+\.\d+|not found)\)$/);
     expect(tunnel([]).stderr).toContain('Name every tester');
     expect(tunnel(['--allowed-mail', '*@example.org']).stderr).toContain('one full address');
     expect(tunnel(['--allowed-mail', 'tester.one@example.org', '--public-port', '3311']).stderr).toContain('never at the local admin port');
@@ -122,6 +123,41 @@ console.error(new Error('failed with ${secretValue}'));`;
     }
     expect((await raw(pub, 'POST', '/trial/lessons', { 'content-type': 'application/json' }, '{}')).status).toBe(404);
     expect((await raw(loc, 'GET', '/api/academy-content')).status).toBe(200);
+  });
+
+  await check('the tunnel goes only onto the public port, and closes unless Cloudflare stops an anonymous visit (no tunnel opened)', async () => {
+    // Every answer names its port.
+    expect((await raw(pub, 'GET', '/admin')).headers['x-ihear-trial']).toBe('public');
+    expect((await raw(loc, 'GET', '/api/academy-content')).headers['x-ihear-trial']).toBe('local');
+    const tunnel = args => new Promise(resolve => {
+      const run = spawn(process.execPath, ['tools/classroom-trial/start-tunnel.mjs', ...args], { windowsHide: true });
+      let stdout = '', stderr = '';
+      run.stdout.on('data', data => { stdout += data; });
+      run.stderr.on('data', data => { stderr += data; });
+      run.on('exit', status => resolve({ status, stdout, stderr }));
+    });
+    // Before opening: the local admin port, or a port with nothing on it, is refused.
+    for (const port of [loc, 9]) {
+      const refusedPort = await tunnel(['--allowed-mail', 'tester.one@example.org', '--public-port', String(port), '--local-port', '1']);
+      expect([port, refusedPort.status]).toEqual([port, 2]);
+      expect(refusedPort.stderr).toMatch(/is not the trial server's public port|was not found/);
+      expect(refusedPort.stderr).toContain('No tunnel was opened');
+    }
+    // After opening, an anonymous visit: the trial server answering it means no PIN stood in the way.
+    const open = await tunnel(['--gate-check-only', `http://127.0.0.1:${pub}`, '--gate-seconds', '5']);
+    expect([open.status, open.stderr]).toEqual([3, expect.stringContaining('GATE FAILED')]);
+    // Cloudflare's redirect to its email-PIN sign-in is the pass; an unclear answer closes the tunnel.
+    const stand = createServer((request, response) => {
+      if (request.url === '/gated/admin') response.writeHead(302, { location: 'https://example.cloudflareaccess.com/cdn-cgi/access/login/trial' }).end();
+      else response.writeHead(200, { 'content-type': 'text/plain' }).end('hello');
+    });
+    await new Promise(resolve => { stand.listen(0, '127.0.0.1', resolve); });
+    const standIn = `http://127.0.0.1:${stand.address().port}`;
+    const gated = await tunnel(['--gate-check-only', `${standIn}/gated`, '--gate-seconds', '5']);
+    expect([gated.status, gated.stdout]).toEqual([0, expect.stringContaining('Email gate confirmed')]);
+    const unclear = await tunnel(['--gate-check-only', `${standIn}/unclear`, '--gate-seconds', '2']);
+    expect([unclear.status, unclear.stderr]).toEqual([4, expect.stringContaining('could not be confirmed')]);
+    stand.close();
   });
 
   const start = new Date(Date.now() + 8 * 3600_000 + 5 * 60_000);

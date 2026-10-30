@@ -11,6 +11,7 @@ The trial runs on this computer, and the outside world sees only the classroom. 
 | `tools/classroom-trial/trial-server.mjs` | Runs the built site with two listeners, both on `127.0.0.1`. **Public** (3310) is the only port a tunnel may use. **Local** (3311) is for this computer only. |
 | `tools/classroom-trial/new-lesson.mjs` | Adds a `TEST-` lesson through the local port and prints the tutor's and the student's personal links, once. |
 | `tools/classroom-trial/start-tunnel.mjs` | Opens a Cloudflare Quick Tunnel to the public port, limited by `--allowed-mail`: Cloudflare sends each visitor a one-time PIN. `--dry-run` prints the command without opening anything. |
+| `tools/classroom-trial/tunnel-checks.mjs` | What `start-tunnel.mjs` checks: which cloudflared to run and whether it is new enough, and whether an anonymous visit to the open tunnel is stopped by Cloudflare's email PIN. |
 | `tools/classroom-trial/env-file.mjs` | Reads the vendor-key file for the two scripts below and the server. It never shows a value: errors name a setting or a line number only. |
 | `tools/classroom-trial/local-join-check.mjs` | The local join check: the server with the real keys and two browsers on this computer (tutor and student, fake camera and microphone) joining one real Zoom session. No tunnel. `--rehearsal` runs it with stand-in keys and no route to Zoom. |
 
@@ -20,6 +21,16 @@ The trial runs on this computer, and the outside world sees only the classroom. 
   - Only the listed email addresses get past Cloudflare's PIN page.
   - The `trycloudflare.com` address is random and lives only while the tunnel runs.
   - No Cloudflare account or domain is used.
+- **Before the tunnel opens, `start-tunnel.mjs` checks two things:**
+  - cloudflared is 2026.9.2 or later, which `--allowed-mail` needs. The flag is hidden from `--help`, so the version is what counts.
+  - The port is the trial server's public port. Every answer from the server carries `X-iHear-Trial: public` or `local`, and anything else is refused.
+- **After it opens:**
+  - It visits the address anonymously.
+  - Only Cloudflare stopping that visit (a redirect to its email-PIN sign-in, or a refusal) counts as a pass.
+  - If the trial server answers instead, or the answer stays unclear for 90 seconds, the tunnel is closed at once.
+- **cloudflared itself:**
+  - The trial uses a copy in `%LOCALAPPDATA%\iHear-classroom-trial\cloudflared\`: 2026.10.6, with its SHA-256 checked against the release and Cloudflare's signature valid.
+  - Deleting that folder removes it.
 - **Public port, classroom only:**
   - The room page, its three APIs (join, status, host-events), the site's static files and the theme start-up script.
   - Everything else answers 404: the home page, `/admin`, `/api/admin`, `/api/auth` (no Google sign-in) and the other APIs.
@@ -73,6 +84,8 @@ The trial runs on this computer, and the outside world sees only the classroom. 
    - It prints names, yes/no answers, counts and host names only.
 4. **Start the server:** `node tools/classroom-trial/trial-server.mjs --env <that file>`.
 5. **Open the tunnel**, which needs approval: `node tools/classroom-trial/start-tunnel.mjs --allowed-mail <tester 1> --allowed-mail <tester 2>`.
+   - It shows the address while checking. The next step, adding lessons, appears only after the gate check passes; otherwise the tunnel is already closed.
+   - Before sending any link, also try the address with an email that is not on the list: no PIN should arrive.
 6. **Add a lesson:** `node tools/classroom-trial/new-lesson.mjs --public <tunnel address> --date YYYY-MM-DD --time HH:MM` (Taipei). Send each link to its tester only.
 7. **Follow the lesson** at `http://127.0.0.1:3311/trial/owner`, on this computer.
 8. **Close:** Ctrl+C the tunnel, then the server. After the trial, revoke the keys at the vendor.

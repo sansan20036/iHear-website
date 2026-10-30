@@ -123,14 +123,18 @@ const sessionCookie = async (request, email, maxAge) => {
 
 const log = (port, request, status) => appendFileSync(path.join(dataDir, `${port === publicPort ? 'public' : 'local'}-requests.log`),
   `${new Date().toISOString()} ${request.method} ${new URL(request.url, 'http://x').pathname} ${status}\n`);
+// Every answer says which port gave it, so start-tunnel.mjs can tell the classroom-only public port
+// from anything else, and an answer that reached this computer from one Cloudflare stopped.
+const marker = port => (port === publicPort ? 'public' : 'local');
 const notFound = (port, request, response) => {
-  response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow' });
+  response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow', 'x-ihear-trial': marker(port) });
   response.end('Not found');
   log(port, request, 404);
 };
 const forward = (port, request, response, pathname) => {
   applyHeaders(pathname, response);
   response.setHeader('X-Robots-Tag', 'noindex, nofollow');
+  response.setHeader('X-iHear-Trial', marker(port));
   response.on('finish', () => log(port, request, response.statusCode));
   void handle(request, response).catch(error => {
     console.error(error);
@@ -160,7 +164,7 @@ const publicServer = createServer(async (request, response) => {
       const invite = invites.get(tutor[1]);
       if (!invite || invite.expiresAt < Date.now() || !sameHash(url.searchParams.get('t'), invite.tutorTokenHash)) return notFound(publicPort, request, response);
       response.writeHead(303, {
-        location: `/classroom/${tutor[1]}`, 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow', 'referrer-policy': 'no-referrer',
+        location: `/classroom/${tutor[1]}`, 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow', 'referrer-policy': 'no-referrer', 'x-ihear-trial': 'public',
         'set-cookie': [cookie(request, ACCESS_COOKIE, accessId(), ACCESS_HOURS * 3600), await sessionCookie(request, invite.tutorEmail, ACCESS_HOURS * 3600)],
       });
       response.end();
