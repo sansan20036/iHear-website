@@ -20,12 +20,15 @@ export type MediaProviderName = (typeof MEDIA_PROVIDERS)[number];
 
 export type ConnectionState = "idle" | "connecting" | "connected" | "reconnecting" | "disconnected" | "failed";
 export type DeviceKind = "camera" | "microphone";
-export type DeviceState = "off" | "on" | "denied" | "unavailable";
+// "starting": a press is waiting for the browser and the provider. "failed": it did not start and
+// can be pressed again; the problem says why, for the page's message.
+export type DeviceState = "off" | "on" | "denied" | "unavailable" | "starting" | "failed";
+export type DeviceProblem = "timeout" | "capture" | "autoplay" | "missing" | "busy" | "error";
 export type MediaRole = "tutor" | "student";
 
 export type MediaEvent =
   | { type: "connection"; state: ConnectionState; at: number }
-  | { type: "device"; kind: DeviceKind; state: DeviceState; at: number }
+  | { type: "device"; kind: DeviceKind; state: DeviceState; problem?: DeviceProblem; at: number }
   // The other person in the room. A real adapter also passes their user key (our participant
   // id, which the session token carries) so the tutor's page can report joins and leaves.
   | { type: "remote"; present: boolean; camera: boolean; microphone: boolean; userKey: string | null; at: number }
@@ -211,8 +214,8 @@ export class SyntheticMediaAdapter implements ClassroomMediaAdapter {
 // missing or changed call fails the type check; the tests stand in for the SDK with this shape.
 export type ZoomParticipant = { userId: number; userIdentity?: string; userKey?: string; bVideoOn?: boolean; muted?: boolean; audio?: string };
 export type ZoomStream = {
-  startAudio(): Promise<unknown>; muteAudio(): Promise<unknown>; unmuteAudio(): Promise<unknown>;
-  startVideo(): Promise<unknown>; stopVideo(): Promise<unknown>;
+  startAudio(): Promise<unknown>; stopAudio(): Promise<unknown>; muteAudio(): Promise<unknown>; unmuteAudio(): Promise<unknown>;
+  startVideo(): Promise<unknown>; stopVideo(): Promise<unknown>; isCapturingVideo(): boolean;
   attachVideo(userId: number, quality: number): Promise<unknown>; detachVideo(userId: number): Promise<unknown>;
   // Materials: the tutor shares a screen, window or tab; the other side sees it in a container of its own.
   isStartShareScreenWithVideoElement(): boolean;
@@ -237,7 +240,7 @@ export type ZoomClient = {
   leave(): Promise<unknown>;
   getMediaStream(): ZoomStream;
   getWhiteboardClient(): ZoomWhiteboard;
-  getCurrentUserInfo(): { userId: number } | null;
+  getCurrentUserInfo(): { userId: number; audio?: string } | null;
   getAllUser(): ZoomParticipant[];
   on(event: string, handler: (payload: unknown) => void): void;
   off(event: string, handler: (payload: unknown) => void): void;
@@ -262,6 +265,19 @@ export async function loadZoomVideoSdkPackage(): Promise<ZoomVideoSdk> {
 
 const ZOOM_CONNECTION: Record<string, ConnectionState> = { Connected: "connected", Reconnecting: "reconnecting", Closed: "disconnected", Fail: "failed" };
 const VIDEO_720P = 3;
+// How long a press of the camera or microphone may wait for Zoom before the page offers to try
+// again; starting normally takes a second or two.
+const DEVICE_START_MS = 10_000;
+type DeviceAnswer = { state: DeviceState; problem?: DeviceProblem };
+// A refused start: blocked by the person or the browser, or worth another try (and why).
+function deviceAnswerOf(error: unknown): DeviceAnswer {
+  const { name, type, reason, message } = (error ?? {}) as { name?: string; type?: string; reason?: string; message?: string };
+  const text = `${type ?? ""} ${reason ?? ""} ${message ?? ""}`;
+  if (name === "NotAllowedError" || name === "SecurityError" || /PERMISSION|denied|not allowed/i.test(text)) return { state: "denied" };
+  if (name === "NotFoundError" || name === "OverconstrainedError" || /not ?found|no (camera|microphone|device)/i.test(text)) return { state: "failed", problem: "missing" };
+  if (name === "NotReadableError" || /in use|could not start|busy/i.test(text)) return { state: "failed", problem: "busy" };
+  return { state: "failed", problem: "error" };
+}
 const isNode = (value: unknown): value is Node => Boolean(value) && typeof (value as Node).nodeType === "number";
 type ZoomStage = { videos: HTMLElement; share: HTMLElement; whiteboard: HTMLElement; ownShare: HTMLElement };
 
@@ -279,8 +295,17 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
   private board: "none" | "presenting" | "viewing" = "none";
   private readonly tiles = new Map<number, unknown>();
   private readonly handlers: [string, (payload: unknown) => void][] = [];
+  // This page's camera and microphone, the latest press of each, and the press now waiting for Zoom.
+  private readonly devices: Record<DeviceKind, DeviceState> = { camera: "off", microphone: "off" };
+  private readonly presses: Record<DeviceKind, number> = { camera: 0, microphone: 0 };
+  private readonly waiting: Partial<Record<DeviceKind, (answer: DeviceAnswer) => void>> = {};
+  // Presses made while Zoom is still finishing the join, waiting for its media stream.
+  private readonly streamWaiters = new Set<() => void>();
+  private readonly deviceStartMs: number;
 
-  constructor(private readonly load: () => Promise<ZoomVideoSdk> = loadZoomVideoSdkPackage, private readonly now: () => number = Date.now) {}
+  constructor(private readonly load: () => Promise<ZoomVideoSdk> = loadZoomVideoSdkPackage, private readonly now: () => number = Date.now, options: { deviceStartMs?: number } = {}) {
+    this.deviceStartMs = options.deviceStartMs ?? DEVICE_START_MS;
+  }
 
   subscribe(listener: (event: MediaEvent) => void) {
     this.listeners.add(listener);
@@ -322,6 +347,10 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
       await client.init("en-US", "Global", { patchJsMedia: true, leaveOnPageUnload: true });
       this.listen("connection-change", (payload) => {
         const state = ZOOM_CONNECTION[String((payload as { state?: string })?.state)];
+        // Zoom says "Connected" before join() has finished. The room counts as connected, and its
+        // buttons work, only once join() has given the media stream (seen in the real trial: a
+        // camera pressed in between did nothing).
+        if (state === "connected" && !this.stream) return;
         if (state) this.emit({ type: "connection", state, at: this.now() });
       });
       for (const name of ["user-added", "user-updated", "user-removed"]) this.listen(name, () => this.reportRemote());
@@ -330,15 +359,41 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
       // The browser's own "stop sharing" button.
       this.listen("passively-stop-share", () => this.endOwnShare());
       this.listen("peer-whiteboard-state-change", (payload) => void this.remoteBoard(payload as { action?: string; userId?: number }));
+      // Zoom's own reports on this page's camera and microphone. They settle a press even when the
+      // call that started it never answers (seen when a device was pressed the moment both had
+      // joined), and keep the buttons true when something else changes a device. Zoom 2.x marks
+      // its old "media-sdk-change" readiness event as deprecated and always successful.
+      this.listen("video-capturing-change", (payload) => {
+        const state = (payload as { state?: string })?.state;
+        if (state === "Started") this.fromZoom("camera", { state: "on" });
+        else if (state === "Failed") this.fromZoom("camera", { state: "failed", problem: "capture" });
+        else if (state === "Stopped" && this.devices.camera === "on") this.fromZoom("camera", { state: "off" });
+      });
+      this.listen("current-audio-change", (payload) => {
+        const action = (payload as { action?: string })?.action;
+        if (action === "join") this.audioStarted = true;
+        if (action === "leave") this.audioStarted = false;
+        if (action === "join" || action === "unmuted") this.fromZoom("microphone", { state: "on" });
+        else if ((action === "muted" || action === "leave") && this.devices.microphone === "on") this.fromZoom("microphone", { state: "off" });
+      });
+      // Zoom: this "may occur when invoking stream.startAudio() immediately after joining"; the
+      // browser waits for the person to press something again.
+      this.listen("auto-play-audio-failed", () => this.fromZoom("microphone", { state: "failed", problem: "autoplay" }));
+      this.listen("device-permission-change", (payload) => {
+        const { name, state } = (payload ?? {}) as { name?: string; state?: string };
+        if ((name === "camera" || name === "microphone") && state === "denied") this.fromZoom(name, { state: "denied" });
+      });
       // The display name is the participant code: no student name reaches Zoom.
       await client.join(input.sessionName, input.sessionToken, input.participantCode);
       this.stream = client.getMediaStream();
+      for (const ready of [...this.streamWaiters]) ready();
       this.emit({ type: "connection", state: "connected", at: this.now() });
       this.reportRemote();
       const sharing = this.stream.getActiveShareUserId();
       if (sharing) await this.remoteShare({ state: "Active", userId: sharing });
     } catch (error) {
       this.client = null;
+      for (const ready of [...this.streamWaiters]) ready();
       this.emit({ type: "connection", state: "failed", at: this.now() });
       throw error;
     }
@@ -349,6 +404,15 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     if (!client) return;
     for (const [name, handler] of this.handlers.splice(0)) client.off(name, handler);
     this.client = null; this.stream = null; this.audioStarted = false; this.tiles.clear(); this.sharer = null;
+    for (const ready of [...this.streamWaiters]) ready();
+    // A press still waiting ends with the room; the next join starts with both devices off.
+    for (const kind of ["camera", "microphone"] as const) {
+      this.presses[kind] += 1;
+      const pending = this.waiting[kind];
+      delete this.waiting[kind];
+      pending?.({ state: "off" });
+      this.devices[kind] = "off";
+    }
     await client.leave().catch(() => undefined);
     if (this.stage) {
       for (const part of Object.values(this.stage)) part.replaceChildren();
@@ -359,26 +423,108 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     this.emit({ type: "connection", state: "disconnected", at: this.now() });
   }
 
+  // A press of the camera or microphone, always from the person's own click, as browsers require.
+  // Turning on waits for Zoom's call or Zoom's own report, at most deviceStartMs; anything else
+  // ends as "failed", which the page offers to try again.
   async setDevice(kind: DeviceKind, on: boolean) {
-    const stream = this.stream;
-    if (!stream) return "off" as DeviceState;
-    let state: DeviceState;
-    try {
-      if (kind === "microphone") {
-        if (on && !this.audioStarted) { await stream.startAudio(); this.audioStarted = true; }
-        else if (on) await stream.unmuteAudio();
-        else if (this.audioStarted) await stream.muteAudio();
-      } else if (on) {
-        await stream.startVideo();
-        const self = this.client?.getCurrentUserInfo()?.userId;
-        if (self != null) await this.attach(self);
-      } else await stream.stopVideo();
-      state = on ? "on" : "off";
-    } catch (error) {
-      state = (error as { name?: string })?.name === "NotAllowedError" || /PERMISSION/i.test(String((error as { type?: string })?.type ?? "")) ? "denied" : "unavailable";
+    const press = ++this.presses[kind];
+    // After a press that did not start, Zoom's half-started camera or audio is cleared first.
+    const retry = this.devices[kind] === "failed";
+    let stream = this.stream;
+    if (!stream && on && this.client) {
+      // Pressed while Zoom is still finishing the join: wait for its media stream, never drop it.
+      this.setDeviceState(kind, "starting");
+      stream = await this.streamWithin(this.deviceStartMs);
+      if (press !== this.presses[kind]) return this.devices[kind];
+      if (!stream) {
+        this.setDeviceState(kind, "failed", "timeout");
+        return "failed" as DeviceState;
+      }
     }
-    this.emit({ type: "device", kind, state, at: this.now() });
-    return state;
+    if (!stream) return "off" as DeviceState;
+    if (!on) {
+      try {
+        if (kind === "camera") await stream.stopVideo();
+        else if (this.audioStarted) await stream.muteAudio();
+        await this.settle(kind, { state: "off" });
+      } catch (error) {
+        await this.settle(kind, deviceAnswerOf(error));
+      }
+      return this.devices[kind];
+    }
+    this.setDeviceState(kind, "starting");
+    const answer = await this.start(kind, stream, retry);
+    // A later press, or leaving, took over: its own answer stands.
+    if (press !== this.presses[kind] || stream !== this.stream) return this.devices[kind];
+    await this.settle(kind, answer);
+    return answer.state;
+  }
+
+  // The media stream once join() has given it, or null after `ms` (or on leaving).
+  private streamWithin(ms: number) {
+    return new Promise<ZoomStream | null>((resolve) => {
+      const deadline = setTimeout(() => ready(), ms);
+      const ready = () => {
+        clearTimeout(deadline);
+        this.streamWaiters.delete(ready);
+        resolve(this.stream);
+      };
+      this.streamWaiters.add(ready);
+    });
+  }
+
+  // Zoom's call, Zoom's own report or the deadline, whichever comes first.
+  private start(kind: DeviceKind, stream: ZoomStream, retry: boolean) {
+    return new Promise<DeviceAnswer>((resolve) => {
+      const deadline = setTimeout(() => done({ state: "failed", problem: "timeout" }), this.deviceStartMs);
+      const done = (answer: DeviceAnswer) => {
+        clearTimeout(deadline);
+        if (this.waiting[kind] === done) delete this.waiting[kind];
+        resolve(answer);
+      };
+      this.waiting[kind] = done;
+      this.callStart(kind, stream, retry).then(() => done({ state: "on" }), (error: unknown) => done(deviceAnswerOf(error)));
+    });
+  }
+
+  private async callStart(kind: DeviceKind, stream: ZoomStream, retry: boolean) {
+    if (kind === "camera") {
+      // Already capturing: an earlier press started after all.
+      if (stream.isCapturingVideo()) return;
+      if (retry) await stream.stopVideo().catch(() => undefined);
+      await stream.startVideo();
+      return;
+    }
+    if (retry) {
+      await stream.stopAudio().catch(() => undefined);
+      this.audioStarted = false;
+    }
+    if (this.audioStarted) {
+      await stream.unmuteAudio();
+    } else {
+      await stream.startAudio();
+      this.audioStarted = true;
+    }
+  }
+
+  // Zoom's own report on a device answers the press now waiting, or else stands by itself.
+  private fromZoom(kind: DeviceKind, answer: DeviceAnswer) {
+    const waiting = this.waiting[kind];
+    if (waiting) waiting(answer);
+    else void this.settle(kind, answer);
+  }
+
+  private async settle(kind: DeviceKind, answer: DeviceAnswer) {
+    this.setDeviceState(kind, answer.state, answer.problem);
+    const self = this.client?.getCurrentUserInfo()?.userId;
+    if (kind === "camera" && answer.state === "on" && self != null) await this.attach(self).catch(() => undefined);
+  }
+
+  private setDeviceState(kind: DeviceKind, state: DeviceState, problem?: DeviceProblem) {
+    // A repeated failure is told again, for the page's message.
+    if (this.devices[kind] === state && state !== "failed") return;
+    this.devices[kind] = state;
+    this.emit({ type: "device", kind, state, ...(state === "failed" ? { problem: problem ?? "error" } : {}), at: this.now() });
   }
 
   // Materials: Zoom has no PDF or PPT upload, so the tutor shares the screen, window or browser tab
@@ -458,9 +604,16 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
 
   private async attach(userId: number) {
     if (!this.stream || !this.stage || this.tiles.has(userId)) return;
-    const element = await this.stream.attachVideo(userId, VIDEO_720P);
-    this.tiles.set(userId, element);
-    if (isNode(element)) this.stage.videos.append(element);
+    // Claimed before the wait, so Zoom's report and the finished call never draw one video twice.
+    this.tiles.set(userId, null);
+    try {
+      const element = await this.stream.attachVideo(userId, VIDEO_720P);
+      this.tiles.set(userId, element);
+      if (isNode(element)) this.stage.videos.append(element);
+    } catch (error) {
+      this.tiles.delete(userId);
+      throw error;
+    }
   }
 
   // The other person's shared screen, shown while they share.

@@ -303,13 +303,22 @@ describe("browser adapters", () => {
     };
     return { doc, root: doc.createElement("div") };
   }
-  function fakeZoom({ joinError = null, videoError = null, shareError = null, canBoard = true, sharingAtJoin = 0 } = {}) {
+  function fakeZoom({ joinError = null, videoError = null, shareError = null, canBoard = true, sharingAtJoin = 0, videoHangs = 0, audioHangs = 0, slowJoin = false } = {}) {
     const calls = [];
     const handlers = new Map();
     const users = [{ userId: 1, userIdentity: "P-TEST-T01" }];
+    // A join() that finishes only when the test says so, as Zoom's can after it reports "Connected".
+    let releaseJoin = () => {};
+    const joinGate = slowJoin ? new Promise(resolve => { releaseJoin = resolve; }) : null;
+    // The first N starts never answer, as Zoom's did when a device was pressed the moment both had joined.
+    const hangs = { video: videoHangs, audio: audioHangs };
+    const never = () => new Promise(() => {});
+    let capturing = false;
     const stream = {
-      startAudio: async () => calls.push("startAudio"), muteAudio: async () => calls.push("muteAudio"), unmuteAudio: async () => calls.push("unmuteAudio"),
-      startVideo: async () => { calls.push("startVideo"); if (videoError) throw videoError; }, stopVideo: async () => calls.push("stopVideo"),
+      startAudio: async () => { calls.push("startAudio"); if (hangs.audio > 0) { hangs.audio -= 1; await never(); } },
+      stopAudio: async () => calls.push("stopAudio"), muteAudio: async () => calls.push("muteAudio"), unmuteAudio: async () => calls.push("unmuteAudio"),
+      startVideo: async () => { calls.push("startVideo"); if (videoError) throw videoError; if (hangs.video > 0) { hangs.video -= 1; await never(); } capturing = true; },
+      stopVideo: async () => { calls.push("stopVideo"); capturing = false; }, isCapturingVideo: () => capturing,
       attachVideo: async (userId) => { calls.push(`attach:${userId}`); return { nodeType: 1, tag: `video:${userId}` }; }, detachVideo: async (userId) => calls.push(`detach:${userId}`),
       isStartShareScreenWithVideoElement: () => true,
       startShareScreen: async (target) => { calls.push(`share:${target.tag}`); if (shareError) throw shareError; },
@@ -326,7 +335,7 @@ describe("browser adapters", () => {
     };
     const client = {
       init: async (...args) => calls.push(["init", ...args.slice(0, 2)].join(":")),
-      join: async (...args) => { calls.push(["join", ...args].join(":")); if (joinError) throw joinError; },
+      join: async (...args) => { calls.push(["join", ...args].join(":")); if (joinGate) await joinGate; if (joinError) throw joinError; },
       leave: async () => calls.push("leave"), getMediaStream: () => stream, getWhiteboardClient: () => whiteboard,
       getCurrentUserInfo: () => ({ userId: 1 }), getAllUser: () => users,
       on: (name, handler) => handlers.set(name, handler), off: (name) => { calls.push(`off:${name}`); handlers.delete(name); },
@@ -335,15 +344,15 @@ describe("browser adapters", () => {
       VERSION: "2.6.0", createClient: () => client,
       checkSystemRequirements: () => ({ audio: true, video: true, screen: false }), checkFeatureRequirements: () => ({ unSupportFeatures: ["screenShare"] }),
     };
-    return { calls, handlers, users, sdk };
+    return { calls, handlers, users, sdk, releaseJoin: () => releaseJoin() };
   }
   const zoomJoin = { sessionToken: "synthetic.jwt.token", sessionName: "ihear-l-test-v01", lessonCode: "TEST-V01", participantCode: "TEST-T01", role: "tutor" };
   // Zoom calls its handlers without waiting; let their asynchronous work finish.
   const settle = () => new Promise(resolve => { setTimeout(resolve, 0); });
   const recorded = adapter => { const events = []; adapter.subscribe(event => events.push(event)); return events; };
-  const joined = async (options) => {
+  const joined = async (options, adapterOptions) => {
     const zoom = fakeZoom(options), dom = fakeDom();
-    const adapter = new ZoomVideoSdkMediaAdapter(async () => zoom.sdk, () => 1);
+    const adapter = new ZoomVideoSdkMediaAdapter(async () => zoom.sdk, () => 1, adapterOptions);
     const events = recorded(adapter);
     adapter.mount(dom.root);
     await adapter.join(zoomJoin);
@@ -381,6 +390,101 @@ describe("browser adapters", () => {
     await adapter.leave();
     expect(zoom.calls).toContain("leave");
     expect(zoom.handlers.size).toBe(0);
+  });
+
+  test("Zoom devices: a start Zoom never answers ends 'failed' after the deadline; pressing again clears it and starts", async () => {
+    const { zoom, adapter, events, videos } = await joined({ videoHangs: 1 }, { deviceStartMs: 20 });
+    expect(await adapter.setDevice("camera", true)).toBe("failed");
+    expect(events.filter(event => event.type === "device")).toEqual([
+      { type: "device", kind: "camera", state: "starting", at: 1 },
+      { type: "device", kind: "camera", state: "failed", problem: "timeout", at: 1 },
+    ]);
+    expect(await adapter.setDevice("camera", true)).toBe("on");
+    expect(zoom.calls.filter(call => /Video|attach/.test(call))).toEqual(["startVideo", "stopVideo", "startVideo", "attach:1"]);
+    expect(videos.children.map(child => child.tag)).toEqual(["video:1"]);
+  });
+
+  test("Zoom devices: Zoom's own report settles a press whose call never answers; late reports count and draw one video", async () => {
+    const waiting = await joined({ videoHangs: 1 }, { deviceStartMs: 5_000 });
+    const pressed = waiting.adapter.setDevice("camera", true);
+    await settle();
+    waiting.zoom.handlers.get("video-capturing-change")({ state: "Started" });
+    expect(await pressed).toBe("on");
+    expect(waiting.videos.children.map(child => child.tag)).toEqual(["video:1"]);
+    // After the deadline: a report still turns the camera on, however many come, with one video.
+    const late = await joined({ videoHangs: 1 }, { deviceStartMs: 20 });
+    expect(await late.adapter.setDevice("camera", true)).toBe("failed");
+    late.zoom.handlers.get("video-capturing-change")({ state: "Started" });
+    late.zoom.handlers.get("video-capturing-change")({ state: "Started" });
+    await settle();
+    expect(late.events.at(-1)).toMatchObject({ type: "device", kind: "camera", state: "on" });
+    expect(late.videos.children.map(child => child.tag)).toEqual(["video:1"]);
+    late.zoom.handlers.get("video-capturing-change")({ state: "Stopped" });
+    expect(late.events.at(-1)).toMatchObject({ type: "device", kind: "camera", state: "off" });
+  });
+
+  test("Zoom devices: a capture failure, paused sound, a blocked permission and a busy camera each end the press as they should", async () => {
+    const capture = await joined({ videoHangs: 1 }, { deviceStartMs: 5_000 });
+    const pressed = capture.adapter.setDevice("camera", true);
+    await settle();
+    capture.zoom.handlers.get("video-capturing-change")({ state: "Failed" });
+    expect(await pressed).toBe("failed");
+    expect(capture.events.at(-1)).toMatchObject({ type: "device", kind: "camera", state: "failed", problem: "capture" });
+    // Zoom's auto-play failure: pressing again restarts the audio.
+    const sound = await joined({ audioHangs: 1 }, { deviceStartMs: 5_000 });
+    const speaking = sound.adapter.setDevice("microphone", true);
+    await settle();
+    sound.zoom.handlers.get("auto-play-audio-failed")();
+    expect(await speaking).toBe("failed");
+    expect(sound.events.at(-1)).toMatchObject({ type: "device", kind: "microphone", state: "failed", problem: "autoplay" });
+    expect(await sound.adapter.setDevice("microphone", true)).toBe("on");
+    expect(sound.zoom.calls.filter(call => /Audio/.test(call))).toEqual(["startAudio", "stopAudio", "startAudio"]);
+    const blocked = await joined({ videoHangs: 1 }, { deviceStartMs: 5_000 });
+    const asking = blocked.adapter.setDevice("camera", true);
+    await settle();
+    blocked.zoom.handlers.get("device-permission-change")({ name: "camera", state: "denied" });
+    expect(await asking).toBe("denied");
+    const busy = await joined({ videoError: Object.assign(new Error("Could not start video source"), { name: "NotReadableError" }) });
+    expect(await busy.adapter.setDevice("camera", true)).toBe("failed");
+    expect(busy.events.at(-1)).toMatchObject({ type: "device", kind: "camera", state: "failed", problem: "busy" });
+  });
+
+  test("Zoom devices: the room counts as connected only once join() gives the media stream; a press made sooner waits", async () => {
+    const zoom = fakeZoom({ slowJoin: true }), dom = fakeDom();
+    const adapter = new ZoomVideoSdkMediaAdapter(async () => zoom.sdk, () => 1, { deviceStartMs: 5_000 });
+    const events = recorded(adapter);
+    adapter.mount(dom.root);
+    const joining = adapter.join(zoomJoin);
+    await settle();
+    // Zoom says "Connected" while its join() is still running: the room is not connected yet.
+    zoom.handlers.get("connection-change")({ state: "Connected" });
+    expect(events.map(event => [event.type, event.state])).toEqual([["connection", "connecting"]]);
+    const pressed = adapter.setDevice("camera", true);
+    await settle();
+    expect(events.at(-1)).toMatchObject({ type: "device", kind: "camera", state: "starting" });
+    zoom.releaseJoin();
+    await joining;
+    expect(await pressed).toBe("on");
+    expect(events.filter(event => event.type === "connection").map(event => event.state)).toEqual(["connecting", "connected"]);
+    // A join that fails meanwhile ends the waiting press at once, with the message and "Try again".
+    const failing = fakeZoom({ slowJoin: true, joinError: new Error("join refused") });
+    const lost = new ZoomVideoSdkMediaAdapter(async () => failing.sdk, () => 1, { deviceStartMs: 5_000 });
+    const lostEvents = recorded(lost);
+    const attempt = lost.join(zoomJoin).catch(() => "join failed");
+    await settle();
+    const waiting = lost.setDevice("microphone", true);
+    await settle();
+    failing.releaseJoin();
+    expect([await attempt, await waiting]).toEqual(["join failed", "failed"]);
+    expect(lostEvents.filter(event => event.type === "device").map(event => event.state)).toEqual(["starting", "failed"]);
+  });
+
+  test("Zoom devices: leaving ends a press still waiting, and the room starts again with both off", async () => {
+    const { adapter } = await joined({ audioHangs: 1 }, { deviceStartMs: 5_000 });
+    const speaking = adapter.setDevice("microphone", true);
+    await settle();
+    await adapter.leave();
+    expect(await speaking).toBe("off");
   });
 
   test("Zoom: the system check is Zoom's own answer for this browser, without joining", async () => {

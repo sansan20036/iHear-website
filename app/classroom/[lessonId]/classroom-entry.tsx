@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   createMediaAdapter, hostReportFor, MediaAdapterUnavailableError, SYNTHETIC_SCENARIOS, SyntheticMediaAdapter,
-  type ClassroomMediaAdapter, type ConnectionState, type DeviceKind, type DeviceState, type MediaEvent, type MediaSystemCheck, type SyntheticScenario,
+  type ClassroomMediaAdapter, type ConnectionState, type DeviceKind, type DeviceProblem, type DeviceState, type MediaEvent, type MediaSystemCheck, type SyntheticScenario,
 } from "../../../lib/classroom-media";
 import { classroomDeviceOf, deviceLimits, type CapabilityName, type ClassroomDevice } from "../../../lib/classroom-capabilities";
 
@@ -77,10 +77,11 @@ const copy = {
     cameraOnSimulated: "Camera on (simulated: no real picture)", cameraOn: "Camera on", cameraOff: "Camera off",
     cameraDenied: "Camera not allowed", cameraUnavailable: "No camera found",
     micOn: "Microphone on", micOff: "Microphone muted", micDenied: "Microphone not allowed", micUnavailable: "No microphone found",
+    cameraStarting: "Camera starting…", cameraFailed: "Camera did not start", micStarting: "Microphone starting…", micFailed: "Microphone did not start",
     waitingOther: "Waiting for the other person to enter.",
     syntheticOther: "The test classroom cannot see the other person; use the simulation controls below.",
     otherLeft: "The other person has left the classroom.",
-    controls: "Classroom controls", camera: "Camera", microphone: "Microphone", on: "on", off: "off",
+    controls: "Classroom controls", camera: "Camera", microphone: "Microphone", on: "on", off: "off", starting: "starting…", retryDevice: "Try again",
     connection: { idle: "Not connected", connecting: "Connecting…", connected: "Connected", reconnecting: "Reconnecting…", disconnected: "Disconnected", failed: "Connection failed" } as Record<ConnectionState, string>,
     notConnected: "Video is not connected: no video service has been chosen for this classroom yet.",
     reconnecting: "The video connection dropped. Reconnecting…",
@@ -89,6 +90,11 @@ const copy = {
       camera: { denied: "The camera is blocked. Allow the camera for this site in the browser's settings, then try again.", unavailable: "No camera was found. Check that one is connected and not used by another app." },
       microphone: { denied: "The microphone is blocked. Allow the microphone for this site in the browser's settings, then try again.", unavailable: "No microphone was found. Check that one is connected and not used by another app." },
     } as Record<DeviceKind, Partial<Record<DeviceState, string>>>,
+    // A press that did not start, by what went wrong ("error" for the rest); "Try again" sits beside it.
+    deviceFailed: {
+      camera: { error: "The camera did not start. Press “Try again”. If it still does not start, reload this page.", missing: "No camera was found. Check that it is connected, then press “Try again”.", busy: "Another app may be using the camera (another video app, for example). Close it, then press “Try again”." },
+      microphone: { error: "The microphone did not start. Press “Try again”. If it still does not start, reload this page.", autoplay: "The browser paused this page's sound. Press “Try again” to start it.", missing: "No microphone was found. Check that it is connected, then press “Try again”.", busy: "Another app may be using the microphone. Close it, then press “Try again”." },
+    } as Record<DeviceKind, Partial<Record<DeviceProblem, string>>>,
     recording: "Recording", recordingNote: "Recording starts and stops on its own; you do not need to do anything.",
     allowed: "This lesson may be recorded.", notAllowed: "This lesson is not recorded.", waiting: "Waiting for the first report…",
     undecided: "Whether this lesson is recorded is decided automatically before it starts.",
@@ -138,10 +144,11 @@ const copy = {
     cameraOnSimulated: "攝影機開啟（模擬：沒有真實畫面）", cameraOn: "攝影機開啟", cameraOff: "攝影機關閉",
     cameraDenied: "沒有攝影機權限", cameraUnavailable: "找不到攝影機",
     micOn: "麥克風開啟", micOff: "麥克風靜音", micDenied: "沒有麥克風權限", micUnavailable: "找不到麥克風",
+    cameraStarting: "攝影機開啟中…", cameraFailed: "攝影機沒有開啟", micStarting: "麥克風開啟中…", micFailed: "麥克風沒有開啟",
     waitingOther: "等待對方進入教室。",
     syntheticOther: "測試教室看不到對方是否進入，可以用下方的模擬控制。",
     otherLeft: "對方已離開教室。",
-    controls: "教室控制", camera: "攝影機", microphone: "麥克風", on: "開", off: "關",
+    controls: "教室控制", camera: "攝影機", microphone: "麥克風", on: "開", off: "關", starting: "開啟中…", retryDevice: "再試一次",
     connection: { idle: "未連線", connecting: "連線中…", connected: "已連線", reconnecting: "重新連線中…", disconnected: "已中斷", failed: "連線失敗" } as Record<ConnectionState, string>,
     notConnected: "視訊尚未接上：這間教室還沒有選定視訊服務。",
     reconnecting: "視訊連線中斷，正在重新連線…",
@@ -150,6 +157,10 @@ const copy = {
       camera: { denied: "攝影機被封鎖。請在瀏覽器的網站設定允許使用攝影機，再試一次。", unavailable: "找不到攝影機。請確認攝影機已接上，而且沒有被其他程式使用。" },
       microphone: { denied: "麥克風被封鎖。請在瀏覽器的網站設定允許使用麥克風，再試一次。", unavailable: "找不到麥克風。請確認麥克風已接上，而且沒有被其他程式使用。" },
     } as Record<DeviceKind, Partial<Record<DeviceState, string>>>,
+    deviceFailed: {
+      camera: { error: "攝影機沒有成功開啟。請按「再試一次」；如果還是不行，請重新整理這個頁面。", missing: "找不到攝影機。請確認攝影機已接上，再按「再試一次」。", busy: "攝影機可能正被其他程式使用（例如另一個視訊軟體）。請關閉那個程式，再按「再試一次」。" },
+      microphone: { error: "麥克風沒有成功開啟。請按「再試一次」；如果還是不行，請重新整理這個頁面。", autoplay: "瀏覽器暫停了這個頁面的聲音。請按「再試一次」讓聲音開始。", missing: "找不到麥克風。請確認麥克風已接上，再按「再試一次」。", busy: "麥克風可能正被其他程式使用。請關閉那個程式，再按「再試一次」。" },
+    } as Record<DeviceKind, Partial<Record<DeviceProblem, string>>>,
     recording: "錄影", recordingNote: "錄影會自動開始和停止，你不需要操作。",
     allowed: "這堂課可以錄影。", notAllowed: "這堂課不錄影。", waiting: "等待第一次回報…",
     undecided: "是否錄影會在上課前自動決定。",
@@ -205,12 +216,14 @@ type Media = {
   available: boolean;
   connection: ConnectionState;
   devices: Record<DeviceKind, DeviceState>;
+  // Why a device that was pressed did not start, for the message beside "Try again".
+  deviceProblems: Partial<Record<DeviceKind, DeviceProblem>>;
   remote: { present: boolean; camera: boolean; microphone: boolean; seen: boolean };
   share: "none" | "sending" | "receiving";
   whiteboard: "none" | "presenting" | "viewing";
 };
 
-const initialMedia = (): Media => ({ available: true, connection: "idle", devices: { camera: "off", microphone: "off" }, remote: { present: false, camera: false, microphone: false, seen: false }, share: "none", whiteboard: "none" });
+const initialMedia = (): Media => ({ available: true, connection: "idle", devices: { camera: "off", microphone: "off" }, deviceProblems: {}, remote: { present: false, camera: false, microphone: false, seen: false }, share: "none", whiteboard: "none" });
 
 function initialLocale(): Locale {
   try {
@@ -343,7 +356,10 @@ export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: stri
         connection.current = event.state;
         setMedia((state) => ({ ...state, connection: event.state }));
       } else if (event.type === "device") {
-        setMedia((state) => ({ ...state, devices: { ...state.devices, [event.kind]: event.state } }));
+        setMedia((state) => ({
+          ...state, devices: { ...state.devices, [event.kind]: event.state },
+          deviceProblems: { ...state.deviceProblems, [event.kind]: event.state === "failed" ? event.problem ?? "error" : undefined },
+        }));
       } else if (event.type === "remote") {
         setMedia((state) => ({ ...state, remote: { present: event.present, camera: event.camera, microphone: event.microphone, seen: state.remote.seen || event.present } }));
       } else if (event.type === "share") {
@@ -488,8 +504,8 @@ export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: stri
   const badge = statusProblem && isStudent ? "unknown" : badgeOf(recording);
   // "Simulated" only in the synthetic stand-in; a vendor adapter carries real video.
   const cameraOn = simulator ? text.cameraOnSimulated : text.cameraOn;
-  const cameraText = { on: cameraOn, off: text.cameraOff, denied: text.cameraDenied, unavailable: text.cameraUnavailable }[media.devices.camera];
-  const micText = { on: text.micOn, off: text.micOff, denied: text.micDenied, unavailable: text.micUnavailable }[media.devices.microphone];
+  const cameraText = { on: cameraOn, off: text.cameraOff, denied: text.cameraDenied, unavailable: text.cameraUnavailable, starting: text.cameraStarting, failed: text.cameraFailed }[media.devices.camera];
+  const micText = { on: text.micOn, off: text.micOff, denied: text.micDenied, unavailable: text.micUnavailable, starting: text.micStarting, failed: text.micFailed }[media.devices.microphone];
   const otherName = joined?.role === "tutor" ? text.other_student : text.other_tutor;
   const connected = media.connection === "connected";
 
@@ -605,6 +621,17 @@ export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: stri
             </div>
           )}
           {(["camera", "microphone"] as const).map((kind) => {
+            // A press that did not start: what to do, and the button that tries again (a click of
+            // its own, as the browser requires).
+            if (media.devices[kind] === "failed") {
+              const problem = media.deviceProblems[kind] ?? "error";
+              return (
+                <div key={kind} className="classroom-room-problem classroom-room-problem-row" role="alert" data-device-problem={`${kind}:${problem}`}>
+                  <span>{text.deviceFailed[kind][problem] ?? text.deviceFailed[kind].error}</span>
+                  <button type="button" className="classroom-room-secondary" onClick={() => toggle(kind)}>{text.retryDevice}</button>
+                </div>
+              );
+            }
             const help = text.deviceHelp[kind][media.devices[kind]];
             return help ? <p key={kind} className="classroom-room-problem" role="alert">{help}</p> : null;
           })}
@@ -615,8 +642,8 @@ export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: stri
               const blocked = state === "denied" || state === "unavailable";
               return (
                 <button key={kind} type="button" className="classroom-room-control" aria-pressed={state === "on"}
-                  disabled={!media.available || !connected || blocked} onClick={() => toggle(kind)}>
-                  {text[kind]}：{state === "on" ? text.on : text.off}
+                  disabled={!media.available || !connected || blocked || state === "starting"} onClick={() => toggle(kind)}>
+                  {text[kind]}：{state === "on" ? text.on : state === "starting" ? text.starting : text.off}
                 </button>
               );
             })}

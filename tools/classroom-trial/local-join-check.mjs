@@ -191,28 +191,28 @@ try {
     await check('both join the real Zoom session and connect', async () => {
       for (const who of [tutor, student]) await expect(who.page.locator('.classroom-room-connection')).toHaveText('已連線', { timeout: 90_000 });
     });
-    // In the first real runs the tutor's first device, pressed the moment both had joined, never
-    // started. People take a few seconds, so the room settles first (written in the report).
-    report.findings.settleBeforeDevices = '8 s after both connected; then one person after the other';
-    await pause(8000);
-    // Each device on its own, one person after the other, so one that never answers cannot hide
-    // how the other device, the other person or the whiteboard did.
+    // Pressed the moment both have connected, both people at once: before the room waited for
+    // Zoom's own reports and offered "Try again", the tutor's first device never started this way.
+    // A press that shows the room's message gets "Try again", as a person would, up to twice.
+    report.findings.devicePresses = 'both people at once, the moment both had connected; up to 2 retries each';
     const turnOn = async (kind, finding) => {
-      const results = [];
-      let failed;
-      for (const [label, who] of [['tutor', tutor], ['student', student]]) {
-        try {
-          const button = who.page.getByRole('button', { name: new RegExp(`^${kind}：`) });
-          await button.click();
-          await expect(button).toHaveText(`${kind}：開`, { timeout: 30_000 });
-          results.push(`${label} on`);
-        } catch (error) {
-          results.push(`${label} not on after 30 s`);
-          failed ??= error;
+      const outcomes = await Promise.all([['tutor', tutor], ['student', student]].map(async ([label, who]) => {
+        const button = who.page.getByRole('button', { name: new RegExp(`^${kind}：`) });
+        const problem = who.page.locator(`[data-device-problem^="${finding}:"]`);
+        const problems = [];
+        await button.click();
+        for (let tries = 0; tries <= 2; tries += 1) {
+          // Exactly "on": while starting the button reads 開啟中…, which also begins with 開.
+          await expect(button.filter({ hasText: new RegExp(`^${kind}：開$`) }).or(problem)).toBeVisible({ timeout: 20_000 }).catch(() => undefined);
+          if ((await button.textContent()) === `${kind}：開`) return `${label} on ${problems.length ? `after ${problems.length} retry(ies): ${problems.join(', ')}` : 'at the first press'}`;
+          if (!(await problem.isVisible())) break;
+          problems.push(String(await problem.getAttribute('data-device-problem')).split(':')[1]);
+          await problem.getByRole('button').click();
         }
-      }
-      report.findings[finding] = results.join(', ');
-      if (failed) throw failed;
+        return `${label} NOT on (${problems.join(', ') || 'no answer'})`;
+      }));
+      report.findings[finding] = outcomes.join('; ');
+      if (outcomes.some(outcome => outcome.includes('NOT on'))) throw new Error(`${kind} did not turn on for everyone: ${outcomes.join('; ')}`);
     };
     await check('both turn on the camera, and each sees the other\'s video', async () => {
       await turnOn('攝影機', 'camera');
