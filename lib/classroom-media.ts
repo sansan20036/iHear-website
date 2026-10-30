@@ -9,8 +9,11 @@
 //
 // The synthetic stand-in has no camera, no microphone and no network: it plays the states a real
 // SDK reports, so the page, the tutor's reports and the overview can be shown and tested. It never
-// claims to carry audio or video (capabilities.realMedia is false). The Zoom adapter works only
-// with the SDK package, which is added with the trial account; until then it says so.
+// claims to carry audio or video (capabilities.realMedia is false). The Zoom adapter loads the
+// official package (@zoom/videosdk 2.6.0, 2026-10-30); joining a real session still needs the
+// Video SDK key of a trial account.
+
+import type ZoomVideo from "@zoom/videosdk";
 
 export const MEDIA_PROVIDERS = ["synthetic", "zoom-video-sdk", "tencent-lcic"] as const;
 export type MediaProviderName = (typeof MEDIA_PROVIDERS)[number];
@@ -25,12 +28,17 @@ export type MediaEvent =
   | { type: "device"; kind: DeviceKind; state: DeviceState; at: number }
   // The other person in the room. A real adapter also passes their user key (our participant
   // id, which the session token carries) so the tutor's page can report joins and leaves.
-  | { type: "remote"; present: boolean; camera: boolean; microphone: boolean; userKey: string | null; at: number };
+  | { type: "remote"; present: boolean; camera: boolean; microphone: boolean; userKey: string | null; at: number }
+  // Materials and the whiteboard: what this page is showing or sending right now.
+  | { type: "share"; state: "none" | "sending" | "receiving"; at: number }
+  | { type: "whiteboard"; state: "none" | "presenting" | "viewing"; at: number };
 
 export type MediaCapabilities = {
   // True only for an adapter that really carries audio and video.
   realMedia: boolean;
   screenShare: boolean;
+  // A whiteboard this page can start or show (LCIC's is inside Tencent's page).
+  whiteboard: boolean;
   // False when the vendor's own page runs the call (LCIC): our page then sees no connection,
   // device or remote events, and the overview relies on the vendor's callbacks.
   observable: boolean;
@@ -51,7 +59,15 @@ export interface ClassroomMediaAdapter {
   subscribe(listener: (event: MediaEvent) => void): () => void;
   // Where the vendor draws video or its classroom; the synthetic stand-in draws nothing.
   mount?(element: HTMLElement): void;
+  // What this browser supports, from the vendor's own check, before or after joining.
+  systemCheck?(): Promise<MediaSystemCheck>;
+  // The tutor's materials (sharing a screen, window or tab) and the whiteboard. True when started.
+  setScreenShare?(on: boolean): Promise<boolean>;
+  setWhiteboard?(on: boolean): Promise<boolean>;
+  exportWhiteboard?(name: string): Promise<void>;
 }
+
+export type MediaSystemCheck = { sdkVersion: string; audio: boolean; video: boolean; screenShare: boolean; unsupported: string[] };
 
 export class MediaAdapterUnavailableError extends Error {
   constructor(readonly provider: string, reason?: string) {
@@ -76,7 +92,7 @@ type SyntheticOptions = { connectDelayMs?: number; now?: () => number };
 
 export class SyntheticMediaAdapter implements ClassroomMediaAdapter {
   readonly provider = "synthetic" as const;
-  readonly capabilities: MediaCapabilities = { realMedia: false, screenShare: false, observable: true };
+  readonly capabilities: MediaCapabilities = { realMedia: false, screenShare: false, whiteboard: false, observable: true };
   private readonly listeners = new Set<(event: MediaEvent) => void>();
   private connection: ConnectionState = "idle";
   private readonly devices: Record<DeviceKind, DeviceState> = { camera: "off", microphone: "off" };
@@ -190,43 +206,77 @@ export class SyntheticMediaAdapter implements ClassroomMediaAdapter {
   }
 }
 
-// The part of the Zoom Video SDK (web, 2.x) the adapter uses, as Zoom documents it. Only these
-// calls are made, so a test can stand in for the SDK. To be checked against the real package.
+// The part of the Zoom Video SDK (web 2.x) this adapter uses, as the official package declares it.
+// OfficialZoomSdk below makes TypeScript check every call against @zoom/videosdk's own types, so a
+// missing or changed call fails the type check; the tests stand in for the SDK with this shape.
 export type ZoomParticipant = { userId: number; userIdentity?: string; userKey?: string; bVideoOn?: boolean; muted?: boolean; audio?: string };
 export type ZoomStream = {
   startAudio(): Promise<unknown>; muteAudio(): Promise<unknown>; unmuteAudio(): Promise<unknown>;
   startVideo(): Promise<unknown>; stopVideo(): Promise<unknown>;
-  attachVideo?(userId: number, quality: number): Promise<unknown>; detachVideo?(userId: number): Promise<unknown>;
+  attachVideo(userId: number, quality: number): Promise<unknown>; detachVideo(userId: number): Promise<unknown>;
+  // Materials: the tutor shares a screen, window or tab; the other side sees it in a container of its own.
+  isStartShareScreenWithVideoElement(): boolean;
+  startShareScreen(target: HTMLCanvasElement | HTMLVideoElement): Promise<unknown>;
+  stopShareScreen(): Promise<unknown>;
+  getActiveShareUserId(): number;
+  attachShareView(userId: number): Promise<unknown>;
+  detachShareView(userId: number): Promise<unknown>;
+};
+export type ZoomWhiteboard = {
+  isWhiteboardEnabled(): boolean;
+  canStartWhiteboard(): boolean;
+  startWhiteboardScreen(element: HTMLElement): Promise<unknown>;
+  stopWhiteboardScreen(): Promise<unknown>;
+  startWhiteboardView(element: HTMLElement, presenterId: number): Promise<unknown>;
+  stopWhiteboardView(): Promise<unknown>;
+  exportWhiteboard(format: "pdf", name?: string): Promise<unknown>;
 };
 export type ZoomClient = {
-  init(language: string, dependentAssets: string, options?: Record<string, unknown>): Promise<unknown>;
+  init(language: string, dependentAssets: string, options?: { patchJsMedia?: boolean; leaveOnPageUnload?: boolean }): Promise<unknown>;
   join(topic: string, token: string, userName: string): Promise<unknown>;
   leave(): Promise<unknown>;
   getMediaStream(): ZoomStream;
+  getWhiteboardClient(): ZoomWhiteboard;
   getCurrentUserInfo(): { userId: number } | null;
   getAllUser(): ZoomParticipant[];
   on(event: string, handler: (payload: unknown) => void): void;
   off(event: string, handler: (payload: unknown) => void): void;
 };
-export type ZoomVideoSdk = { createClient(): ZoomClient };
+export type ZoomVideoSdk = {
+  VERSION: string;
+  createClient(): ZoomClient;
+  checkSystemRequirements(): { audio: boolean; video: boolean; screen: boolean };
+  checkFeatureRequirements(): { unSupportFeatures: string[] };
+};
+type MustProvide<Shape, Real extends Shape> = Real;
+export type OfficialZoomSdk = MustProvide<ZoomVideoSdk, typeof ZoomVideo>;
 
-// The npm package @zoom/videosdk is installed together with the trial account (it needs a Video
-// SDK key to do anything); until then the adapter reports that it cannot connect.
+// The official package, loaded only in the browser and only when a Zoom room opens, so its code
+// stays out of every other page. Its WebAssembly and worker files come from Zoom's "Global"
+// location (https://source.zoom.us/videosdk/<version>/lib/), which the classroom's CSP allows.
 export async function loadZoomVideoSdkPackage(): Promise<ZoomVideoSdk> {
-  throw new MediaAdapterUnavailableError("zoom-video-sdk", "The Zoom Video SDK package is not installed yet (it comes with the trial account)");
+  if (typeof window === "undefined") throw new MediaAdapterUnavailableError("zoom-video-sdk", "The Zoom Video SDK runs only in a browser");
+  const official = await import("@zoom/videosdk");
+  return official.default;
 }
 
 const ZOOM_CONNECTION: Record<string, ConnectionState> = { Connected: "connected", Reconnecting: "reconnecting", Closed: "disconnected", Fail: "failed" };
 const VIDEO_720P = 3;
+const isNode = (value: unknown): value is Node => Boolean(value) && typeof (value as Node).nodeType === "number";
+type ZoomStage = { videos: HTMLElement; share: HTMLElement; whiteboard: HTMLElement; ownShare: HTMLElement };
 
 export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
   readonly provider = "zoom-video-sdk" as const;
-  readonly capabilities: MediaCapabilities = { realMedia: true, screenShare: false, observable: true };
+  readonly capabilities: MediaCapabilities = { realMedia: true, screenShare: true, whiteboard: true, observable: true };
   private readonly listeners = new Set<(event: MediaEvent) => void>();
+  private sdk: Promise<ZoomVideoSdk> | null = null;
   private client: ZoomClient | null = null;
   private stream: ZoomStream | null = null;
-  private container: HTMLElement | null = null;
+  private stage: ZoomStage | null = null;
   private audioStarted = false;
+  private sharing: "none" | "sending" | "receiving" = "none";
+  private sharer: number | null = null;
+  private board: "none" | "presenting" | "viewing" = "none";
   private readonly tiles = new Map<number, unknown>();
   private readonly handlers: [string, (payload: unknown) => void][] = [];
 
@@ -237,29 +287,56 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     return () => { this.listeners.delete(listener); };
   }
 
-  mount(element: HTMLElement) { this.container = element; }
+  // Zoom draws each video into a <video-player-container> and a shared screen into another one
+  // (its rule: the two are never mixed); the whiteboard and the tutor's own share get plain elements.
+  mount(element: HTMLElement) {
+    const part = (tag: string, name: string, hidden: boolean) => {
+      const child = element.ownerDocument.createElement(tag);
+      child.className = `classroom-zoom-${name}`;
+      child.hidden = hidden;
+      return child;
+    };
+    this.stage = {
+      share: part("video-player-container", "share", true), whiteboard: part("div", "whiteboard", true),
+      videos: part("video-player-container", "videos", false), ownShare: part("div", "own-share", true),
+    };
+    element.replaceChildren(this.stage.share, this.stage.whiteboard, this.stage.videos, this.stage.ownShare);
+  }
+
+  // Zoom's own check of this browser (audio, video, screen sharing), without joining anything.
+  async systemCheck(): Promise<MediaSystemCheck> {
+    const sdk = await this.loadOnce();
+    const support = sdk.checkSystemRequirements();
+    return { sdkVersion: sdk.VERSION, audio: support.audio, video: support.video, screenShare: support.screen, unsupported: [...sdk.checkFeatureRequirements().unSupportFeatures] };
+  }
 
   async join(input: MediaJoin) {
     if (!input.sessionToken || !input.sessionName) throw new Error("A Zoom join token and its session name are required");
     if (this.client) return;
     this.emit({ type: "connection", state: "connecting", at: this.now() });
     try {
-      const sdk = await this.load();
+      const sdk = await this.loadOnce();
       const client = sdk.createClient();
       this.client = client;
       // "Global": the default data centres; the China options are not part of phase 1.
-      await client.init("en-US", "Global", { patchJsMedia: true });
+      await client.init("en-US", "Global", { patchJsMedia: true, leaveOnPageUnload: true });
       this.listen("connection-change", (payload) => {
         const state = ZOOM_CONNECTION[String((payload as { state?: string })?.state)];
         if (state) this.emit({ type: "connection", state, at: this.now() });
       });
       for (const name of ["user-added", "user-updated", "user-removed"]) this.listen(name, () => this.reportRemote());
       this.listen("peer-video-state-change", (payload) => void this.peerVideo(payload as { action?: string; userId?: number }));
+      this.listen("active-share-change", (payload) => void this.remoteShare(payload as { state?: string; userId?: number }));
+      // The browser's own "stop sharing" button.
+      this.listen("passively-stop-share", () => this.endOwnShare());
+      this.listen("peer-whiteboard-state-change", (payload) => void this.remoteBoard(payload as { action?: string; userId?: number }));
       // The display name is the participant code: no student name reaches Zoom.
       await client.join(input.sessionName, input.sessionToken, input.participantCode);
       this.stream = client.getMediaStream();
       this.emit({ type: "connection", state: "connected", at: this.now() });
       this.reportRemote();
+      const sharing = this.stream.getActiveShareUserId();
+      if (sharing) await this.remoteShare({ state: "Active", userId: sharing });
     } catch (error) {
       this.client = null;
       this.emit({ type: "connection", state: "failed", at: this.now() });
@@ -271,9 +348,14 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     const client = this.client;
     if (!client) return;
     for (const [name, handler] of this.handlers.splice(0)) client.off(name, handler);
-    this.client = null; this.stream = null; this.audioStarted = false; this.tiles.clear();
+    this.client = null; this.stream = null; this.audioStarted = false; this.tiles.clear(); this.sharer = null;
     await client.leave().catch(() => undefined);
-    this.container?.replaceChildren();
+    if (this.stage) {
+      for (const part of Object.values(this.stage)) part.replaceChildren();
+      this.stage.share.hidden = true; this.stage.whiteboard.hidden = true; this.stage.ownShare.hidden = true;
+    }
+    this.setShare("none");
+    this.setBoard("none");
     this.emit({ type: "connection", state: "disconnected", at: this.now() });
   }
 
@@ -299,6 +381,59 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     return state;
   }
 
+  // Materials: Zoom has no PDF or PPT upload, so the tutor shares the screen, window or browser tab
+  // that shows them. Browsers on phones and tablets cannot share; the room offers this on computers.
+  async setScreenShare(on: boolean) {
+    const stream = this.stream, stage = this.stage;
+    if (!stream || !stage) return false;
+    if (!on) {
+      if (this.sharing === "sending") { await stream.stopShareScreen().catch(() => undefined); this.endOwnShare(); }
+      return false;
+    }
+    const target = stage.ownShare.ownerDocument.createElement(stream.isStartShareScreenWithVideoElement() ? "video" : "canvas");
+    stage.ownShare.replaceChildren(target);
+    stage.ownShare.hidden = false;
+    try {
+      await stream.startShareScreen(target);
+    } catch {
+      // Includes the browser's picker being cancelled.
+      this.endOwnShare();
+      return false;
+    }
+    this.setShare("sending");
+    return true;
+  }
+
+  // Zoom's whiteboard: only the host (the tutor's token) starts it; the other person sees it and,
+  // on a computer, can draw. Zoom keeps nothing afterwards, so the tutor exports a PDF if needed.
+  async setWhiteboard(on: boolean) {
+    const board = this.client?.getWhiteboardClient(), stage = this.stage;
+    if (!board || !stage) return false;
+    if (!on) {
+      if (this.board === "presenting") { await board.stopWhiteboardScreen().catch(() => undefined); this.hideBoard(); }
+      return false;
+    }
+    if (!board.isWhiteboardEnabled() || !board.canStartWhiteboard()) return false;
+    stage.whiteboard.hidden = false;
+    try {
+      await board.startWhiteboardScreen(stage.whiteboard);
+    } catch {
+      this.hideBoard();
+      return false;
+    }
+    this.setBoard("presenting");
+    return true;
+  }
+
+  async exportWhiteboard(name: string) {
+    await this.client?.getWhiteboardClient().exportWhiteboard("pdf", name);
+  }
+
+  private loadOnce() {
+    this.sdk ??= this.load();
+    return this.sdk.catch((error: unknown) => { this.sdk = null; throw error; });
+  }
+
   private listen(name: string, handler: (payload: unknown) => void) {
     this.client?.on(name, handler);
     this.handlers.push([name, handler]);
@@ -317,15 +452,69 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
   private async peerVideo(payload: { action?: string; userId?: number }) {
     if (payload.userId == null) return;
     if (payload.action === "Start") await this.attach(payload.userId);
-    else if (payload.action === "Stop") { await this.stream?.detachVideo?.(payload.userId); this.tiles.delete(payload.userId); }
+    else if (payload.action === "Stop") { await this.stream?.detachVideo(payload.userId); this.tiles.delete(payload.userId); }
     this.reportRemote();
   }
 
   private async attach(userId: number) {
-    if (!this.stream?.attachVideo || !this.container || this.tiles.has(userId)) return;
+    if (!this.stream || !this.stage || this.tiles.has(userId)) return;
     const element = await this.stream.attachVideo(userId, VIDEO_720P);
     this.tiles.set(userId, element);
-    if (element && typeof (element as Node).nodeType === "number") this.container.append(element as Node);
+    if (isNode(element)) this.stage.videos.append(element);
+  }
+
+  // The other person's shared screen, shown while they share.
+  private async remoteShare(payload: { state?: string; userId?: number }) {
+    const stream = this.stream, stage = this.stage;
+    if (!stream || !stage || payload.userId == null || payload.userId === this.client?.getCurrentUserInfo()?.userId) return;
+    if (payload.state === "Active" && this.sharer !== payload.userId) {
+      const view = await stream.attachShareView(payload.userId).catch(() => null);
+      if (!isNode(view)) return;
+      stage.share.replaceChildren(view);
+      stage.share.hidden = false;
+      this.sharer = payload.userId;
+      this.setShare("receiving");
+    } else if (payload.state === "Inactive" && this.sharer === payload.userId) {
+      await stream.detachShareView(payload.userId).catch(() => undefined);
+      stage.share.replaceChildren();
+      stage.share.hidden = true;
+      this.sharer = null;
+      this.setShare("none");
+    }
+  }
+
+  private async remoteBoard(payload: { action?: string; userId?: number }) {
+    const board = this.client?.getWhiteboardClient(), stage = this.stage;
+    if (!board || !stage || payload.userId == null) return;
+    if (payload.action === "Start") {
+      stage.whiteboard.hidden = false;
+      await board.startWhiteboardView(stage.whiteboard, payload.userId).then(() => this.setBoard("viewing"), () => this.hideBoard());
+    } else if (payload.action === "Stop") {
+      await board.stopWhiteboardView().catch(() => undefined);
+      this.hideBoard();
+    }
+  }
+
+  private endOwnShare() {
+    if (this.stage) { this.stage.ownShare.replaceChildren(); this.stage.ownShare.hidden = true; }
+    if (this.sharing === "sending") this.setShare("none");
+  }
+
+  private hideBoard() {
+    if (this.stage) { this.stage.whiteboard.replaceChildren(); this.stage.whiteboard.hidden = true; }
+    this.setBoard("none");
+  }
+
+  private setShare(state: "none" | "sending" | "receiving") {
+    if (this.sharing === state) return;
+    this.sharing = state;
+    this.emit({ type: "share", state, at: this.now() });
+  }
+
+  private setBoard(state: "none" | "presenting" | "viewing") {
+    if (this.board === state) return;
+    this.board = state;
+    this.emit({ type: "whiteboard", state, at: this.now() });
   }
 
   private emit(event: MediaEvent) {
@@ -341,7 +530,7 @@ export const LCIC_FRAME_PERMISSIONS = "camera; microphone; fullscreen; display-c
 
 export class LcicEmbedAdapter implements ClassroomMediaAdapter {
   readonly provider = "tencent-lcic" as const;
-  readonly capabilities: MediaCapabilities = { realMedia: true, screenShare: true, observable: false };
+  readonly capabilities: MediaCapabilities = { realMedia: true, screenShare: true, whiteboard: true, observable: false };
   private readonly listeners = new Set<(event: MediaEvent) => void>();
   private container: HTMLElement | null = null;
   private frame: HTMLIFrameElement | null = null;

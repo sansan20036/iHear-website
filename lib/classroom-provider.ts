@@ -136,7 +136,9 @@ export function classroomProvider(): ClassroomProvider {
     if (!config) throw new ClassroomProviderUnavailableError("Tencent LCIC is not configured");
     // The lesson-to-room map is a local file in this prototype; a hosted site needs a table first.
     if (process.env.VERCEL || process.env.NETLIFY) throw new ClassroomProviderUnavailableError("Tencent LCIC needs its room table before it can run on a hosted site");
-    return tencentLcicProvider(config, { rooms: fileRoomRegistry(), recordingAllowed: recordingAllowedNow });
+    // Real students are never recorded through LCIC until a trial shows StopRecord stops a
+    // recording mid-class; until then only TEST- lessons can record (see tencent-lcic.ts).
+    return tencentLcicProvider(config, { rooms: fileRoomRegistry(), recordingAllowed: recordingAllowedNow, midClassStopVerified: process.env.LCIC_MIDCLASS_STOP_VERIFIED === "1" });
   }
   throw new ClassroomProviderUnavailableError(MEDIA_PROVIDERS.includes(name as MediaProviderName)
     ? `The ${name} provider is not available`

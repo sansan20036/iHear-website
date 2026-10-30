@@ -258,6 +258,22 @@ describe("classroom access", () => {
     }
   });
 
+  test("a vendor trial may record test consent only for TEST- codes, never for a real code and never in production", async () => {
+    vi.stubEnv("CLASSROOM_PROVIDER", "zoom-video-sdk");
+    try {
+      expect(await setConsent("TEST-S7", "student")).toMatchObject({ status: 403, body: { code: "POLICY_PENDING" } });
+      vi.stubEnv("CLASSROOM_TRIAL_CONSENT", "1");
+      expect(await setConsent("TEST-S7", "student")).toMatchObject({ status: 200, body: { ok: true, synthetic: true } });
+      expect(await setConsent("S-0007", "student")).toMatchObject({ status: 403, body: { code: "POLICY_PENDING" } });
+      vi.stubEnv("VERCEL_ENV", "production");
+      expect(await setConsent("TEST-S7", "student")).toMatchObject({ status: 403, body: { code: "POLICY_PENDING" } });
+    } finally {
+      vi.stubEnv("CLASSROOM_PROVIDER", "synthetic");
+      vi.stubEnv("CLASSROOM_TRIAL_CONSENT", "");
+      vi.stubEnv("VERCEL_ENV", "");
+    }
+  });
+
   test("both people can read the recording state with the same entry check; reading stores nothing and shows codes only", async () => {
     at("2026-11-20T05:00:00Z");
     const lesson = await createLesson({ code: "TEST-L11", time: "16:00", tutorCode: "TEST-T11", studentCode: "TEST-S11" });

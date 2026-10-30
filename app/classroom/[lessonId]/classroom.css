@@ -68,6 +68,15 @@
 .classroom-vendor-stage { display: grid; gap: 8px; margin: 12px 0; }
 .classroom-vendor-stage:empty { display: none; }
 .classroom-vendor-stage video, .classroom-vendor-stage video-player { width: 100%; border-radius: 12px; background: #111; }
+/* Zoom: the shared screen and the whiteboard above the two video tiles (side by side on a computer). */
+.classroom-vendor-stage video-player-container { display: grid; gap: 8px; width: 100%; }
+.classroom-zoom-videos { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.classroom-zoom-videos video-player { aspect-ratio: 16 / 9; height: auto; }
+.classroom-zoom-share video-player { aspect-ratio: 16 / 9; height: auto; background: #0b1630; }
+.classroom-zoom-whiteboard { width: 100%; height: min(70vh, 640px); border-radius: 12px; overflow: hidden; background: #fff; border: 1px solid #d8deea; }
+.classroom-zoom-own-share video, .classroom-zoom-own-share canvas { width: min(320px, 100%); border-radius: 8px; opacity: .85; }
+.classroom-vendor-stage [hidden] { display: none !important; }
+.classroom-room-tools { display: grid; gap: 8px; margin: 0 0 12px; }
 .classroom-vendor-stage.tencent-lcic { display: block; }
 .classroom-lcic-frame { display: block; width: 100%; height: min(78vh, 760px); border: 0; border-radius: 12px; background: #f4f6fb; }
 .classroom-room-limits ul { margin: 8px 0 0; padding-left: 20px; }

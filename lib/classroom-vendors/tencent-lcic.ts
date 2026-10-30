@@ -13,12 +13,18 @@ import { fetchTransport, setting, type VendorTransport } from "./http";
 //   API: POST https://lcic.intl.tencentcloudapi.com, Version 2022-08-17, TC3-HMAC-SHA256
 //   RegisterUser {SdkAppId, Name, OriginId} -> {UserId}; LoginUser {UserId} -> {Token} (7 days)
 //   CreateRoom {Name, StartTime, EndTime, SdkAppId, Resolution, MaxMicNumber, SubType, TeacherId,
-//               DisableRecord (0 = record the whole class, 1 = never)} -> {RoomId}
+//               DisableRecord (1 = never, 2 = manual: only StartRecord/StopRecord)} -> {RoomId}
 //   Join: https://www.tencentclass.com/latest/class.html?classid=&userid=&token=
-// Recording is decided when the room is created: a room made before consent is decided, or
-// without it, never records. Starting or stopping it mid-class from the server, ending a class
-// and removing a person are not documented, so those answer 501 and the overview raises its
-// usual anomaly (a withdrawal that cannot be stopped is an error for a person to handle).
+//   EndRoom {RoomId}; KickUserFromRoom {RoomId, SdkAppId, UserId, KickType 2, Duration 0};
+//   DeleteRecord {RoomId, SdkAppId}: international API reference (2026-05-27).
+//   StartRecord {SdkAppId, RoomId} -> {TaskId}; StopRecord {SdkAppId, RoomId, TaskId}: documented
+//   only in Tencent's China-site reference (2025-09-12); the international list does not show them.
+// Recording: a room never records unless the server allowed it before creating the room, and then
+// only in manual mode, so nothing records until the server calls StartRecord. Whether StopRecord
+// works on the international service, and how soon it stops, is NOT known: no callback confirms a
+// stop. So a stop is never treated as confirmed here; the service's withdrawal steps end the
+// class (EndRoom) when no confirmation comes, and the next entry opens a new room that never
+// records. Until a trial shows the stop works, only TEST- lessons may be recorded at all.
 
 export const LCIC_API_VERSION = "2022-08-17";
 export const LCIC_CLASS_PAGE = "https://www.tencentclass.com/latest/class.html";
@@ -79,7 +85,7 @@ export async function lcicCall(config: TencentLcicConfig, transport: VendorTrans
 }
 
 /** Which LCIC room and users belong to a lesson. Local file for the prototype; a table before production. */
-export type LcicRoom = { roomId: number; recordingDisabled: boolean; users: Record<string, string> };
+export type LcicRoom = { roomId: number; recordingDisabled: boolean; users: Record<string, string>; recordTaskId?: string; endedAt?: number };
 export type LcicRoomRegistry = {
   get(lessonId: string): Promise<LcicRoom | null>;
   set(lessonId: string, room: LcicRoom): Promise<void>;
@@ -132,15 +138,45 @@ type Options = {
   rooms: LcicRoomRegistry;
   // The server's recording decision for the lesson at the moment the room is created.
   recordingAllowed: (lesson: ClassroomLesson) => Promise<boolean>;
+  // Set (LCIC_MIDCLASS_STOP_VERIFIED=1) only after a trial has shown StopRecord stops a recording
+  // mid-class. Until then only lessons whose every participant is a TEST- code may record.
+  midClassStopVerified?: boolean;
   now?: () => number;
 };
 
-const notDocumented = async (): Promise<ProviderCall> => ({ ok: false, httpStatus: 501 });
+/** A lesson made only of test identities (TEST- codes), never real students. */
+export const isTestLesson = (lesson: ClassroomLesson) => lesson.participants.length > 0 && lesson.participants.every(participant => /^TEST-/.test(participant.code));
+
+// Tencent's error code as an HTTP-like status for the service: missing room 404, a class in the
+// wrong state 409, an action this application cannot use 501, refused credentials 403, else 502.
+export function lcicStatusOf(code: string) {
+  if (/^ResourceNotFound/.test(code)) return 404;
+  if (/^FailedOperation\.(Class|RoomNotEnd)/.test(code)) return 409;
+  if (/^(InvalidAction|UnsupportedOperation)/.test(code)) return 501;
+  if (/^(AuthFailure|UnauthorizedOperation)/.test(code)) return 403;
+  return 502;
+}
 
 export function tencentLcicProvider(config: TencentLcicConfig, options: Options): ClassroomProvider {
   const transport = options.transport ?? fetchTransport;
   const now = options.now ?? Date.now;
   const api = (action: string, params: Record<string, unknown>) => lcicCall(config, transport, action, params, now());
+  // A control call: accepted (202) when Tencent answers without an error. Accepted is not done:
+  // only LCIC's callbacks or the next snapshot show what happened.
+  const control = async (action: string, params: Record<string, unknown>, after?: (result: Record<string, unknown>) => Promise<void>): Promise<ProviderCall> => {
+    try {
+      const result = await api(action, params);
+      await after?.(result);
+      return { ok: true, httpStatus: 202 };
+    } catch (error) {
+      if (error instanceof LcicApiError) return { ok: false, httpStatus: lcicStatusOf(error.code) };
+      throw error;
+    }
+  };
+  const openRoomOf = async (lesson: ClassroomLesson) => {
+    const room = await options.rooms.get(lesson.id);
+    return room && !room.endedAt ? room : null;
+  };
 
   async function userOf(room: LcicRoom | null, participant: ClassroomParticipant) {
     const known = room?.users[participant.id];
@@ -153,17 +189,19 @@ export function tencentLcicProvider(config: TencentLcicConfig, options: Options)
 
   async function roomOf(lesson: ClassroomLesson) {
     const existing = await options.rooms.get(lesson.id);
-    if (existing) return existing;
+    if (existing && !existing.endedAt) return existing;
     const tutor = lesson.participants.find(entry => entry.role === "tutor");
     if (!tutor) throw new LcicApiError("CreateRoom", "NO_TUTOR");
-    const users: Record<string, string> = {};
-    for (const participant of lesson.participants) users[participant.id] = await userOf(null, participant);
-    // Never recorded unless the server has already decided the lesson may be recorded.
-    const recordingDisabled = !(await options.recordingAllowed(lesson));
+    // After a class was ended (EndRoom), the same people enter a new room.
+    const users: Record<string, string> = { ...(existing?.users ?? {}) };
+    for (const participant of lesson.participants) users[participant.id] ??= await userOf(null, participant);
+    // Never recorded unless the server has already decided the lesson may be recorded, and only
+    // for test lessons until the mid-class stop has been shown to work.
+    const recordingDisabled = !((await options.recordingAllowed(lesson)) && (options.midClassStopVerified === true || isTestLesson(lesson)));
     const created = await api("CreateRoom", {
       Name: lesson.code, StartTime: Math.floor(Date.parse(lesson.startsAt) / 1000), EndTime: Math.floor(Date.parse(lesson.endsAt) / 1000),
       SdkAppId: config.sdkAppId, Resolution: 2, MaxMicNumber: 1, SubType: "videodoc", TeacherId: users[tutor.id],
-      AutoMic: 1, DisableRecord: recordingDisabled ? 1 : 0, RoomType: 0,
+      AutoMic: 1, DisableRecord: recordingDisabled ? 1 : 2, RoomType: 0,
     });
     if (typeof created.RoomId !== "number") throw new LcicApiError("CreateRoom", "NO_ROOM_ID");
     const room = { roomId: created.RoomId, recordingDisabled, users };
@@ -188,10 +226,33 @@ export function tencentLcicProvider(config: TencentLcicConfig, options: Options)
       url.searchParams.set("token", login.Token);
       return { kind: "embed", token: login.Token, issuedAt, expiresAt: issuedAt + LOGIN_TOKEN_MS, embedUrl: url.toString(), recordingDisabled: room.recordingDisabled };
     },
-    startRecording: notDocumented,
-    stopRecording: notDocumented,
-    endSession: notDocumented,
-    removeUser: notDocumented,
+    // Manual recording: only a room created for recording, and the task id is kept for the stop.
+    async startRecording(lesson) {
+      const room = await openRoomOf(lesson);
+      if (!room || room.recordingDisabled) return { ok: false, httpStatus: 409 };
+      return control("StartRecord", { SdkAppId: config.sdkAppId, RoomId: room.roomId }, async (result) => {
+        if (typeof result.TaskId !== "string" || !result.TaskId) throw new LcicApiError("StartRecord", "NO_TASK_ID");
+        await options.rooms.set(lesson.id, { ...room, recordTaskId: result.TaskId });
+      });
+    },
+    async stopRecording(lesson) {
+      const room = await openRoomOf(lesson);
+      // Nothing was started from here, so there is nothing to stop.
+      if (!room?.recordTaskId) return { ok: false, httpStatus: 409 };
+      return control("StopRecord", { SdkAppId: config.sdkAppId, RoomId: room.roomId, TaskId: room.recordTaskId });
+    },
+    async endSession(lesson) {
+      const room = await openRoomOf(lesson);
+      if (!room) return { ok: false, httpStatus: 404 };
+      return control("EndRoom", { RoomId: room.roomId }, async () => { await options.rooms.set(lesson.id, { ...room, endedAt: now() }); });
+    },
+    // userKey is our participant id, the OriginId the person was registered with.
+    async removeUser(lesson, userKey) {
+      const room = await openRoomOf(lesson);
+      const userId = room?.users[userKey];
+      if (!room || !userId) return { ok: false, httpStatus: 404 };
+      return control("KickUserFromRoom", { RoomId: room.roomId, SdkAppId: config.sdkAppId, UserId: userId, KickType: 2, Duration: 0 });
+    },
     async snapshot(lesson) {
       const room = await options.rooms.get(lesson.id);
       if (!room) return null;
@@ -209,6 +270,11 @@ export function tencentLcicProvider(config: TencentLcicConfig, options: Options)
       if (response.status !== 206 && !(response.status === 200 && start === 0)) throw new Error(`Download answered ${response.status}`);
       return response.bytes ?? Buffer.from(response.body);
     },
-    deleteRecording: notDocumented,
+    // A room's recording files are deleted together (the file id is lcic-<RoomId>).
+    async deleteRecording(record) {
+      const roomId = Number(/^lcic-(\d+)$/.exec(String(record.providerFileId ?? ""))?.[1]);
+      if (!Number.isSafeInteger(roomId)) return { ok: false, httpStatus: 404 };
+      return control("DeleteRecord", { RoomId: roomId, SdkAppId: config.sdkAppId });
+    },
   };
 }

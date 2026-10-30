@@ -7,7 +7,7 @@ const read = async (path) => (await readFile(new URL(`../${path}`, import.meta.u
 describe("production operations configuration", () => {
   it("permits same-origin Academy embedding only on the exact editor route", async () => {
     const { headers: rules } = JSON.parse(await read("vercel.json"));
-    expect(rules.map(rule => rule.source)).toEqual(["/(.*)", "/admin/media", "/admin/academy"]);
+    expect(rules.map(rule => rule.source)).toEqual(["/(.*)", "/admin/media", "/admin/academy", "/classroom/:lessonId"]);
     const headerMap = rule => Object.fromEntries(rule.headers.map(header => [header.key.toLowerCase(), header.value]));
     const defaults = headerMap(rules[0]);
     expect(defaults["x-frame-options"]).toBe("DENY");
@@ -22,6 +22,35 @@ describe("production operations configuration", () => {
     for (const route of ["/", "/academy/courses", "/academy/courses/zh", "/admin", "/admin/academy/other", "/admin/accounts", "/api/auth/signin"]) {
       expect(rules.slice(1).some(rule => rule.source === route)).toBe(false);
     }
+  });
+
+  // Vercel applies a later matching rule's header over an earlier one (seen live on /admin/media,
+  // 2026-10-30), so only the classroom page gets camera, microphone and screen sharing, for itself
+  // and Tencent's classroom frame; every other page keeps them off, and nothing may frame it.
+  it("allows camera, microphone and the two classroom vendors only on the classroom page", async () => {
+    const { headers: rules } = JSON.parse(await read("vercel.json"));
+    const headerMap = rule => Object.fromEntries(rule.headers.map(header => [header.key.toLowerCase(), header.value]));
+    const defaults = headerMap(rules[0]);
+    expect(defaults["permissions-policy"]).toBe("camera=(), microphone=(), geolocation=(), payment=()");
+    const others = rules.slice(0, -1).map(headerMap);
+    expect(others.every(rule => !/camera=\(self|tencentclass|zoom\.us/.test(`${rule["permissions-policy"] ?? ""} ${rule["content-security-policy"] ?? ""}`))).toBe(true);
+    const classroom = rules.at(-1);
+    expect(classroom.source).toBe("/classroom/:lessonId");
+    const room = headerMap(classroom);
+    expect(Object.keys(room).sort()).toEqual(["content-security-policy", "permissions-policy"]);
+    const tencent = '"https://www.tencentclass.com"';
+    for (const feature of ["camera", "microphone", "display-capture", "fullscreen", "clipboard-read", "clipboard-write"]) {
+      expect(room["permissions-policy"]).toContain(`${feature}=(self ${tencent})`);
+    }
+    expect(room["permissions-policy"]).toContain("geolocation=(), payment=()");
+    const csp = Object.fromEntries(room["content-security-policy"].split("; ").map(part => [part.split(" ")[0], part]));
+    expect(csp["frame-ancestors"]).toBe("frame-ancestors 'none'");
+    expect(csp["frame-src"]).toBe("frame-src 'self' https://www.tencentclass.com");
+    expect(csp["script-src"]).toBe("script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob: https://source.zoom.us");
+    expect(csp["worker-src"]).toBe("worker-src 'self' blob: https://source.zoom.us");
+    // Joining first calls https://zoom.us/wc/lsdk, which *.zoom.us does not cover (seen with the real package).
+    expect(csp["connect-src"]).toBe("connect-src 'self' https://zoom.us https://*.zoom.us wss://*.zoom.us");
+    expect(csp["media-src"]).toBe("media-src 'self' blob: mediastream:");
   });
 
   it("does not bypass current-data page routes with legacy static HTML rewrites", async () => {

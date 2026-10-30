@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   createMediaAdapter, hostReportFor, MediaAdapterUnavailableError, SYNTHETIC_SCENARIOS, SyntheticMediaAdapter,
-  type ClassroomMediaAdapter, type ConnectionState, type DeviceKind, type DeviceState, type MediaEvent, type SyntheticScenario,
+  type ClassroomMediaAdapter, type ConnectionState, type DeviceKind, type DeviceState, type MediaEvent, type MediaSystemCheck, type SyntheticScenario,
 } from "../../../lib/classroom-media";
 import { classroomDeviceOf, deviceLimits, type CapabilityName, type ClassroomDevice } from "../../../lib/classroom-capabilities";
 
@@ -20,11 +20,18 @@ const vendorCopy = {
     limits: {
       video: "視訊在這台裝置上的效果未確認", documents: "教材（PDF、PPT）只能用分享畫面觀看，或效果未確認",
       whiteboard: "白板只能觀看、不能在上面畫，或效果未確認", screenShare: "不能從這台裝置分享畫面",
-      fileTransfer: "傳送檔案的方式未確認", recording: "錄影在開課時就決定，上課中無法由系統停止（未確認）",
+      fileTransfer: "傳送檔案的方式未確認", recording: "上課中由系統停止錄影的方式尚未實測；必要時會結束這間教室，再開一間不錄影的教室",
     } as Record<CapabilityName, string>,
     lcicNote: "以下是騰訊的教室畫面：鏡頭、麥克風、教材和白板都在裡面操作。連線狀態也顯示在騰訊的畫面內。",
     lcicRecordingOff: "這堂課的教室建立時不錄影。",
     zoomVideo: "Zoom 視訊畫面",
+    share: "分享畫面（教材）", shareStop: "停止分享畫面", whiteboard: "開啟白板", whiteboardStop: "關閉白板", exportBoard: "下載白板 PDF",
+    sharing: "你正在分享畫面。", receiving: "正在顯示對方分享的畫面。", presenting: "你正在主持白板，對方會同時看到。", viewing: "正在顯示小老師的白板。",
+    shareHint: "教材（PDF、PPT）：先在這台電腦打開檔案，再按「分享畫面」，選擇那個視窗或瀏覽器分頁。",
+    noShareHere: "這台裝置不能分享畫面；要展示教材請改用電腦。",
+    shareFailed: "畫面沒有開始分享（可能取消了選擇）。",
+    boardFailed: "白板無法開啟：這個帳號可能沒有開啟白板，或這台裝置不支援。",
+    sdkCheck: (check: MediaSystemCheck) => `Zoom 視訊 ${check.sdkVersion}：音訊${check.audio ? "可用" : "不可用"}、視訊${check.video ? "可用" : "不可用"}、分享畫面${check.screenShare ? "可用" : "不可用"}`,
   },
   en: {
     limitsTitle: "Limits on this device",
@@ -33,11 +40,18 @@ const vendorCopy = {
     limits: {
       video: "Video on this device is not confirmed", documents: "Materials (PDF, PPT) only through a shared screen, or not confirmed",
       whiteboard: "The whiteboard is view-only here, or not confirmed", screenShare: "This device cannot share its screen",
-      fileTransfer: "Sending files is not confirmed", recording: "Recording is decided when the class opens and cannot be stopped by iHear mid-class (not confirmed)",
+      fileTransfer: "Sending files is not confirmed", recording: "Stopping a recording mid-class from iHear is not yet tested; if needed the class is ended and a new one opens without recording",
     } as Record<CapabilityName, string>,
     lcicNote: "Below is Tencent's classroom: the camera, microphone, materials and whiteboard are all inside it, and so is the connection status.",
     lcicRecordingOff: "This class was opened without recording.",
     zoomVideo: "Zoom video",
+    share: "Share screen (materials)", shareStop: "Stop sharing", whiteboard: "Open whiteboard", whiteboardStop: "Close whiteboard", exportBoard: "Download whiteboard PDF",
+    sharing: "You are sharing your screen.", receiving: "Showing the other person’s shared screen.", presenting: "You are presenting the whiteboard; the other person sees it too.", viewing: "Showing the tutor’s whiteboard.",
+    shareHint: "Materials (PDF, PPT): open the file on this computer first, then choose Share screen and pick that window or browser tab.",
+    noShareHere: "This device cannot share its screen; use a computer to show materials.",
+    shareFailed: "The screen was not shared (the choice may have been cancelled).",
+    boardFailed: "The whiteboard could not open: it may be off for this account, or this device does not support it.",
+    sdkCheck: (check: MediaSystemCheck) => `Zoom video ${check.sdkVersion}: audio ${check.audio ? "supported" : "not supported"}, video ${check.video ? "supported" : "not supported"}, screen sharing ${check.screenShare ? "supported" : "not supported"}`,
   },
 };
 
@@ -60,7 +74,7 @@ const copy = {
     lesson: "Lesson", time: "Time (Taipei)", you: "You", tutor: "Tutor", student: "Student",
     stage: "Video", self: "You", other_tutor: "Tutor", other_student: "Student",
     noVideo: "No real video in this test classroom.",
-    cameraOnSimulated: "Camera on (simulated: no real picture)", cameraOff: "Camera off",
+    cameraOnSimulated: "Camera on (simulated: no real picture)", cameraOn: "Camera on", cameraOff: "Camera off",
     cameraDenied: "Camera not allowed", cameraUnavailable: "No camera found",
     micOn: "Microphone on", micOff: "Microphone muted", micDenied: "Microphone not allowed", micUnavailable: "No microphone found",
     waitingOther: "Waiting for the other person to enter.",
@@ -121,7 +135,7 @@ const copy = {
     lesson: "課程", time: "時間（台北）", you: "你的身分", tutor: "小老師", student: "學生",
     stage: "視訊畫面", self: "你", other_tutor: "小老師", other_student: "學生",
     noVideo: "測試教室沒有真實視訊。",
-    cameraOnSimulated: "攝影機開啟（模擬：沒有真實畫面）", cameraOff: "攝影機關閉",
+    cameraOnSimulated: "攝影機開啟（模擬：沒有真實畫面）", cameraOn: "攝影機開啟", cameraOff: "攝影機關閉",
     cameraDenied: "沒有攝影機權限", cameraUnavailable: "找不到攝影機",
     micOn: "麥克風開啟", micOff: "麥克風靜音", micDenied: "沒有麥克風權限", micUnavailable: "找不到麥克風",
     waitingOther: "等待對方進入教室。",
@@ -192,9 +206,11 @@ type Media = {
   connection: ConnectionState;
   devices: Record<DeviceKind, DeviceState>;
   remote: { present: boolean; camera: boolean; microphone: boolean; seen: boolean };
+  share: "none" | "sending" | "receiving";
+  whiteboard: "none" | "presenting" | "viewing";
 };
 
-const initialMedia = (): Media => ({ available: true, connection: "idle", devices: { camera: "off", microphone: "off" }, remote: { present: false, camera: false, microphone: false, seen: false } });
+const initialMedia = (): Media => ({ available: true, connection: "idle", devices: { camera: "off", microphone: "off" }, remote: { present: false, camera: false, microphone: false, seen: false }, share: "none", whiteboard: "none" });
 
 function initialLocale(): Locale {
   try {
@@ -229,6 +245,9 @@ export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: stri
   const [hostProblem, setHostProblem] = useState<"" | "unstable" | "signedOut">("");
   const [media, setMedia] = useState<Media>(initialMedia);
   const [simulator, setSimulator] = useState<SyntheticMediaAdapter | null>(null);
+  // The vendor's own check of this browser, and a problem starting the materials or whiteboard.
+  const [sdkCheck, setSdkCheck] = useState<MediaSystemCheck | null>(null);
+  const [toolProblem, setToolProblem] = useState<"" | "share" | "board">("");
   // The provider's session token. It is never shown; it goes only to the media adapter.
   const session = useRef<{ kind?: "sdk" | "embed"; token?: string; sessionName?: string; embedUrl?: string; recordingDisabled?: boolean; expiresAt: string } | null>(null);
   const vendorStage = useRef<HTMLDivElement | null>(null);
@@ -325,8 +344,12 @@ export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: stri
         setMedia((state) => ({ ...state, connection: event.state }));
       } else if (event.type === "device") {
         setMedia((state) => ({ ...state, devices: { ...state.devices, [event.kind]: event.state } }));
-      } else {
+      } else if (event.type === "remote") {
         setMedia((state) => ({ ...state, remote: { present: event.present, camera: event.camera, microphone: event.microphone, seen: state.remote.seen || event.present } }));
+      } else if (event.type === "share") {
+        setMedia((state) => ({ ...state, share: event.state }));
+      } else {
+        setMedia((state) => ({ ...state, whiteboard: event.state }));
       }
       if (joined.role === "tutor") {
         const body = hostReportFor(event);
@@ -334,6 +357,7 @@ export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: stri
       }
     });
     if (vendorStage.current && current.mount) current.mount(vendorStage.current);
+    current.systemCheck?.().then(setSdkCheck, () => setSdkCheck(null));
     if (session.current) {
       current.join({
         sessionToken: session.current.token ?? "", sessionName: session.current.sessionName, embedUrl: session.current.embedUrl,
@@ -348,6 +372,8 @@ export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: stri
       void current.leave();
       adapter.current = null;
       setSimulator(null);
+      setSdkCheck(null);
+      setToolProblem("");
       connection.current = "idle";
     };
   }, [phase, joined, report]);
@@ -417,6 +443,26 @@ export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: stri
     await current.setDevice(kind, media.devices[kind] !== "on");
   }
 
+  // The tutor's materials and whiteboard (Zoom). Starting either can be refused by the browser or
+  // the account; the page says so and the lesson carries on.
+  async function toggleShare() {
+    const current = adapter.current;
+    if (!current?.setScreenShare) return;
+    setToolProblem("");
+    const on = media.share !== "sending";
+    const started = await current.setScreenShare(on).catch(() => false);
+    if (on && !started) setToolProblem("share");
+  }
+
+  async function toggleBoard() {
+    const current = adapter.current;
+    if (!current?.setWhiteboard) return;
+    setToolProblem("");
+    const on = media.whiteboard !== "presenting";
+    const started = await current.setWhiteboard(on).catch(() => false);
+    if (on && !started) setToolProblem("board");
+  }
+
   async function reconnect() {
     const current = adapter.current;
     if (!current || !session.current || !joined) return;
@@ -440,7 +486,9 @@ export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: stri
   const until = (iso: string) => new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Taipei", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(iso));
   const showSignIn = phase === "blocked" && !joinKey && ["NOT_ON_ROSTER", "IDENTITY_UNVERIFIED"].includes(reason);
   const badge = statusProblem && isStudent ? "unknown" : badgeOf(recording);
-  const cameraText = { on: text.cameraOnSimulated, off: text.cameraOff, denied: text.cameraDenied, unavailable: text.cameraUnavailable }[media.devices.camera];
+  // "Simulated" only in the synthetic stand-in; a vendor adapter carries real video.
+  const cameraOn = simulator ? text.cameraOnSimulated : text.cameraOn;
+  const cameraText = { on: cameraOn, off: text.cameraOff, denied: text.cameraDenied, unavailable: text.cameraUnavailable }[media.devices.camera];
   const micText = { on: text.micOn, off: text.micOff, denied: text.micDenied, unavailable: text.micUnavailable }[media.devices.microphone];
   const otherName = joined?.role === "tutor" ? text.other_student : text.other_tutor;
   const connected = media.connection === "connected";
@@ -488,9 +536,36 @@ export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: stri
               <>
                 {joined.provider === "tencent-lcic" && <p className="classroom-room-note" role="note">{v.lcicNote}{session.current?.recordingDisabled ? ` ${v.lcicRecordingOff}` : ""}</p>}
                 <div className={`classroom-vendor-stage ${joined.provider}`} ref={vendorStage} aria-label={joined.provider === "zoom-video-sdk" ? v.zoomVideo : text.stage} data-provider={joined.provider} />
+                {joined.provider === "zoom-video-sdk" && (
+                  <div className="classroom-room-tools" aria-live="polite">
+                    {media.share !== "none" && <p className="classroom-room-note" role="status">{media.share === "sending" ? v.sharing : v.receiving}</p>}
+                    {media.whiteboard !== "none" && <p className="classroom-room-note" role="status">{media.whiteboard === "presenting" ? v.presenting : v.viewing}</p>}
+                    {joined.role === "tutor" && (
+                      <>
+                        <div className="classroom-room-controls" role="toolbar" aria-label={v.zoomVideo}>
+                          <button type="button" className="classroom-room-control" aria-pressed={media.share === "sending"} data-tool="share"
+                            disabled={!connected || device !== "desktop" || sdkCheck?.screenShare === false} onClick={toggleShare}>
+                            {media.share === "sending" ? v.shareStop : v.share}
+                          </button>
+                          <button type="button" className="classroom-room-control" aria-pressed={media.whiteboard === "presenting"} data-tool="whiteboard"
+                            disabled={!connected} onClick={toggleBoard}>
+                            {media.whiteboard === "presenting" ? v.whiteboardStop : v.whiteboard}
+                          </button>
+                          {media.whiteboard === "presenting" && (
+                            <button type="button" className="classroom-room-secondary" data-tool="export"
+                              onClick={() => void adapter.current?.exportWhiteboard?.(`iHear-${joined.lesson.code}`).catch(() => setToolProblem("board"))}>{v.exportBoard}</button>
+                          )}
+                        </div>
+                        <p className="classroom-room-muted">{device === "desktop" && sdkCheck?.screenShare !== false ? v.shareHint : v.noShareHere}</p>
+                      </>
+                    )}
+                    {toolProblem && <p className="classroom-room-problem" role="alert">{toolProblem === "share" ? v.shareFailed : v.boardFailed}</p>}
+                  </div>
+                )}
                 {limits.length > 0 && (
                   <details className="classroom-room-card classroom-room-limits" data-device={device}>
                     <summary>{v.limitsTitle}（{v.device[device]}）</summary>
+                    {sdkCheck && <p className="classroom-room-muted" data-sdk-version={sdkCheck.sdkVersion}>{v.sdkCheck(sdkCheck)}</p>}
                     <ul>{limits.map(limit => <li key={limit.name} data-capability={limit.name} data-level={limit.level}>{v.limits[limit.name]}{limit.level === "unknown" ? v.unknown : ""}</li>)}</ul>
                   </details>
                 )}
@@ -504,7 +579,7 @@ export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: stri
               {!media.available ? <p>{text.notConnected}</p>
                 : media.remote.present ? (
                   <>
-                    <p>{media.remote.camera ? text.cameraOnSimulated : text.cameraOff}</p>
+                    <p>{media.remote.camera ? cameraOn : text.cameraOff}</p>
                     <p className="classroom-room-tile-sub">{media.remote.microphone ? text.micOn : text.micOff}</p>
                   </>
                 ) : (

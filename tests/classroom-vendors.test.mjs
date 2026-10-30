@@ -4,7 +4,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { CLASSROOM_CAPABILITIES, classroomDeviceOf, deviceLimits } from "../lib/classroom-capabilities";
 import { LcicEmbedAdapter, LCIC_FRAME_PERMISSIONS, MediaAdapterUnavailableError, ZoomVideoSdkMediaAdapter } from "../lib/classroom-media";
 import { ClassroomProviderUnavailableError, classroomProvider } from "../lib/classroom-provider";
-import { LcicApiError, memoryRoomRegistry, tc3Sign, tencentLcicConfig, tencentLcicProvider, verifyLcicCallback } from "../lib/classroom-vendors/tencent-lcic";
+import { isTestLesson, LcicApiError, lcicStatusOf, memoryRoomRegistry, tc3Sign, tencentLcicConfig, tencentLcicProvider, verifyLcicCallback } from "../lib/classroom-vendors/tencent-lcic";
 import { zoomApiToken, zoomVideoSdkConfig, zoomVideoSdkProvider } from "../lib/classroom-vendors/zoom-video-sdk";
 
 // The two vendor adapters (Zoom Video SDK, Tencent LCIC) against stand-ins: every HTTP request
@@ -114,15 +114,26 @@ describe("Tencent LCIC, server side", () => {
   const config = tencentLcicConfig(env);
   const answers = {
     RegisterUser: (body) => ({ UserId: `lcic-${JSON.parse(body).OriginId}`, RequestId: "r" }),
-    CreateRoom: () => ({ RoomId: 345678, RequestId: "r" }),
     LoginUser: (body) => ({ UserId: JSON.parse(body).UserId, Token: `synthetic-login-${JSON.parse(body).UserId}`, RequestId: "r" }),
+    StartRecord: () => ({ TaskId: "task-TEST-1", RequestId: "r" }),
+    StopRecord: () => ({ RequestId: "r" }), EndRoom: () => ({ RequestId: "r" }),
+    KickUserFromRoom: () => ({ RequestId: "r" }), DeleteRecord: () => ({ RequestId: "r" }),
   };
-  const lcic = ({ allowed = false, answer } = {}) => {
-    const fake = fakeTransport(answer ?? (request => ({ status: 200, body: JSON.stringify({ Response: answers[request.headers["X-TC-Action"]](request.body) }) })));
+  // Each fake application numbers its rooms from 345678; "answer" may replace Tencent's reply.
+  const lcic = ({ allowed = false, verified = false, answer } = {}) => {
+    let created = 0;
+    const standard = request => {
+      const action = request.headers["X-TC-Action"];
+      const response = action === "CreateRoom" ? { RoomId: 345678 + created++, RequestId: "r" } : answers[action](request.body);
+      return { status: 200, body: JSON.stringify({ Response: response }) };
+    };
+    const fake = fakeTransport(answer ? request => answer(request, standard) : standard);
     const rooms = memoryRoomRegistry();
-    return { ...fake, rooms, provider: tencentLcicProvider(config, { transport: fake.transport, rooms, recordingAllowed: async () => allowed, now: () => NOW }) };
+    const recordingAllowed = async () => (typeof allowed === "function" ? allowed() : allowed);
+    return { ...fake, rooms, provider: tencentLcicProvider(config, { transport: fake.transport, rooms, recordingAllowed, midClassStopVerified: verified, now: () => NOW }) };
   };
   const actions = requests => requests.map(request => request.headers["X-TC-Action"]);
+  const tencentError = code => ({ status: 200, body: JSON.stringify({ Response: { Error: { Code: code, Message: "details that may repeat the request" }, RequestId: "r" } }) });
 
   test("the signature matches Tencent's documented example (payload hash and canonical request)", () => {
     const signed = tc3Sign({
@@ -160,21 +171,99 @@ describe("Tencent LCIC, server side", () => {
     expect(new URL(prepared.embedUrl).searchParams.get("userid")).toBe("lcic-P-TEST-S01");
   });
 
-  test("a room is created recording only when the server has already allowed recording", async () => {
+  test("a room records only when the server allowed it, and then in manual mode (2): nothing records before StartRecord", async () => {
     const { provider, requests } = lcic({ allowed: true });
     const prepared = await provider.prepareJoin({ lesson, participant: tutor, now: NOW });
-    expect(JSON.parse(requests[2].body).DisableRecord).toBe(0);
+    expect(JSON.parse(requests[2].body).DisableRecord).toBe(2);
     expect(prepared.recordingDisabled).toBe(false);
   });
 
-  test("an API error keeps only Tencent's code; mid-class recording control is reported as not available", async () => {
-    const { provider } = lcic({ answer: () => ({ status: 200, body: JSON.stringify({ Response: { Error: { Code: "AuthFailure.SignatureFailure", Message: "details that may repeat the request" }, RequestId: "r" } }) }) });
+  test("real students are never recorded through LCIC until the mid-class stop is verified; TEST- lessons may be", async () => {
+    const real = { ...lesson, id: "L-R-001", code: "R-001", participants: [{ id: "P-R-T01", code: "T-001", role: "tutor" }, { id: "P-R-S01", code: "S-001", role: "student" }] };
+    const createRoom = requests => JSON.parse(requests.find(request => request.headers["X-TC-Action"] === "CreateRoom").body);
+    const unverified = lcic({ allowed: true });
+    expect((await unverified.provider.prepareJoin({ lesson: real, participant: real.participants[0], now: NOW })).recordingDisabled).toBe(true);
+    expect(createRoom(unverified.requests).DisableRecord).toBe(1);
+    const verified = lcic({ allowed: true, verified: true });
+    await verified.provider.prepareJoin({ lesson: real, participant: real.participants[0], now: NOW });
+    expect(createRoom(verified.requests).DisableRecord).toBe(2);
+    expect([isTestLesson(lesson), isTestLesson(real), isTestLesson({ ...real, participants: [tutor, real.participants[1]] })]).toEqual([true, false, false]);
+  });
+
+  test("an API error keeps only Tencent's code", async () => {
+    const { provider } = lcic({ answer: () => tencentError("AuthFailure.SignatureFailure") });
     const failure = await provider.prepareJoin({ lesson, participant: tutor, now: NOW }).catch(error => error);
     expect(failure).toBeInstanceOf(LcicApiError);
     expect(failure.message).toBe("LCIC RegisterUser failed: AuthFailure.SignatureFailure");
-    for (const call of [provider.startRecording(lesson), provider.stopRecording(lesson), provider.endSession(lesson), provider.removeUser(lesson, student.id)]) {
-      expect(await call).toEqual({ ok: false, httpStatus: 501 });
+  });
+
+  test("the server starts and stops the recording (StartRecord, then StopRecord with the kept task id); a stop is only 'accepted'", async () => {
+    const { provider, requests, rooms } = lcic({ allowed: true });
+    await provider.prepareJoin({ lesson, participant: tutor, now: NOW });
+    const before = requests.length;
+    expect(await provider.startRecording(lesson)).toEqual({ ok: true, httpStatus: 202 });
+    expect(JSON.parse(requests[before].body)).toEqual({ SdkAppId: 1400000000, RoomId: 345678 });
+    expect((await rooms.get(lesson.id)).recordTaskId).toBe("task-TEST-1");
+    expect(await provider.stopRecording(lesson)).toEqual({ ok: true, httpStatus: 202 });
+    expect(actions(requests.slice(before))).toEqual(["StartRecord", "StopRecord"]);
+    expect(JSON.parse(requests.at(-1).body)).toEqual({ SdkAppId: 1400000000, RoomId: 345678, TaskId: "task-TEST-1" });
+  });
+
+  test("a room made without recording is never started; a stop with nothing started sends nothing", async () => {
+    const { provider, requests } = lcic();
+    await provider.prepareJoin({ lesson, participant: tutor, now: NOW });
+    const before = requests.length;
+    expect(await provider.startRecording(lesson)).toEqual({ ok: false, httpStatus: 409 });
+    expect(await provider.stopRecording(lesson)).toEqual({ ok: false, httpStatus: 409 });
+    expect(requests.length).toBe(before);
+  });
+
+  test("StopRecord unavailable on the international service is reported (501), never taken as stopped", async () => {
+    const { provider } = lcic({ allowed: true, answer: (request, standard) => (request.headers["X-TC-Action"] === "StopRecord" ? tencentError("InvalidAction") : standard(request)) });
+    await provider.prepareJoin({ lesson, participant: tutor, now: NOW });
+    await provider.startRecording(lesson);
+    expect(await provider.stopRecording(lesson)).toEqual({ ok: false, httpStatus: 501 });
+    for (const [code, status] of [["UnsupportedOperation", 501], ["ResourceNotFound.Room", 404], ["FailedOperation.ClassEnded", 409], ["FailedOperation.RoomNotEnd", 409], ["UnauthorizedOperation", 403], ["InternalError", 502]]) {
+      expect(lcicStatusOf(code)).toBe(status);
     }
+  });
+
+  test("ending the class (EndRoom) closes the room; the next entry opens a new room for the same people, decided again", async () => {
+    let allowed = true;
+    const { provider, requests, rooms } = lcic({ allowed: () => allowed });
+    await provider.prepareJoin({ lesson, participant: tutor, now: NOW });
+    await provider.startRecording(lesson);
+    expect(await provider.endSession(lesson)).toEqual({ ok: true, httpStatus: 202 });
+    expect([requests.at(-1).headers["X-TC-Action"], JSON.parse(requests.at(-1).body)]).toEqual(["EndRoom", { RoomId: 345678 }]);
+    expect((await rooms.get(lesson.id)).endedAt).toBe(NOW);
+    expect(await provider.endSession(lesson)).toEqual({ ok: false, httpStatus: 404 });
+    // Consent was withdrawn: the new room never records, and has nothing to stop.
+    allowed = false;
+    const before = requests.length;
+    const again = await provider.prepareJoin({ lesson, participant: student, now: NOW });
+    expect(actions(requests.slice(before))).toEqual(["CreateRoom", "LoginUser"]);
+    expect(JSON.parse(requests[before].body).DisableRecord).toBe(1);
+    expect([new URL(again.embedUrl).searchParams.get("classid"), again.recordingDisabled]).toEqual(["345679", true]);
+    expect(await provider.stopRecording(lesson)).toEqual({ ok: false, httpStatus: 409 });
+  });
+
+  test("removing a person is KickUserFromRoom with LCIC's id for our participant; nobody unknown is sent", async () => {
+    const { provider, requests } = lcic();
+    await provider.prepareJoin({ lesson, participant: tutor, now: NOW });
+    expect(await provider.removeUser(lesson, student.id)).toEqual({ ok: true, httpStatus: 202 });
+    expect(JSON.parse(requests.at(-1).body)).toEqual({ RoomId: 345678, SdkAppId: 1400000000, UserId: "lcic-P-TEST-S01", KickType: 2, Duration: 0 });
+    const before = requests.length;
+    expect(await provider.removeUser(lesson, "P-UNKNOWN")).toEqual({ ok: false, httpStatus: 404 });
+    expect(requests.length).toBe(before);
+  });
+
+  test("deleting a recording deletes the room's files (DeleteRecord); another vendor's file id is not sent", async () => {
+    const { provider, requests } = lcic();
+    expect(await provider.deleteRecording({ providerFileId: "lcic-345678" })).toEqual({ ok: true, httpStatus: 202 });
+    expect([requests.at(-1).headers["X-TC-Action"], JSON.parse(requests.at(-1).body)]).toEqual(["DeleteRecord", { RoomId: 345678, SdkAppId: 1400000000 }]);
+    const before = requests.length;
+    expect(await provider.deleteRecording({ providerFileId: "zoom-file-1" })).toEqual({ ok: false, httpStatus: 404 });
+    expect(requests.length).toBe(before);
   });
 
   test("callbacks are verified as md5(callback key + expiry), Tencent's documented example included", () => {
@@ -199,32 +288,71 @@ describe("Tencent LCIC, server side", () => {
 });
 
 describe("browser adapters", () => {
-  function fakeZoom({ joinError = null, videoError = null } = {}) {
+  // A small stand-in for the page: elements remember their class, children and whether hidden.
+  function fakeDom() {
+    const doc = {
+      createElement(tag) {
+        const element = {
+          tag, className: "", hidden: false, children: [], nodeType: 1, ownerDocument: doc,
+          append(...nodes) { element.children.push(...nodes); },
+          replaceChildren(...nodes) { element.children = [...nodes]; },
+          remove() { element.removed = true; },
+        };
+        return element;
+      },
+    };
+    return { doc, root: doc.createElement("div") };
+  }
+  function fakeZoom({ joinError = null, videoError = null, shareError = null, canBoard = true, sharingAtJoin = 0 } = {}) {
     const calls = [];
     const handlers = new Map();
     const users = [{ userId: 1, userIdentity: "P-TEST-T01" }];
     const stream = {
       startAudio: async () => calls.push("startAudio"), muteAudio: async () => calls.push("muteAudio"), unmuteAudio: async () => calls.push("unmuteAudio"),
       startVideo: async () => { calls.push("startVideo"); if (videoError) throw videoError; }, stopVideo: async () => calls.push("stopVideo"),
-      attachVideo: async (userId) => { calls.push(`attach:${userId}`); return { nodeType: 1 }; }, detachVideo: async (userId) => calls.push(`detach:${userId}`),
+      attachVideo: async (userId) => { calls.push(`attach:${userId}`); return { nodeType: 1, tag: `video:${userId}` }; }, detachVideo: async (userId) => calls.push(`detach:${userId}`),
+      isStartShareScreenWithVideoElement: () => true,
+      startShareScreen: async (target) => { calls.push(`share:${target.tag}`); if (shareError) throw shareError; },
+      stopShareScreen: async () => calls.push("stopShare"),
+      getActiveShareUserId: () => sharingAtJoin,
+      attachShareView: async (userId) => { calls.push(`shareView:${userId}`); return { nodeType: 1, tag: `shared:${userId}` }; },
+      detachShareView: async (userId) => calls.push(`shareViewOff:${userId}`),
+    };
+    const whiteboard = {
+      isWhiteboardEnabled: () => true, canStartWhiteboard: () => canBoard,
+      startWhiteboardScreen: async (element) => calls.push(`board:${element.className}`), stopWhiteboardScreen: async () => calls.push("boardOff"),
+      startWhiteboardView: async (element, userId) => calls.push(`boardView:${userId}`), stopWhiteboardView: async () => calls.push("boardViewOff"),
+      exportWhiteboard: async (format, name) => calls.push(`export:${format}:${name}`),
     };
     const client = {
       init: async (...args) => calls.push(["init", ...args.slice(0, 2)].join(":")),
       join: async (...args) => { calls.push(["join", ...args].join(":")); if (joinError) throw joinError; },
-      leave: async () => calls.push("leave"), getMediaStream: () => stream, getCurrentUserInfo: () => ({ userId: 1 }), getAllUser: () => users,
+      leave: async () => calls.push("leave"), getMediaStream: () => stream, getWhiteboardClient: () => whiteboard,
+      getCurrentUserInfo: () => ({ userId: 1 }), getAllUser: () => users,
       on: (name, handler) => handlers.set(name, handler), off: (name) => { calls.push(`off:${name}`); handlers.delete(name); },
     };
-    return { calls, handlers, users, sdk: { createClient: () => client } };
+    const sdk = {
+      VERSION: "2.6.0", createClient: () => client,
+      checkSystemRequirements: () => ({ audio: true, video: true, screen: false }), checkFeatureRequirements: () => ({ unSupportFeatures: ["screenShare"] }),
+    };
+    return { calls, handlers, users, sdk };
   }
   const zoomJoin = { sessionToken: "synthetic.jwt.token", sessionName: "ihear-l-test-v01", lessonCode: "TEST-V01", participantCode: "TEST-T01", role: "tutor" };
+  // Zoom calls its handlers without waiting; let their asynchronous work finish.
+  const settle = () => new Promise(resolve => { setTimeout(resolve, 0); });
   const recorded = adapter => { const events = []; adapter.subscribe(event => events.push(event)); return events; };
-
-  test("Zoom: joins the token's topic with the participant code as the name; the other person's key comes from Zoom", async () => {
-    const zoom = fakeZoom();
+  const joined = async (options) => {
+    const zoom = fakeZoom(options), dom = fakeDom();
     const adapter = new ZoomVideoSdkMediaAdapter(async () => zoom.sdk, () => 1);
     const events = recorded(adapter);
-    adapter.mount({ append: () => undefined, replaceChildren: () => undefined });
+    adapter.mount(dom.root);
     await adapter.join(zoomJoin);
+    const [share, whiteboard, videos, ownShare] = dom.root.children;
+    return { zoom, adapter, events, share, whiteboard, videos, ownShare };
+  };
+
+  test("Zoom: joins the token's topic with the participant code as the name; the other person's key comes from Zoom", async () => {
+    const { zoom, events, videos, adapter } = await joined();
     expect(zoom.calls.slice(0, 2)).toEqual(["init:en-US:Global", "join:ihear-l-test-v01:synthetic.jwt.token:TEST-T01"]);
     zoom.users.push({ userId: 2, userIdentity: "P-TEST-S01", bVideoOn: true, audio: "computer", muted: false });
     zoom.handlers.get("user-added")([{ userId: 2 }]);
@@ -232,13 +360,19 @@ describe("browser adapters", () => {
     expect(events.at(-1)).toMatchObject({ type: "remote", present: true, camera: true, microphone: true, userKey: "P-TEST-S01" });
     zoom.handlers.get("connection-change")({ state: "Reconnecting" });
     expect(events.at(-1)).toMatchObject({ type: "connection", state: "reconnecting" });
+    expect(await adapter.setDevice("camera", true)).toBe("on");
+    expect(videos.children.map(child => child.tag)).toEqual(["video:1"]);
+  });
+
+  test("Zoom: videos and a shared screen go into separate <video-player-container>s, as Zoom requires", async () => {
+    const { share, whiteboard, videos, ownShare } = await joined();
+    expect([share.tag, whiteboard.tag, videos.tag, ownShare.tag]).toEqual(["video-player-container", "div", "video-player-container", "div"]);
+    expect([share.className, whiteboard.className, videos.className, ownShare.className]).toEqual(["classroom-zoom-share", "classroom-zoom-whiteboard", "classroom-zoom-videos", "classroom-zoom-own-share"]);
+    expect([share.hidden, whiteboard.hidden, videos.hidden, ownShare.hidden]).toEqual([true, true, false, true]);
   });
 
   test("Zoom: microphone starts audio once, then mutes; the camera starts video and shows it; a refusal is 'denied'", async () => {
-    const zoom = fakeZoom({ videoError: Object.assign(new Error("no"), { name: "NotAllowedError" }) });
-    const adapter = new ZoomVideoSdkMediaAdapter(async () => zoom.sdk, () => 1);
-    adapter.mount({ append: () => undefined, replaceChildren: () => undefined });
-    await adapter.join(zoomJoin);
+    const { zoom, adapter } = await joined({ videoError: Object.assign(new Error("no"), { name: "NotAllowedError" }) });
     expect(await adapter.setDevice("microphone", true)).toBe("on");
     expect(await adapter.setDevice("microphone", false)).toBe("off");
     expect(await adapter.setDevice("microphone", true)).toBe("on");
@@ -249,12 +383,70 @@ describe("browser adapters", () => {
     expect(zoom.handlers.size).toBe(0);
   });
 
-  test("Zoom: without the SDK package (before the trial) joining fails and says so; a topic is required", async () => {
+  test("Zoom: the system check is Zoom's own answer for this browser, without joining", async () => {
+    const zoom = fakeZoom();
+    const adapter = new ZoomVideoSdkMediaAdapter(async () => zoom.sdk, () => 1);
+    expect(await adapter.systemCheck()).toEqual({ sdkVersion: "2.6.0", audio: true, video: true, screenShare: false, unsupported: ["screenShare"] });
+    expect(zoom.calls).toEqual([]);
+  });
+
+  test("Zoom outside a browser: the official package is not loaded, joining fails and says so; a topic is required", async () => {
     const adapter = new ZoomVideoSdkMediaAdapter();
     const events = recorded(adapter);
     await expect(adapter.join(zoomJoin)).rejects.toThrow(MediaAdapterUnavailableError);
     expect(events.map(event => event.state)).toEqual(["connecting", "failed"]);
     await expect(adapter.join({ ...zoomJoin, sessionName: undefined })).rejects.toThrow(/session name/);
+  });
+
+  test("Zoom materials: the tutor shares a screen; a cancelled picker shares nothing; stopping ends it", async () => {
+    const cancelled = await joined({ shareError: Object.assign(new Error("Permission denied"), { name: "NotAllowedError" }) });
+    expect(await cancelled.adapter.setScreenShare(true)).toBe(false);
+    expect([cancelled.ownShare.hidden, cancelled.events.some(event => event.type === "share")]).toEqual([true, false]);
+    const { zoom, adapter, events, ownShare } = await joined();
+    expect(await adapter.setScreenShare(true)).toBe(true);
+    expect(zoom.calls).toContain("share:video");
+    expect([ownShare.hidden, events.at(-1)]).toEqual([false, { type: "share", state: "sending", at: 1 }]);
+    expect(await adapter.setScreenShare(false)).toBe(false);
+    expect([zoom.calls.at(-1), ownShare.hidden, events.at(-1).state]).toEqual(["stopShare", true, "none"]);
+    // The browser's own "stop sharing" button.
+    await adapter.setScreenShare(true);
+    zoom.handlers.get("passively-stop-share")({});
+    expect(events.at(-1)).toMatchObject({ type: "share", state: "none" });
+  });
+
+  test("Zoom materials: the other person's share is shown while it runs, including one already running at entry", async () => {
+    const { zoom, events, share } = await joined();
+    zoom.handlers.get("active-share-change")({ state: "Active", userId: 2 }); await settle();
+    expect([share.hidden, share.children.map(child => child.tag), events.at(-1).state]).toEqual([false, ["shared:2"], "receiving"]);
+    zoom.handlers.get("active-share-change")({ state: "Inactive", userId: 2 }); await settle();
+    expect([zoom.calls.at(-1), share.hidden, share.children, events.at(-1).state]).toEqual(["shareViewOff:2", true, [], "none"]);
+    const running = await joined({ sharingAtJoin: 2 });
+    expect([running.share.hidden, running.events.at(-1)]).toEqual([false, { type: "share", state: "receiving", at: 1 }]);
+  });
+
+  test("Zoom whiteboard: the tutor presents and can export a PDF; refused when Zoom says it cannot start; the student views it", async () => {
+    const refused = await joined({ canBoard: false });
+    expect([await refused.adapter.setWhiteboard(true), refused.whiteboard.hidden]).toEqual([false, true]);
+    const { zoom, adapter, events, whiteboard } = await joined();
+    expect(await adapter.setWhiteboard(true)).toBe(true);
+    expect([zoom.calls.at(-1), whiteboard.hidden, events.at(-1).state]).toEqual(["board:classroom-zoom-whiteboard", false, "presenting"]);
+    await adapter.exportWhiteboard("iHear-TEST-V01");
+    expect(zoom.calls.at(-1)).toBe("export:pdf:iHear-TEST-V01");
+    expect(await adapter.setWhiteboard(false)).toBe(false);
+    expect([zoom.calls.at(-1), whiteboard.hidden, events.at(-1).state]).toEqual(["boardOff", true, "none"]);
+    const viewer = await joined();
+    viewer.zoom.handlers.get("peer-whiteboard-state-change")({ action: "Start", userId: 1 }); await settle();
+    expect([viewer.zoom.calls.at(-1), viewer.whiteboard.hidden, viewer.events.at(-1).state]).toEqual(["boardView:1", false, "viewing"]);
+    viewer.zoom.handlers.get("peer-whiteboard-state-change")({ action: "Stop", userId: 1 }); await settle();
+    expect([viewer.zoom.calls.at(-1), viewer.whiteboard.hidden, viewer.events.at(-1).state]).toEqual(["boardViewOff", true, "none"]);
+  });
+
+  test("Zoom: leaving ends the share and the whiteboard on this page too", async () => {
+    const { adapter, events, share, whiteboard } = await joined({ sharingAtJoin: 2 });
+    await adapter.setWhiteboard(true);
+    await adapter.leave();
+    expect(events.slice(-3).map(event => [event.type, event.state])).toEqual([["share", "none"], ["whiteboard", "none"], ["connection", "disconnected"]]);
+    expect([share.hidden, whiteboard.hidden, share.children]).toEqual([true, true, []]);
   });
 
   test("LCIC: only Tencent's classroom page is placed in the room, with camera and microphone allowed", async () => {

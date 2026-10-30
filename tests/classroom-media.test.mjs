@@ -21,7 +21,7 @@ describe("the provider-neutral media adapter", () => {
     expect(MEDIA_PROVIDERS).toEqual(["synthetic", "zoom-video-sdk", "tencent-lcic"]);
     const synthetic = createMediaAdapter("synthetic", { connectDelayMs: 0 });
     expect(synthetic).toBeInstanceOf(SyntheticMediaAdapter);
-    expect(synthetic.capabilities).toEqual({ realMedia: false, screenShare: false, observable: true });
+    expect(synthetic.capabilities).toEqual({ realMedia: false, screenShare: false, whiteboard: false, observable: true });
     expect(createMediaAdapter("zoom-video-sdk").provider).toBe("zoom-video-sdk");
     expect(createMediaAdapter("tencent-lcic").provider).toBe("tencent-lcic");
     for (const provider of ["tencent-rtc", "agora", ""]) expect(() => createMediaAdapter(provider)).toThrow(MediaAdapterUnavailableError);

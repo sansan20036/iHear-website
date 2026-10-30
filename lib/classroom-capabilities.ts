@@ -66,7 +66,7 @@ export const CLASSROOM_CAPABILITIES: Record<"synthetic" | "zoom-video-sdk" | "te
       phone: { level: "none", note: "TRTC Web cannot share the screen from mobile browsers" },
     },
     fileTransfer: all("unknown", "Not documented beyond courseware"),
-    recording: all("limited", "Decided when the room is created (DisableRecord); stopping mid-class from the server is not documented"),
+    recording: all("limited", "Manual mode: StartRecord/StopRecord are documented only on Tencent's China site; a mid-class stop is unverified, so ending the class (EndRoom) is the fallback"),
   },
 };
 

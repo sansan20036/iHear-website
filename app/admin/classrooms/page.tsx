@@ -21,7 +21,8 @@ const copy = {
     noAnomalies: "No problems recorded.", open: "Open", resolved: "Cleared", handled: "Handled", unhandled: "Needs handling", earlier: "Handled before it came back", note: "What was done", save: "Record handling", firstSeen: "First seen", lastSeen: "Last seen",
     lessons: "Lessons", add: "Add a one-to-one lesson", code: "Lesson code", date: "Date", time: "Start (Taipei)", minutes: "Minutes", tutorCode: "Tutor code", tutorEmail: "Tutor sign-in email", studentCode: "Student code",
     adding: "Adding…", linkOnce: "Student's personal link (shown only now; send it to the family):", copyLink: "Copy link", copied: "Copied",
-    consent: "Synthetic consent (local testing only)", consentIntro: "The consent policy is still to be approved; these records are synthetic.", personCode: "Person code", role: "Role", status: "Status",
+    consent: "Synthetic consent (local testing only)", consentIntro: "The consent policy is still to be approved; these records are synthetic.",
+    trialConsentIntro: "Vendor trial: test consent can be set only for TEST- codes (adult testers). Real students cannot be recorded.", personCode: "Person code", role: "Role", status: "Status",
     granted: "Consented", withdrawn: "Withdrawn", staffNotice: "Tutor notice acknowledged", setConsent: "Save",
   },
   zhHant: {
@@ -35,7 +36,8 @@ const copy = {
     noAnomalies: "目前沒有異常紀錄。", open: "未解除", resolved: "已解除", handled: "已處置", unhandled: "待處置", earlier: "先前處置（之後又再發生）", note: "處置說明", save: "記錄處置", firstSeen: "首次發現", lastSeen: "最後出現",
     lessons: "課程", add: "新增一對一課程", code: "課程代碼", date: "日期", time: "開始時間（台北）", minutes: "分鐘", tutorCode: "小老師代碼", tutorEmail: "小老師登入 Email", studentCode: "學生代碼",
     adding: "新增中…", linkOnce: "學生專屬連結（只顯示這一次，請交給家長）：", copyLink: "複製連結", copied: "已複製",
-    consent: "合成同意資料（僅限本機測試）", consentIntro: "錄影同意政策尚待確認；這裡的紀錄都是合成資料。", personCode: "人員代碼", role: "角色", status: "狀態",
+    consent: "合成同意資料（僅限本機測試）", consentIntro: "錄影同意政策尚待確認；這裡的紀錄都是合成資料。",
+    trialConsentIntro: "廠商試用：只能替 TEST- 代碼（成人測試者）設定測試同意，真實學生無法錄影。", personCode: "人員代碼", role: "角色", status: "狀態",
     granted: "已同意", withdrawn: "已撤回", staffNotice: "小老師已確認告知", setConsent: "儲存",
   },
 };
@@ -52,7 +54,7 @@ type Card = {
 };
 type Anomaly = { lessonId: string; lessonCode: string | null; code: string; label: string; severity: string; firstSeenAt: string | null; openedAt: string | null; lastSeenAt: string | null; resolvedAt: string | null; handled: boolean; acknowledgedBy: string | null; acknowledgedAt: string | null; note: string | null };
 type Lesson = { lessonId: string; code: string; startsAt: string; endsAt: string; tutorCode: string | null; studentCodes: string[] };
-type Overview = { mode: string | null; dashboard: { generatedAt: string; groups: Record<string, Card[]>; counts: Record<string, number> }; anomalies: Anomaly[]; lessons: Lesson[] };
+type Overview = { mode: string | null; trialConsent?: boolean; dashboard: { generatedAt: string; groups: Record<string, Card[]>; counts: Record<string, number> }; anomalies: Anomaly[]; lessons: Lesson[] };
 
 const GROUPS = ["ANOMALY", "LIVE", "WAITING", "ENDED"];
 const taipei = (iso: string | null) => (iso ? new Date(new Date(iso).getTime() + 8 * 3600_000).toISOString().slice(5, 16).replace("T", " ") : "—");
@@ -254,10 +256,10 @@ export default function ClassroomsPage() {
         ) : null}
       </div>
 
-      {overview?.mode === "synthetic" && (
+      {(overview?.mode === "synthetic" || overview?.trialConsent) && (
         <div className="admin-panel classroom-panel">
           <h2>{text.consent}</h2>
-          <p className="admin-muted">{text.consentIntro}</p>
+          <p className="admin-muted">{overview?.mode === "synthetic" ? text.consentIntro : text.trialConsentIntro}</p>
           <div className="admin-toolbar">
             <input className="admin-search" value={consent.personCode} placeholder={text.personCode} onChange={(event) => setConsent((current) => ({ ...current, personCode: event.target.value }))} />
             <select className="admin-select" value={consent.role} aria-label={text.role} onChange={(event) => setConsent((current) => ({ ...current, role: event.target.value }))}>
