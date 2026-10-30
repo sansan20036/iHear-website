@@ -58,7 +58,9 @@ const redact = text => {
   return out.replace(TOKEN, '[token]').replace(/(https?:\/\/[^\s"'<>?]+)\?[^\s"'<>]*/g, '$1?[hidden]');
 };
 
-const report = { mode: rehearsal ? 'rehearsal: stand-in keys, no route to Zoom session servers' : 'real: the Zoom Video SDK trial keys', startedAt: new Date(startedAt).toISOString(), checks: [], findings: {}, cspProblems: [], status: 'running' };
+const report = { mode: rehearsal ? 'rehearsal: stand-in keys, no route to Zoom session servers' : 'real: the Zoom Video SDK trial keys', startedAt: new Date(startedAt).toISOString(), checks: [], findings: {}, cspProblems: [], consoleProblems: [], alerts: [], status: 'running' };
+// The two pages, for screenshots and the room's own alerts when a check fails.
+const pages = [];
 const found = { browserResponses: 0, requestsToOutside: 0, pageAndStorage: 0, joinAnswersStopped: 0, serverOutput: 0, runFiles: 0, filesWrittenDuringRun: 0, filesGitCouldCommit: 0 };
 const key = { tokensChecked: 0, tokensNamingTheKey: 0, plainInResponses: 0, plainInServerOutput: 0 };
 let failure;
@@ -70,6 +72,12 @@ async function check(name, action, { fatal = true } = {}) {
   catch (error) {
     report.checks.push({ name, status: 'failed', error: redact(error.message) });
     console.log(`[${elapsed()}] FAIL ${name}: ${redact(error.message).split('\n')[0]}`);
+    const slug = name.replace(/[^A-Za-z0-9]+/g, '-').slice(0, 40);
+    for (const { who, page } of pages) {
+      await page.screenshot({ path: path.join(runDir, `failed-${slug}-${who}.png`), fullPage: true }).catch(() => undefined);
+      const alerts = await page.locator('[role="alert"]').allInnerTexts().catch(() => []);
+      for (const text of alerts) report.alerts.push(`${who}, ${name}: ${redact(text).slice(0, 300)}`);
+    }
     if (fatal) throw error;
     failure ??= error;
   }
@@ -109,12 +117,15 @@ try {
   const lessonId = links.lesson.lessonId;
 
   browser = await chromium.launch({
+    // The full Chromium build (also when headless), closer to the Chrome testers use than the
+    // stripped-down headless shell.
+    channel: 'chromium',
     headless: args.headed !== 'true',
     args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream',
       // A rehearsal cannot reach Zoom's session servers: only this computer and Zoom's file server resolve.
       ...(rehearsal ? ['--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE source.zoom.us'] : [])],
   });
-  const person = async () => {
+  const person = async who => {
     const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: 'zh-TW', permissions: ['camera', 'microphone'] });
     context.setDefaultTimeout(60_000);
     // Each join answer is read here first; one carrying a secret never reaches the page, or Zoom.
@@ -150,10 +161,17 @@ try {
     });
     const page = await context.newPage();
     page.on('websocket', socket => hosts.add(new URL(socket.url()).host));
-    page.on('console', message => { if (/Content Security Policy|Refused to/i.test(message.text())) report.cspProblems.push(redact(message.text()).slice(0, 300)); });
+    // The page's own errors and warnings (Zoom's included), redacted, for working out a failure.
+    page.on('console', message => {
+      const text = redact(message.text()).slice(0, 300);
+      if (/Content Security Policy|Refused to/i.test(text)) report.cspProblems.push(text);
+      else if (['error', 'warning'].includes(message.type()) && report.consoleProblems.length < 60) report.consoleProblems.push(`${who}: ${message.type()}: ${text}`);
+    });
+    page.on('pageerror', error => { if (report.consoleProblems.length < 60) report.consoleProblems.push(`${who}: page error: ${redact(error.message).slice(0, 300)}`); });
+    pages.push({ who, page });
     return { context, page };
   };
-  const tutor = await person(), student = await person();
+  const tutor = await person('tutor'), student = await person('student');
   const enter = async (who, link) => {
     await who.page.goto(link);
     await expect(who.page).toHaveURL(new RegExp(`^${origin}/classroom/${lessonId}(\\?|$)`));
@@ -173,25 +191,47 @@ try {
     await check('both join the real Zoom session and connect', async () => {
       for (const who of [tutor, student]) await expect(who.page.locator('.classroom-room-connection')).toHaveText('已連線', { timeout: 90_000 });
     });
-    await check('both turn on the microphone and camera, and each sees the other\'s', async () => {
-      for (const who of [tutor, student]) {
-        for (const kind of ['麥克風', '攝影機']) {
+    // In the first real runs the tutor's first device, pressed the moment both had joined, never
+    // started. People take a few seconds, so the room settles first (written in the report).
+    report.findings.settleBeforeDevices = '8 s after both connected; then one person after the other';
+    await pause(8000);
+    // Each device on its own, one person after the other, so one that never answers cannot hide
+    // how the other device, the other person or the whiteboard did.
+    const turnOn = async (kind, finding) => {
+      const results = [];
+      let failed;
+      for (const [label, who] of [['tutor', tutor], ['student', student]]) {
+        try {
           const button = who.page.getByRole('button', { name: new RegExp(`^${kind}：`) });
           await button.click();
           await expect(button).toHaveText(`${kind}：開`, { timeout: 30_000 });
+          results.push(`${label} on`);
+        } catch (error) {
+          results.push(`${label} not on after 30 s`);
+          failed ??= error;
         }
       }
-      for (const who of [tutor, student]) {
-        const tile = who.page.locator('.classroom-room-tile.remote');
-        await expect(tile).toContainText('攝影機開啟', { timeout: 45_000 });
-        await expect(tile).toContainText('麥克風開啟', { timeout: 45_000 });
-        // Zoom draws both videos, this person's own and the other's, in the room's video container.
-        await expect(who.page.locator('video-player-container.classroom-zoom-videos > *')).toHaveCount(2, { timeout: 45_000 });
+      report.findings[finding] = results.join(', ');
+      if (failed) throw failed;
+    };
+    await check('both turn on the camera, and each sees the other\'s video', async () => {
+      await turnOn('攝影機', 'camera');
+      for (const [label, who] of [['tutor', tutor], ['student', student]]) {
+        await expect(who.page.locator('.classroom-room-tile.remote')).toContainText('攝影機開啟', { timeout: 45_000 });
+        // Zoom draws both videos, this person's own and the other's, in the room's video container
+        // (in the real trial it also kept an element of its own there, so: at least two).
+        const videos = who.page.locator('video-player-container.classroom-zoom-videos > *');
+        await expect.poll(() => videos.count(), { timeout: 45_000 }).toBeGreaterThanOrEqual(2);
+        report.findings[`videoElements_${label}`] = (await videos.evaluateAll(nodes => nodes.map(node => node.tagName.toLowerCase()))).join(' ');
       }
       await pause(3000);
       await tutor.page.screenshot({ path: path.join(runDir, 'tutor-room.png'), fullPage: true });
       await student.page.screenshot({ path: path.join(runDir, 'student-room.png'), fullPage: true });
-    });
+    }, { fatal: false });
+    await check('both turn on the microphone, and each sees the other\'s as on', async () => {
+      await turnOn('麥克風', 'microphone');
+      for (const who of [tutor, student]) await expect(who.page.locator('.classroom-room-tile.remote')).toContainText('麥克風開啟', { timeout: 45_000 });
+    }, { fatal: false });
     await check('whiteboard: the tutor opens it and the student sees it', async () => {
       const button = tutor.page.locator('[data-tool="whiteboard"]');
       await button.click();
@@ -261,9 +301,10 @@ try {
   if (failure) report.error = redact(failure.message);
   writeFileSync(path.join(runDir, 'report.json'), `${JSON.stringify(report, null, 2)}\n`);
   console.log(`\nLocal join check (${report.mode}): ${report.status.toUpperCase()}`);
-  if (report.findings.whiteboard) console.log(`  whiteboard: ${report.findings.whiteboard}`);
+  for (const [name, value] of Object.entries(report.findings)) console.log(`  ${name}: ${value}`);
   console.log(`  hosts the browsers contacted: ${report.hosts.join(', ')}`);
   if (report.cspProblems.length) console.log(`  blocked by the page's content security policy: ${report.cspProblems.length} (see the report)`);
+  if (report.consoleProblems.length || report.alerts.length) console.log(`  page errors and warnings: ${report.consoleProblems.length}; room alerts: ${report.alerts.length} (see the report)`);
   console.log(`  secrets found: ${Object.entries(found).map(([name, value]) => `${name} ${value}`).join(', ')}`);
   const { scanned, total, notScanned } = report.responsesScanned;
   console.log(`  responses from this computer scanned: ${scanned} of ${total}${notScanned.length ? `; body never arrived: ${[...new Set(notScanned)].join(', ')}` : ''}`);

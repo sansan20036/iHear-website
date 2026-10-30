@@ -46,10 +46,15 @@ describe("production operations configuration", () => {
     const csp = Object.fromEntries(room["content-security-policy"].split("; ").map(part => [part.split(" ")[0], part]));
     expect(csp["frame-ancestors"]).toBe("frame-ancestors 'none'");
     expect(csp["frame-src"]).toBe("frame-src 'self' https://www.tencentclass.com");
-    expect(csp["script-src"]).toBe("script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob: https://source.zoom.us");
-    expect(csp["worker-src"]).toBe("worker-src 'self' blob: https://source.zoom.us");
-    // Joining first calls https://zoom.us/wc/lsdk, which *.zoom.us does not cover (seen with the real package).
-    expect(csp["connect-src"]).toBe("connect-src 'self' https://zoom.us https://*.zoom.us wss://*.zoom.us");
+    // Zoom's whiteboard loads its script and stylesheet from the account's regional Zoom host (seen in
+    // the real trial: https://<region>.zoom.us/web_client_whiteboard/...), so Zoom's own domains are allowed.
+    expect(csp["script-src"]).toBe("script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob: https://source.zoom.us https://*.zoom.us");
+    expect(csp["worker-src"]).toBe("worker-src 'self' blob: https://source.zoom.us https://*.zoom.us");
+    expect(csp["style-src"]).toBe("style-src 'self' 'unsafe-inline' https://*.zoom.us");
+    expect(csp["font-src"]).toBe("font-src 'self' data: https://*.zoom.us");
+    // Joining first calls https://zoom.us/wc/lsdk, which *.zoom.us does not cover (seen with the real package);
+    // the whiteboard then fetches blob: addresses the page made itself (seen in the real trial).
+    expect(csp["connect-src"]).toBe("connect-src 'self' blob: https://zoom.us https://*.zoom.us wss://*.zoom.us");
     expect(csp["media-src"]).toBe("media-src 'self' blob: mediastream:");
   });
 
