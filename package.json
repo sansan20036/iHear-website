@@ -27,6 +27,7 @@
     "test:classroom:postgres": "vitest run tests/classroom-postgres.test.mjs",
     "test:classroom:browser": "node tests/classroom.smoke.mjs",
     "test:classroom:zoom-sdk": "node tests/classroom-zoom-sdk.smoke.mjs",
+    "test:classroom:trial-server": "node tests/classroom-trial-server.smoke.mjs",
     "test:recording-pathway": "node --test \"tools/recording-pathway/test/*.test.mjs\"",
     "academy:fields": "node scripts/generate-academy-fields.mjs",
     "serve:legacy": "node scripts/prepare-public.mjs && node server.js",
