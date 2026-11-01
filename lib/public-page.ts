@@ -6,6 +6,7 @@ import { publicContentStore, readContentStore } from "./content-store";
 import { renderPageContent, requestContentLocale } from "./render-page-content";
 import { getCurrentSiteMetrics } from "./impact-store";
 import { publicImpactMilestone } from "./impact-types";
+import { inlineSiteBootstraps, readLayoutBootstrap, readThemeBootstrap, templateLayoutPage } from "./site-bootstrap";
 
 export const PUBLIC_PAGES = ["/", "/about", "/programs", "/impact", "/team", "/submit-bio", "/stories", "/get-involved", "/academy", "/donate", "/resources", "/faq", "/contact", "/events"];
 
@@ -13,12 +14,20 @@ export async function servePublicPage(request: Request, page: string) {
   if (!PUBLIC_PAGES.includes(page)) return new NextResponse("Not found", { status: 404 });
   const locale = requestContentLocale(request);
   try {
-    const [template, content, metrics] = await Promise.all([
+    const [template, content, metrics, themeScript, layoutScript] = await Promise.all([
       readFile(path.join(process.cwd(), ".private", page === "/" ? "index.html" : `${page.slice(1)}.html`), "utf8"),
       readContentStore(page).then(publicContentStore),
       page === "/" ? getCurrentSiteMetrics().then(value => value ? publicImpactMilestone(value) : null) : Promise.resolve(undefined),
+      // Read with the content and written into the page, so the first paint waits for no further
+      // request. Neither read throws: each falls back exactly as its bootstrap route does.
+      readThemeBootstrap(),
+      readLayoutBootstrap(page),
     ]);
-    const html = renderPageContent(template, page, content, locale, metrics);
+    const html = inlineSiteBootstraps(renderPageContent(template, page, content, locale, metrics), {
+      theme: themeScript,
+      // Only when the template's tag asks for this page; any other tag keeps loading from the route.
+      layout: templateLayoutPage(template) === page ? layoutScript : null,
+    });
     return new NextResponse(html, { headers: { ...NO_STORE_HEADERS, "Content-Type": "text/html; charset=utf-8" } });
   } catch {
     // An unavailable data source must not expose old template text as current.

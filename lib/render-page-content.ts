@@ -10,6 +10,7 @@ export function requestContentLocale(request: Request): ContentLocale {
 }
 
 const escapeText = (value: string) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const CONTENT_BOOTSTRAP = "/assets/content-bootstrap.js?v=20260920-v2";
 
 /** Render text-only catalog slots; leave markup, links and images untouched. */
 export function renderPageContent(html: string, page: string, store: PublicContentStore, locale: ContentLocale, metrics?: PublicMetrics | null) {
@@ -26,6 +27,10 @@ export function renderPageContent(html: string, page: string, store: PublicConte
   // Escape script delimiters, including administrator-authored text. Only the
   // public store is embedded; no editor identities or database credentials.
   const payload = JSON.stringify({ page, store, slots, metrics, metricText: metricResult.metricText }).replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
+  // The published content (about 150 KB) goes last in <head>, so the browser finds the stylesheets
+  // and the theme and layout scripts above it at once. content-bootstrap.js still runs before the
+  // body is parsed; the preload starts its download with the first bytes of the page.
   return rendered.replace(/<html\b([^>]*?)\blang="[^"]*"/i, `<html$1lang="${locale === "en" ? "en" : locale === "zhHant" ? "zh-Hant" : "zh-Hans"}"`)
-    .replace(/<head([^>]*)>/i, opening => `${opening}\n<script id="ihear-published-content" type="application/json">${payload}</script>\n<script src="/assets/content-bootstrap.js?v=20260920-v2"></script>`);
+    .replace(/<head([^>]*)>/i, opening => `${opening}\n<link rel="preload" href="${CONTENT_BOOTSTRAP}" as="script">`)
+    .replace(/<\/head>/i, closing => `<script id="ihear-published-content" type="application/json">${payload}</script>\n<script src="${CONTENT_BOOTSTRAP}"></script>\n${closing}`);
 }

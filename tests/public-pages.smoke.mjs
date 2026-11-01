@@ -150,6 +150,14 @@ try {
     const html = await response.text();
     const seed = JSON.parse(html.match(/id="ihear-published-content" type="application\/json">([\s\S]*?)<\/script>/)[1]);
     assert.equal(seed.page, page);
+    // The first paint waits for no other request: the theme and layout scripts are in the page, with
+    // the text their routes serve, and the published content comes after the stylesheets.
+    const head = html.slice(0, html.indexOf('</head>'));
+    assert.ok(!head.includes('src="/api/site-theme/bootstrap"') && !head.includes('src="/api/site-layout/bootstrap'), `No bootstrap request before the first paint: ${page}`);
+    assert.equal(/<script data-site-theme-bootstrap>([\s\S]*?)<\/script>/.exec(head)?.[1], await (await fetch(origin + '/api/site-theme/bootstrap')).text(), `Inline theme script: ${page}`);
+    assert.equal(/<script data-site-layout-bootstrap>([\s\S]*?)<\/script>/.exec(head)?.[1], await (await fetch(origin + '/api/site-layout/bootstrap?page=' + encodeURIComponent(page))).text(), `Inline layout script: ${page}`);
+    assert.ok(head.indexOf('/assets/site.css') < head.indexOf('id="ihear-published-content"'), `Stylesheets come before the published content: ${page}`);
+    assert.match(head, /<link rel="preload" href="\/assets\/content-bootstrap\.js\?v=[^"]+" as="script">/, `content-bootstrap.js is preloaded: ${page}`);
     const content = await (await fetch(origin + '/api/content/get?page=' + encodeURIComponent(page))).json();
     assert.deepEqual(seed.store.locales, content.locales);
     const legacy = await fetch(origin + (page === '/' ? '/index' : page) + '.html');
