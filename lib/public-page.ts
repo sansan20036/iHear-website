@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { NO_STORE_HEADERS } from "./response-headers";
 import { publicContentStore, readContentStore } from "./content-store";
+import { logDatabaseModeOnce } from "./database-mode";
 import { renderPageContent, requestContentLocale } from "./render-page-content";
 import { getCurrentSiteMetrics } from "./impact-store";
 import { publicImpactMilestone } from "./impact-types";
@@ -12,6 +13,8 @@ export const PUBLIC_PAGES = ["/", "/about", "/programs", "/impact", "/team", "/s
 
 export async function servePublicPage(request: Request, page: string) {
   if (!PUBLIC_PAGES.includes(page)) return new NextResponse("Not found", { status: 404 });
+  // One fixed word per instance in the runtime log, so a release can confirm the connection mode.
+  logDatabaseModeOnce();
   const locale = requestContentLocale(request);
   try {
     const [template, content, metrics, themeScript, layoutScript] = await Promise.all([

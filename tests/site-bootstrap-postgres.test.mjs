@@ -117,4 +117,17 @@ describe("public pages carry the stored theme and layout (disposable PostgreSQL)
       quiet.mockRestore();
     }
   });
+
+  test("the page writes its connection mode once, as a fixed word, never the connection string", async () => {
+    delete globalThis.ihearDatabaseModeLogged;
+    const lines = [];
+    const info = vi.spyOn(console, "info").mockImplementation((...args) => { lines.push(args); });
+    try {
+      for (let index = 0; index < 3; index++) expect((await render()).status).toBe(200);
+    } finally {
+      info.mockRestore();
+    }
+    expect(lines).toEqual([["ihear-db-mode=local"]]);
+    expect(JSON.stringify(lines)).not.toContain(password);
+  });
 });
