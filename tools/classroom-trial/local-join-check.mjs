@@ -4,7 +4,8 @@
 // Nothing is tunneled: the browsers reach only this computer and Zoom. Run it before any tunnel.
 //
 // It checks that both connect, each sees the other's camera and microphone, the tutor's whiteboard
-// opens and the student sees it, and the tutor's page says "not recorded". It also checks that no
+// opens and the student sees it, the tutor's page says "not recorded", and leaving really closes the
+// room for each person (the student first, so the tutor can see them go). It also checks that no
 // vendor secret reaches a browser, Zoom, the server's output or a file: each join answer is read
 // before the page may use it, so a key and a secret entered the wrong way round never leave here.
 //
@@ -262,10 +263,25 @@ try {
     }
     expect(found.pageAndStorage).toBe(0);
   }, { fatal: false });
-  await check('both leave the room', async () => {
-    for (const who of [tutor, student]) await who.page.getByRole('button', { name: '離開教室' }).click();
-    await pause(3000);
-  }, { fatal: false });
+  // Leaving must close the room for that person, not only take the click: it says so, offers to
+  // re-enter, and the room's connection, video stage and leave button are gone.
+  const leaves = async who => {
+    await who.page.getByRole('button', { name: '離開教室' }).click();
+    await expect(who.page.getByText('你已離開教室。')).toBeVisible({ timeout: 30_000 });
+    await expect(who.page.getByRole('button', { name: '重新進入' })).toBeVisible();
+    for (const gone of ['.classroom-room-connection', '.classroom-vendor-stage']) await expect(who.page.locator(gone)).toHaveCount(0);
+    await expect(who.page.getByRole('button', { name: '離開教室' })).toHaveCount(0);
+  };
+  await check('the student leaves: the room closes and offers to re-enter', () => leaves(student), { fatal: false });
+  // A rehearsal has no session, so nobody there can see the other person go.
+  if (!rehearsal) {
+    await check('the tutor sees that the student left, and stays connected', async () => {
+      await expect(tutor.page.locator('.classroom-room-tile.remote')).toContainText('對方已離開教室。', { timeout: 45_000 });
+      await expect(tutor.page.locator('.classroom-room-connection')).toHaveText('已連線');
+    }, { fatal: false });
+  }
+  await check('the tutor leaves: the room closes and offers to re-enter', () => leaves(tutor), { fatal: false });
+  await pause(3000);
 } catch (error) {
   failure ??= error;
 } finally {
