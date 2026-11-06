@@ -3070,3 +3070,45 @@ for (const width of [320,390]) {
   await expect(hidden).toBeVisible();
  });
 }
+
+// 2026-11-07: on a phone, visitors saw "no published profiles yet" for a second or two before
+// the team appeared. The header's sign-in check reported "not an administrator", and the team
+// list took that as an administrator leaving management: it cleared the list still loading
+// (showing the empty message) and fetched it again. A visitor stays a visitor.
+for (const [language, empty] of [["en", "No published profiles yet."], ["zhTW", "目前沒有已發布的團隊檔案。"], ["zhCN", "目前没有已发布的团队档案。"]]) {
+  test(`a visitor never sees "no published profiles" while the team is loading on a phone (${language})`, async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await mockApplication(page, { admin: false });
+    let teamRequests = 0;
+    // A slower phone connection: the team list arrives after the sign-in check has answered.
+    await page.route("**/api/team-profiles**", async (route) => {
+      teamRequests += 1;
+      await new Promise((resolve) => { setTimeout(resolve, 900); });
+      await route.fallback();
+    });
+    await page.addInitScript((lang) => {
+      localStorage.setItem("ihear-lang", lang);
+      window.teamMessages = [];
+      new MutationObserver(() => {
+        for (const node of document.querySelectorAll("[data-team-leaders] .team-directory-message, [data-team-tutors] .team-directory-message")) {
+          if (window.teamMessages.at(-1) !== node.textContent) window.teamMessages.push(node.textContent);
+        }
+      }).observe(document, { childList: true, subtree: true, characterData: true });
+    }, language);
+    await page.goto("/team");
+    await expect(page.locator('[data-team-tutors] [data-profile-id="tutor-test"]')).toHaveCount(1, { timeout: 10_000 });
+    const seen = await page.evaluate(() => window.teamMessages);
+    expect(seen.length, "the loading message was shown first").toBeGreaterThan(0);
+    expect(seen.filter((text) => text === empty), JSON.stringify(seen)).toEqual([]);
+    // One request for the public list: nothing thrown away and fetched again.
+    expect(teamRequests).toBe(1);
+  });
+}
+
+test("a team roster that is really empty still says so once it has loaded", async ({ page }) => {
+  await mockApplication(page, { admin: false });
+  await page.route("**/api/team-profiles**", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ leaders: [], tutors: [], people: [] }) }));
+  await page.goto("/team");
+  await expect(page.locator("[data-team-tutors] .team-directory-message")).toHaveText("No published profiles yet.");
+  await expect(page.locator("[data-team-leaders] .team-directory-message")).toHaveText("No published profiles yet.");
+});

@@ -25,6 +25,9 @@
   Object.assign(labels.zhHant,{hide:"隱藏",show:"重新顯示",hidden:"已隱藏",hiddenNotice:"已隱藏，訪客已看不到此卡片。",draftNotice:"已取消隱藏，仍為草稿，訪客看不到。",shownNotice:"已重新顯示。",hideField:"暫時隱藏此卡片",saveVisibility:"儲存變更",adminLoading:"正在載入管理名冊…"});
   Object.assign(labels.zhHans,{hide:"隐藏",show:"重新显示",hidden:"已隐藏",hiddenNotice:"已隐藏，访客已看不到此卡片。",draftNotice:"已取消隐藏，仍为草稿，访客看不到。",shownNotice:"已重新显示。",hideField:"暂时隐藏此卡片",saveVisibility:"保存更改",adminLoading:"正在加载管理名册…"});
   const state={leaders:[],tutors:[],people:[],tutorView:"summary",tutorOverrides:new Map(),admin:false,adminSnapshot:null,adminLoading:false,adminError:false,adminEmail:"",editMode:false,busy:false,reordering:false,deleteConfirming:false,draft:null,sortPreview:null,originalDraft:"",activeLocale:"en",translationReceipt:"",translationReady:false,englishGuardAccepted:false,translationEdits:{}};
+  // Whether the list has loaded once. Until then an empty list means "still loading", never
+  // "no published profiles" (2026-11-07: visitors on phones saw that for a second or two).
+  state.loaded=false;
   const adminBar=document.createElement("div"),dialog=document.createElement("dialog"),sortDialog=document.createElement("dialog"),toast=document.createElement("div");
   adminBar.className="team-directory-admin";adminBar.hidden=true;adminBar.setAttribute("data-no-inline-edit","");
   leaderMount.parentElement.insertBefore(adminBar,leaderMount);
@@ -160,7 +163,7 @@
   }
   function cardNode(html){const template=document.createElement("template");template.innerHTML=html.trim();return template.content.firstElementChild}
   function reconcile(mount,card,items){
-    if(!items.length){message(mount,l().empty);return}
+    if(!items.length){message(mount,state.loaded?l().empty:l().loading);return}
     mount.querySelectorAll(":scope > .team-directory-message").forEach(node=>node.remove());
     const existing=new Map(Array.from(mount.querySelectorAll(":scope > [data-profile-id]"),node=>[node.dataset.profileId,node]));
     const retained=new Set();
@@ -428,7 +431,7 @@
       const parameters=new URLSearchParams();if(admin)parameters.set("includeDrafts","true");if(context&&context.revision)parameters.set("live",context.revision);const query=parameters.toString();
       const response=await fetch(`/api/team-profiles${query?`?${query}`:""}`,{credentials:"same-origin",cache:"no-store"});
       if(!response.ok)throw new Error("load");const data=await response.json();if(sequence!==loadSequence||session!==authVersion)return;
-      state.leaders=Array.isArray(data.leaders)?data.leaders:[];state.tutors=Array.isArray(data.tutors)?data.tutors:[];state.people=Array.isArray(data.people)?data.people:[];state.busy=false;state.adminLoading=false;if(admin)rememberAdminRoster();render()
+      state.leaders=Array.isArray(data.leaders)?data.leaders:[];state.tutors=Array.isArray(data.tutors)?data.tutors:[];state.people=Array.isArray(data.people)?data.people:[];state.busy=false;state.adminLoading=false;state.loaded=true;if(admin)rememberAdminRoster();render()
     }catch(error){if(sequence!==loadSequence||session!==authVersion)return;state.adminLoading=false;state.adminError=admin;if(admin&&state.editMode&&!state.adminSnapshot){render();if(context)throw error;return}if(!admin||!state.leaders.length&&!state.tutors.length){const failure=`<p class="team-directory-message">${esc(l().failed)}</p><button type="button" class="team-admin-button" data-team-retry>${esc(l().retry)}</button>`;leaderMount.innerHTML=failure;tutorMount.innerHTML=failure}if(context)throw error}
   }
   document.addEventListener("click",event=>{
@@ -485,7 +488,12 @@
   window.addEventListener("ihear:before-language",event=>{if(dialog.open&&isDirty()){if(!confirm(l().unsaved))event.preventDefault();else closeEditor(true)}});
   window.addEventListener("ihear:language",()=>{render();if(dialog.open){syncDraft();buildEditor()}if(sortDialog.open)buildSortDialog()});
   window.addEventListener("beforeunload",event=>{if(!isDirty())return;event.preventDefault();event.returnValue=""});
-  window.addEventListener("ihear:auth",event=>{const session=event.detail&&event.detail.session;authVersion++;state.adminLoading=false;if(session&&session.user&&session.user.isAdmin){if(state.adminEmail!==(session.user.email||""))state.adminSnapshot=null;state.adminEmail=session.user.email||"";state.admin=true;render();load(true)}else{state.admin=false;state.adminEmail="";state.adminSnapshot=null;closeEditor(true);dialog.replaceChildren();state.sortPreview=null;if(sortDialog.open)sortDialog.close();sortDialog.replaceChildren();leaveManagement()}});
+  window.addEventListener("ihear:auth",event=>{const session=event.detail&&event.detail.session;
+    // The header reports while it checks sign-in, and again when it knows. A visitor who stays a
+    // visitor changes nothing, so the public list (loading or shown) is left alone instead of
+    // being cleared and fetched again.
+    if(!(session&&session.user&&session.user.isAdmin)&&!state.admin&&!state.editMode)return;
+    authVersion++;state.adminLoading=false;if(session&&session.user&&session.user.isAdmin){if(state.adminEmail!==(session.user.email||""))state.adminSnapshot=null;state.adminEmail=session.user.email||"";state.admin=true;render();load(true)}else{state.admin=false;state.adminEmail="";state.adminSnapshot=null;closeEditor(true);dialog.replaceChildren();state.sortPreview=null;if(sortDialog.open)sortDialog.close();sortDialog.replaceChildren();leaveManagement()}});
   window.iHearTeamProfiles={refresh:context=>load(state.admin,context),isDirty};
   if(window.iHearLiveContent)window.iHearLiveContent.register("team",{refresh:context=>load(state.admin,context),isDirty,onBlocked:()=>showToast(l().conflict,true)});
   message(leaderMount,l().loading);message(tutorMount,l().loading);load(false);
