@@ -172,7 +172,7 @@ describe("production operations configuration", () => {
 
     expect(backup).toContain("site_media_assets: siteMediaAssets");
     expect(backup).toContain("site_media_variants: siteMediaVariants");
-    expect(verifier).toContain("[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]");
+    expect(verifier).toContain("[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]");
     expect(backup).toContain("resource_links: resourceLinks");
     expect(verifier).toContain('required.push("resource_links")');
     expect(restoreVerifier).toContain("INSERT INTO resource_links");
@@ -298,5 +298,37 @@ describe("production operations configuration", () => {
     expect(configure).not.toContain("credential.private_key");
     expect(example).toContain("GOOGLE_CLOUD_LOCAL_ADC=");
     expect(example).not.toContain("GOOGLE_CLOUD_PRIVATE_KEY=");
+  });
+
+  // D1 (2026-11-07): migration 028's nine classroom tables in every backup, restore and audit path,
+  // checked only once 028 is recorded; the daily backup's classroom part stays off until iHear
+  // confirms encryption, access and retention (H8). Run for real in tests/classroom-postgres.test.mjs.
+  it("keeps the classroom tables recoverable once 028 is applied, with the daily part off until H8", async () => {
+    const tables = await read("scripts/classroom-backup-tables.mjs");
+    const backup = await read("scripts/backup-database.mjs");
+    const verifier = await read("scripts/verify-backup-file.mjs");
+    const restore = await read("scripts/verify-backup.mjs");
+    const audit = await read("scripts/audit-database.mjs");
+    const drill = await read(".github/workflows/monthly-restore-drill.yml");
+    const daily = await read(".github/workflows/daily-application-backup.yml");
+    const migration = await read("db/migrations/028_classroom_mvp.sql");
+    const names = ["classroom_lessons", "classroom_participants", "classroom_consents", "classroom_staff_notices", "classroom_join_tokens",
+      "classroom_events", "classroom_jobs", "classroom_recording_files", "classroom_anomalies"];
+    for (const name of names) {
+      expect(migration).toContain(`CREATE TABLE IF NOT EXISTS public.${name} (`);
+      expect(migration).toContain(`ALTER TABLE public.${name} ENABLE ROW LEVEL SECURITY;`);
+      expect(tables).toContain(`name: "${name}"`);
+      expect(drill).toContain(`to_regclass('public.${name}')`);
+    }
+    for (const script of [backup, verifier, restore, audit]) expect(script).toContain('from "./classroom-backup-tables.mjs"');
+    expect(backup).toContain('process.env.BACKUP_INCLUDE_CLASSROOM === "1"');
+    expect(daily).not.toContain("BACKUP_INCLUDE_CLASSROOM");
+    expect(verifier).toContain("validateClassroomBackup(tables)");
+    expect(verifier).toContain('backup.payload.version >= 11 ? "028"');
+    expect(restore).toContain("validateClassroomBackup(tables)");
+    expect(audit).toContain('migration.version === CLASSROOM_MIGRATION');
+    expect(drill).toContain("WHERE version = '028'");
+    expect(drill).toContain("Row level security is off on a restored classroom table");
+    expect(drill).toContain("restored_classroom_row_counts");
   });
 });

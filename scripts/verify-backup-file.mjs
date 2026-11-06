@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { validateAcademyContentBackup } from "./academy-content-backup.mjs";
+import { CLASSROOM_TABLE_NAMES, validateClassroomBackup } from "./classroom-backup-tables.mjs";
 
 function checksum(value) {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -38,7 +39,7 @@ try {
   }
   if (
     backup.payload?.format !== "ihear-postgres-backup" ||
-    ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10].includes(backup.payload?.version)
+    ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].includes(backup.payload?.version)
   ) {
     throw new Error("Unsupported backup format.");
   }
@@ -63,11 +64,14 @@ try {
   if (backup.payload.version >= 8) required.push("localized_translation_states");
   if (backup.payload.version >= 9) required.push('media_galleries', 'media_gallery_assets', 'media_gallery_operations');
   if (backup.payload.version >= 10) required.push("resource_links");
+  // Version 11: migration 028's classroom tables (only when the daily backup's classroom part is on).
+  if (backup.payload.version >= 11) required.push(...CLASSROOM_TABLE_NAMES);
   for (const tableName of required) {
     if (!Array.isArray(tables[tableName])) {
       throw new Error(`Backup is missing ${tableName}.`);
     }
   }
+  if (backup.payload.version >= 11) validateClassroomBackup(tables);
 
   if (backup.payload.version >= 10) assertUnique(tables.resource_links, row => row.id, "resource_links");
   if (tables.resource_links?.some(row => row.category !== undefined && !['form', 'article'].includes(row.category))) throw new Error("Invalid resource category in backup");
@@ -118,7 +122,7 @@ try {
     assertUnique(tables.localized_translation_states, (row) => `${row.resource_type}\u0000${row.resource_scope}\u0000${row.resource_id}\u0000${row.field_key}\u0000${row.locale}`, "localized_translation_states");
   }
 
-  const requiredMigration = backup.payload.version >= 10 ? "020" : backup.payload.version >= 9 ? "019" : backup.payload.version >= 8 ? "017" : backup.payload.version >= 7 ? "015" : backup.payload.version >= 6 ? "014" : backup.payload.version >= 5 ? "012" : backup.payload.version >= 4 ? "011" : backup.payload.version >= 3 ? "010" : "009";
+  const requiredMigration = backup.payload.version >= 11 ? "028" : backup.payload.version >= 10 ? "020" : backup.payload.version >= 9 ? "019" : backup.payload.version >= 8 ? "017" : backup.payload.version >= 7 ? "015" : backup.payload.version >= 6 ? "014" : backup.payload.version >= 5 ? "012" : backup.payload.version >= 4 ? "011" : backup.payload.version >= 3 ? "010" : "009";
   if (!tables.schema_migrations.some((row) => String(row.version) === requiredMigration)) {
     throw new Error(`Backup does not include migration ${requiredMigration}.`);
   }
