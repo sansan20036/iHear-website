@@ -75,12 +75,25 @@ const post = (pathname, body = {}, headers = {}) => new Request(`${ORIGIN}${path
 const read = async response => ({ status: response.status, body: await response.json(), headers: response.headers });
 const claimsOf = token => JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString("utf8"));
 
+// The key of a personal link: behind # (/classroom/<id>#k=<key>), never sent to a server.
+const keyOf = link => new URLSearchParams(new URL(link, ORIGIN).hash.slice(1)).get("k") ?? new URL(link, ORIGIN).searchParams.get("k");
+const hashOf = value => createHash("sha256").update(value).digest("hex");
+
 async function createLesson(fields) {
   signedIn(OWNER);
   const result = await read(await lessons.POST(post("/api/admin/classrooms", { date: "2026-11-20", minutes: 60, tutorEmail: TUTOR, ...fields })));
   expect(result.status).toBe(201);
-  const link = new URL(result.body.studentLink, ORIGIN);
-  return { lessonId: result.body.lesson.lessonId, key: link.searchParams.get("k"), link: result.body.studentLink };
+  return { lessonId: result.body.lesson.lessonId, key: keyOf(result.body.studentLink), link: result.body.studentLink };
+}
+
+// An owner's change to who can enter a lesson: cancel it, or revoke or reissue the student's link.
+async function lessonAccess(lessonId, body, { email = OWNER, headers = {} } = {}) {
+  signedIn(email);
+  const route = await import("../app/api/admin/classrooms/[lessonId]/route");
+  const request = new Request(`${ORIGIN}/api/admin/classrooms/${lessonId}`, {
+    method: "PATCH", headers: { origin: ORIGIN, "content-type": "application/json", ...headers }, body: JSON.stringify(body),
+  });
+  return read(await route.PATCH(request, params(lessonId)));
 }
 
 async function join(lessonId, { key, email } = {}) {
@@ -198,7 +211,8 @@ describe("classroom access", () => {
     expect(invalid.status).toBe(400);
     expect(Object.keys(invalid.body.issues).sort()).toEqual(["code", "minutes", "studentCode", "time", "tutorEmail"]);
     const lesson = await createLesson({ code: "TEST-L0", time: "14:00", tutorCode: "TEST-T0", studentCode: "TEST-S0" });
-    expect(lesson.link).toMatch(/^\/classroom\/L-[0-9a-f]{32}\?k=[A-Za-z0-9_-]{43}$/);
+    // The key is behind #, so the browser never sends it to a server, a log or another site.
+    expect(lesson.link).toMatch(/^\/classroom\/L-[0-9a-f]{32}#k=[A-Za-z0-9_-]{43}$/);
     expect(appendAdminActivity).toHaveBeenCalledWith(expect.objectContaining({ action: "classroom.lesson_created", entityType: "classroom", actorEmail: OWNER }));
     const stored = await readFile(path.join(directory, "classroom.json"), "utf8");
     expect(stored).not.toContain(lesson.key);
@@ -591,5 +605,164 @@ describe("a recorded lesson, synthetic end to end", () => {
     expect(appendAdminActivity).toHaveBeenCalledWith(expect.objectContaining({ action: "classroom.reconciled", entityStatus: "not-reachable" }));
     const missing = await reconcile.POST(post("/api/admin/classrooms/L-00000000000000000000000000000000/reconcile"), params("L-00000000000000000000000000000000"));
     expect(missing.status).toBe(404);
+  });
+});
+
+// Phase 2 (2026-11-06): the student's personal link can be cancelled with the lesson, revoked and
+// reissued, and a link that no longer counts gets no session token, whether entering, reconnecting
+// (the same request) or reading the status. Every refusal leaves nothing issued.
+describe("personal links: cancel, revoke and reissue", () => {
+  test("another lesson's link or tutor sign-in gets nothing, and a role or person named in the request is ignored", async () => {
+    at("2026-11-20T09:50:00Z");
+    const a = await createLesson({ code: "TEST-K1", time: "18:00", tutorCode: "TEST-KT1", studentCode: "TEST-KS1" });
+    const b = await createLesson({ code: "TEST-K2", time: "18:00", tutorCode: "TEST-KT2", studentCode: "TEST-KS2", tutorEmail: "other-tutor@example.test" });
+    const refusals = [await join(b.lessonId, { key: a.key }), await join(b.lessonId, { email: TUTOR })];
+    for (const refused of refusals) {
+      expect(refused).toMatchObject({ status: 403, body: { code: "NOT_ON_ROSTER" } });
+      expect(refused.body.session).toBeUndefined();
+    }
+    signedIn(null);
+    const claimed = await read(await joinRoute.POST(post(`/api/classroom/${a.lessonId}/join`, { key: a.key, role: "tutor", participantCode: "TEST-KT1", email: TUTOR }), params(a.lessonId)));
+    expect(claimed).toMatchObject({ status: 200, body: { role: "student", participantCode: "TEST-KS1" } });
+    expect(claimsOf(claimed.body.session.token)).toMatchObject({ role_type: 0 });
+  });
+
+  test("cancelling: owners only, from this site, recorded once; then neither the link nor the tutor gets a token", async () => {
+    at("2026-11-20T10:50:00Z");
+    const lesson = await createLesson({ code: "TEST-K3", time: "19:00", tutorCode: "TEST-KT3", studentCode: "TEST-KS3" });
+    expect((await join(lesson.lessonId, { key: lesson.key })).status).toBe(200);
+    expect((await lessonAccess(lesson.lessonId, { action: "cancel" }, { email: null })).status).toBe(403);
+    findAdminAccount.mockResolvedValue({ email: EDITOR, enabled: true });
+    expect((await lessonAccess(lesson.lessonId, { action: "cancel" }, { email: EDITOR })).status).toBe(403);
+    findAdminAccount.mockResolvedValue(null);
+    expect((await lessonAccess(lesson.lessonId, { action: "cancel" }, { headers: { origin: "https://evil.example" } })).status).toBe(403);
+    expect((await lessonAccess(lesson.lessonId, { action: "drop" })).status).toBe(400);
+    expect((await lessonAccess("L-00000000000000000000000000000000", { action: "cancel" })).status).toBe(404);
+    expect(appendAdminActivity).not.toHaveBeenCalledWith(expect.objectContaining({ action: "classroom.lesson_cancelled" }));
+    expect(await join(lesson.lessonId, { key: lesson.key })).toMatchObject({ status: 200 });
+
+    const cancelled = await lessonAccess(lesson.lessonId, { action: "cancel" });
+    expect(cancelled).toMatchObject({ status: 200, body: { ok: true, cancelled: true, changed: true } });
+    expect(appendAdminActivity).toHaveBeenCalledWith(expect.objectContaining({ action: "classroom.lesson_cancelled", entityType: "classroom", entityId: lesson.lessonId, actorEmail: OWNER }));
+    for (const who of [{ key: lesson.key }, { email: TUTOR }]) {
+      const refused = await join(lesson.lessonId, who);
+      expect(refused).toMatchObject({ status: 403, body: { code: "LESSON_CANCELLED" } });
+      expect(refused.body.session).toBeUndefined();
+    }
+    expect(await roomStatus(lesson.lessonId, { key: lesson.key })).toMatchObject({ status: 403, body: { code: "LESSON_CANCELLED" } });
+    // A cancelled lesson gets no new link; cancelling again changes nothing and is not logged again.
+    expect(await lessonAccess(lesson.lessonId, { action: "reissue_link" })).toMatchObject({ status: 409, body: { code: "LESSON_CANCELLED" } });
+    appendAdminActivity.mockClear();
+    expect(await lessonAccess(lesson.lessonId, { action: "cancel" })).toMatchObject({ status: 200, body: { cancelled: true, changed: false } });
+    expect(appendAdminActivity).not.toHaveBeenCalled();
+    expect((await overview()).lessons.find(item => item.lessonId === lesson.lessonId)).toMatchObject({ cancelled: true });
+  });
+
+  test("revoking the student's link: the old link gets no token at entry, on reconnect or for the status; the tutor is unaffected", async () => {
+    at("2026-11-20T11:50:00Z");
+    const lesson = await createLesson({ code: "TEST-K4", time: "20:00", tutorCode: "TEST-KT4", studentCode: "TEST-KS4" });
+    expect((await join(lesson.lessonId, { key: lesson.key })).status).toBe(200);
+    expect((await lessonAccess(lesson.lessonId, { action: "revoke_link", studentCode: "TEST-NONE" })).status).toBe(404);
+    expect((await lessonAccess(lesson.lessonId, { action: "revoke_link", studentCode: "TEST-KT4" })).status).toBe(404);
+    const revoked = await lessonAccess(lesson.lessonId, { action: "revoke_link", studentCode: "TEST-KS4" });
+    expect(revoked).toMatchObject({ status: 200, body: { ok: true, revoked: true } });
+    expect(revoked.body.studentLink).toBeUndefined();
+    expect(appendAdminActivity).toHaveBeenCalledWith(expect.objectContaining({ action: "classroom.student_link_revoked", entityType: "classroom", entityId: lesson.lessonId }));
+    // Entering again and reconnecting send the same request; the status uses the same check.
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const again = await join(lesson.lessonId, { key: lesson.key });
+      expect(again).toMatchObject({ status: 403, body: { code: "NOT_ON_ROSTER" } });
+      expect(again.body.session).toBeUndefined();
+    }
+    expect(await roomStatus(lesson.lessonId, { key: lesson.key })).toMatchObject({ status: 403 });
+    expect(await join(lesson.lessonId, { email: TUTOR })).toMatchObject({ status: 200, body: { role: "tutor" } });
+    // The old key's hash is gone; neither the answer nor the activity entry names a key.
+    const stored = await readFile(path.join(directory, "classroom.json"), "utf8");
+    expect(stored).not.toContain(hashOf(lesson.key));
+    expect(JSON.stringify([revoked.body, appendAdminActivity.mock.calls])).not.toMatch(/k=|[0-9a-f]{64}/);
+  });
+
+  test("reissuing: a new link behind #, shown in that answer only; the old link and any earlier reissue stop at once", async () => {
+    at("2026-11-20T12:50:00Z");
+    const lesson = await createLesson({ code: "TEST-K5", time: "21:00", tutorCode: "TEST-KT5", studentCode: "TEST-KS5" });
+    const first = await lessonAccess(lesson.lessonId, { action: "reissue_link" });
+    expect(first).toMatchObject({ status: 200, body: { ok: true } });
+    expect(first.body.studentLink).toMatch(new RegExp(`^/classroom/${lesson.lessonId}#k=[A-Za-z0-9_-]{43}$`));
+    const firstKey = keyOf(first.body.studentLink);
+    expect(firstKey).not.toBe(lesson.key);
+    expect(appendAdminActivity).toHaveBeenCalledWith(expect.objectContaining({ action: "classroom.student_link_reissued", entityType: "classroom", entityId: lesson.lessonId }));
+    expect(JSON.stringify(appendAdminActivity.mock.calls)).not.toContain(firstKey);
+    expect(await join(lesson.lessonId, { key: lesson.key })).toMatchObject({ status: 403, body: { code: "NOT_ON_ROSTER" } });
+    expect(await join(lesson.lessonId, { key: firstKey })).toMatchObject({ status: 200, body: { role: "student", participantCode: "TEST-KS5" } });
+    const second = await lessonAccess(lesson.lessonId, { action: "reissue_link", studentCode: "TEST-KS5" });
+    const secondKey = keyOf(second.body.studentLink);
+    expect((await join(lesson.lessonId, { key: firstKey })).status).toBe(403);
+    expect((await join(lesson.lessonId, { key: secondKey })).status).toBe(200);
+    const shown = JSON.stringify(await overview());
+    const stored = await readFile(path.join(directory, "classroom.json"), "utf8");
+    for (const key of [lesson.key, firstKey, secondKey]) {
+      expect(shown).not.toContain(key);
+      expect(stored).not.toContain(key);
+    }
+    expect(stored).toContain(hashOf(secondKey));
+    expect(stored).not.toContain(hashOf(firstKey));
+  });
+});
+
+// /classroom (2026-11-06): the entry page the home page will link to at the end of S3. A
+// signed-in tutor sees their own lessons; students enter with their personal link and have no list.
+describe("my lessons (/classroom)", () => {
+  async function myLessons(email, extra = {}) {
+    auth.mockResolvedValue(email ? { user: { email, ...extra } } : null);
+    const route = await import("../app/api/classroom/my-lessons/route");
+    return read(await route.GET(new Request(`${ORIGIN}/api/classroom/my-lessons`)));
+  }
+
+  test("signed out it asks for a sign-in, and while the classroom is closed it is closed for everyone; never cached", async () => {
+    at("2026-11-21T01:00:00Z");
+    const anonymous = await myLessons(null);
+    expect(anonymous).toMatchObject({ status: 401, body: { code: "SIGN_IN_REQUIRED" } });
+    expect(anonymous.body.lessons).toBeUndefined();
+    expect(anonymous.headers.get("cache-control")).toBe("private, no-store, max-age=0");
+    vi.stubEnv("CLASSROOM_PROVIDER", "");
+    try {
+      expect(await myLessons(TUTOR)).toMatchObject({ status: 503, body: { code: "PROVIDER_UNAVAILABLE" } });
+    } finally {
+      vi.stubEnv("CLASSROOM_PROVIDER", "synthetic");
+    }
+  });
+
+  test("a tutor sees only their own lessons from a day ago to two weeks ahead, codes and times only; another account sees none", async () => {
+    at("2026-11-21T01:00:00Z");
+    await createLesson({ date: "2026-11-21", code: "TEST-M1", time: "10:00", tutorCode: "TEST-MT1", studentCode: "TEST-MS1" });
+    await createLesson({ date: "2026-11-30", code: "TEST-M2", time: "10:00", tutorCode: "TEST-MT2", studentCode: "TEST-MS2" });
+    await createLesson({ date: "2026-12-20", code: "TEST-M3", time: "10:00", tutorCode: "TEST-MT3", studentCode: "TEST-MS3" });
+    await createLesson({ date: "2026-11-21", code: "TEST-M4", time: "10:00", tutorCode: "TEST-MT4", studentCode: "TEST-MS4", tutorEmail: "other-tutor@example.test" });
+    // The sign-in email is matched however it is written.
+    const result = await myLessons(TUTOR.toUpperCase());
+    expect(result).toMatchObject({ status: 200, body: { ok: true, admin: false } });
+    const codes = result.body.lessons.map(lesson => lesson.code);
+    expect(codes).toEqual(expect.arrayContaining(["TEST-M1", "TEST-M2"]));
+    for (const code of ["TEST-M3", "TEST-M4"]) expect(codes).not.toContain(code);
+    // Nothing that could let anyone into a room: no token, topic, key, hash or email.
+    for (const lesson of result.body.lessons) {
+      expect(Object.keys(lesson).sort()).toEqual(["closesAt", "code", "endsAt", "lessonId", "opensAt", "participantCode", "startsAt", "state", "studentCodes"]);
+    }
+    expect(JSON.stringify(result.body)).not.toMatch(/token|sessionName|ihear-l-|joinKey|k=|[0-9a-f]{64}|@/i);
+    const first = () => myLessons(TUTOR).then(answer => answer.body.lessons.find(lesson => lesson.code === "TEST-M1"));
+    expect(await first()).toMatchObject({ state: "before", opensAt: "2026-11-21T01:45:00.000Z", participantCode: "TEST-MT1", studentCodes: ["TEST-MS1"] });
+    at("2026-11-21T02:10:00Z");
+    expect((await first()).state).toBe("open");
+    at("2026-11-21T03:20:00Z");
+    expect((await first()).state).toBe("ended");
+    expect((await myLessons("someone@example.test")).body).toEqual({ ok: true, admin: false, lessons: [] });
+    expect((await myLessons(OWNER, { isAdmin: true })).body).toMatchObject({ ok: true, admin: true, lessons: [] });
+  });
+
+  test("a cancelled lesson shows as cancelled", async () => {
+    at("2026-11-21T04:00:00Z");
+    const lesson = await createLesson({ date: "2026-11-22", code: "TEST-M5", time: "10:00", tutorCode: "TEST-MT5", studentCode: "TEST-MS5" });
+    expect((await lessonAccess(lesson.lessonId, { action: "cancel" })).status).toBe(200);
+    expect((await myLessons(TUTOR)).body.lessons.find(item => item.code === "TEST-M5")).toMatchObject({ state: "cancelled" });
   });
 });

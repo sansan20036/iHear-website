@@ -236,7 +236,11 @@ const localServer = createServer(async (request, response) => {
         return log(localPort, request, created.status);
       }
       const lessonId = result.lesson.lessonId;
-      const studentKey = new URL(result.studentLink, publicOrigin).searchParams.get('k');
+      // The website gives the key behind # (2026-11-06). This trial server keeps it in the query
+      // (?k=), because its public port admits a classroom page only with a key it can check; the
+      // page reads either form and takes the key out of the address bar.
+      const issued = new URL(result.studentLink, publicOrigin);
+      const studentKey = new URLSearchParams(issued.hash.slice(1)).get('k') ?? issued.searchParams.get('k');
       const tutorToken = randomBytes(32).toString('base64url');
       invites.set(lessonId, {
         studentKeyHash: hash(studentKey), tutorTokenHash: hash(tutorToken), tutorEmail,
@@ -248,7 +252,7 @@ const localServer = createServer(async (request, response) => {
       response.end(JSON.stringify({
         lesson: result.lesson,
         tutorLink: `${publicOrigin}/trial/tutor/${lessonId}?t=${tutorToken}`,
-        studentLink: new URL(result.studentLink, publicOrigin).toString(),
+        studentLink: `${publicOrigin}/classroom/${lessonId}?k=${studentKey}`,
       }));
       return log(localPort, request, 201);
     }

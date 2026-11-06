@@ -1,0 +1,9 @@
+/* /classroom: the entry page (2026-11-06). The room's own styles (classroom.css) supply the rest. */
+.classroom-paths { display:grid; gap:18px; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); }
+.classroom-paths h2, .classroom-mine h2 { margin:0 0 6px; font-size:18px; }
+.classroom-paths p { margin:0 0 12px; }
+.classroom-mine ul { list-style:none; margin:0 0 12px; padding:0; display:grid; gap:10px; }
+.classroom-mine li { display:flex; flex-wrap:wrap; align-items:center; gap:6px 14px; padding:10px 0; border-bottom:1px solid #e3e8ef; }
+.classroom-mine li.is-ended, .classroom-mine li.is-cancelled { color:#5d6877; }
+.classroom-mine-state { font-weight:700; }
+.classroom-mine li .classroom-room-primary { margin-left:auto; }

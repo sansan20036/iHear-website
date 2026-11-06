@@ -21,6 +21,11 @@ const copy = {
     noAnomalies: "No problems recorded.", open: "Open", resolved: "Cleared", handled: "Handled", unhandled: "Needs handling", earlier: "Handled before it came back", note: "What was done", save: "Record handling", firstSeen: "First seen", lastSeen: "Last seen",
     lessons: "Lessons", add: "Add a one-to-one lesson", code: "Lesson code", date: "Date", time: "Start (Taipei)", minutes: "Minutes", tutorCode: "Tutor code", tutorEmail: "Tutor sign-in email", studentCode: "Student code",
     adding: "Adding…", linkOnce: "Student's personal link (shown only now; send it to the family):", copyLink: "Copy link", copied: "Copied",
+    revokeLink: "Revoke student link", reissueLink: "Reissue student link", cancelLesson: "Cancel lesson", cancelledMark: "Cancelled",
+    confirmRevoke: "Revoke the student's link? It stops working at once and no new link is made.",
+    confirmReissue: "Make a new student link? The current link stops working at once.",
+    confirmCancel: "Cancel this lesson? Neither the student's link nor the tutor can enter it any more.",
+    revokedNotice: "Student link revoked. The old link no longer enters.", cancelledNotice: "Lesson cancelled.",
     consent: "Synthetic consent (local testing only)", consentIntro: "The consent policy is still to be approved; these records are synthetic.",
     trialConsentIntro: "Vendor trial: test consent can be set only for TEST- codes (adult testers). Real students cannot be recorded.", personCode: "Person code", role: "Role", status: "Status",
     granted: "Consented", withdrawn: "Withdrawn", staffNotice: "Tutor notice acknowledged", setConsent: "Save",
@@ -36,6 +41,11 @@ const copy = {
     noAnomalies: "目前沒有異常紀錄。", open: "未解除", resolved: "已解除", handled: "已處置", unhandled: "待處置", earlier: "先前處置（之後又再發生）", note: "處置說明", save: "記錄處置", firstSeen: "首次發現", lastSeen: "最後出現",
     lessons: "課程", add: "新增一對一課程", code: "課程代碼", date: "日期", time: "開始時間（台北）", minutes: "分鐘", tutorCode: "小老師代碼", tutorEmail: "小老師登入 Email", studentCode: "學生代碼",
     adding: "新增中…", linkOnce: "學生專屬連結（只顯示這一次，請交給家長）：", copyLink: "複製連結", copied: "已複製",
+    revokeLink: "撤銷學生連結", reissueLink: "重發學生連結", cancelLesson: "取消課程", cancelledMark: "已取消",
+    confirmRevoke: "確定撤銷學生連結？目前的連結會立即失效，也不會產生新連結。",
+    confirmReissue: "確定重發學生連結？目前的連結會立即失效。",
+    confirmCancel: "確定取消這堂課？學生連結和小老師都將無法再進入。",
+    revokedNotice: "學生連結已撤銷，舊連結已無法進入。", cancelledNotice: "課程已取消。",
     consent: "合成同意資料（僅限本機測試）", consentIntro: "錄影同意政策尚待確認；這裡的紀錄都是合成資料。",
     trialConsentIntro: "廠商試用：只能替 TEST- 代碼（成人測試者）設定測試同意，真實學生無法錄影。", personCode: "人員代碼", role: "角色", status: "狀態",
     granted: "已同意", withdrawn: "已撤回", staffNotice: "小老師已確認告知", setConsent: "儲存",
@@ -53,7 +63,8 @@ type Card = {
   dataState: { value: string; label: string; lastConfirmedAt: string | null; ageSeconds: number | null };
 };
 type Anomaly = { lessonId: string; lessonCode: string | null; code: string; label: string; severity: string; firstSeenAt: string | null; openedAt: string | null; lastSeenAt: string | null; resolvedAt: string | null; handled: boolean; acknowledgedBy: string | null; acknowledgedAt: string | null; note: string | null };
-type Lesson = { lessonId: string; code: string; startsAt: string; endsAt: string; tutorCode: string | null; studentCodes: string[] };
+type Lesson = { lessonId: string; code: string; startsAt: string; endsAt: string; cancelled: boolean; tutorCode: string | null; studentCodes: string[] };
+type AccessAction = "cancel" | "revoke_link" | "reissue_link";
 type Overview = { mode: string | null; trialConsent?: boolean; dashboard: { generatedAt: string; groups: Record<string, Card[]>; counts: Record<string, number> }; anomalies: Anomaly[]; lessons: Lesson[] };
 
 const GROUPS = ["ANOMALY", "LIVE", "WAITING", "ENDED"];
@@ -76,6 +87,7 @@ export default function ClassroomsPage() {
   const [busy, setBusy] = useState(false);
   const [studentLink, setStudentLink] = useState("");
   const [copied, setCopied] = useState(false);
+  const [notice, setNotice] = useState("");
   const [consent, setConsent] = useState({ personCode: "", role: "student", status: "granted" });
 
   const refresh = useCallback(async () => {
@@ -132,9 +144,25 @@ export default function ClassroomsPage() {
     const data = await adminFetch<{ studentLink: string }>("/api/admin/classrooms", { method: "POST", body: JSON.stringify({ ...lesson, minutes: Number(lesson.minutes) }) });
     setStudentLink(`${window.location.origin}${data.studentLink}`);
     setCopied(false);
+    setNotice("");
     setLesson(emptyLesson);
     await refresh();
   });
+  // Revoke or reissue the student's link, or cancel the lesson; each asks first. A reissued link
+  // is shown once, in the same box as a new lesson's.
+  const changeAccess = (item: Lesson, action: AccessAction) => {
+    const question = { cancel: text.confirmCancel, revoke_link: text.confirmRevoke, reissue_link: text.confirmReissue }[action];
+    if (!window.confirm(`${item.code}：${question}`)) return;
+    return mutate(async () => {
+      const data = await adminFetch<{ studentLink?: string }>(`/api/admin/classrooms/${encodeURIComponent(item.lessonId)}`, {
+        method: "PATCH", body: JSON.stringify({ action, studentCode: item.studentCodes[0] }),
+      });
+      setStudentLink(data.studentLink ? `${window.location.origin}${data.studentLink}` : "");
+      setCopied(false);
+      setNotice(action === "cancel" ? `${item.code}：${text.cancelledNotice}` : action === "revoke_link" ? `${item.code}：${text.revokedNotice}` : "");
+      await refresh();
+    });
+  };
   const saveConsent = () => mutate(async () => {
     await adminFetch("/api/admin/classrooms/consents", { method: "POST", body: JSON.stringify(consent) });
     setConsent((current) => ({ ...current, personCode: "" }));
@@ -245,11 +273,24 @@ export default function ClassroomsPage() {
             <button type="button" className="admin-button secondary" onClick={() => navigator.clipboard?.writeText(studentLink).then(() => setCopied(true), () => setCopied(false))}>{copied ? text.copied : text.copyLink}</button>
           </div>
         )}
+        {notice && <p className="classroom-notice" role="status">{notice}</p>}
         {overview?.lessons.length ? (
           <div className="admin-table-wrap">
-            <table className="admin-table">
+            <table className="admin-table classroom-lessons">
               <tbody>
-                {overview.lessons.map((item) => <tr key={item.lessonId}><td><strong>{item.code}</strong></td><td>{taipei(item.startsAt)}–{taipei(item.endsAt).slice(-5)}</td><td>{text.tutor} {item.tutorCode}</td><td>{text.student} {item.studentCodes.join("、")}</td></tr>)}
+                {overview.lessons.map((item) => (
+                  <tr key={item.lessonId} className={item.cancelled ? "is-cancelled" : undefined}>
+                    <td><strong>{item.code}</strong>{item.cancelled && <span className="classroom-cancelled">{text.cancelledMark}</span>}</td>
+                    <td>{taipei(item.startsAt)}–{taipei(item.endsAt).slice(-5)}</td>
+                    <td>{text.tutor} {item.tutorCode}</td>
+                    <td>{text.student} {item.studentCodes.join("、")}</td>
+                    <td className="classroom-lesson-actions">
+                      <button type="button" className="admin-button secondary" disabled={busy || item.cancelled} onClick={() => changeAccess(item, "revoke_link")}>{text.revokeLink}</button>
+                      <button type="button" className="admin-button secondary" disabled={busy || item.cancelled} onClick={() => changeAccess(item, "reissue_link")}>{text.reissueLink}</button>
+                      <button type="button" className="admin-button secondary" disabled={busy || item.cancelled} onClick={() => changeAccess(item, "cancel")}>{text.cancelLesson}</button>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>

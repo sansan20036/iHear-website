@@ -237,6 +237,22 @@ function initialLocale(): Locale {
   return navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en";
 }
 
+// The personal key from the address: behind # (#k=…), or the older ?k=. It is taken out of the
+// address bar at once (replacing the history entry, so none keeps it): not left in the history,
+// a bookmark, a screenshot or an address passed on. It lives in this page's memory only, never in
+// storage. Null when the address has none.
+function takeJoinKey(): string | null {
+  const url = new URL(window.location.href);
+  const fragment = new URLSearchParams(url.hash.replace(/^#/, ""));
+  if (!fragment.has("k") && !url.searchParams.has("k")) return null;
+  const key = fragment.get("k") || url.searchParams.get("k");
+  fragment.delete("k");
+  url.searchParams.delete("k");
+  const rest = fragment.toString();
+  window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${rest ? `#${rest}` : ""}`);
+  return key || null;
+}
+
 // One word for the badge both people see, from the recording status.
 function badgeOf(recording: Recording | null): "recording" | "starting" | "paused" | "off" | "unknown" {
   if (!recording) return "unknown";
@@ -278,8 +294,17 @@ export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: stri
 
   useEffect(() => {
     setLocale(initialLocale());
-    setJoinKey(new URLSearchParams(window.location.search).get("k"));
+    const key = takeJoinKey();
+    if (key) setJoinKey(key);
     setDevice(classroomDeviceOf(navigator.userAgent, navigator.maxTouchPoints));
+    // A new link opened in a tab that already shows this room changes only the part after #,
+    // which reloads nothing; its key is taken the same way.
+    const onHash = () => {
+      const next = takeJoinKey();
+      if (next) setJoinKey(next);
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
   }, []);
   useEffect(() => {
     document.documentElement.lang = locale === "en" ? "en" : "zh-Hant";

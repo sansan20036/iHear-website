@@ -89,7 +89,8 @@ try {
     const created = await api(admin, '/api/admin/classrooms', { code: item.code, ...taipei(item.offset), minutes: 60, tutorCode: item.tutorCode, tutorEmail: tutor, studentCode: item.studentCode });
     if (created.status !== 201) throw new Error(`${item.code}: lesson not created (${created.status})`);
     const link = new URL(created.body.studentLink, origin);
-    lessons.push({ ...item, id: created.body.lesson.lessonId, link: link.href, key: link.searchParams.get('k'), sessionId: `SYN-DEMO-${item.code}` });
+    // The key is behind # (2026-11-06).
+    lessons.push({ ...item, id: created.body.lesson.lessonId, link: link.href, key: new URLSearchParams(link.hash.slice(1)).get('k'), sessionId: `SYN-DEMO-${item.code}` });
     await api(admin, '/api/admin/classrooms/consents', { personCode: item.tutorCode, role: 'tutor', status: 'granted' });
     if (item.consent) await api(admin, '/api/admin/classrooms/consents', { personCode: item.studentCode, role: 'student', status: 'granted' });
   }

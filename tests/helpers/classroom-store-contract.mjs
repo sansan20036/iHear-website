@@ -46,6 +46,35 @@ export function classroomStoreContract(name, getStore) {
       expect(nextDay.map(entry => entry.id)).not.toContain(A);
     });
 
+    test('a lesson can be cancelled and its student key hash replaced; only an existing student row changes', async () => {
+      const store = getStore();
+      const B = 'L-contract-access';
+      await store.createLesson(contractLesson(B, 'TEST-CX'));
+      expect(await store.setLessonCancelled(B)).toBe(true);
+      expect((await store.lesson(B)).cancelled).toBe(true);
+      expect(await store.setLessonCancelled('L-contract-missing')).toBe(false);
+      const fresh = hashOf(`${B}-new-link`);
+      expect(await store.replaceStudentKeyHash(B, `${B}-S`, fresh)).toBe(true);
+      expect((await store.lesson(B)).participants.find(entry => entry.role === 'student').joinKeyHash).toBe(fresh);
+      // The tutor signs in and has no key; a tutor row never takes one.
+      expect(await store.replaceStudentKeyHash(B, `${B}-T`, hashOf('x'))).toBe(false);
+      expect((await store.lesson(B)).participants.find(entry => entry.role === 'tutor').joinKeyHash).toBeNull();
+      expect(await store.replaceStudentKeyHash('L-contract-missing', `${B}-S`, fresh)).toBe(false);
+    });
+
+    test("a tutor's lessons are found by the sign-in email within a time window; a student row never matches", async () => {
+      const store = getStore();
+      const C = 'L-contract-mine';
+      const lesson = contractLesson(C, 'TEST-CM', '2026-11-25T08:00:00.000Z');
+      lesson.participants[0].staffEmail = 'mine@example.test';
+      await store.createLesson(lesson);
+      const day = { from: Date.parse('2026-11-25T00:00:00Z'), to: Date.parse('2026-11-26T00:00:00Z') };
+      expect((await store.listLessonsForStaff('mine@example.test', day)).map(entry => entry.id)).toEqual([C]);
+      expect(await store.listLessonsForStaff('tutor@example.test', day)).toEqual([]);
+      expect(await store.listLessonsForStaff('mine@example.test', { from: Date.parse('2026-11-26T00:00:00Z'), to: Date.parse('2026-11-27T00:00:00Z') })).toEqual([]);
+      expect(await store.listLessonsForStaff('', day)).toEqual([]);
+    });
+
     test('a transaction is all or nothing', async () => {
       const store = getStore();
       await expect(store.transaction(async tx => {

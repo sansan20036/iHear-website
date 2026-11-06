@@ -1,7 +1,7 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 
 // @ts-ignore - shared classroom logic, plain JavaScript tested with node --test.
-import { getJoinEligibility, getRecordingEligibility } from "../tools/recording-pathway/classroom/eligibility.mjs";
+import { getJoinEligibility, getRecordingEligibility, JOIN_WINDOW_AFTER_MS, JOIN_WINDOW_BEFORE_MS } from "../tools/recording-pathway/classroom/eligibility.mjs";
 // @ts-ignore - shared classroom logic, plain JavaScript tested with node --test.
 import { fileRecording, ingestApiSnapshot, ingestHostReport, processJobs, storeEvent } from "../tools/recording-pathway/classroom/webhook-ingest.mjs";
 // @ts-ignore - shared classroom logic, plain JavaScript tested with node --test.
@@ -85,7 +85,75 @@ export async function createClassroomLesson({ store, input, actor, now }: { stor
   };
   await store.createLesson(lesson);
   // The student's personal link is shown once; only its hash is kept.
-  return { lesson, studentLink: `/classroom/${lesson.id}?k=${joinKey}` };
+  return { lesson, studentLink: studentLinkOf(lesson.id, joinKey) };
+}
+
+// The key goes behind #: browsers never send that part, so it reaches no server, log or other
+// site; the classroom page reads it and takes it out of the address bar (2026-11-06).
+const studentLinkOf = (lessonId: string, joinKey: string) => `/classroom/${lessonId}#k=${joinKey}`;
+
+export const LESSON_ACCESS_ACTIONS = ["cancel", "revoke_link", "reissue_link"] as const;
+export type LessonAccessAction = (typeof LESSON_ACCESS_ACTIONS)[number];
+
+// An owner's change to who can enter a lesson. Cancelling stops the link and the tutor's
+// sign-in alike; revoking replaces the student's key with one nobody is given; reissuing replaces
+// it with a new one, shown in this answer only. Either way the old link gets no session token
+// from then on: entering, reconnecting and the status all go through the same check. Someone
+// already in the room keeps the token they hold (at most 30 minutes) until they leave.
+export async function changeLessonAccess({ store, lessonId, action, studentCode }: {
+  store: ClassroomStore; lessonId: string; action: unknown; studentCode?: unknown;
+}) {
+  if (!LESSON_ACCESS_ACTIONS.includes(action as LessonAccessAction)) {
+    return { status: 400, body: { error: `Use one of: ${LESSON_ACCESS_ACTIONS.join(", ")}`, code: "INVALID_ACTION" } };
+  }
+  const lesson = await store.lesson(lessonId);
+  if (!lesson) return { status: 404, body: { error: "Lesson not found", code: "LESSON_NOT_FOUND" } };
+  if (action === "cancel") {
+    if (lesson.cancelled) return { status: 200, body: { ok: true, cancelled: true, changed: false } };
+    await store.setLessonCancelled(lesson.id);
+    return { status: 200, body: { ok: true, cancelled: true, changed: true } };
+  }
+  const students = lesson.participants.filter((entry) => entry.role === "student");
+  const code = typeof studentCode === "string" && studentCode.trim() ? studentCode.trim() : null;
+  // One-to-one lessons have one student, who need not be named.
+  const student = code ? students.find((entry) => entry.code === code) : students.length === 1 ? students[0] : undefined;
+  if (!student) return { status: 404, body: { error: "No such student in this lesson", code: "STUDENT_NOT_FOUND" } };
+  if (action === "reissue_link" && lesson.cancelled) {
+    return { status: 409, body: { error: "The lesson is cancelled", code: "LESSON_CANCELLED" } };
+  }
+  const joinKey = randomBytes(32).toString("base64url");
+  if (!(await store.replaceStudentKeyHash(lesson.id, student.id, hashKey(joinKey)))) {
+    return { status: 404, body: { error: "No such student in this lesson", code: "STUDENT_NOT_FOUND" } };
+  }
+  if (action === "revoke_link") return { status: 200, body: { ok: true, revoked: true, studentCode: student.code } };
+  return { status: 200, body: { ok: true, reissued: true, studentCode: student.code, studentLink: studentLinkOf(lesson.id, joinKey) } };
+}
+
+// "My lessons" on /classroom: the signed-in tutor's own lessons from a day ago to two weeks
+// ahead, with codes and times only. Whether one can be entered now follows the same time window
+// as the entry check, which still decides at the door. Students enter with their personal link
+// and have no list in phase 1.
+const MY_LESSONS_AHEAD_MS = 14 * DAY_MS;
+
+export async function myClassroomLessons({ store, email, now }: { store: ClassroomStore; email: string; now: number }) {
+  if (!email) return [];
+  const lessons = await store.listLessonsForStaff(email, { from: now - DAY_MS, to: now + MY_LESSONS_AHEAD_MS });
+  return lessons.map((lesson) => {
+    const opensAt = Date.parse(lesson.startsAt) - JOIN_WINDOW_BEFORE_MS;
+    const closesAt = Date.parse(lesson.endsAt) + JOIN_WINDOW_AFTER_MS;
+    const state = lesson.cancelled ? "cancelled" : now < opensAt ? "before" : now <= closesAt ? "open" : "ended";
+    return {
+      lessonId: lesson.id,
+      code: lesson.code,
+      startsAt: lesson.startsAt,
+      endsAt: lesson.endsAt,
+      opensAt: new Date(opensAt).toISOString(),
+      closesAt: new Date(closesAt).toISOString(),
+      state,
+      participantCode: lesson.participants.find((entry) => entry.role === "tutor" && entry.staffEmail === email)?.code ?? null,
+      studentCodes: lesson.participants.filter((entry) => entry.role === "student").map((entry) => entry.code),
+    };
+  });
 }
 
 // Only what the shared rules need: never e-mail addresses or link hashes.
@@ -409,6 +477,7 @@ export async function classroomOverview({ store, now }: { store: ClassroomStore;
       code: lesson.code,
       startsAt: lesson.startsAt,
       endsAt: lesson.endsAt,
+      cancelled: lesson.cancelled,
       tutorCode: lesson.participants.find((entry) => entry.role === "tutor")?.code ?? null,
       studentCodes: lesson.participants.filter((entry) => entry.role === "student").map((entry) => entry.code),
     })),

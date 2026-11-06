@@ -35,6 +35,8 @@ function watch(page) {
   return page;
 }
 const claimsOf = token => JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8'));
+// A personal link carries its key behind #, so the browser never sends it to a server.
+const keyOf = link => new URLSearchParams(new URL(link).hash.slice(1)).get('k');
 // The server rewrites the synthetic provider's file in place, so a read can catch it half
 // written; that read counts as "not yet" and the poll reads again.
 const calls = async lessonId => {
@@ -105,7 +107,8 @@ try {
     await expect(link).toBeVisible();
     lesson.link = await link.textContent();
     lesson.id = new URL(lesson.link).pathname.split('/').pop();
-    lesson.key = new URL(lesson.link).searchParams.get('k');
+    lesson.key = keyOf(lesson.link);
+    expect(lesson.link).toMatch(/\/classroom\/L-[0-9a-f]{32}#k=[A-Za-z0-9_-]{43}$/);
     expect(lesson.id).toMatch(/^L-[0-9a-f]{32}$/);
     await shot(admin, '01-lesson-added');
     await refresh();
@@ -320,9 +323,161 @@ try {
     await shot(admin, '06-overview-phone');
   });
 
+  // Phase 2 (2026-11-06): the page takes the key out of the address bar at once; owners revoke,
+  // reissue and cancel, and a link that no longer counts gets no session token.
+  const linkLesson = { code: 'TEST-B2', tutorCode: 'TEST-BT2', studentCode: 'TEST-BS2' };
+  const linkRow = () => admin.locator('.classroom-lessons tr', { hasText: linkLesson.code });
+  const ownerAction = async name => {
+    admin.once('dialog', dialog => dialog.accept());
+    await linkRow().getByRole('button', { name, exact: true }).click();
+  };
+  const enterAgain = async page => {
+    const [response] = await Promise.all([
+      page.waitForResponse(item => item.url().endsWith('/join') && item.request().method() === 'POST'),
+      page.getByRole('button', { name: /^(進入教室|重新進入|再試一次)$/ }).click(),
+    ]);
+    return { status: response.status(), body: await response.json() };
+  };
+  let kid;
+
+  await check('a personal link is given behind #; the page reads the key and takes it out of the address bar (the older ?k= form too)', async () => {
+    await admin.setViewportSize({ width: 1280, height: 900 });
+    await refresh();
+    await admin.getByLabel('課程代碼').fill(linkLesson.code);
+    await admin.getByLabel('日期').fill(lesson.date);
+    await admin.getByLabel('開始時間（台北）').fill(lesson.time);
+    await admin.getByLabel('分鐘').fill('60');
+    await admin.getByLabel('小老師代碼').fill(linkLesson.tutorCode);
+    await admin.getByLabel('小老師登入 Email').fill(tutor);
+    await admin.getByLabel('學生代碼').fill(linkLesson.studentCode);
+    await admin.getByRole('button', { name: '新增一對一課程' }).click();
+    const box = admin.locator('.classroom-link code');
+    await expect(box).toBeVisible();
+    linkLesson.link = await box.textContent();
+    expect(linkLesson.link).toMatch(/\/classroom\/L-[0-9a-f]{32}#k=[A-Za-z0-9_-]{43}$/);
+    linkLesson.id = new URL(linkLesson.link).pathname.split('/').pop();
+    linkLesson.key = keyOf(linkLesson.link);
+    const roomAddress = `${origin}/classroom/${linkLesson.id}`;
+
+    const kidContext = await context({ locale: 'zh-TW' });
+    kid = watch(await kidContext.newPage());
+    const pageRequests = [];
+    kid.on('request', item => pageRequests.push(item.url()));
+    await kid.goto(linkLesson.link);
+    await expect.poll(() => kid.evaluate(() => window.location.href)).toBe(roomAddress);
+    const entered = await enterAgain(kid);
+    expect(entered).toMatchObject({ status: 200, body: { role: 'student', participantCode: linkLesson.studentCode } });
+    // The key was never in a request address, and is not in the page or its storage.
+    expect(pageRequests.filter(url => url.includes(linkLesson.key))).toEqual([]);
+    expect(await kid.content()).not.toContain(linkLesson.key);
+    expect(await kid.evaluate(() => JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage } }))).not.toContain(linkLesson.key);
+
+    const legacyContext = await context({ locale: 'zh-TW' });
+    const legacy = watch(await legacyContext.newPage());
+    await legacy.goto(`${roomAddress}?k=${linkLesson.key}`);
+    await expect.poll(() => legacy.evaluate(() => window.location.href)).toBe(roomAddress);
+    expect((await enterAgain(legacy)).status).toBe(200);
+    await legacyContext.close();
+  });
+
+  await check('revoking the link: "Connect again" gets no new token, and neither does entering again', async () => {
+    await ownerAction('撤銷學生連結');
+    await expect(admin.locator('.classroom-notice')).toContainText('學生連結已撤銷');
+    await kid.getByText('模擬控制（只在測試教室）').click();
+    await kid.getByRole('button', { name: '連線失敗', exact: true }).click();
+    const failed = kid.getByRole('alert').filter({ hasText: '視訊無法連線' });
+    await expect(failed).toBeVisible();
+    const [refusedRejoin] = await Promise.all([
+      kid.waitForResponse(item => item.url().endsWith('/join') && item.request().method() === 'POST'),
+      kid.getByRole('button', { name: '重新連線', exact: true }).click(),
+    ]);
+    expect(refusedRejoin.status()).toBe(403);
+    expect((await refusedRejoin.json()).session).toBeUndefined();
+    await expect(failed).toContainText('這個連結無法進入這堂課。請向 iHear 索取新的連結。');
+    await expect(kid.locator('.classroom-room-connection')).not.toHaveText('已連線');
+    await kid.getByRole('button', { name: '離開教室' }).click();
+    const again = await enterAgain(kid);
+    expect(again).toMatchObject({ status: 403, body: { code: 'NOT_ON_ROSTER' } });
+    expect(again.body.session).toBeUndefined();
+    await expect(kid.locator('.classroom-room-problem')).toContainText('這個連結無法進入這堂課');
+  });
+
+  await check('reissuing: the new link is shown once; the old link stays refused and the new one enters', async () => {
+    await ownerAction('重發學生連結');
+    const box = admin.locator('.classroom-link code');
+    await expect(box).toContainText(`/classroom/${linkLesson.id}#k=`);
+    linkLesson.newLink = await box.textContent();
+    linkLesson.newKey = keyOf(linkLesson.newLink);
+    expect(linkLesson.newKey).not.toBe(linkLesson.key);
+    await refresh();
+    await expect(admin.locator('.classroom-link')).toHaveCount(0);
+    expect(await admin.content()).not.toContain(linkLesson.newKey);
+    const oldContext = await context({ locale: 'zh-TW' });
+    const old = watch(await oldContext.newPage());
+    await old.goto(linkLesson.link);
+    expect(await enterAgain(old)).toMatchObject({ status: 403, body: { code: 'NOT_ON_ROSTER' } });
+    await oldContext.close();
+    // Opened in the tab that still shows the room: only the part after # changes, so the page is
+    // not reloaded; it must still take the new key (and out of the address bar).
+    await kid.goto(linkLesson.newLink);
+    await expect.poll(() => kid.evaluate(() => window.location.href)).toBe(`${origin}/classroom/${linkLesson.id}`);
+    expect(await enterAgain(kid)).toMatchObject({ status: 200, body: { role: 'student', participantCode: linkLesson.studentCode } });
+  });
+
+  await check('cancelling the lesson: the current link gets no token either', async () => {
+    await ownerAction('取消課程');
+    await expect(linkRow()).toContainText('已取消');
+    await expect(linkRow().getByRole('button', { name: '重發學生連結', exact: true })).toBeDisabled();
+    await kid.getByRole('button', { name: '離開教室' }).click();
+    const refused = await enterAgain(kid);
+    expect(refused).toMatchObject({ status: 403, body: { code: 'LESSON_CANCELLED' } });
+    expect(refused.body.session).toBeUndefined();
+    await expect(kid.locator('.classroom-room-problem')).toContainText('這堂課已經取消。');
+    await shot(admin, '09-overview-link-actions');
+  });
+
+  // /classroom (2026-11-06): the entry page the home page will link to, only at the end of S3.
+  await check('/classroom signed out: the tutor sign-in and the personal-link path, and no lesson at all', async () => {
+    const visitorContext = await context({ locale: 'zh-TW', viewport: { width: 390, height: 844 } });
+    const visitor = watch(await visitorContext.newPage());
+    await visitor.goto(`${origin}/classroom`);
+    await expect(visitor.getByRole('link', { name: '小老師：使用 Google 登入' })).toHaveAttribute('href', '/api/auth/signin?callbackUrl=%2Fclassroom');
+    await expect(visitor.getByText('請使用 iHear 寄給你的個人課程連結進入教室')).toBeVisible();
+    const html = await visitor.content();
+    for (const value of [lesson.code, lesson.id, linkLesson.code, linkLesson.id]) expect(html).not.toContain(value);
+    expect(await noHorizontalOverflow(visitor)).toBe(true);
+    await shot(visitor, '10-classroom-entry-signed-out');
+    await visitorContext.close();
+  });
+
+  await check('/classroom for the signed-in tutor: only their lessons; an open one is entered from 我的課程, a cancelled one cannot be', async () => {
+    const mine = watch(await tutorContext.newPage());
+    await mine.goto(`${origin}/classroom`);
+    const open = mine.locator('.classroom-mine li', { hasText: lesson.code });
+    const cancelled = mine.locator('.classroom-mine li', { hasText: linkLesson.code });
+    await expect(open).toContainText('可以進入');
+    await expect(cancelled).toContainText('已取消');
+    await expect(cancelled.getByRole('link')).toHaveCount(0);
+    const answer = await mine.evaluate(async () => JSON.stringify(await (await fetch('/api/classroom/my-lessons')).json()));
+    for (const value of [lesson.key, linkLesson.key, linkLesson.newKey, tutor, 'token', 'sessionName']) expect(answer).not.toContain(value);
+    await shot(mine, '11-classroom-my-lessons');
+    await open.getByRole('link', { name: '進入教室' }).click();
+    await expect(mine).toHaveURL(`${origin}/classroom/${lesson.id}`);
+    await expect(mine.getByRole('button', { name: '進入教室' })).toBeVisible();
+    await mine.close();
+  });
+
+  await check('/classroom for an owner who teaches nothing here: no lessons, and the way to the overview', async () => {
+    const page = watch(await ownerContext.newPage());
+    await page.goto(`${origin}/classroom`);
+    await expect(page.getByText('目前沒有你的課程。')).toBeVisible();
+    await expect(page.getByRole('link', { name: '管理全部課程' })).toHaveAttribute('href', '/admin/classrooms');
+    await page.close();
+  });
+
   await check('codes only, nothing sent to another site, no unexpected browser errors', async () => {
     const shown = await admin.evaluate(async () => JSON.stringify(await (await fetch('/api/admin/classrooms')).json()));
-    for (const value of [tutor, lesson.key, 'Synthetic Display Name', '203.0.113.7']) expect(shown).not.toContain(value);
+    for (const value of [tutor, lesson.key, linkLesson.key, linkLesson.newKey, 'Synthetic Display Name', '203.0.113.7']) expect(shown).not.toContain(value);
     expect(report.externalRequests).toEqual([]);
     expect(consoleProblems).toEqual([]);
   });

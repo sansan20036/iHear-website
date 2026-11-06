@@ -31,6 +31,10 @@
 .classroom-link { margin-top:12px; padding:10px 14px; border-radius:12px; background:var(--classroom-warn-bg); display:grid; gap:8px; }
 .classroom-link p { margin:0; font-weight:700; color:var(--classroom-warn); }
 .classroom-link code { overflow-wrap:anywhere; font-size:13px; }
+.classroom-notice { margin:12px 0 0; font-weight:700; color:#157047; }
+.classroom-lesson-actions { display:flex; flex-wrap:wrap; gap:6px; }
+.classroom-cancelled { margin-left:8px; font-size:12px; font-weight:800; color:var(--classroom-bad); white-space:nowrap; }
+.classroom-lessons tr.is-cancelled td { color:#5d6877; }
 @media (max-width:720px) {
   .classroom-counts { grid-template-columns:repeat(2,minmax(0,1fr)); }
   /* On a phone each record or lesson is one stacked block instead of a squeezed table row. */

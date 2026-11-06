@@ -125,6 +125,11 @@ export type ClassroomStore = {
   listOpenFilingLessonIds(): Promise<string[]>;
   createLesson(lesson: ClassroomLesson): Promise<void>;
   listLessons(window: { from: number; to: number }): Promise<ClassroomLesson[]>;
+  // The lessons whose tutor signs in with this (lower-case) email, overlapping the window.
+  listLessonsForStaff(email: string, window: { from: number; to: number }): Promise<ClassroomLesson[]>;
+  // Owners' changes to who can enter: false when there is no such lesson (or student row).
+  setLessonCancelled(id: string): Promise<boolean>;
+  replaceStudentKeyHash(lessonId: string, participantId: string, keyHash: string): Promise<boolean>;
   listConsents(codes: string[]): Promise<ClassroomConsent[]>;
   setConsent(consent: ClassroomConsent): Promise<void>;
   listStaffNotices(codes: string[]): Promise<ClassroomStaffNotice[]>;
@@ -343,6 +348,23 @@ export function createFileClassroomStore(filePath: string): ClassroomStore {
     listLessons: ({ from, to }) => run((state) => clone(state.lessons
       .filter((lesson) => Date.parse(lesson.startsAt) < to && Date.parse(lesson.endsAt) > from)
       .sort((a, b) => Date.parse(a.startsAt) - Date.parse(b.startsAt) || a.code.localeCompare(b.code))), false),
+    listLessonsForStaff: (email, { from, to }) => run((state) => clone(email ? state.lessons
+      .filter((lesson) => Date.parse(lesson.startsAt) < to && Date.parse(lesson.endsAt) > from)
+      .filter((lesson) => lesson.participants.some((entry) => entry.role === "tutor" && entry.staffEmail === email))
+      .sort((a, b) => Date.parse(a.startsAt) - Date.parse(b.startsAt) || a.code.localeCompare(b.code)) : []), false),
+    setLessonCancelled: (id) => run((state) => {
+      const lesson = state.lessons.find((item) => item.id === id);
+      if (!lesson) return false;
+      lesson.cancelled = true;
+      return true;
+    }),
+    replaceStudentKeyHash: (lessonId, participantId, keyHash) => run((state) => {
+      const student = state.lessons.find((item) => item.id === lessonId)?.participants
+        .find((entry) => entry.id === participantId && entry.role === "student");
+      if (!student) return false;
+      student.joinKeyHash = keyHash;
+      return true;
+    }),
     listConsents: (codes) => run((state) => clone(state.consents.filter((item) => codes.includes(item.personCode))), false),
     setConsent: (consent) => run((state) => {
       state.consents = [...state.consents.filter((item) => item.personCode !== consent.personCode), clone(consent)];
@@ -728,6 +750,31 @@ export function createPostgresClassroomStore(sql: postgres.Sql): ClassroomStore 
         ORDER BY starts_at, code
       `;
       return lessonsWith(sql, rows);
+    },
+    async listLessonsForStaff(email, { from, to }) {
+      if (!email) return [];
+      const rows = await sql`
+        SELECT l.* FROM public.classroom_lessons l
+        WHERE l.starts_at < ${new Date(to)} AND l.ends_at > ${new Date(from)}
+          AND EXISTS (
+            SELECT 1 FROM public.classroom_participants p
+            WHERE p.lesson_id = l.id AND p.role = 'tutor' AND p.staff_email = ${email}
+          )
+        ORDER BY l.starts_at, l.code
+      `;
+      return lessonsWith(sql, rows);
+    },
+    async setLessonCancelled(id) {
+      const rows = await sql`UPDATE public.classroom_lessons SET cancelled = TRUE, updated_at = NOW() WHERE id = ${id} RETURNING id`;
+      return rows.length > 0;
+    },
+    async replaceStudentKeyHash(lessonId, participantId, keyHash) {
+      const rows = await sql`
+        UPDATE public.classroom_participants SET join_key_hash = ${keyHash}
+        WHERE lesson_id = ${lessonId} AND participant_id = ${participantId} AND role = 'student'
+        RETURNING participant_id
+      `;
+      return rows.length > 0;
     },
     async listConsents(codes) {
       if (!codes.length) return [];
