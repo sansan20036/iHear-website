@@ -3112,3 +3112,176 @@ test("a team roster that is really empty still says so once it has loaded", asyn
   await expect(page.locator("[data-team-tutors] .team-directory-message")).toHaveText("No published profiles yet.");
   await expect(page.locator("[data-team-leaders] .team-directory-message")).toHaveText("No published profiles yet.");
 });
+
+// The header sign-in by who is signed in (2026-11-07). Administration is decided by the session
+// the server computes (isAdmin from the owner list and the admin accounts, on every read); a
+// tutor or anyone else signed in never sees the dashboard entry. The classroom entries stay off
+// until the classroom opens to everyone, the last step of the S3 acceptance.
+test.describe("the header sign-in by who is signed in", () => {
+  const COPY = {
+    en: { signIn: "Sign in", adminSignIn: "Sign in as an administrator with Google", neutralSignIn: "Sign in with Google", dashboard: "Admin dashboard", mine: "My online classroom", manage: "Manage the online classroom", admin: "Administrator signed in", signedIn: "Signed in", signOut: "Sign out", loading: "Checking access…", unavailable: "Could not check sign-in status.", retry: "Retry" },
+    zhTW: { signIn: "登入", adminSignIn: "使用 Google 登入管理員帳號", neutralSignIn: "使用 Google 登入", dashboard: "管理後台", mine: "我的線上教室", manage: "線上教室管理", admin: "管理員已登入", signedIn: "已登入", signOut: "登出", loading: "正在確認權限…", unavailable: "暫時無法確認登入狀態。", retry: "重試" },
+    zhCN: { signIn: "登录", adminSignIn: "使用 Google 登录管理员账号", neutralSignIn: "使用 Google 登录", dashboard: "管理后台", mine: "我的线上教室", manage: "线上教室管理", admin: "管理员已登录", signedIn: "已登录", signOut: "登出", loading: "正在确认权限…", unavailable: "暂时无法确认登录状态。", retry: "重试" },
+  };
+  const PEOPLE = {
+    owner: { name: "Owner Example", email: "owner@example.test", isAdmin: true, adminRole: "owner" },
+    editor: { name: "Editor Example", email: "editor@example.test", isAdmin: true, adminRole: "editor" },
+    tutor: { name: "Tutor Example", email: "tutor@example.test", isAdmin: false, adminRole: null },
+  };
+  const RELEASE_OFF = "const CLASSROOM_ENTRY_RELEASED = false;";
+  // The session the server answers with; registered after mockApplication's, so it is the one used.
+  const answerSession = (page, user) => page.route("**/api/auth/session", route => route.fulfill({
+    status: 200, contentType: "application/json", body: JSON.stringify(user ? { user } : {}),
+  }));
+  async function visit(page, user, language) {
+    await mockApplication(page, { admin: false });
+    await answerSession(page, user);
+    await page.addInitScript(lang => { localStorage.setItem("ihear-lang", lang); }, language);
+  }
+  // The classroom open to everyone: the same script, served with its release switch on.
+  async function classroomOpen(page) {
+    const source = await readFile(path.resolve(publicDir, "assets/auth.js"), "utf8");
+    expect(source).toContain(RELEASE_OFF);
+    await page.route("**/assets/auth.js*", route => route.fulfill({ contentType: "text/javascript", body: source.replace(RELEASE_OFF, "const CLASSROOM_ENTRY_RELEASED = true;") }));
+  }
+  async function openMenu(page) {
+    await page.locator("[data-auth-desktop] .auth-profile").click();
+    await expect(page.locator("[data-auth-desktop] .auth-popover")).toBeVisible();
+  }
+
+  for (const language of ["en", "zhTW", "zhCN"]) {
+    const text = COPY[language];
+
+    test(`a signed-in tutor or other non-administrator sees no administration entry (${language})`, async ({ page }) => {
+      await visit(page, PEOPLE.tutor, language);
+      for (const route of ["/", "/team", "/academy"]) {
+        await page.goto(route);
+        await expect(page.locator("[data-auth-desktop] .auth-profile")).toBeVisible();
+        await expect(page.locator(".auth-admin-link")).toHaveCount(0);
+        await expect(page.locator('a[href^="/admin"]')).toHaveCount(0);
+        await expect(page.locator(".auth-classroom-link")).toHaveCount(0);
+        for (const mount of ["[data-auth-desktop]", "[data-auth-mobile]"]) await expect(page.locator(mount)).not.toContainText(text.dashboard);
+      }
+      await openMenu(page);
+      const popover = page.locator("[data-auth-desktop] .auth-popover");
+      await expect(popover).toContainText(PEOPLE.tutor.name);
+      await expect(popover).toContainText(PEOPLE.tutor.email);
+      await expect(popover.locator("[data-auth-signout]")).toHaveText(text.signOut);
+      await expect(page.locator("[data-auth-mobile] [data-auth-signout]")).toHaveText(text.signOut);
+      // Without a name or email the menu says "signed in", never "administrator signed in".
+      await answerSession(page, { isAdmin: false });
+      await page.reload();
+      await expect(page.locator("[data-auth-desktop] .auth-name")).toHaveText(text.signedIn);
+    });
+
+    test(`an administrator's menu is unchanged while the classroom is not open (${language})`, async ({ page }) => {
+      await visit(page, PEOPLE.owner, language);
+      for (const who of ["owner", "editor"]) {
+        await answerSession(page, PEOPLE[who]);
+        await page.goto("/");
+        await expect(page.locator(".auth-admin-link")).toHaveCount(2);
+        await expect(page.locator('a[href^="/admin"]:not(.auth-admin-link)')).toHaveCount(0);
+        await expect(page.locator(".auth-classroom-link")).toHaveCount(0);
+        await openMenu(page);
+        await expect(page.locator("[data-auth-desktop] .auth-admin-link")).toHaveAttribute("href", "/admin");
+        await expect(page.locator("[data-auth-desktop] .auth-admin-link")).toContainText(text.dashboard);
+      }
+      await answerSession(page, { isAdmin: true });
+      await page.reload();
+      await expect(page.locator("[data-auth-desktop] .auth-name")).toHaveText(text.admin);
+    });
+
+    test(`once the classroom opens: owners get its overview, everyone else signed in gets their classroom (${language})`, async ({ page }) => {
+      await classroomOpen(page);
+      await visit(page, PEOPLE.owner, language);
+      await page.goto("/");
+      await openMenu(page);
+      const owner = page.locator("[data-auth-desktop] .auth-popover");
+      await expect(owner.locator('.auth-admin-link[href="/admin"]')).toContainText(text.dashboard);
+      await expect(owner.locator(".auth-classroom-link")).toHaveAttribute("href", "/admin/classrooms");
+      await expect(owner.locator(".auth-classroom-link")).toContainText(text.manage);
+      await expect(page.locator("[data-auth-mobile] .auth-classroom-link")).toHaveAttribute("href", "/admin/classrooms");
+      // The overview link is an administration link like the dashboard: no other /admin link appears.
+      await expect(page.locator('a[href^="/admin"]:not(.auth-admin-link)')).toHaveCount(0);
+
+      await answerSession(page, PEOPLE.editor);
+      await page.reload();
+      await openMenu(page);
+      const editor = page.locator("[data-auth-desktop] .auth-popover");
+      await expect(editor.locator('.auth-admin-link[href="/admin"]')).toContainText(text.dashboard);
+      await expect(editor.locator(".auth-classroom-link")).toHaveAttribute("href", "/classroom");
+      await expect(editor.locator(".auth-classroom-link")).toContainText(text.mine);
+
+      await answerSession(page, PEOPLE.tutor);
+      await page.reload();
+      await openMenu(page);
+      const tutor = page.locator("[data-auth-desktop] .auth-popover");
+      await expect(tutor.locator(".auth-classroom-link")).toHaveAttribute("href", "/classroom");
+      await expect(tutor.locator(".auth-classroom-link")).toContainText(text.mine);
+      await expect(page.locator("[data-auth-mobile] .auth-classroom-link")).toHaveAttribute("href", "/classroom");
+      await expect(page.locator(".auth-admin-link")).toHaveCount(0);
+      await expect(page.locator('a[href^="/admin"]')).toHaveCount(0);
+
+      // Signing in no longer says "administrator".
+      await answerSession(page, null);
+      await page.reload();
+      await expect(page.locator("[data-auth-desktop] [data-auth-signin]")).toHaveAttribute("aria-label", text.neutralSignIn);
+    });
+
+    test(`signed out, checking and a failed check look as before (${language})`, async ({ page }) => {
+      await visit(page, null, language);
+      let release;
+      const held = new Promise(resolve => { release = resolve; });
+      await page.route("**/api/auth/session", async route => { await held; await route.fulfill({ status: 500, contentType: "application/json", body: "{}" }); }, { times: 1 });
+      await page.goto("/");
+      await expect(page.locator("[data-auth-desktop] .auth-loading")).toHaveText(text.loading);
+      release();
+      await expect(page.locator("[data-auth-desktop] .auth-error")).toContainText(text.unavailable);
+      await expect(page.locator(".auth-admin-link")).toHaveCount(0);
+      await page.locator("[data-auth-desktop] [data-auth-retry]").click();
+      const signIn = page.locator("[data-auth-desktop] [data-auth-signin]");
+      await expect(signIn).toContainText(text.signIn);
+      // Before the classroom opens the sign-in keeps its administrator wording.
+      await expect(signIn).toHaveAttribute("aria-label", text.adminSignIn);
+      await expect(page.locator(".auth-admin-link, .auth-classroom-link")).toHaveCount(0);
+    });
+  }
+
+  test("only a literal isAdmin true from the server counts; any other value is a non-administrator", async ({ page }) => {
+    await visit(page, PEOPLE.tutor, "en");
+    for (const isAdmin of ["true", 1, null, undefined]) {
+      await answerSession(page, { name: "Someone", email: "someone@example.test", isAdmin, adminRole: "owner" });
+      await page.goto("/");
+      await expect(page.locator("[data-auth-desktop] .auth-profile")).toBeVisible();
+      await expect(page.locator(".auth-admin-link"), `isAdmin ${String(isAdmin)}`).toHaveCount(0);
+    }
+    // What the page itself is told later (an event, its storage) does not make anyone an administrator.
+    await answerSession(page, PEOPLE.tutor);
+    await page.goto("/");
+    await page.evaluate(() => {
+      localStorage.setItem("isAdmin", "true");
+      window.dispatchEvent(new CustomEvent("ihear:auth", { detail: { session: { user: { isAdmin: true } } } }));
+      window.dispatchEvent(new CustomEvent("ihear:language"));
+    });
+    await expect(page.locator("[data-auth-desktop] .auth-profile")).toBeVisible();
+    await expect(page.locator(".auth-admin-link")).toHaveCount(0);
+  });
+
+  test("the header's wording exists in all three languages with the same keys, Traditional and Simplified kept apart", async () => {
+    const source = await readFile(path.resolve("assets/auth.js"), "utf8");
+    const block = source.match(/const labelsByLocale = (\{[\s\S]*?\n {2}\});/)?.[1];
+    expect(block).toBeTruthy();
+    const labels = new Function(`return (${block});`)();
+    const keys = Object.keys(labels.en).sort();
+    for (const locale of ["zhHant", "zhHans"]) expect(Object.keys(labels[locale]).sort(), locale).toEqual(keys);
+    for (const [locale, values] of Object.entries(labels)) {
+      for (const key of keys) expect(typeof values[key] === "string" && values[key].trim().length > 0, `${locale}.${key}`).toBe(true);
+    }
+    for (const key of keys) {
+      if (key !== "signOut") expect(labels.zhHant[key], key).not.toBe(labels.en[key]);
+      expect([...labels.zhHans[key]].filter(char => "後線課確認權帳號實時連結錄後臺".includes(char)), `zhHans.${key}`).toEqual([]);
+      expect([...labels.zhHant[key]].filter(char => "后线课确认权账号实时连结录".includes(char)), `zhHant.${key}`).toEqual([]);
+    }
+    for (const key of ["signInNeutral", "signedInGeneric", "classroom", "classroomHint", "classroomAdmin", "classroomAdminHint"]) expect(keys).toContain(key);
+  });
+});
