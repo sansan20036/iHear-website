@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
+import { LESSON_ID_PATTERN } from "../../../lib/classroom-link";
 import ClassroomEntry from "./classroom-entry";
 import "./classroom.css";
 
@@ -18,6 +19,6 @@ type Props = { params: Promise<{ lessonId: string }> };
 
 export default async function ClassroomPage({ params }: Props) {
   const { lessonId } = await params;
-  if (!/^[A-Za-z0-9-]{1,36}$/.test(lessonId)) notFound();
+  if (!LESSON_ID_PATTERN.test(lessonId)) notFound();
   return <ClassroomEntry lessonId={lessonId} synthetic={process.env.CLASSROOM_PROVIDER === "synthetic"} />;
 }

@@ -8,53 +8,13 @@ import {
 } from "../../../lib/classroom-media";
 import { classroomDeviceOf, deviceLimits, type CapabilityName, type ClassroomDevice } from "../../../lib/classroom-capabilities";
 import { rejoinRoom, requestJoin, type JoinedSession } from "../../../lib/classroom-join-client";
+import { browserClassroomLocale, CLASSROOM_LOCALES, htmlLangOf, intlLocaleOf, LOCALE_NAMES, type ClassroomLocale } from "../../../lib/classroom-locale";
+import { roomCopy as copy, vendorCopy } from "./classroom-copy";
 
 // The vendor-specific parts of the room (2026-10-30): Zoom draws its video in our page; LCIC is
 // Tencent's own classroom page in an iframe. Notes per device come from lib/classroom-capabilities
 // (vendor documentation, not yet tried on real devices).
 const VENDOR_PROVIDERS = new Set(["zoom-video-sdk", "tencent-lcic"]);
-const vendorCopy = {
-  zh: {
-    limitsTitle: "這台裝置的限制",
-    device: { desktop: "電腦", tablet: "平板", phone: "手機" } as Record<ClassroomDevice, string>,
-    unknown: "（未確認）",
-    limits: {
-      video: "視訊在這台裝置上的效果未確認", documents: "教材（PDF、PPT）只能用分享畫面觀看，或效果未確認",
-      whiteboard: "白板只能觀看、不能在上面畫，或效果未確認", screenShare: "不能從這台裝置分享畫面",
-      fileTransfer: "傳送檔案的方式未確認", recording: "上課中由系統停止錄影的方式尚未實測；必要時會結束這間教室，再開一間不錄影的教室",
-    } as Record<CapabilityName, string>,
-    lcicNote: "以下是騰訊的教室畫面：鏡頭、麥克風、教材和白板都在裡面操作。連線狀態也顯示在騰訊的畫面內。",
-    lcicRecordingOff: "這堂課的教室建立時不錄影。",
-    zoomVideo: "Zoom 視訊畫面",
-    share: "分享畫面（教材）", shareStop: "停止分享畫面", whiteboard: "開啟白板", whiteboardStop: "關閉白板", exportBoard: "下載白板 PDF",
-    sharing: "你正在分享畫面。", receiving: "正在顯示對方分享的畫面。", presenting: "你正在主持白板，對方會同時看到。", viewing: "正在顯示小老師的白板。",
-    shareHint: "教材（PDF、PPT）：先在這台電腦打開檔案，再按「分享畫面」，選擇那個視窗或瀏覽器分頁。",
-    noShareHere: "這台裝置不能分享畫面；要展示教材請改用電腦。",
-    shareFailed: "畫面沒有開始分享（可能取消了選擇）。",
-    boardFailed: "白板無法開啟：這個帳號可能沒有開啟白板，或這台裝置不支援。",
-    sdkCheck: (check: MediaSystemCheck) => `Zoom 視訊 ${check.sdkVersion}：音訊${check.audio ? "可用" : "不可用"}、視訊${check.video ? "可用" : "不可用"}、分享畫面${check.screenShare ? "可用" : "不可用"}`,
-  },
-  en: {
-    limitsTitle: "Limits on this device",
-    device: { desktop: "Computer", tablet: "Tablet", phone: "Phone" } as Record<ClassroomDevice, string>,
-    unknown: " (not confirmed)",
-    limits: {
-      video: "Video on this device is not confirmed", documents: "Materials (PDF, PPT) only through a shared screen, or not confirmed",
-      whiteboard: "The whiteboard is view-only here, or not confirmed", screenShare: "This device cannot share its screen",
-      fileTransfer: "Sending files is not confirmed", recording: "Stopping a recording mid-class from iHear is not yet tested; if needed the class is ended and a new one opens without recording",
-    } as Record<CapabilityName, string>,
-    lcicNote: "Below is Tencent's classroom: the camera, microphone, materials and whiteboard are all inside it, and so is the connection status.",
-    lcicRecordingOff: "This class was opened without recording.",
-    zoomVideo: "Zoom video",
-    share: "Share screen (materials)", shareStop: "Stop sharing", whiteboard: "Open whiteboard", whiteboardStop: "Close whiteboard", exportBoard: "Download whiteboard PDF",
-    sharing: "You are sharing your screen.", receiving: "Showing the other person’s shared screen.", presenting: "You are presenting the whiteboard; the other person sees it too.", viewing: "Showing the tutor’s whiteboard.",
-    shareHint: "Materials (PDF, PPT): open the file on this computer first, then choose Share screen and pick that window or browser tab.",
-    noShareHere: "This device cannot share its screen; use a computer to show materials.",
-    shareFailed: "The screen was not shared (the choice may have been cancelled).",
-    boardFailed: "The whiteboard could not open: it may be off for this account, or this device does not support it.",
-    sdkCheck: (check: MediaSystemCheck) => `Zoom video ${check.sdkVersion}: audio ${check.audio ? "supported" : "not supported"}, video ${check.video ? "supported" : "not supported"}, screen sharing ${check.screenShare ? "supported" : "not supported"}`,
-  },
-};
 
 // What a student or a tutor sees: one button to enter, a plain reason when they cannot, and once
 // inside, the lesson's facts, the video stage with camera and microphone controls, and whether
@@ -64,143 +24,8 @@ const vendorCopy = {
 // page: the tutor's page only reports what it sees, every 30 seconds, or every 10 while
 // recording so that a stop reaches it quickly, and both pages read the recording state.
 
-type Locale = "en" | "zh";
+type Locale = ClassroomLocale;
 
-const copy = {
-  en: {
-    title: "iHear Classroom", other: "中文",
-    synthetic: "Test classroom: synthetic data only. No video or recording is connected.",
-    enter: "Enter the classroom", entering: "Checking…", retry: "Try again", leave: "Leave the classroom",
-    left: "You have left the classroom.", rejoin: "Enter again", signIn: "Tutor sign-in",
-    lesson: "Lesson", time: "Time (Taipei)", you: "You", tutor: "Tutor", student: "Student",
-    stage: "Video", self: "You", other_tutor: "Tutor", other_student: "Student",
-    noVideo: "No real video in this test classroom.",
-    cameraOnSimulated: "Camera on (simulated: no real picture)", cameraOn: "Camera on", cameraOff: "Camera off",
-    cameraDenied: "Camera not allowed", cameraUnavailable: "No camera found",
-    micOn: "Microphone on", micOff: "Microphone muted", micDenied: "Microphone not allowed", micUnavailable: "No microphone found",
-    cameraStarting: "Camera starting…", cameraFailed: "Camera did not start", micStarting: "Microphone starting…", micFailed: "Microphone did not start",
-    waitingOther: "Waiting for the other person to enter.",
-    syntheticOther: "The test classroom cannot see the other person; use the simulation controls below.",
-    otherLeft: "The other person has left the classroom.",
-    controls: "Classroom controls", camera: "Camera", microphone: "Microphone", on: "on", off: "off", starting: "starting…", retryDevice: "Try again",
-    connection: { idle: "Not connected", connecting: "Connecting…", connected: "Connected", reconnecting: "Reconnecting…", disconnected: "Disconnected", failed: "Connection failed" } as Record<ConnectionState, string>,
-    notConnected: "Video is not connected: no video service has been chosen for this classroom yet.",
-    reconnecting: "The video connection dropped. Reconnecting…",
-    failed: "The video could not connect. Try connecting again.", reconnect: "Connect again",
-    deviceHelp: {
-      camera: { denied: "The camera is blocked. Allow the camera for this site in the browser's settings, then try again.", unavailable: "No camera was found. Check that one is connected and not used by another app." },
-      microphone: { denied: "The microphone is blocked. Allow the microphone for this site in the browser's settings, then try again.", unavailable: "No microphone was found. Check that one is connected and not used by another app." },
-    } as Record<DeviceKind, Partial<Record<DeviceState, string>>>,
-    // A press that did not start, by what went wrong ("error" for the rest); "Try again" sits beside it.
-    deviceFailed: {
-      camera: { error: "The camera did not start. Press “Try again”. If it still does not start, reload this page.", missing: "No camera was found. Check that it is connected, then press “Try again”.", busy: "Another app may be using the camera (another video app, for example). Close it, then press “Try again”." },
-      microphone: { error: "The microphone did not start. Press “Try again”. If it still does not start, reload this page.", autoplay: "The browser paused this page's sound. Press “Try again” to start it.", missing: "No microphone was found. Check that it is connected, then press “Try again”.", busy: "Another app may be using the microphone. Close it, then press “Try again”." },
-    } as Record<DeviceKind, Partial<Record<DeviceProblem, string>>>,
-    recording: "Recording", recordingNote: "Recording starts and stops on its own; you do not need to do anything.",
-    allowed: "This lesson may be recorded.", notAllowed: "This lesson is not recorded.", waiting: "Waiting for the first report…",
-    undecided: "Whether this lesson is recorded is decided automatically before it starts.",
-    badge: { recording: "Recording", starting: "Starting recording", paused: "Recording paused", off: "Not recording", unknown: "Recording state unknown" },
-    studentNotice: {
-      recording: "This lesson is being recorded.", starting: "Recording is about to start.", paused: "Recording is paused.",
-      off: "This lesson is not being recorded.", unknown: "The recording state could not be checked just now.",
-    },
-    basis: { confirmed: "confirmed", requested: "requested, waiting for the video service", inferred: "inferred" } as Record<string, string>,
-    status: {
-      NOT_REQUESTED: "Not started", BLOCKED: "Not recorded (consent conditions not met)", START_REQUESTED: "Start requested",
-      RECORDING: "Recording", PAUSED: "Paused", STOPPED: "Stopped, waiting for the file", POSSIBLY_STOPPED: "Possibly stopped",
-      FAILED: "Recording failed", COMPLETED: "Recording complete",
-    } as Record<string, string>,
-    failedRecording: "Recording failed. iHear has been notified; the lesson carries on.",
-    unstable: "The connection to iHear is unstable. Still trying…",
-    signedOut: "Your sign-in has expired. Sign in again so the lesson keeps being reported.",
-    simulate: "Simulation controls (test classroom only)",
-    simulateNote: "These buttons play what a real video service would report. Nothing is sent to anyone.",
-    scenario: {
-      "remote-joins": "Other person enters", "remote-leaves": "Other person leaves", "remote-camera-off": "Their camera off", "remote-camera-on": "Their camera on",
-      "network-drop": "Network drops", "network-restore": "Network back", "connection-failed": "Connection fails",
-      "camera-denied": "Camera blocked", "microphone-unavailable": "No microphone", "devices-restored": "Devices back",
-    } as Record<SyntheticScenario, string>,
-    reasons: {
-      LESSON_NOT_FOUND: "This lesson could not be found. Check that the link is complete, or contact iHear.",
-      LESSON_CANCELLED: "This lesson has been cancelled.",
-      NOT_ON_ROSTER_LINK: "This link does not open this lesson. Ask iHear for a new link.",
-      NOT_ON_ROSTER: "Students: open the personal link from iHear. Tutors: sign in with your iHear account first.",
-      IDENTITY_UNVERIFIED: "Your identity could not be confirmed. Tutors: sign in with your iHear account.",
-      OBSERVER_NOT_ENABLED: "Observing lessons is not available yet.",
-      OUTSIDE_JOIN_WINDOW: "The classroom opens 15 minutes before the lesson and closes 15 minutes after it ends.",
-      CHECK_FAILED: "Entry could not be checked just now. Please try again.",
-      PROVIDER_UNAVAILABLE: "The classroom is not open yet.",
-      RATE_LIMITED: "Too many attempts. Please wait a few minutes and try again.",
-      UNAVAILABLE: "The classroom cannot be reached right now. Please try again.",
-    } as Record<string, string>,
-  },
-  zh: {
-    title: "iHear 線上教室", other: "English",
-    synthetic: "測試教室：只有合成資料，沒有接上視訊或錄影。",
-    enter: "進入教室", entering: "確認中…", retry: "再試一次", leave: "離開教室",
-    left: "你已離開教室。", rejoin: "重新進入", signIn: "小老師登入",
-    lesson: "課程", time: "時間（台北）", you: "你的身分", tutor: "小老師", student: "學生",
-    stage: "視訊畫面", self: "你", other_tutor: "小老師", other_student: "學生",
-    noVideo: "測試教室沒有真實視訊。",
-    cameraOnSimulated: "攝影機開啟（模擬：沒有真實畫面）", cameraOn: "攝影機開啟", cameraOff: "攝影機關閉",
-    cameraDenied: "沒有攝影機權限", cameraUnavailable: "找不到攝影機",
-    micOn: "麥克風開啟", micOff: "麥克風靜音", micDenied: "沒有麥克風權限", micUnavailable: "找不到麥克風",
-    cameraStarting: "攝影機開啟中…", cameraFailed: "攝影機沒有開啟", micStarting: "麥克風開啟中…", micFailed: "麥克風沒有開啟",
-    waitingOther: "等待對方進入教室。",
-    syntheticOther: "測試教室看不到對方是否進入，可以用下方的模擬控制。",
-    otherLeft: "對方已離開教室。",
-    controls: "教室控制", camera: "攝影機", microphone: "麥克風", on: "開", off: "關", starting: "開啟中…", retryDevice: "再試一次",
-    connection: { idle: "未連線", connecting: "連線中…", connected: "已連線", reconnecting: "重新連線中…", disconnected: "已中斷", failed: "連線失敗" } as Record<ConnectionState, string>,
-    notConnected: "視訊尚未接上：這間教室還沒有選定視訊服務。",
-    reconnecting: "視訊連線中斷，正在重新連線…",
-    failed: "視訊無法連線，請再試一次。", reconnect: "重新連線",
-    deviceHelp: {
-      camera: { denied: "攝影機被封鎖。請在瀏覽器的網站設定允許使用攝影機，再試一次。", unavailable: "找不到攝影機。請確認攝影機已接上，而且沒有被其他程式使用。" },
-      microphone: { denied: "麥克風被封鎖。請在瀏覽器的網站設定允許使用麥克風，再試一次。", unavailable: "找不到麥克風。請確認麥克風已接上，而且沒有被其他程式使用。" },
-    } as Record<DeviceKind, Partial<Record<DeviceState, string>>>,
-    deviceFailed: {
-      camera: { error: "攝影機沒有成功開啟。請按「再試一次」；如果還是不行，請重新整理這個頁面。", missing: "找不到攝影機。請確認攝影機已接上，再按「再試一次」。", busy: "攝影機可能正被其他程式使用（例如另一個視訊軟體）。請關閉那個程式，再按「再試一次」。" },
-      microphone: { error: "麥克風沒有成功開啟。請按「再試一次」；如果還是不行，請重新整理這個頁面。", autoplay: "瀏覽器暫停了這個頁面的聲音。請按「再試一次」讓聲音開始。", missing: "找不到麥克風。請確認麥克風已接上，再按「再試一次」。", busy: "麥克風可能正被其他程式使用。請關閉那個程式，再按「再試一次」。" },
-    } as Record<DeviceKind, Partial<Record<DeviceProblem, string>>>,
-    recording: "錄影", recordingNote: "錄影會自動開始和停止，你不需要操作。",
-    allowed: "這堂課可以錄影。", notAllowed: "這堂課不錄影。", waiting: "等待第一次回報…",
-    undecided: "是否錄影會在上課前自動決定。",
-    badge: { recording: "錄影中", starting: "正在啟動錄影", paused: "錄影暫停", off: "未錄影", unknown: "錄影狀態不明" },
-    studentNotice: {
-      recording: "這堂課正在錄影。", starting: "錄影即將開始。", paused: "錄影已暫停。",
-      off: "這堂課目前沒有錄影。", unknown: "暫時無法確認錄影狀態。",
-    },
-    basis: { confirmed: "已確認", requested: "已請求，等待視訊服務確認", inferred: "推測" } as Record<string, string>,
-    status: {
-      NOT_REQUESTED: "未開始", BLOCKED: "不錄影（同意條件不符）", START_REQUESTED: "已送出錄影啟動請求",
-      RECORDING: "錄影中", PAUSED: "暫停", STOPPED: "已停止，等待錄影檔", POSSIBLY_STOPPED: "可能已停止",
-      FAILED: "錄影失敗", COMPLETED: "錄影已完成",
-    } as Record<string, string>,
-    failedRecording: "錄影失敗。已通知 iHear 管理員，課程照常進行。",
-    unstable: "和 iHear 的連線不穩定，正在重試…",
-    signedOut: "登入已過期。請重新登入，系統才能繼續記錄這堂課。",
-    simulate: "模擬控制（只在測試教室）",
-    simulateNote: "這些按鈕模擬真實視訊服務會回報的狀況，不會傳送給任何人。",
-    scenario: {
-      "remote-joins": "對方進入", "remote-leaves": "對方離開", "remote-camera-off": "對方關攝影機", "remote-camera-on": "對方開攝影機",
-      "network-drop": "網路中斷", "network-restore": "網路恢復", "connection-failed": "連線失敗",
-      "camera-denied": "攝影機被封鎖", "microphone-unavailable": "找不到麥克風", "devices-restored": "裝置恢復",
-    } as Record<SyntheticScenario, string>,
-    reasons: {
-      LESSON_NOT_FOUND: "找不到這堂課。請確認連結是否完整，或聯絡 iHear。",
-      LESSON_CANCELLED: "這堂課已經取消。",
-      NOT_ON_ROSTER_LINK: "這個連結無法進入這堂課。請向 iHear 索取新的連結。",
-      NOT_ON_ROSTER: "學生請使用 iHear 提供的個人專屬連結；小老師請先用 iHear 帳號登入。",
-      IDENTITY_UNVERIFIED: "無法確認你的身分。小老師請用 iHear 帳號登入。",
-      OBSERVER_NOT_ENABLED: "旁聽功能尚未開放。",
-      OUTSIDE_JOIN_WINDOW: "教室在上課前 15 分鐘開放，下課後 15 分鐘關閉。",
-      CHECK_FAILED: "暫時無法確認入場資格，請稍後再試。",
-      PROVIDER_UNAVAILABLE: "教室尚未開放。",
-      RATE_LIMITED: "嘗試次數太多，請過幾分鐘再試。",
-      UNAVAILABLE: "暫時連不上教室，請稍後再試。",
-    } as Record<string, string>,
-  },
-};
 
 const HEARTBEAT_MS = 30_000;
 const RECORDING_HEARTBEAT_MS = 10_000;
@@ -225,17 +50,6 @@ type Media = {
 };
 
 const initialMedia = (): Media => ({ available: true, connection: "idle", devices: { camera: "off", microphone: "off" }, deviceProblems: {}, remote: { present: false, camera: false, microphone: false, seen: false }, share: "none", whiteboard: "none" });
-
-function initialLocale(): Locale {
-  try {
-    const stored = localStorage.getItem("ihear-lang");
-    if (stored === "en") return "en";
-    if (stored === "zhTW" || stored === "zhCN") return "zh";
-  } catch {
-    // Storage can be blocked; fall back to the browser's language.
-  }
-  return navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en";
-}
 
 // The personal key from the address: behind # (#k=…), or the older ?k=. It is taken out of the
 // address bar at once (replacing the history entry, so none keeps it): not left in the history,
@@ -265,7 +79,7 @@ function badgeOf(recording: Recording | null): "recording" | "starting" | "pause
 }
 
 export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: string; synthetic: boolean }) {
-  const [locale, setLocale] = useState<Locale>("zh");
+  const [locale, setLocale] = useState<Locale>("zhHant");
   const [joinKey, setJoinKey] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>("ready");
   const [reason, setReason] = useState("");
@@ -293,7 +107,7 @@ export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: stri
   const signInUrl = `/api/auth/signin?callbackUrl=${encodeURIComponent(`/classroom/${lessonId}`)}`;
 
   useEffect(() => {
-    setLocale(initialLocale());
+    setLocale(browserClassroomLocale());
     const key = takeJoinKey();
     if (key) setJoinKey(key);
     setDevice(classroomDeviceOf(navigator.userAgent, navigator.maxTouchPoints));
@@ -307,7 +121,7 @@ export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: stri
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
   useEffect(() => {
-    document.documentElement.lang = locale === "en" ? "en" : "zh-Hant";
+    document.documentElement.lang = htmlLangOf(locale);
   }, [locale]);
 
   async function enter() {
@@ -526,7 +340,7 @@ export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: stri
     setPhase("left");
   }
 
-  const when = (iso: string) => new Intl.DateTimeFormat(locale === "en" ? "en-GB" : "zh-TW", {
+  const when = (iso: string) => new Intl.DateTimeFormat(intlLocaleOf(locale), {
     timeZone: "Asia/Taipei", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false,
   }).format(new Date(iso));
   const until = (iso: string) => new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Taipei", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(iso));
@@ -543,7 +357,7 @@ export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: stri
     <main className="classroom-room">
       <header className="classroom-room-head">
         <h1>{text.title}</h1>
-        <button type="button" className="classroom-lang" onClick={() => setLocale(locale === "en" ? "zh" : "en")}>{text.other}</button>
+        <div className="classroom-langs" role="group" aria-label="Language / 語言 / 语言">{CLASSROOM_LOCALES.filter(item => item !== locale).map(item => <button key={item} type="button" className="classroom-lang" lang={htmlLangOf(item)} onClick={() => setLocale(item)}>{LOCALE_NAMES[item]}</button>)}</div>
       </header>
       {synthetic && <p className="classroom-room-note" role="note">{text.synthetic}</p>}
 

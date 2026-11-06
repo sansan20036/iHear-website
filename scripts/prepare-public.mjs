@@ -1,8 +1,12 @@
 import { copyFile, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { prepareAcademy } from "./prepare-academy.mjs";
+import { applyClassroomEntry, applyClassroomSwitch, readClassroomEntrySwitch } from "./classroom-entry.mjs";
 
 const root = process.cwd();
+// The online classroom's release switch: off, the home page entries are left out of the built
+// pages and the header script keeps its entries closed (scripts/classroom-entry.mjs).
+const classroomEntryReleased = await readClassroomEntrySwitch(root);
 const publicDir = path.join(root, "public");
 const privateDir = path.join(root, ".private");
 
@@ -195,6 +199,8 @@ await rm(publicDir, { recursive: true, force: true });
 await mkdir(publicDir, { recursive: true });
 await mkdir(privateDir, { recursive: true });
 await copyDir(path.join(root, "assets"), path.join(publicDir, "assets"));
+const builtAuthScript = path.join(publicDir, "assets", "auth.js");
+await writeFile(builtAuthScript, applyClassroomSwitch(await readFile(builtAuthScript, "utf8"), classroomEntryReleased), "utf8");
 await prepareAcademy(root, publicDir);
 await mkdir(path.join(publicDir, "assets", "vendor"), { recursive: true });
 await copyFile(
@@ -270,7 +276,7 @@ await writeFile(path.join(publicDir, "assets", "layout-slots.json"), JSON.string
 for (const file of htmlFiles) {
   const sourcePath = path.join(root, file);
   const targetPath = path.join(file === "team.html" ? privateDir : publicDir, file);
-  const html = await readFile(sourcePath, "utf8");
+  const html = applyClassroomEntry(await readFile(sourcePath, "utf8"), classroomEntryReleased);
   verifyContentBuild(html, file, catalogIdentities);
   await writeFile(targetPath, withClientScripts(html, file), "utf8");
   // Public copies support the local legacy fixture. Production serves only the
@@ -296,4 +302,4 @@ for (const file of passthroughFiles) {
   }
 }
 
-console.log(`Prepared ${htmlFiles.length} HTML pages in public/.`);
+console.log(`Prepared ${htmlFiles.length} HTML pages in public/ (online classroom entry ${classroomEntryReleased ? "on" : "off"}).`);

@@ -1197,3 +1197,13 @@ body:has(.site-theme-dialog[open]){ overflow:hidden; }
 .resource-links-list p{margin:4px 0;white-space:pre-wrap}
 .resource-external{font-size:.85rem;font-weight:400}
 [data-resource-links] h1{font-size:clamp(1.6rem,4vw,2.4rem)}
+
+/* The online classroom entry (D2, 2026-11-07): one word for the page's language, picked from the
+   language the server puts on <html>, so it is right from the first paint without any script. */
+[data-classroom-entry] > [lang]{display:none}
+html:not([lang="zh-Hant"]):not([lang="zh-Hans"]) [data-classroom-entry] > [lang="en"],
+html[lang="zh-Hant"] [data-classroom-entry] > [lang="zh-Hant"],
+html[lang="zh-Hans"] [data-classroom-entry] > [lang="zh-Hans"]{display:inline}
+/* A confirmed staff preview's link, fixed in a corner so nothing on the page moves. */
+.classroom-preview-link{position:fixed;right:16px;bottom:16px;z-index:150;display:inline-flex;align-items:center;min-height:44px;padding:10px 16px;border-radius:999px;border:2px dashed #fff;background:var(--navy);color:#fff;font-weight:700;text-decoration:none;box-shadow:0 6px 18px rgba(27,42,87,.25)}
+.classroom-preview-link:hover,.classroom-preview-link:focus-visible{background:var(--navy-deep);color:#fff}

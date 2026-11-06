@@ -4,7 +4,13 @@
   // The online classroom's entries in this menu ("My online classroom", and the classroom
   // overview for owners) and the neutral sign-in wording appear only when the classroom opens to
   // everyone: the last step of the S3 acceptance, released with the home page link (2026-11-07).
+  // The build sets this line from data/classroom-entry.json, the same switch as the home page's
+  // entries (scripts/classroom-entry.mjs); keep it exactly as it is.
   const CLASSROOM_ENTRY_RELEASED = false;
+  // Before then, staff may preview the entries in one tab with ?classroom-preview=1, but only once
+  // the server confirms they are staff (/api/classroom/entry): the address only asks.
+  const PREVIEW_PARAMETER = "classroom-preview";
+  const PREVIEW_STORAGE = "ihear-classroom-preview";
 
   const labelsByLocale = {
     en: {
@@ -14,6 +20,7 @@
       failedIn: "Sign in could not start. Please try again.",
       classroom: "My online classroom", classroomHint: "See your lessons and enter the classroom",
       classroomAdmin: "Manage the online classroom", classroomAdminHint: "Lessons, live status and student links",
+      classroomPreview: "Online Classroom (staff preview)",
     },
     zhHant: {
       signIn: "登入", signInFull: "使用 Google 登入管理員帳號", signInNeutral: "使用 Google 登入", signOut: "登出",
@@ -22,6 +29,7 @@
       failedIn: "無法開始登入，請再試一次。",
       classroom: "我的線上教室", classroomHint: "查看你的課程並進入教室",
       classroomAdmin: "線上教室管理", classroomAdminHint: "課程、即時狀態與學生連結",
+      classroomPreview: "線上教室（工作人員預覽）",
     },
     zhHans: {
       signIn: "登录", signInFull: "使用 Google 登录管理员账号", signInNeutral: "使用 Google 登录", signOut: "登出",
@@ -30,12 +38,16 @@
       failedIn: "无法开始登录，请重试。",
       classroom: "我的线上教室", classroomHint: "查看你的课程并进入教室",
       classroomAdmin: "线上教室管理", classroomAdminHint: "课程、实时状态与学生链接",
+      classroomPreview: "线上教室（工作人员预览）",
     },
   };
 
   let currentSession = null;
   let loadFailed = false;
   let busy = false;
+  // Whether the server confirmed a preview, and for which signed-in account it asked.
+  let previewAllowed = false;
+  let previewCheckedFor = null;
 
   function locale() {
     const language = (document.documentElement.lang || "en").toLowerCase();
@@ -136,6 +148,60 @@
     return { admin, owner: admin && user.adminRole === "owner" };
   }
 
+  // The classroom entries show once the classroom is open, or in a preview the server confirmed.
+  function classroomEntriesOpen() {
+    return CLASSROOM_ENTRY_RELEASED || previewAllowed;
+  }
+
+  // Whether this tab asked for a preview: ?classroom-preview=1 starts it, =0 ends it.
+  function previewWanted() {
+    try {
+      const value = new URLSearchParams(window.location.search).get(PREVIEW_PARAMETER);
+      if (value === "1") sessionStorage.setItem(PREVIEW_STORAGE, "1");
+      if (value === "0") sessionStorage.removeItem(PREVIEW_STORAGE);
+      return sessionStorage.getItem(PREVIEW_STORAGE) === "1";
+    } catch {
+      return false;
+    }
+  }
+
+  // Asked once per page and signed-in account, only while the classroom is not open, only when
+  // this tab wants a preview, and never for anyone signed out. Only a plain yes counts.
+  async function checkPreview() {
+    const account = currentSession?.user ? String(currentSession.user.email || "") : null;
+    if (CLASSROOM_ENTRY_RELEASED || account === null || !previewWanted()) {
+      previewAllowed = false;
+      previewCheckedFor = null;
+      return;
+    }
+    if (previewCheckedFor === account) return;
+    previewCheckedFor = account;
+    previewAllowed = false;
+    try {
+      const response = await fetch("/api/classroom/entry", { credentials: "same-origin", cache: "no-store" });
+      const answer = response.ok ? await response.json() : null;
+      previewAllowed = answer?.released === false && answer?.preview === true;
+    } catch {
+      previewAllowed = false;
+    }
+  }
+
+  // The preview's own link to /classroom: fixed in a corner, so nothing on the page moves, and
+  // not on the classroom pages themselves.
+  function renderPreviewLink() {
+    const existing = document.querySelector("[data-classroom-preview]");
+    if (!previewAllowed || CLASSROOM_ENTRY_RELEASED || window.location.pathname.startsWith("/classroom")) {
+      existing?.remove();
+      return;
+    }
+    const link = existing || document.createElement("a");
+    link.className = "classroom-preview-link";
+    link.href = "/classroom";
+    link.setAttribute("data-classroom-preview", "");
+    link.textContent = labels().classroomPreview;
+    if (!existing) document.body.appendChild(link);
+  }
+
   function menuLink(mode, className, href, title, hint) {
     return `<a class="${className}" href="${href}"${mode === "desktop" ? ' role="menuitem"' : ""}><span>${escapeHtml(title)}</span><small>${escapeHtml(hint)}</small></a>`;
   }
@@ -151,8 +217,8 @@
     // administration link like the dashboard) and everyone else signed in gets "My online classroom".
     const links = [
       access.admin ? menuLink(mode, "auth-admin-link", "/admin", copy.dashboard, copy.dashboardHint) : "",
-      CLASSROOM_ENTRY_RELEASED && access.owner ? menuLink(mode, "auth-admin-link auth-classroom-link", "/admin/classrooms", copy.classroomAdmin, copy.classroomAdminHint) : "",
-      CLASSROOM_ENTRY_RELEASED && !access.owner ? menuLink(mode, "auth-classroom-link", "/classroom", copy.classroom, copy.classroomHint) : "",
+      classroomEntriesOpen() && access.owner ? menuLink(mode, "auth-admin-link auth-classroom-link", "/admin/classrooms", copy.classroomAdmin, copy.classroomAdminHint) : "",
+      classroomEntriesOpen() && !access.owner ? menuLink(mode, "auth-classroom-link", "/classroom", copy.classroom, copy.classroomHint) : "",
     ].join("");
     if (mode === "mobile") {
       return `<div class="auth-mobile-panel"><div class="auth-mobile-identity" title="${email}">${avatar}<span class="auth-name">${name}</span></div>${links}<button class="auth-signout" type="button" data-auth-signout>${escapeHtml(copy.signOut)}</button></div>`;
@@ -194,6 +260,7 @@
     document.querySelectorAll("[data-auth-signin]").forEach((button) => button.addEventListener("click", signIn));
     document.querySelectorAll("[data-auth-retry]").forEach((button) => button.addEventListener("click", refresh));
     bindPopover();
+    renderPreviewLink();
     window.dispatchEvent(new CustomEvent("ihear:auth", { detail: { session: currentSession, error: loadFailed } }));
   }
 
@@ -210,6 +277,7 @@
     render({ loading: true });
     try {
       currentSession = await fetchSession();
+      await checkPreview();
     } catch {
       loadFailed = true;
     } finally {
@@ -234,6 +302,8 @@
       });
       const data = await responseJson(response);
       currentSession = null;
+      previewAllowed = false;
+      previewCheckedFor = null;
       render();
       const redirectUrl = data?.url || window.location.href;
       if (redirectUrl === window.location.href) window.location.reload();

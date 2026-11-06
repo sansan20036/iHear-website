@@ -364,10 +364,10 @@ describe('backups, the restore check, the monthly drill and the audit with the c
     return body.map(line => line.slice(indent)).join('\n');
   }
   // The drill's dump and restore, inside this disposable server.
-  function dumpAndRestore(source, target) {
-    docker(['exec', container, 'pg_dump', '-U', 'postgres', '-d', source, '--format=custom', '--no-owner', '--no-privileges', '--schema=public', '--exclude-table-data=public.api_rate_limits', `--file=/tmp/${source}.dump`]);
+  function dumpAndRestore(source, target, extra = []) {
+    docker(['exec', container, 'pg_dump', '-U', 'postgres', '-d', source, '--format=custom', '--no-owner', '--no-privileges', '--schema=public', '--exclude-table-data=public.api_rate_limits', ...extra, `--file=/tmp/${target}.dump`]);
     docker(['exec', container, 'createdb', '-U', 'postgres', target]);
-    docker(['exec', container, 'pg_restore', '-U', 'postgres', '-d', target, '--clean', '--if-exists', '--exit-on-error', `/tmp/${source}.dump`]);
+    docker(['exec', container, 'pg_restore', '-U', 'postgres', '-d', target, '--clean', '--if-exists', '--exit-on-error', `/tmp/${target}.dump`]);
   }
   async function resigned(change) {
     const backup = JSON.parse(await readFile(backupFile, 'utf8'));
@@ -537,5 +537,32 @@ describe('backups, the restore check, the monthly drill and the audit with the c
     const missing = psql('classroom_restore', drillSql());
     expect(missing.status).not.toBe(0);
     expect(missing.output).toMatch(/classroom tables are missing/i);
+  });
+
+  // H8 option 乙 (2026-11-07), researched here only: the weekly and monthly workflows are not
+  // changed until iHear confirms the data-retention risk. Left out of a full dump, the classroom
+  // rows are gone from the backup, yet the database still restores whole around them.
+  test("H8 option 乙, researched only: a full dump without the classroom rows restores every classroom table empty, with row level security, and passes the drill and the audit", async () => {
+    dumpAndRestore('classroom_test', 'classroom_restore_h8', ['--exclude-table-data=public.classroom_*']);
+    const drill = psql('classroom_restore_h8', drillSql());
+    expect(drill.status, drill.output).toBe(0);
+    const restored = JSON.parse(drill.output.trim().split('\n').filter(Boolean).at(-1));
+    expect(Object.keys(restored).sort()).toEqual([...CLASSROOM].sort());
+    expect(Object.values(restored)).toEqual(CLASSROOM.map(() => 0));
+    // Only the dump left them out: the source still has a row in every classroom table.
+    for (const [table, count] of Object.entries(await counts(sql))) expect(count, table).toBeGreaterThan(0);
+    const audited = audit('classroom_restore_h8');
+    expect(audited.classroom).toMatchObject({ applied: true, missingTables: [], missingConstraints: [], missingIndexes: [], rlsOff: [], policies: [] });
+    expect(audited.issues.classroomIssues).toEqual([]);
+    // Everything else came back whole, 028's record included.
+    const rows = (database, query) => psql(database, query).output.trim();
+    for (const table of ['schema_migrations', 'site_settings', 'content_overrides', 'admin_activity_log']) {
+      expect(rows('classroom_restore_h8', `SELECT count(*) FROM public.${table};`), table).toBe(rows('classroom_test', `SELECT count(*) FROM public.${table};`));
+    }
+    expect(rows('classroom_restore_h8', "SELECT count(*) FROM public.schema_migrations WHERE version = '028';")).toBe('1');
+    // No classroom row, code or key hash is anywhere in the dump file itself.
+    const planted = createHash('sha256').update(plantedKey).digest('hex');
+    const found = docker(['exec', container, 'sh', '-c', `pg_restore -f - /tmp/classroom_restore_h8.dump | grep -c -e TEST-BA -e L-backup-a -e ${planted} || true`]);
+    expect(found).toBe('0');
   });
 });

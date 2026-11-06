@@ -4,6 +4,7 @@
 .classroom-room-head { display:flex; justify-content:space-between; align-items:center; gap:12px; }
 .classroom-room-head h1 { margin:0; font-size:24px; }
 .classroom-lang { border:1px solid var(--room-line); background:var(--bg-surface, #fff); color:var(--room-ink); border-radius:999px; padding:6px 14px; font:inherit; cursor:pointer; }
+.classroom-langs { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; }
 .classroom-room-note { margin:0; background:var(--room-note-bg); color:var(--room-note); border-radius:12px; padding:10px 14px; font-weight:700; }
 .classroom-room-card { background:var(--bg-surface, #fff); border:1px solid var(--room-line); border-radius:16px; padding:16px; display:grid; gap:10px; }
 .classroom-room-card h2 { margin:0; font-size:18px; }

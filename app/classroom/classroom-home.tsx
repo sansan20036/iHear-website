@@ -1,73 +1,63 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 
-// /classroom: what a visitor, a tutor and an administrator see. The lessons come from
-// /api/classroom/my-lessons (the signed-in tutor's own, codes and times only); entering a room
-// still goes through the room's own entry check.
+import { parseStudentLink, studentRoomPath } from "../../lib/classroom-link";
+import { browserClassroomLocale, CLASSROOM_LOCALES, htmlLangOf, intlLocaleOf, LOCALE_NAMES, type ClassroomLocale } from "../../lib/classroom-locale";
+import { homeCopy } from "./classroom-home-copy";
 
-type Locale = "zh" | "en";
+// /classroom: what a visitor, a tutor and an administrator see. Until the classroom opens to
+// everyone (data/classroom-entry.json), only staff the server confirms through
+// /api/classroom/entry see more than "not open yet"; nothing in the address changes that. The
+// lessons come from /api/classroom/my-lessons (the signed-in tutor's own, codes and times only);
+// entering a room still goes through the room's own entry check. A student either opens the
+// personal link from iHear or pastes it here: it is read in this page and never followed.
+
 type MyLesson = {
   lessonId: string; code: string; startsAt: string; endsAt: string; opensAt: string; closesAt: string;
   state: "before" | "open" | "ended" | "cancelled"; participantCode: string | null; studentCodes: string[];
 };
 type View =
-  | { kind: "loading" } | { kind: "closed" } | { kind: "signedOut" } | { kind: "unavailable" }
+  | { kind: "loading" } | { kind: "closed"; staffSignIn: boolean } | { kind: "signedOut" } | { kind: "unavailable" }
   | { kind: "mine"; admin: boolean; lessons: MyLesson[] };
 
 const SIGN_IN = `/api/auth/signin?callbackUrl=${encodeURIComponent("/classroom")}`;
 
-const copy = {
-  zh: {
-    title: "iHear 線上教室", other: "English", loading: "載入中…",
-    closed: "線上教室尚未開放。", unavailable: "暫時無法載入課程，請稍後再試。",
-    tutorTitle: "小老師", tutorIntro: "用你在 iHear 登記的 Google 帳號登入，就會看到你的課程。", tutorSignIn: "小老師：使用 Google 登入",
-    studentTitle: "學生和家長", studentPath: "請使用 iHear 寄給你的個人課程連結進入教室。連結遺失時，請聯絡 iHear 重新發送。",
-    mine: "我的課程", empty: "目前沒有你的課程。", student: "學生", enter: "進入教室", admin: "管理全部課程",
-    state: { before: "尚未開放", open: "可以進入", ended: "已結束", cancelled: "已取消" },
-    opensAt: "開放時間",
-  },
-  en: {
-    title: "iHear Online Classroom", other: "中文", loading: "Loading…",
-    closed: "The online classroom is not open yet.", unavailable: "Your lessons could not be loaded. Please try again later.",
-    tutorTitle: "Tutors", tutorIntro: "Sign in with the Google account registered with iHear to see your lessons.", tutorSignIn: "Tutors: sign in with Google",
-    studentTitle: "Students and families", studentPath: "Please enter with the personal lesson link iHear sent you. If it is lost, ask iHear for a new one.",
-    mine: "My lessons", empty: "You have no lessons right now.", student: "Student", enter: "Enter the classroom", admin: "Manage all lessons",
-    state: { before: "Not open yet", open: "Open now", ended: "Ended", cancelled: "Cancelled" },
-    opensAt: "Opens",
-  },
-};
-
-function initialLocale(): Locale {
-  try {
-    const stored = localStorage.getItem("ihear-lang");
-    if (stored === "en") return "en";
-    if (stored === "zhTW" || stored === "zhCN") return "zh";
-  } catch {
-    // Storage can be blocked; fall back to the browser's language.
-  }
-  return navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en";
-}
-
 export default function ClassroomHome() {
-  const [locale, setLocale] = useState<Locale>("zh");
+  const [locale, setLocale] = useState<ClassroomLocale>("zhHant");
   const [view, setView] = useState<View>({ kind: "loading" });
-  const text = copy[locale];
+  const [preview, setPreview] = useState(false);
+  const [pasted, setPasted] = useState("");
+  const [pasteProblem, setPasteProblem] = useState(false);
+  const text = homeCopy[locale];
 
   useEffect(() => {
-    setLocale(initialLocale());
+    setLocale(browserClassroomLocale());
   }, []);
   useEffect(() => {
-    document.documentElement.lang = locale === "en" ? "en" : "zh-Hant";
+    document.documentElement.lang = htmlLangOf(locale);
   }, [locale]);
   useEffect(() => {
     let stopped = false;
     (async () => {
       try {
+        const entryResponse = await fetch("/api/classroom/entry", { credentials: "same-origin", cache: "no-store" });
+        const entry = await entryResponse.json().catch(() => null);
+        if (stopped) return;
+        if (!entryResponse.ok || !entry) {
+          setView({ kind: "unavailable" });
+          return;
+        }
+        // Not open yet, and the server did not confirm this person as staff: nothing more to show.
+        if (entry.released !== true && entry.preview !== true) {
+          setView({ kind: "closed", staffSignIn: entry.signedIn !== true });
+          return;
+        }
+        setPreview(entry.released !== true);
         const response = await fetch("/api/classroom/my-lessons", { credentials: "same-origin", cache: "no-store" });
         const data = await response.json().catch(() => ({}));
         if (stopped) return;
-        if (response.status === 503 && data?.code === "PROVIDER_UNAVAILABLE") setView({ kind: "closed" });
+        if (response.status === 503 && data?.code === "PROVIDER_UNAVAILABLE") setView({ kind: "closed", staffSignIn: false });
         else if (response.status === 401) setView({ kind: "signedOut" });
         else if (response.ok && data?.ok) setView({ kind: "mine", admin: data.admin === true, lessons: Array.isArray(data.lessons) ? data.lessons : [] });
         else setView({ kind: "unavailable" });
@@ -78,20 +68,64 @@ export default function ClassroomHome() {
     return () => { stopped = true; };
   }, []);
 
-  const when = (iso: string) => new Intl.DateTimeFormat(locale === "en" ? "en-GB" : "zh-TW", {
+  // A pasted link leads only to this site's room, at an address built from its checked parts.
+  // The field is cleared either way, so the key is not left on the page.
+  function openPasted(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const link = parseStudentLink(pasted, window.location.origin);
+    setPasted("");
+    if (!link) {
+      setPasteProblem(true);
+      return;
+    }
+    setPasteProblem(false);
+    window.location.assign(studentRoomPath(link));
+  }
+
+  const when = (iso: string) => new Intl.DateTimeFormat(intlLocaleOf(locale), {
     timeZone: "Asia/Taipei", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false,
   }).format(new Date(iso));
   const until = (iso: string) => new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Taipei", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(iso));
+
+  const studentPath = (
+    <div className="classroom-student-path">
+      <h2>{text.studentTitle}</h2>
+      <p>{text.studentPath}</p>
+      <form className="classroom-paste" onSubmit={openPasted} noValidate>
+        <label htmlFor="classroom-paste-link">{text.pasteLabel}</label>
+        <div className="classroom-paste-row">
+          <input
+            id="classroom-paste-link" type="text" inputMode="url" autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false}
+            value={pasted} aria-describedby="classroom-paste-note"
+            onChange={(event) => { setPasted(event.target.value); setPasteProblem(false); }}
+          />
+          <button type="submit" className="classroom-room-primary">{text.pasteGo}</button>
+        </div>
+        <p id="classroom-paste-note" className="classroom-room-muted">{text.pasteNote}</p>
+        {pasteProblem && <p className="classroom-room-problem" role="alert">{text.pasteInvalid}</p>}
+      </form>
+    </div>
+  );
 
   return (
     <main className="classroom-room classroom-home">
       <header className="classroom-room-head">
         <h1>{text.title}</h1>
-        <button type="button" className="classroom-lang" onClick={() => setLocale(locale === "en" ? "zh" : "en")}>{text.other}</button>
+        <div className="classroom-langs" role="group" aria-label={text.language}>
+          {CLASSROOM_LOCALES.filter((item) => item !== locale).map((item) => (
+            <button key={item} type="button" className="classroom-lang" lang={htmlLangOf(item)} onClick={() => setLocale(item)}>{LOCALE_NAMES[item]}</button>
+          ))}
+        </div>
       </header>
 
+      {preview && view.kind !== "loading" && <p className="classroom-preview-banner" role="note">{text.preview}</p>}
       {view.kind === "loading" && <p className="classroom-room-muted" role="status">{text.loading}</p>}
-      {view.kind === "closed" && <section className="classroom-room-card"><p>{text.closed}</p></section>}
+      {view.kind === "closed" && (
+        <section className="classroom-room-card">
+          <p>{text.closed}</p>
+          {view.staffSignIn && <a className="classroom-room-secondary" href={SIGN_IN}>{text.staffSignIn}</a>}
+        </section>
+      )}
       {view.kind === "unavailable" && <section className="classroom-room-card"><p className="classroom-room-problem" role="alert">{text.unavailable}</p></section>}
 
       {view.kind === "signedOut" && (
@@ -101,33 +135,33 @@ export default function ClassroomHome() {
             <p>{text.tutorIntro}</p>
             <a className="classroom-room-primary" href={SIGN_IN}>{text.tutorSignIn}</a>
           </div>
-          <div>
-            <h2>{text.studentTitle}</h2>
-            <p>{text.studentPath}</p>
-          </div>
+          {studentPath}
         </section>
       )}
 
       {view.kind === "mine" && (
-        <section className="classroom-room-card classroom-mine" aria-label={text.mine}>
-          <h2>{text.mine}</h2>
-          {view.lessons.length === 0 ? <p>{text.empty}</p> : (
-            <ul>
-              {view.lessons.map((lesson) => (
-                <li key={lesson.lessonId} className={`is-${lesson.state}`}>
-                  <strong>{lesson.code}</strong>
-                  <span>{when(lesson.startsAt)}–{until(lesson.endsAt)}</span>
-                  <span>{text.student} {lesson.studentCodes.join("、")}</span>
-                  <span className="classroom-mine-state">
-                    {text.state[lesson.state]}{lesson.state === "before" ? `（${text.opensAt} ${when(lesson.opensAt)}）` : ""}
-                  </span>
-                  {lesson.state === "open" && <a className="classroom-room-primary" href={`/classroom/${encodeURIComponent(lesson.lessonId)}`}>{text.enter}</a>}
-                </li>
-              ))}
-            </ul>
-          )}
-          {view.admin && <a className="classroom-room-secondary" href="/admin/classrooms">{text.admin}</a>}
-        </section>
+        <>
+          <section className="classroom-room-card classroom-mine" aria-label={text.mine}>
+            <h2>{text.mine}</h2>
+            {view.lessons.length === 0 ? <p>{text.empty}</p> : (
+              <ul>
+                {view.lessons.map((lesson) => (
+                  <li key={lesson.lessonId} className={`is-${lesson.state}`}>
+                    <strong>{lesson.code}</strong>
+                    <span>{when(lesson.startsAt)}–{until(lesson.endsAt)}</span>
+                    <span>{text.student} {lesson.studentCodes.join("、")}</span>
+                    <span className="classroom-mine-state">
+                      {text.state[lesson.state]}{lesson.state === "before" ? `（${text.opensAt} ${when(lesson.opensAt)}）` : ""}
+                    </span>
+                    {lesson.state === "open" && <a className="classroom-room-primary" href={`/classroom/${encodeURIComponent(lesson.lessonId)}`}>{text.enter}</a>}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {view.admin && <a className="classroom-room-secondary" href="/admin/classrooms">{text.admin}</a>}
+          </section>
+          <section className="classroom-room-card">{studentPath}</section>
+        </>
       )}
     </main>
   );

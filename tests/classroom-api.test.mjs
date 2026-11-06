@@ -766,3 +766,46 @@ describe("my lessons (/classroom)", () => {
     expect((await myLessons(TUTOR)).body.lessons.find(item => item.code === "TEST-M5")).toMatchObject({ state: "cancelled" });
   });
 });
+
+// The home page's classroom entry (D2, 2026-11-07): before it opens to everyone, the server alone
+// decides who may preview it. A parameter in the address only asks; this answer is what counts.
+describe("who may preview the classroom entry (/api/classroom/entry)", () => {
+  async function entry(email, extra = {}) {
+    auth.mockResolvedValue(email ? { user: { email, ...extra } } : null);
+    const route = await import("../app/api/classroom/entry/route");
+    return read(await route.GET(new Request(`${ORIGIN}/api/classroom/entry?classroom-preview=1`)));
+  }
+
+  test("the answer says only whether it is open and whether this person may preview it, and is never cached", async () => {
+    at("2026-11-21T01:00:00Z");
+    const anonymous = await entry(null);
+    expect(anonymous).toMatchObject({ status: 200, body: { released: false, preview: false, signedIn: false } });
+    expect(Object.keys(anonymous.body).sort()).toEqual(["preview", "released", "signedIn"]);
+    expect(anonymous.headers.get("cache-control")).toBe("private, no-store, max-age=0");
+    expect((await entry(OWNER, { isAdmin: true })).body).toEqual({ released: false, preview: true, signedIn: true });
+    // Only the server's own administrator mark counts; anyone else signed in is not staff.
+    expect((await entry("someone@example.test")).body).toEqual({ released: false, preview: false, signedIn: true });
+    expect((await entry("someone@example.test", { isAdmin: "true" })).body).toEqual({ released: false, preview: false, signedIn: true });
+  });
+
+  test("a tutor of a lesson in the coming two weeks may preview; while the classroom is closed, only administrators", async () => {
+    at("2026-11-21T01:00:00Z");
+    await createLesson({ date: "2026-11-22", code: "TEST-E1", time: "10:00", tutorCode: "TEST-ET1", studentCode: "TEST-ES1", tutorEmail: "entry-tutor@example.test" });
+    const tutor = await entry("Entry-Tutor@example.test");
+    expect(tutor.body).toEqual({ released: false, preview: true, signedIn: true });
+    expect(JSON.stringify(tutor.body)).not.toMatch(/@|TEST-|L-/);
+    vi.stubEnv("CLASSROOM_PROVIDER", "");
+    try {
+      expect((await entry("entry-tutor@example.test")).body).toEqual({ released: false, preview: false, signedIn: true });
+      expect((await entry(OWNER, { isAdmin: true })).body).toEqual({ released: false, preview: true, signedIn: true });
+    } finally {
+      vi.stubEnv("CLASSROOM_PROVIDER", "synthetic");
+    }
+  });
+
+  test("it is rate limited like the other classroom reads", async () => {
+    enforceRateLimit.mockResolvedValueOnce({ limited: true, response: new Response(JSON.stringify({ error: "Too many requests" }), { status: 429 }) });
+    expect((await entry(OWNER, { isAdmin: true })).status).toBe(429);
+    expect(enforceRateLimit).toHaveBeenCalledWith(expect.any(Request), expect.objectContaining({ scope: "classroom-entry" }));
+  });
+});

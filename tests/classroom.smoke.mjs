@@ -436,23 +436,61 @@ try {
     await shot(admin, '09-overview-link-actions');
   });
 
-  // /classroom (2026-11-06): the entry page the home page will link to, only at the end of S3.
-  await check('/classroom signed out: the tutor sign-in and the personal-link path, and no lesson at all', async () => {
+  // /classroom (2026-11-06; D2 2026-11-07): the entry page the home page links to once it opens.
+  // Until then (the switch in data/classroom-entry.json is off here, as in the repository) only
+  // staff the server confirms see more than "not open yet"; an address parameter changes nothing.
+  await check('/classroom before it opens: a visitor sees only "not open yet" and a staff sign-in, whatever the address says', async () => {
     const visitorContext = await context({ locale: 'zh-TW', viewport: { width: 390, height: 844 } });
     const visitor = watch(await visitorContext.newPage());
-    await visitor.goto(`${origin}/classroom`);
-    await expect(visitor.getByRole('link', { name: '小老師：使用 Google 登入' })).toHaveAttribute('href', '/api/auth/signin?callbackUrl=%2Fclassroom');
-    await expect(visitor.getByText('請使用 iHear 寄給你的個人課程連結進入教室')).toBeVisible();
+    for (const address of ['/classroom', '/classroom?classroom-preview=1']) {
+      await visitor.goto(`${origin}${address}`);
+      await expect(visitor.getByText('線上教室尚未開放。')).toBeVisible();
+      await expect(visitor.getByRole('link', { name: '工作人員登入' })).toHaveAttribute('href', '/api/auth/signin?callbackUrl=%2Fclassroom');
+      await expect(visitor.getByRole('link', { name: '小老師：使用 Google 登入' })).toHaveCount(0);
+      await expect(visitor.getByLabel('貼上個人課程連結')).toHaveCount(0);
+    }
+    expect(await visitor.evaluate(async () => (await fetch('/api/classroom/entry')).json())).toEqual({ released: false, preview: false, signedIn: false });
     const html = await visitor.content();
     for (const value of [lesson.code, lesson.id, linkLesson.code, linkLesson.id]) expect(html).not.toContain(value);
     expect(await noHorizontalOverflow(visitor)).toBe(true);
-    await shot(visitor, '10-classroom-entry-signed-out');
+    await shot(visitor, '10-classroom-entry-not-open');
     await visitorContext.close();
   });
 
-  await check('/classroom for the signed-in tutor: only their lessons; an open one is entered from 我的課程, a cancelled one cannot be', async () => {
+  await check("/classroom once open (the server's answer replayed in this browser only): the tutor sign-in, and a pasted link opens only this site's room", async () => {
+    const visitorContext = await context({ locale: 'zh-TW', viewport: { width: 390, height: 844 } });
+    const visitor = watch(await visitorContext.newPage());
+    await visitor.route('**/api/classroom/entry', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ released: true, preview: false, signedIn: false }) }));
+    const requests = [];
+    visitor.on('request', item => requests.push(item.url()));
+    await visitor.goto(`${origin}/classroom`);
+    await expect(visitor.getByRole('link', { name: '小老師：使用 Google 登入' })).toHaveAttribute('href', '/api/auth/signin?callbackUrl=%2Fclassroom');
+    await expect(visitor.getByText('請使用 iHear 寄給你的個人課程連結進入教室')).toBeVisible();
+    const box = visitor.getByLabel('貼上個人課程連結');
+    const go = visitor.getByRole('button', { name: '前往教室' });
+    // Another site's address, even with a real key in it, is refused, cleared and never opened.
+    await box.fill(`https://evil.example/classroom/${lesson.id}#k=${lesson.key}`);
+    await go.click();
+    await expect(visitor.locator('.classroom-paste').getByRole('alert')).toContainText('這不是有效的 iHear 個人課程連結');
+    await expect(box).toHaveValue('');
+    expect(visitor.url()).toBe(`${origin}/classroom`);
+    // The real link opens this lesson's room, and the key leaves the address bar at once.
+    await box.fill(lesson.link);
+    await go.click();
+    await expect.poll(() => visitor.evaluate(() => window.location.href)).toBe(`${origin}/classroom/${lesson.id}`);
+    expect(await enterAgain(visitor)).toMatchObject({ status: 200, body: { role: 'student', participantCode: lesson.studentCode } });
+    expect(requests.filter(url => url.includes(lesson.key))).toEqual([]);
+    expect(requests.filter(url => !url.startsWith(origin))).toEqual([]);
+    await visitor.getByRole('button', { name: '離開教室' }).click();
+    await shot(visitor, '10b-classroom-entry-open-paste');
+    await visitorContext.close();
+  });
+
+  await check('/classroom for the signed-in tutor before it opens: the server confirms the preview; only their lessons; an open one is entered from 我的課程, a cancelled one cannot be', async () => {
     const mine = watch(await tutorContext.newPage());
     await mine.goto(`${origin}/classroom`);
+    await expect(mine.getByText('工作人員預覽', { exact: false })).toBeVisible();
+    expect(await mine.evaluate(async () => (await fetch('/api/classroom/entry')).json())).toEqual({ released: false, preview: true, signedIn: true });
     const open = mine.locator('.classroom-mine li', { hasText: lesson.code });
     const cancelled = mine.locator('.classroom-mine li', { hasText: linkLesson.code });
     await expect(open).toContainText('可以進入');
@@ -467,12 +505,30 @@ try {
     await mine.close();
   });
 
-  await check('/classroom for an owner who teaches nothing here: no lessons, and the way to the overview', async () => {
+  await check('/classroom for an owner who teaches nothing here: the preview, no lessons, and the way to the overview', async () => {
     const page = watch(await ownerContext.newPage());
     await page.goto(`${origin}/classroom`);
+    await expect(page.getByText('工作人員預覽', { exact: false })).toBeVisible();
     await expect(page.getByText('目前沒有你的課程。')).toBeVisible();
     await expect(page.getByRole('link', { name: '管理全部課程' })).toHaveAttribute('href', '/admin/classrooms');
     await page.close();
+  });
+
+  await check('/classroom and the room in Simplified Chinese for a browser set to it, and back to Traditional with one press', async () => {
+    const hansContext = await context({ email: tutor, locale: 'zh-CN' });
+    const page = watch(await hansContext.newPage());
+    await page.goto(`${origin}/classroom`);
+    await expect(page.getByRole('heading', { name: '我的课程' })).toBeVisible();
+    await expect(page.getByText('工作人员预览', { exact: false })).toBeVisible();
+    await expect(page.locator('html')).toHaveAttribute('lang', 'zh-Hans');
+    await page.goto(`${origin}/classroom/${lesson.id}`);
+    await expect(page.getByRole('button', { name: '进入教室' })).toBeVisible();
+    await expect(page.locator('html')).toHaveAttribute('lang', 'zh-Hans');
+    await page.getByRole('button', { name: '繁體中文' }).click();
+    await expect(page.getByRole('button', { name: '進入教室' })).toBeVisible();
+    await expect(page.locator('html')).toHaveAttribute('lang', 'zh-Hant');
+    await shot(page, '12-classroom-room-languages');
+    await hansContext.close();
   });
 
   await check('codes only, nothing sent to another site, no unexpected browser errors', async () => {

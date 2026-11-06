@@ -331,4 +331,17 @@ describe("production operations configuration", () => {
     expect(drill).toContain("Row level security is off on a restored classroom table");
     expect(drill).toContain("restored_classroom_row_counts");
   });
+
+  // H8 is not confirmed by iHear (2026-11-07). Option 乙 (leave the classroom rows out of the full
+  // dumps) is researched only, in the PostgreSQL tests; the schedules stay as they are, so applying
+  // 028 on the live database stays blocked. Changing this test is part of that separate approval.
+  it("leaves the weekly and monthly full dumps unchanged until iHear confirms H8, so 028 stays blocked", async () => {
+    for (const file of [".github/workflows/weekly-postgres-backup.yml", ".github/workflows/monthly-restore-drill.yml"]) {
+      const dumps = (await read(file)).split(/\r?\n/).filter(line => line.includes("pg_dump"));
+      expect(dumps, file).toHaveLength(1);
+      expect(dumps[0], file).toContain("--schema=public --exclude-table-data=public.api_rate_limits");
+      expect(dumps[0], file).not.toMatch(/classroom/);
+    }
+    expect(await read(".github/workflows/daily-application-backup.yml")).not.toContain("BACKUP_INCLUDE_CLASSROOM");
+  });
 });

@@ -3285,3 +3285,217 @@ test.describe("the header sign-in by who is signed in", () => {
     for (const key of ["signInNeutral", "signedInGeneric", "classroom", "classroomHint", "classroomAdmin", "classroomAdminHint"]) expect(keys).toContain(key);
   });
 });
+
+// The home page's way into the online classroom (D2, 2026-11-07). One switch decides both the
+// home page entries and the header's: off, the built page has no entry at all; on, the hero
+// button and a footer link lead to /classroom in the page's language from the first paint.
+// Before it opens, staff may preview it, but only when the server says they are staff: the
+// address only asks.
+test.describe("the home page's classroom entry and its release switch", () => {
+  const START = "<!-- classroom-entry:start -->";
+  const END = "<!-- classroom-entry:end -->";
+  const RELEASE_OFF = "const CLASSROOM_ENTRY_RELEASED = false;";
+  const LABEL = { en: "Online Classroom", zhTW: "線上教室", zhCN: "线上教室" };
+  const PREVIEW = { en: "Online Classroom (staff preview)", zhTW: "線上教室（工作人員預覽）", zhCN: "线上教室（工作人员预览）" };
+  const OWNER = { name: "Owner Example", email: "owner@example.test", isAdmin: true, adminRole: "owner" };
+  const TUTOR = { name: "Tutor Example", email: "tutor@example.test", isAdmin: false, adminRole: null };
+  const EMPTY_STORE = { version: 3, updatedAt: "", locales: Object.fromEntries(["en", "zhHant", "zhHans"].map(locale => [locale, { pages: {}, itemUpdatedAt: {} }])) };
+  const answerSession = (page, user) => page.route("**/api/auth/session", route => route.fulfill({
+    status: 200, contentType: "application/json", body: JSON.stringify(user ? { user } : {}),
+  }));
+  // What the server answers about a preview, and every time it was asked.
+  async function answerEntry(page, body) {
+    const asked = [];
+    await page.route("**/api/classroom/entry**", route => {
+      asked.push(route.request().url());
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+    });
+    return asked;
+  }
+  async function visit(page, { user = null, language = "en" } = {}) {
+    await mockApplication(page, { admin: false });
+    await answerSession(page, user);
+    await page.addInitScript(lang => { localStorage.setItem("ihear-lang", lang); }, language);
+  }
+  // The home page built with the switch on: the entries from the source page put back where the
+  // switched-off build left them out, and the header script with its switch on.
+  async function switchedOn(page, { serverLocale = null } = {}) {
+    const built = await readFile(path.resolve(publicDir, "index.html"), "utf8");
+    const source = await readFile(path.resolve("index.html"), "utf8");
+    expect(built).not.toContain("/classroom");
+    let html = built.replace(/\r\n/g, "\n");
+    const lines = source.split(/\r?\n/);
+    let anchor = "";
+    for (let index = 0; index < lines.length; index += 1) {
+      if (!lines[index].includes(START)) {
+        if (lines[index].trim()) anchor = lines[index].trim();
+        continue;
+      }
+      const block = [];
+      while (!lines[index].includes(END)) block.push(lines[index++]);
+      block.push(lines[index]);
+      const at = html.indexOf(anchor);
+      expect(at, "the line before an entry is in the built page once").toBeGreaterThan(-1);
+      expect(html.lastIndexOf(anchor)).toBe(at);
+      const lineEnd = html.indexOf("\n", at);
+      html = `${html.slice(0, lineEnd + 1)}${block.join("\n").replace(START, "").replace(END, "")}\n${html.slice(lineEnd + 1)}`;
+    }
+    // As the live site serves it: the page language set by the server from the visitor's choice.
+    if (serverLocale) html = renderPageContent(html, "/", EMPTY_STORE, serverLocale);
+    const auth = await readFile(path.resolve(publicDir, "assets/auth.js"), "utf8");
+    expect(auth).toContain(RELEASE_OFF);
+    await page.route(`${e2eOrigin}/`, route => route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: html }));
+    await page.route("**/assets/auth.js*", route => route.fulfill({ contentType: "text/javascript", body: auth.replace(RELEASE_OFF, "const CLASSROOM_ENTRY_RELEASED = true;") }));
+  }
+  const entries = page => page.locator("a[data-classroom-entry]");
+
+  test("switched off, the built home page has no entry, and nobody signed out is asked about a preview, address or not", async ({ page }) => {
+    await visit(page);
+    const asked = await answerEntry(page, { released: false, preview: true, signedIn: false });
+    const response = await page.goto("/?classroom-preview=1");
+    const html = await response.text();
+    for (const fragment of ["/classroom", "classroom-entry", "線上教室", "线上教室", "Online Classroom"]) expect(html).not.toContain(fragment);
+    await expect(page.locator("[data-auth-desktop] [data-auth-signin]")).toBeVisible();
+    await expect(page.locator('a[href^="/classroom"]')).toHaveCount(0);
+    await expect(page.locator("[data-classroom-preview]")).toHaveCount(0);
+    await page.goto("/team");
+    await expect(page.locator("[data-auth-desktop] [data-auth-signin]")).toBeVisible();
+    expect(asked).toEqual([]);
+    expect(await readFile(path.resolve(publicDir, "assets/auth.js"), "utf8")).toContain(RELEASE_OFF);
+  });
+
+  test("the address alone opens nothing: signed in, the preview shows only if the server says this person is staff", async ({ page }) => {
+    await visit(page, { user: TUTOR });
+    let asked = await answerEntry(page, { released: false, preview: false, signedIn: true });
+    await page.goto("/?classroom-preview=1");
+    await expect(page.locator("[data-auth-desktop] .auth-profile")).toBeVisible();
+    await expect.poll(() => asked.length).toBe(1);
+    await expect(page.locator("[data-classroom-preview]")).toHaveCount(0);
+    await expect(page.locator('a[href^="/classroom"]')).toHaveCount(0);
+    // Anything but a plain yes is a no.
+    await page.unroute("**/api/classroom/entry**");
+    asked = await answerEntry(page, { released: false, preview: "true", signedIn: true });
+    await page.reload();
+    await expect.poll(() => asked.length).toBe(1);
+    await expect(page.locator("[data-classroom-preview]")).toHaveCount(0);
+    await page.unroute("**/api/classroom/entry**");
+    await page.route("**/api/classroom/entry**", route => route.fulfill({ status: 500, body: "unavailable" }));
+    await page.reload();
+    await expect(page.locator("[data-auth-desktop] .auth-profile")).toBeVisible();
+    await expect(page.locator("[data-classroom-preview]")).toHaveCount(0);
+    await expect(page.locator('a[href^="/classroom"]')).toHaveCount(0);
+  });
+
+  for (const language of ["en", "zhTW", "zhCN"]) {
+    test(`staff the server confirms see the preview link and their classroom entry; ?classroom-preview=0 ends it (${language})`, async ({ page }) => {
+      await visit(page, { user: TUTOR, language });
+      const asked = await answerEntry(page, { released: false, preview: true, signedIn: true });
+      await page.goto("/?classroom-preview=1");
+      const chip = page.locator("a[data-classroom-preview]");
+      await expect(chip).toBeVisible();
+      await expect(chip).toHaveText(PREVIEW[language]);
+      await expect(chip).toHaveAttribute("href", "/classroom");
+      await expect(page.locator("[data-auth-desktop] .auth-classroom-link")).toHaveAttribute("href", "/classroom");
+      // The hero and footer entries stay out of the page until the switch is on.
+      await expect(entries(page)).toHaveCount(0);
+      // The preview lasts for this tab only, and still asks the server on each page.
+      await page.goto("/about");
+      await expect(page.locator("a[data-classroom-preview]")).toBeVisible();
+      expect(asked.length).toBe(2);
+      await page.goto("/?classroom-preview=0");
+      await expect(page.locator("[data-auth-desktop] .auth-profile")).toBeVisible();
+      await expect(page.locator("a[data-classroom-preview]")).toHaveCount(0);
+      await expect(page.locator(".auth-classroom-link")).toHaveCount(0);
+      expect(asked.length).toBe(2);
+    });
+  }
+
+  test("an owner's preview shows the classroom overview in the menu, and the preview link stays fixed so nothing on the page moves", async ({ page }) => {
+    await visit(page, { user: OWNER });
+    await answerEntry(page, { released: false, preview: true, signedIn: true });
+    await page.goto("/?classroom-preview=1");
+    const chip = page.locator("a[data-classroom-preview]");
+    await expect(chip).toBeVisible();
+    expect(await chip.evaluate(node => getComputedStyle(node).position)).toBe("fixed");
+    await expect(page.locator('[data-auth-desktop] .auth-classroom-link[href="/admin/classrooms"]')).toHaveCount(1);
+    await expect(page.locator('[data-auth-desktop] .auth-admin-link[href="/admin"]')).toHaveCount(1);
+  });
+
+  for (const language of ["en", "zhTW", "zhCN"]) {
+    test(`switched on, the hero button and a footer link lead to /classroom, in the page's language (${language})`, async ({ page }) => {
+      await visit(page, { language });
+      await page.context().addCookies([{ name: "ihear-lang", value: language, url: e2eOrigin }]);
+      await switchedOn(page);
+      await page.goto("/");
+      const hero = page.locator(".hero-ctas a[data-classroom-entry]");
+      const footer = page.locator("footer a[data-classroom-entry]");
+      await expect(hero).toBeVisible();
+      await expect(hero).toHaveText(LABEL[language], { useInnerText: true });
+      await expect(hero).toHaveAttribute("href", "/classroom");
+      expect(await hero.getAttribute("target")).toBeNull();
+      await footer.scrollIntoViewIfNeeded();
+      await expect(footer).toHaveText(LABEL[language], { useInnerText: true });
+      await expect(footer).toHaveAttribute("href", "/classroom");
+      await expect(entries(page)).toHaveCount(2);
+      // What people and screen readers get: one name, in this language.
+      await expect(page.getByRole("link", { name: LABEL[language], exact: true })).toHaveCount(2);
+      for (const entry of [hero, footer]) expect(await entry.locator("span").evaluateAll(spans => spans.filter(span => getComputedStyle(span).display !== "none").length)).toBe(1);
+      // The language switch swaps the words at once.
+      const next = language === "en" ? "zhCN" : "en";
+      await page.locator(`#langSwitch button[data-lang="${next}"]`).click();
+      await expect(hero).toHaveText(LABEL[next], { useInnerText: true });
+      await expect(footer).toHaveText(LABEL[next], { useInnerText: true });
+    });
+  }
+
+  test("switched on, the words are right from the first paint: the server's page language picks them, before any script runs", async ({ page }) => {
+    await visit(page);
+    await page.route("**/assets/site.js*", route => route.fulfill({ contentType: "text/javascript", body: "" }));
+    for (const [locale, language] of [["en", "en"], ["zhHant", "zhTW"], ["zhHans", "zhCN"]]) {
+      await page.unroute(`${e2eOrigin}/`);
+      await page.unroute("**/assets/auth.js*");
+      await switchedOn(page, { serverLocale: locale });
+      await page.goto("/");
+      await expect(page.locator(".hero-ctas a[data-classroom-entry]")).toHaveText(LABEL[language], { useInnerText: true });
+      await expect(page.locator("footer a[data-classroom-entry]")).toHaveText(LABEL[language], { useInnerText: true });
+    }
+  });
+
+  test("switched on, the header shows the classroom entry with no preview, and nothing else is asked", async ({ page }) => {
+    await visit(page, { user: TUTOR });
+    const asked = await answerEntry(page, { released: true, preview: false, signedIn: true });
+    await switchedOn(page);
+    await page.goto("/?classroom-preview=1");
+    await expect(page.locator("[data-auth-desktop] .auth-classroom-link")).toHaveAttribute("href", "/classroom");
+    await expect(page.locator("a[data-classroom-preview]")).toHaveCount(0);
+    expect(asked).toEqual([]);
+  });
+
+  test("the entry fits phones, tablets and desktops, and the switched-on page asks for nothing more", async ({ page }) => {
+    await visit(page);
+    const count = async () => {
+      const urls = [];
+      const listener = request => { if (request.url().startsWith(e2eOrigin) || request.url().startsWith("http")) urls.push(request.url()); };
+      page.on("request", listener);
+      await page.goto("/");
+      await page.waitForLoadState("networkidle");
+      page.off("request", listener);
+      return urls.filter(url => !url.includes("/api/live-revisions")).length;
+    };
+    await page.setViewportSize({ width: 1280, height: 900 });
+    const off = await count();
+    await switchedOn(page);
+    const on = await count();
+    expect(on).toBe(off);
+    for (const [width, height] of [[360, 780], [768, 1024], [1280, 900]]) {
+      await page.setViewportSize({ width, height });
+      await page.goto("/");
+      const hero = page.locator(".hero-ctas a[data-classroom-entry]");
+      await expect(hero).toBeVisible();
+      const box = await hero.boundingBox();
+      expect(box.x).toBeGreaterThanOrEqual(0);
+      expect(box.x + box.width).toBeLessThanOrEqual(width);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    }
+  });
+});
