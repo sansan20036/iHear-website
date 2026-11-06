@@ -7,6 +7,7 @@ import {
   type ClassroomMediaAdapter, type ConnectionState, type DeviceKind, type DeviceProblem, type DeviceState, type MediaEvent, type MediaSystemCheck, type SyntheticScenario,
 } from "../../../lib/classroom-media";
 import { classroomDeviceOf, deviceLimits, type CapabilityName, type ClassroomDevice } from "../../../lib/classroom-capabilities";
+import { rejoinRoom, requestJoin, type JoinedSession } from "../../../lib/classroom-join-client";
 
 // The vendor-specific parts of the room (2026-10-30): Zoom draws its video in our page; LCIC is
 // Tencent's own classroom page in an iframe. Notes per device come from lib/classroom-capabilities
@@ -262,7 +263,10 @@ export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: stri
   const [sdkCheck, setSdkCheck] = useState<MediaSystemCheck | null>(null);
   const [toolProblem, setToolProblem] = useState<"" | "share" | "board">("");
   // The provider's session token. It is never shown; it goes only to the media adapter.
-  const session = useRef<{ kind?: "sdk" | "embed"; token?: string; sessionName?: string; embedUrl?: string; recordingDisabled?: boolean; expiresAt: string } | null>(null);
+  const session = useRef<JoinedSession | null>(null);
+  // "Connect again" on its way, and why the join check refused it (its code), if it did.
+  const [rejoining, setRejoining] = useState(false);
+  const [rejoinProblem, setRejoinProblem] = useState("");
   const vendorStage = useRef<HTMLDivElement | null>(null);
   const [device, setDevice] = useState<ClassroomDevice>("desktop");
   const adapter = useRef<ClassroomMediaAdapter | null>(null);
@@ -284,26 +288,17 @@ export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: stri
   async function enter() {
     setPhase("joining");
     setReason("");
-    try {
-      const response = await fetch(`/api/classroom/${encodeURIComponent(lessonId)}/join`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(joinKey ? { key: joinKey } : {}),
-      });
-      const data = await response.json().catch(() => ({}));
-      if (response.ok && data.ok) {
-        session.current = data.session ?? null;
-        setJoined({ provider: data.provider, lesson: data.lesson, role: data.role, participantCode: data.participantCode });
-        setRecording(null);
-        setMedia(initialMedia());
-        setPhase("joined");
-        return;
-      }
-      const code = response.status === 429 ? "RATE_LIMITED" : typeof data.code === "string" ? data.code : "UNAVAILABLE";
-      setReason(code === "NOT_ON_ROSTER" && joinKey ? "NOT_ON_ROSTER_LINK" : code);
-    } catch {
-      setReason("UNAVAILABLE");
+    setRejoinProblem("");
+    const answer = await requestJoin(lessonId, joinKey);
+    if (answer.ok) {
+      session.current = answer.session;
+      setJoined({ provider: answer.provider, lesson: answer.lesson, role: answer.role, participantCode: answer.participantCode });
+      setRecording(null);
+      setMedia(initialMedia());
+      setPhase("joined");
+      return;
     }
+    setReason(answer.code);
     setPhase("blocked");
   }
 
@@ -479,13 +474,22 @@ export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: stri
     if (on && !started) setToolProblem("board");
   }
 
+  // "Connect again" asks the protected join check again, exactly as entering does, and joins with
+  // the new token; the token from entry is never reused (R-1). A refusal (the time window closed,
+  // the lesson cancelled, the sign-in ended) is shown and nothing connects.
   async function reconnect() {
     const current = adapter.current;
-    if (!current || !session.current || !joined) return;
-    await current.join({
-      sessionToken: session.current.token ?? "", sessionName: session.current.sessionName, embedUrl: session.current.embedUrl,
+    if (!current || !joined) return;
+    setRejoining(true);
+    setRejoinProblem("");
+    const result = await rejoinRoom(current, () => requestJoin(lessonId, joinKey), {
       lessonCode: joined.lesson.code, participantCode: joined.participantCode, role: joined.role,
-    }).catch(() => undefined);
+    });
+    setRejoining(false);
+    // Left (or entered anew) meanwhile: this answer belongs to a room that is gone.
+    if (adapter.current !== current) return;
+    if (result.ok) session.current = result.session;
+    else if (result.code !== "CONNECT_FAILED") setRejoinProblem(result.code);
   }
 
   async function leave() {
@@ -493,6 +497,7 @@ export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: stri
     if (adapter.current) await adapter.current.leave();
     else if (joined?.role === "tutor") await report({ type: "connection", state: "Closed" });
     session.current = null;
+    setRejoinProblem("");
     setPhase("left");
   }
 
@@ -616,8 +621,9 @@ export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: stri
           {media.available && media.connection === "reconnecting" && <p className="classroom-room-problem" role="status">{text.reconnecting}</p>}
           {media.available && media.connection === "failed" && (
             <div className="classroom-room-problem classroom-room-problem-row" role="alert">
-              <span>{text.failed}</span>
-              <button type="button" className="classroom-room-secondary" onClick={reconnect}>{text.reconnect}</button>
+              <span>{text.failed}{rejoinProblem && ` ${text.reasons[rejoinProblem] ?? text.reasons.UNAVAILABLE}`}</span>
+              {joined.role === "tutor" && ["NOT_ON_ROSTER", "IDENTITY_UNVERIFIED"].includes(rejoinProblem) && <a className="classroom-room-secondary" href={signInUrl}>{text.signIn}</a>}
+              <button type="button" className="classroom-room-secondary" disabled={rejoining} onClick={reconnect}>{text.reconnect}</button>
             </div>
           )}
           {(["camera", "microphone"] as const).map((kind) => {

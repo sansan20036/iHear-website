@@ -303,13 +303,20 @@ describe("browser adapters", () => {
     };
     return { doc, root: doc.createElement("div") };
   }
-  function fakeZoom({ joinError = null, videoError = null, shareError = null, canBoard = true, sharingAtJoin = 0, videoHangs = 0, audioHangs = 0, slowJoin = false } = {}) {
+  function fakeZoom({ joinError = null, videoError = null, shareError = null, canBoard = true, sharingAtJoin = 0, videoHangs = 0, audioHangs = 0, slowJoin = false, failedJoins = 0 } = {}) {
     const calls = [];
     const handlers = new Map();
+    // Every listener registered and not yet removed, per event: a second one for the same event
+    // means the page would hear Zoom twice.
+    const live = new Map();
     const users = [{ userId: 1, userIdentity: "P-TEST-T01" }];
     // A join() that finishes only when the test says so, as Zoom's can after it reports "Connected".
     let releaseJoin = () => {};
     const joinGate = slowJoin ? new Promise(resolve => { releaseJoin = resolve; }) : null;
+    // holdNextJoin(): only the next join() waits, until the function it returns is called.
+    let heldJoin = null;
+    let joinFailures = failedJoins;
+    const created = { clients: 0, destroyed: 0 };
     // The first N starts never answer, as Zoom's did when a device was pressed the moment both had joined.
     const hangs = { video: videoHangs, audio: audioHangs };
     const never = () => new Promise(() => {});
@@ -335,16 +342,29 @@ describe("browser adapters", () => {
     };
     const client = {
       init: async (...args) => calls.push(["init", ...args.slice(0, 2)].join(":")),
-      join: async (...args) => { calls.push(["join", ...args].join(":")); if (joinGate) await joinGate; if (joinError) throw joinError; },
+      join: async (...args) => {
+        calls.push(["join", ...args].join(":"));
+        const held = heldJoin;
+        heldJoin = null;
+        if (held) await held;
+        if (joinGate) await joinGate;
+        if (joinError) throw joinError;
+        if (joinFailures > 0) { joinFailures -= 1; throw new Error("join refused"); }
+      },
       leave: async () => calls.push("leave"), getMediaStream: () => stream, getWhiteboardClient: () => whiteboard,
       getCurrentUserInfo: () => ({ userId: 1 }), getAllUser: () => users,
-      on: (name, handler) => handlers.set(name, handler), off: (name) => { calls.push(`off:${name}`); handlers.delete(name); },
+      on: (name, handler) => { handlers.set(name, handler); if (!live.has(name)) live.set(name, new Set()); live.get(name).add(handler); },
+      off: (name, handler) => { calls.push(`off:${name}`); live.get(name)?.delete(handler); if (handlers.get(name) === handler) handlers.delete(name); },
     };
+    // Zoom's createClient() returns the same client every time until destroyClient() (its typings).
     const sdk = {
-      VERSION: "2.6.0", createClient: () => client,
+      VERSION: "2.6.0", createClient: () => { created.clients += 1; return client; },
+      destroyClient: async () => { calls.push("destroyClient"); created.destroyed += 1; },
       checkSystemRequirements: () => ({ audio: true, video: true, screen: false }), checkFeatureRequirements: () => ({ unSupportFeatures: ["screenShare"] }),
     };
-    return { calls, handlers, users, sdk, releaseJoin: () => releaseJoin() };
+    const listening = () => Object.fromEntries([...live].filter(([, set]) => set.size > 0).map(([name, set]) => [name, set.size]));
+    const holdNextJoin = () => { let release; heldJoin = new Promise(resolve => { release = resolve; }); return () => release(); };
+    return { calls, handlers, users, sdk, created, listening, holdNextJoin, releaseJoin: () => releaseJoin() };
   }
   const zoomJoin = { sessionToken: "synthetic.jwt.token", sessionName: "ihear-l-test-v01", lessonCode: "TEST-V01", participantCode: "TEST-T01", role: "tutor" };
   // Zoom calls its handlers without waiting; let their asynchronous work finish.
@@ -485,6 +505,123 @@ describe("browser adapters", () => {
     await settle();
     await adapter.leave();
     expect(await speaking).toBe("off");
+  });
+
+  // R-2 (2026-11-06): after Zoom reported the session failed, join() returned at once because the
+  // old client was still set, so "Connect again" did nothing on real Zoom. The synthetic stand-in
+  // never showed it. Joining again must really join, with the new token, from a released client.
+  const freshJoin = { ...zoomJoin, sessionToken: "fresh.jwt.token" };
+  const joinsOf = zoom => zoom.calls.filter(call => call.startsWith("join:"));
+  const connections = events => events.filter(event => event.type === "connection").map(event => event.state);
+  const onePerEvent = zoom => Object.values(zoom.listening()).every(count => count === 1);
+
+  test("RC-1 Zoom reconnect: after Zoom reports Fail, joining again joins the session again, with the new token", async () => {
+    const { zoom, adapter, events } = await joined();
+    zoom.handlers.get("connection-change")({ state: "Fail" });
+    expect(connections(events)).toEqual(["connecting", "connected", "failed"]);
+    await adapter.join(freshJoin);
+    expect(joinsOf(zoom)).toEqual(["join:ihear-l-test-v01:synthetic.jwt.token:TEST-T01", "join:ihear-l-test-v01:fresh.jwt.token:TEST-T01"]);
+    expect(connections(events)).toEqual(["connecting", "connected", "failed", "connecting", "connected"]);
+    // The same after Zoom closes the session (ended or removed by the host).
+    zoom.handlers.get("connection-change")({ state: "Closed", reason: "ended by host" });
+    await adapter.join({ ...zoomJoin, sessionToken: "third.jwt.token" });
+    expect(joinsOf(zoom).at(-1)).toBe("join:ihear-l-test-v01:third.jwt.token:TEST-T01");
+  });
+
+  test("RC-2 Zoom reconnect: the failed client is released first, listeners are never doubled, and no leave is reported", async () => {
+    const { zoom, adapter, events } = await joined();
+    const once = zoom.listening();
+    expect(onePerEvent(zoom)).toBe(true);
+    zoom.handlers.get("connection-change")({ state: "Fail" });
+    const before = zoom.calls.length;
+    await adapter.join(freshJoin);
+    const rejoin = zoom.calls.slice(before);
+    const at = name => rejoin.findIndex(call => call === name || call.startsWith(`${name}:`));
+    // Listeners off, the client left and destroyed, and only then a new client initialised and joined.
+    expect(at("off")).toBeGreaterThanOrEqual(0);
+    expect(at("leave")).toBeGreaterThan(at("off"));
+    expect(at("destroyClient")).toBeGreaterThan(at("leave"));
+    expect(at("init")).toBeGreaterThan(at("destroyClient"));
+    expect(at("join")).toBeGreaterThan(at("init"));
+    expect(zoom.listening()).toEqual(once);
+    // A reconnect is not the tutor leaving: the page is never told "disconnected" (iHear would hear "Closed").
+    expect(connections(events)).not.toContain("disconnected");
+    for (const token of ["a.jwt.token", "b.jwt.token"]) {
+      zoom.handlers.get("connection-change")({ state: "Fail" });
+      await adapter.join({ ...zoomJoin, sessionToken: token });
+    }
+    expect(zoom.listening()).toEqual(once);
+    expect(zoom.created).toEqual({ clients: 4, destroyed: 3 });
+  });
+
+  test("RC-2 Zoom: two joins at once (a double click) make one client and one join; a room that is up or reconnecting by itself is left alone", async () => {
+    const zoom = fakeZoom(), dom = fakeDom();
+    const adapter = new ZoomVideoSdkMediaAdapter(async () => zoom.sdk, () => 1);
+    adapter.mount(dom.root);
+    await Promise.all([adapter.join(zoomJoin), adapter.join(zoomJoin)]);
+    expect([zoom.created.clients, joinsOf(zoom).length, onePerEvent(zoom)]).toEqual([1, 1, true]);
+    await adapter.join(freshJoin);
+    zoom.handlers.get("connection-change")({ state: "Reconnecting" });
+    await adapter.join(freshJoin);
+    expect(joinsOf(zoom).length).toBe(1);
+    // After a failure, two presses of "Connect again" at once still join once.
+    zoom.handlers.get("connection-change")({ state: "Fail" });
+    await Promise.all([adapter.join(freshJoin), adapter.join(freshJoin)]);
+    expect([zoom.created.clients, joinsOf(zoom).length, onePerEvent(zoom)]).toEqual([2, 2, true]);
+  });
+
+  test("RC-2 Zoom: a join that fails releases its client, so trying again starts clean and joins", async () => {
+    const zoom = fakeZoom({ failedJoins: 1 }), dom = fakeDom();
+    const adapter = new ZoomVideoSdkMediaAdapter(async () => zoom.sdk, () => 1);
+    const events = recorded(adapter);
+    adapter.mount(dom.root);
+    await expect(adapter.join(zoomJoin)).rejects.toThrow("join refused");
+    expect([zoom.listening(), zoom.calls.slice(-2)]).toEqual([{}, ["leave", "destroyClient"]]);
+    await adapter.join(freshJoin);
+    expect(joinsOf(zoom).at(-1)).toBe("join:ihear-l-test-v01:fresh.jwt.token:TEST-T01");
+    expect(onePerEvent(zoom)).toBe(true);
+    expect(connections(events)).toEqual(["connecting", "failed", "connecting", "connected"]);
+  });
+
+  test("RC-2 Zoom: an ordinary leave releases and destroys the client; entering again joins once, one listener each", async () => {
+    const { zoom, adapter, events } = await joined();
+    await adapter.leave();
+    expect([zoom.calls.slice(-2), zoom.listening()]).toEqual([["leave", "destroyClient"], {}]);
+    await adapter.join(freshJoin);
+    expect([joinsOf(zoom).length, onePerEvent(zoom)]).toEqual([2, true]);
+    expect(connections(events)).toEqual(["connecting", "connected", "disconnected", "connecting", "connected"]);
+  });
+
+  test("RC-2 Zoom: leaving while a reconnect is still joining leaves nobody behind in the session", async () => {
+    const { zoom, adapter, events } = await joined();
+    zoom.handlers.get("connection-change")({ state: "Fail" });
+    const release = zoom.holdNextJoin();
+    const rejoining = adapter.join(freshJoin).catch(() => "refused");
+    await settle();
+    await adapter.leave();
+    release();
+    await rejoining;
+    await settle();
+    // Leaving released and destroyed the client; the join that finished afterwards is left again at
+    // once (not destroyed again: that could destroy a newer room's client). Never "connected".
+    expect(zoom.calls.slice(-3)).toEqual(["leave", "destroyClient", "leave"]);
+    expect(connections(events).at(-1)).toBe("disconnected");
+    expect(zoom.listening()).toEqual({});
+  });
+
+  test("RC-2 Zoom: a new room waits until the previous one has released Zoom's shared client", async () => {
+    const zoom = fakeZoom();
+    const first = new ZoomVideoSdkMediaAdapter(async () => zoom.sdk, () => 1);
+    first.mount(fakeDom().root);
+    await first.join(zoomJoin);
+    const second = new ZoomVideoSdkMediaAdapter(async () => zoom.sdk, () => 1);
+    second.mount(fakeDom().root);
+    const leaving = first.leave();
+    await second.join(freshJoin);
+    await leaving;
+    const order = zoom.calls.filter(call => /^(destroyClient|init|join)/.test(call)).map(call => call.split(":")[0]);
+    expect(order).toEqual(["init", "join", "destroyClient", "init", "join"]);
+    expect(onePerEvent(zoom)).toBe(true);
   });
 
   test("Zoom: the system check is Zoom's own answer for this browser, without joining", async () => {

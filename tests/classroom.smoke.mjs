@@ -171,6 +171,7 @@ try {
     const joined = await enter(tutorPage);
     expect(joined).toMatchObject({ status: 200, body: { role: 'tutor', participantCode: lesson.tutorCode } });
     lesson.tutorKey = claimsOf(joined.body.session.token).user_key;
+    lesson.tutorSession = joined.body.session;
     await expect(tutorPage.locator('.classroom-room-recording')).toContainText('未開始');
     await expect(tutorPage.getByText('這堂課可以錄影。')).toBeVisible();
   });
@@ -259,11 +260,54 @@ try {
     await expect(tutorPage.locator('.classroom-room-connection')).toHaveText('已連線');
     await expect.poll(async () => { await refresh(); return card().textContent(); }, { timeout: 20000 }).not.toContain('重新連線中');
 
-    await tutorPage.getByRole('button', { name: '連線失敗', exact: true }).click();
-    await expect(tutorPage.getByRole('alert').filter({ hasText: '視訊無法連線' })).toBeVisible();
-    await tutorPage.getByRole('button', { name: '重新連線', exact: true }).click();
-    await expect(tutorPage.locator('.classroom-room-connection')).toHaveText('已連線');
     for (const page of [tutorPage, student]) expect(await page.evaluate(() => window.__deviceRequests)).toBe(0);
+  });
+
+  // R-1 and R-2 (2026-11-06): "Connect again" used to rejoin with the token given on entry (Zoom's
+  // lasts 30 minutes). It now asks the protected join check for a new one each time.
+  await check('RC-5: after a failed connection, "Connect again" asks the join check again (once, even on a double click) and reconnects', async () => {
+    const joinRequests = [];
+    tutorPage.on('request', item => { if (item.method() === 'POST' && item.url().endsWith(`/api/classroom/${lesson.id}/join`)) joinRequests.push(item); });
+    lesson.joinRequests = joinRequests;
+    const failed = tutorPage.getByRole('alert').filter({ hasText: '視訊無法連線' });
+    await tutorPage.getByRole('button', { name: '連線失敗', exact: true }).click();
+    await expect(failed).toBeVisible();
+    await tutorPage.getByRole('button', { name: '重新連線', exact: true }).dblclick();
+    await expect(tutorPage.locator('.classroom-room-connection')).toHaveText('已連線');
+    expect(joinRequests.length).toBe(1);
+    const fresh = await (await joinRequests[0].response()).json();
+    expect(fresh).toMatchObject({ ok: true, role: 'tutor', participantCode: lesson.tutorCode });
+    // A new token from the server, issued now: never the one from entry.
+    expect(fresh.session.token).not.toBe(lesson.tutorSession.token);
+    expect(Date.parse(fresh.session.expiresAt)).toBeGreaterThan(Date.parse(lesson.tutorSession.expiresAt));
+    expect(claimsOf(fresh.session.token).user_key).toBe(lesson.tutorKey);
+  });
+
+  await check('RC-6: the room joins only with the new answer\'s token; without one it stays failed, and a refusal shows its reason', async () => {
+    const failed = tutorPage.getByRole('alert').filter({ hasText: '視訊無法連線' });
+    const pill = tutorPage.locator('.classroom-room-connection');
+    const again = tutorPage.getByRole('button', { name: '重新連線', exact: true });
+    await tutorPage.getByRole('button', { name: '連線失敗', exact: true }).click();
+    await expect(failed).toBeVisible();
+    // The server's real answer with its token taken out: falling back on an older token would connect.
+    await tutorPage.route('**/join', async route => {
+      const response = await route.fetch();
+      const body = await response.json();
+      await route.fulfill({ response, json: { ...body, session: { ...body.session, token: '' } } });
+    }, { times: 1 });
+    await again.click();
+    await expect(failed).toContainText('暫時連不上教室，請稍後再試。');
+    await tutorPage.waitForTimeout(1500);
+    await expect(pill).not.toHaveText('已連線');
+    // The join check refusing (here: the lesson's time window has closed) is shown, and nothing connects.
+    await tutorPage.route('**/join', route => route.fulfill({ status: 403, json: { error: 'You cannot enter this classroom', code: 'OUTSIDE_JOIN_WINDOW' } }), { times: 1 });
+    await again.click();
+    await expect(failed).toContainText('教室在上課前 15 分鐘開放，下課後 15 分鐘關閉。');
+    await expect(pill).not.toHaveText('已連線');
+    await again.click();
+    await expect(pill).toHaveText('已連線');
+    await expect(failed).toHaveCount(0);
+    expect(lesson.joinRequests.length).toBe(4);
     await shot(tutorPage, '08-tutor-controls');
   });
 

@@ -247,7 +247,9 @@ export type ZoomClient = {
 };
 export type ZoomVideoSdk = {
   VERSION: string;
+  // Returns the same client every time until destroyClient() (Zoom's typings for 2.6.0).
   createClient(): ZoomClient;
+  destroyClient(): Promise<void>;
   checkSystemRequirements(): { audio: boolean; video: boolean; screen: boolean };
   checkFeatureRequirements(): { unSupportFeatures: string[] };
 };
@@ -280,6 +282,13 @@ function deviceAnswerOf(error: unknown): DeviceAnswer {
 }
 const isNode = (value: unknown): value is Node => Boolean(value) && typeof (value as Node).nodeType === "number";
 type ZoomStage = { videos: HTMLElement; share: HTMLElement; whiteboard: HTMLElement; ownShare: HTMLElement };
+type ZoomHandler = [string, (payload: unknown) => void];
+// The states in which this page's client is in the session or on its way there (Zoom reconnects
+// by itself while "reconnecting"): joining again leaves such a room alone.
+const ZOOM_IN_SESSION = new Set<ConnectionState>(["connecting", "connected", "reconnecting"]);
+// Zoom's client is one shared instance per page until it is destroyed, so a room waits for the
+// previous room on this page to finish releasing it before taking it.
+let zoomReleased: Promise<void> = Promise.resolve();
 
 export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
   readonly provider = "zoom-video-sdk" as const;
@@ -294,7 +303,13 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
   private sharer: number | null = null;
   private board: "none" | "presenting" | "viewing" = "none";
   private readonly tiles = new Map<number, unknown>();
-  private readonly handlers: [string, (payload: unknown) => void][] = [];
+  // The listeners of the current client, removed when it is released.
+  private handlers: ZoomHandler[] = [];
+  private connection: ConnectionState = "idle";
+  // The join on its way, so a second press waits for it; and a count that tells a join still on
+  // its way that the room was left (or rejoined) meanwhile.
+  private joining: Promise<void> | null = null;
+  private attempt = 0;
   // This page's camera and microphone, the latest press of each, and the press now waiting for Zoom.
   private readonly devices: Record<DeviceKind, DeviceState> = { camera: "off", microphone: "off" };
   private readonly presses: Record<DeviceKind, number> = { camera: 0, microphone: 0 };
@@ -335,41 +350,80 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     return { sdkVersion: sdk.VERSION, audio: support.audio, video: support.video, screenShare: support.screen, unsupported: [...sdk.checkFeatureRequirements().unSupportFeatures] };
   }
 
+  // Joining, and joining again after Zoom reported the session failed or closed. A second press
+  // while joining waits for that join; a room that is in the session, or that Zoom is
+  // reconnecting by itself, is left alone. After a failure the old client is finished: it is
+  // released first and a new one joins with the new token. (R-2, 2026-11-06: before, join()
+  // returned at once because the old client was still set, so "Connect again" did nothing.)
   async join(input: MediaJoin) {
     if (!input.sessionToken || !input.sessionName) throw new Error("A Zoom join token and its session name are required");
-    if (this.client) return;
-    this.emit({ type: "connection", state: "connecting", at: this.now() });
+    if (this.joining) return this.joining;
+    if (this.client && ZOOM_IN_SESSION.has(this.connection)) return;
+    const joining = this.connect({ ...input, sessionName: input.sessionName });
+    this.joining = joining;
     try {
+      await joining;
+    } finally {
+      if (this.joining === joining) this.joining = null;
+    }
+  }
+
+  private async connect(input: MediaJoin & { sessionName: string }) {
+    const attempt = ++this.attempt;
+    // The client of a session that failed or closed: released, never reused.
+    if (this.client) await this.teardown();
+    if (attempt !== this.attempt) return;
+    this.setConnection("connecting");
+    let client: ZoomClient | null = null;
+    const listening: ZoomHandler[] = [];
+    // This join was overtaken (the room was left meanwhile): leave what it joined, so nobody stays
+    // behind in the session. Its client was already destroyed by the leaving, so it is not
+    // destroyed again (that would destroy a newer room's client).
+    const overtaken = async () => {
+      if (attempt === this.attempt) return false;
+      if (client) await this.release(client, listening.splice(0), false);
+      return true;
+    };
+    try {
+      await zoomReleased;
       const sdk = await this.loadOnce();
-      const client = sdk.createClient();
-      this.client = client;
+      if (attempt !== this.attempt) return;
+      const zoom = sdk.createClient();
+      client = zoom;
+      this.client = zoom;
+      this.handlers = listening;
       // "Global": the default data centres; the China options are not part of phase 1.
-      await client.init("en-US", "Global", { patchJsMedia: true, leaveOnPageUnload: true });
-      this.listen("connection-change", (payload) => {
+      await zoom.init("en-US", "Global", { patchJsMedia: true, leaveOnPageUnload: true });
+      if (await overtaken()) return;
+      const listen = (name: string, handler: (payload: unknown) => void) => {
+        zoom.on(name, handler);
+        listening.push([name, handler]);
+      };
+      listen("connection-change", (payload) => {
         const state = ZOOM_CONNECTION[String((payload as { state?: string })?.state)];
         // Zoom says "Connected" before join() has finished. The room counts as connected, and its
         // buttons work, only once join() has given the media stream (seen in the real trial: a
         // camera pressed in between did nothing).
         if (state === "connected" && !this.stream) return;
-        if (state) this.emit({ type: "connection", state, at: this.now() });
+        if (state) this.setConnection(state);
       });
-      for (const name of ["user-added", "user-updated", "user-removed"]) this.listen(name, () => this.reportRemote());
-      this.listen("peer-video-state-change", (payload) => void this.peerVideo(payload as { action?: string; userId?: number }));
-      this.listen("active-share-change", (payload) => void this.remoteShare(payload as { state?: string; userId?: number }));
+      for (const name of ["user-added", "user-updated", "user-removed"]) listen(name, () => this.reportRemote());
+      listen("peer-video-state-change", (payload) => void this.peerVideo(payload as { action?: string; userId?: number }));
+      listen("active-share-change", (payload) => void this.remoteShare(payload as { state?: string; userId?: number }));
       // The browser's own "stop sharing" button.
-      this.listen("passively-stop-share", () => this.endOwnShare());
-      this.listen("peer-whiteboard-state-change", (payload) => void this.remoteBoard(payload as { action?: string; userId?: number }));
+      listen("passively-stop-share", () => this.endOwnShare());
+      listen("peer-whiteboard-state-change", (payload) => void this.remoteBoard(payload as { action?: string; userId?: number }));
       // Zoom's own reports on this page's camera and microphone. They settle a press even when the
       // call that started it never answers (seen when a device was pressed the moment both had
       // joined), and keep the buttons true when something else changes a device. Zoom 2.x marks
       // its old "media-sdk-change" readiness event as deprecated and always successful.
-      this.listen("video-capturing-change", (payload) => {
+      listen("video-capturing-change", (payload) => {
         const state = (payload as { state?: string })?.state;
         if (state === "Started") this.fromZoom("camera", { state: "on" });
         else if (state === "Failed") this.fromZoom("camera", { state: "failed", problem: "capture" });
         else if (state === "Stopped" && this.devices.camera === "on") this.fromZoom("camera", { state: "off" });
       });
-      this.listen("current-audio-change", (payload) => {
+      listen("current-audio-change", (payload) => {
         const action = (payload as { action?: string })?.action;
         if (action === "join") this.audioStarted = true;
         if (action === "leave") this.audioStarted = false;
@@ -378,49 +432,83 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
       });
       // Zoom: this "may occur when invoking stream.startAudio() immediately after joining"; the
       // browser waits for the person to press something again.
-      this.listen("auto-play-audio-failed", () => this.fromZoom("microphone", { state: "failed", problem: "autoplay" }));
-      this.listen("device-permission-change", (payload) => {
+      listen("auto-play-audio-failed", () => this.fromZoom("microphone", { state: "failed", problem: "autoplay" }));
+      listen("device-permission-change", (payload) => {
         const { name, state } = (payload ?? {}) as { name?: string; state?: string };
         if ((name === "camera" || name === "microphone") && state === "denied") this.fromZoom(name, { state: "denied" });
       });
       // The display name is the participant code: no student name reaches Zoom.
-      await client.join(input.sessionName, input.sessionToken, input.participantCode);
-      this.stream = client.getMediaStream();
+      await zoom.join(input.sessionName, input.sessionToken, input.participantCode);
+      if (await overtaken()) return;
+      this.stream = zoom.getMediaStream();
       for (const ready of [...this.streamWaiters]) ready();
-      this.emit({ type: "connection", state: "connected", at: this.now() });
+      this.setConnection("connected");
       this.reportRemote();
       const sharing = this.stream.getActiveShareUserId();
       if (sharing) await this.remoteShare({ state: "Active", userId: sharing });
     } catch (error) {
-      this.client = null;
-      for (const ready of [...this.streamWaiters]) ready();
-      this.emit({ type: "connection", state: "failed", at: this.now() });
+      if (attempt === this.attempt) {
+        this.client = null;
+        this.stream = null;
+        for (const ready of [...this.streamWaiters]) ready();
+        this.setConnection("failed");
+        // A client whose join failed is released as well, so the next try starts clean.
+        if (client) {
+          this.handlers = [];
+          zoomReleased = this.release(client, listening.splice(0), true);
+          await zoomReleased;
+        }
+      }
       throw error;
     }
   }
 
   async leave() {
-    const client = this.client;
-    if (!client) return;
-    for (const [name, handler] of this.handlers.splice(0)) client.off(name, handler);
+    if (!this.client && !this.joining) return;
+    // A join still on its way stops, and leaves again what it joined (connect's `overtaken`).
+    this.attempt += 1;
+    this.joining = null;
+    await this.teardown();
+    this.setConnection("disconnected");
+  }
+
+  // Ends this page's part in the session: presses, videos, shares, and Zoom's client itself.
+  private async teardown() {
+    const client = this.client, handlers = this.handlers.splice(0);
     this.client = null; this.stream = null; this.audioStarted = false; this.tiles.clear(); this.sharer = null;
     for (const ready of [...this.streamWaiters]) ready();
-    // A press still waiting ends with the room; the next join starts with both devices off.
+    // A press still waiting ends with the room; the next join starts with both devices off, and the
+    // page is told so (after a reconnect it must not still show a device as on).
     for (const kind of ["camera", "microphone"] as const) {
       this.presses[kind] += 1;
       const pending = this.waiting[kind];
       delete this.waiting[kind];
       pending?.({ state: "off" });
-      this.devices[kind] = "off";
+      this.setDeviceState(kind, "off");
     }
-    await client.leave().catch(() => undefined);
+    if (client) {
+      zoomReleased = this.release(client, handlers, true);
+      await zoomReleased;
+    }
     if (this.stage) {
       for (const part of Object.values(this.stage)) part.replaceChildren();
       this.stage.share.hidden = true; this.stage.whiteboard.hidden = true; this.stage.ownShare.hidden = true;
     }
     this.setShare("none");
     this.setBoard("none");
-    this.emit({ type: "connection", state: "disconnected", at: this.now() });
+  }
+
+  // Our listeners off, out of the session, and (unless told not to) Zoom's shared client destroyed,
+  // so the next join gets a fresh client rather than one initialised for an ended session.
+  private async release(client: ZoomClient, handlers: ZoomHandler[], destroy: boolean) {
+    for (const [name, handler] of handlers) client.off(name, handler);
+    await Promise.resolve().then(() => client.leave()).catch(() => undefined);
+    if (destroy) await this.sdk?.then((sdk) => sdk.destroyClient()).catch(() => undefined);
+  }
+
+  private setConnection(state: ConnectionState) {
+    this.connection = state;
+    this.emit({ type: "connection", state, at: this.now() });
   }
 
   // A press of the camera or microphone, always from the person's own click, as browsers require.
@@ -578,11 +666,6 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
   private loadOnce() {
     this.sdk ??= this.load();
     return this.sdk.catch((error: unknown) => { this.sdk = null; throw error; });
-  }
-
-  private listen(name: string, handler: (payload: unknown) => void) {
-    this.client?.on(name, handler);
-    this.handlers.push([name, handler]);
   }
 
   private reportRemote() {

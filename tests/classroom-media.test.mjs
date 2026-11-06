@@ -3,6 +3,7 @@ import { describe, expect, test, vi } from "vitest";
 import {
   createMediaAdapter, hostReportFor, MEDIA_PROVIDERS, MediaAdapterUnavailableError, SYNTHETIC_SCENARIOS, SyntheticMediaAdapter,
 } from "../lib/classroom-media";
+import { rejoinRoom, requestJoin } from "../lib/classroom-join-client";
 
 // The browser side of the classroom's video provider, with the synthetic stand-in only. Passing
 // shows the page gets the states a video SDK reports, and the tutor's reports follow from them.
@@ -113,5 +114,95 @@ describe("the provider-neutral media adapter", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+});
+
+// R-1 (2026-11-06): the room used to reconnect with the session token it got on entry, which Zoom
+// accepts for 30 minutes while a lesson lasts up to 4 hours. Reconnecting now asks the protected
+// join check again and joins with the new token only.
+describe("reconnecting asks the join check again", () => {
+  const room = { lessonCode: "TEST-M1", participantCode: "TEST-MT1", role: "tutor" };
+  const answer = (token, extra = {}) => ({
+    ok: true, provider: "zoom-video-sdk", lesson: { code: "TEST-M1", startsAt: "2026-11-06T09:00:00.000Z", endsAt: "2026-11-06T10:00:00.000Z" },
+    role: "tutor", participantCode: "TEST-MT1",
+    session: { kind: "sdk", token, sessionName: "ihear-l-test-m1", expiresAt: "2026-11-06T10:30:00.000Z" }, ...extra,
+  });
+  const roomAdapter = ({ fails = 0 } = {}) => {
+    const joins = [];
+    let failures = fails;
+    return { joins, adapter: { join: async (input) => { joins.push(input); if (failures > 0) { failures -= 1; throw new Error("could not connect"); } } } };
+  };
+  const response = (status, body) => ({ ok: status >= 200 && status < 300, status, json: async () => body });
+
+  test("RC-3: the join check is asked first and the room joins with its new token and topic", async () => {
+    const { joins, adapter } = roomAdapter();
+    const ask = vi.fn(async () => answer("fresh.jwt.token"));
+    const result = await rejoinRoom(adapter, ask, room);
+    expect(ask).toHaveBeenCalledTimes(1);
+    expect(joins).toEqual([{ sessionToken: "fresh.jwt.token", sessionName: "ihear-l-test-m1", embedUrl: undefined, ...room }]);
+    expect(result).toEqual({ ok: true, session: answer("fresh.jwt.token").session });
+  });
+
+  test("RC-3: an answer without a token is not joined; there is no older token to fall back on", async () => {
+    const { joins, adapter } = roomAdapter();
+    const missing = answer("", {});
+    expect(await rejoinRoom(adapter, async () => missing, room)).toEqual({ ok: false, code: "UNAVAILABLE" });
+    expect(await rejoinRoom(adapter, async () => ({ ...missing, session: null }), room)).toEqual({ ok: false, code: "UNAVAILABLE" });
+    expect(joins).toEqual([]);
+  });
+
+  test("RC-3: two presses at once ask once and join once; the next press asks again", async () => {
+    const { joins, adapter } = roomAdapter();
+    const ask = vi.fn(async () => answer("fresh.jwt.token"));
+    const [first, second] = await Promise.all([rejoinRoom(adapter, ask, room), rejoinRoom(adapter, ask, room)]);
+    expect([ask.mock.calls.length, joins.length, first, second]).toEqual([1, 1, first, first]);
+    await rejoinRoom(adapter, ask, room);
+    expect([ask.mock.calls.length, joins.length]).toEqual([2, 2]);
+  });
+
+  test("RC-3: if the check now names another person or role, the room is not rejoined in their place", async () => {
+    const { joins, adapter } = roomAdapter();
+    expect(await rejoinRoom(adapter, async () => answer("t", { role: "student" }), room)).toEqual({ ok: false, code: "IDENTITY_UNVERIFIED" });
+    expect(await rejoinRoom(adapter, async () => answer("t", { participantCode: "TEST-OTHER" }), room)).toEqual({ ok: false, code: "IDENTITY_UNVERIFIED" });
+    expect(joins).toEqual([]);
+  });
+
+  test("RC-4: refusals keep their code and nothing joins: time window, cancelled, signed out, too many tries, closed, unreachable", async () => {
+    const cases = [
+      [response(403, { code: "OUTSIDE_JOIN_WINDOW" }), null, "OUTSIDE_JOIN_WINDOW"],
+      [response(403, { code: "LESSON_CANCELLED" }), null, "LESSON_CANCELLED"],
+      // A tutor whose sign-in has ended is no longer on the roster; the page offers to sign in.
+      [response(403, { code: "NOT_ON_ROSTER" }), null, "NOT_ON_ROSTER"],
+      [response(403, { code: "NOT_ON_ROSTER" }), "student-key", "NOT_ON_ROSTER_LINK"],
+      [response(429, { error: "Too many requests" }), null, "RATE_LIMITED"],
+      [response(503, { code: "PROVIDER_UNAVAILABLE" }), null, "PROVIDER_UNAVAILABLE"],
+      [{ ok: true, status: 200, json: async () => { throw new SyntaxError("not JSON"); } }, null, "UNAVAILABLE"],
+      [new Error("offline"), null, "UNAVAILABLE"],
+    ];
+    for (const [reply, key, code] of cases) {
+      const { joins, adapter } = roomAdapter();
+      const fetcher = vi.fn(async () => { if (reply instanceof Error) throw reply; return reply; });
+      expect(await rejoinRoom(adapter, () => requestJoin("L-TEST", key, fetcher), room)).toEqual({ ok: false, code });
+      expect(joins).toEqual([]);
+    }
+  });
+
+  test("RC-4: the check is the same protected request as entering: POST, the personal key only, nothing the server decides", async () => {
+    const fetcher = vi.fn(async () => response(200, answer("fresh.jwt.token")));
+    await requestJoin("L-TEST 1", "student-key", fetcher);
+    await requestJoin("L-TEST", null, fetcher);
+    expect(fetcher.mock.calls.map(([url, init]) => [url, init.method, init.headers, init.body])).toEqual([
+      ["/api/classroom/L-TEST%201/join", "POST", { "Content-Type": "application/json" }, JSON.stringify({ key: "student-key" })],
+      ["/api/classroom/L-TEST/join", "POST", { "Content-Type": "application/json" }, "{}"],
+    ]);
+    expect(await requestJoin("L-TEST", null, fetcher)).toEqual(answer("fresh.jwt.token"));
+  });
+
+  test("RC-4: a good answer that then fails to connect says so, and the next press asks for a new token again", async () => {
+    const { joins, adapter } = roomAdapter({ fails: 1 });
+    const ask = vi.fn(async () => answer(`token-${ask.mock.calls.length}`));
+    expect(await rejoinRoom(adapter, ask, room)).toEqual({ ok: false, code: "CONNECT_FAILED" });
+    expect((await rejoinRoom(adapter, ask, room)).ok).toBe(true);
+    expect(joins.map(join => join.sessionToken)).toEqual(["token-1", "token-2"]);
   });
 });
