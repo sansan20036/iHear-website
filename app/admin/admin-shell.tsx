@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { AdminProvider, useAdmin, type AdminLocale } from "./admin-context";
 
@@ -17,6 +17,15 @@ function ShellContent({ children }: { children: React.ReactNode }) {
   const [embedded, setEmbedded] = useState(false);
   useEffect(() => {
     setEmbedded(['/admin/media', '/admin/academy'].includes(pathname) && window.parent !== window && new URLSearchParams(window.location.search).get('embed') === '1');
+  }, [pathname]);
+  // When the menu scrolls, bring the current page's entry into view. Only the menu itself scrolls.
+  const menu = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const nav = menu.current, active = nav?.querySelector<HTMLElement>("button.active");
+    if (!nav || !active) return;
+    const area = nav.getBoundingClientRect(), item = active.getBoundingClientRect();
+    if (item.top < area.top) nav.scrollTop -= area.top - item.top;
+    else if (item.bottom > area.bottom) nav.scrollTop += item.bottom - area.bottom;
   }, [pathname]);
   const text = copy[locale];
   // Academy course pages are English and Traditional Chinese only, so this label has no Simplified form.
@@ -37,7 +46,7 @@ function ShellContent({ children }: { children: React.ReactNode }) {
       {open && <button type="button" className="admin-backdrop" aria-label="Close" onClick={() => setOpen(false)} />}
       <aside className={`admin-sidebar ${open ? "is-open" : ""}`}>
         <div className="admin-brand"><span className="admin-brand-mark">iH</span><strong>{text.title}</strong></div>
-        <nav aria-label={text.title}>
+        <nav ref={menu} aria-label={text.title}>
           {links.map(([href, label, icon]) => (
             <button type="button" key={href} disabled={submitting} onClick={() => go(href)} className={pathname === href ? "active" : ""}>
               <span aria-hidden="true">{icon}</span><span>{label}</span>
