@@ -381,6 +381,11 @@ try {
   });
 
   await check('revoking the link: "Connect again" gets no new token, and neither does entering again', async () => {
+    // These three checks are about the join check. Since 8c27ffd the page also leaves the room by
+    // itself when its status check (every 15 seconds) is refused, which would race the clicks
+    // below, so the status answers are held back here (a 403 without a code, which never makes the
+    // page leave); leaving is tested in classroom-auth.smoke.mjs.
+    await kid.route('**/status', route => route.fulfill({ status: 403, json: { error: 'held back by this test' } }));
     await ownerAction('撤銷學生連結');
     await expect(admin.locator('.classroom-notice')).toContainText('學生連結已撤銷');
     await kid.getByText('模擬控制（只在測試教室）').click();
@@ -433,6 +438,7 @@ try {
     expect(refused).toMatchObject({ status: 403, body: { code: 'LESSON_CANCELLED' } });
     expect(refused.body.session).toBeUndefined();
     await expect(kid.locator('.classroom-room-problem')).toContainText('這堂課已經取消。');
+    await kid.unroute('**/status');
     await shot(admin, '09-overview-link-actions');
   });
 
