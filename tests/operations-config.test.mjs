@@ -333,15 +333,86 @@ describe("production operations configuration", () => {
   });
 
   // H8 is not confirmed by iHear (2026-11-07). Option 乙 (leave the classroom rows out of the full
-  // dumps) is researched only, in the PostgreSQL tests; the schedules stay as they are, so applying
-  // 028 on the live database stays blocked. Changing this test is part of that separate approval.
-  it("leaves the weekly and monthly full dumps unchanged until iHear confirms H8, so 028 stays blocked", async () => {
+  // dumps) has its switch, data/backup-policy.json, read by the weekly backup and the monthly drill
+  // (and the manual encrypted backup, from main). It is off: until iHear approves option 2 the
+  // dumps hold every row as before. Turning it on is a reviewed commit of that file.
+  it("keeps the H8 option 2 switch off, and the weekly and monthly dumps follow it and nothing else", async () => {
+    expect(JSON.parse(await read("data/backup-policy.json"))).toEqual({ excludeClassroomData: false });
+    expect((await read(".gitignore")).split("\n")).toContain("!data/backup-policy.json");
     for (const file of [".github/workflows/weekly-postgres-backup.yml", ".github/workflows/monthly-restore-drill.yml"]) {
-      const dumps = (await read(file)).split(/\r?\n/).filter(line => line.includes("pg_dump"));
+      const text = await read(file);
+      const dumps = text.split("\n").filter(line => line.includes("pg_dump"));
       expect(dumps, file).toHaveLength(1);
-      expect(dumps[0], file).toContain("--schema=public --exclude-table-data=public.api_rate_limits");
-      expect(dumps[0], file).not.toMatch(/classroom/);
+      expect(dumps[0], file).toContain('--schema=public --exclude-table-data=public.api_rate_limits ${CLASSROOM_EXCLUSION:+"$CLASSROOM_EXCLUSION"} --file=');
+      expect(dumps[0].replace('${CLASSROOM_EXCLUSION:+"$CLASSROOM_EXCLUSION"}', ""), file).not.toMatch(/classroom/i);
+      expect(text, file).toContain('option="$(node scripts/backup-policy.mjs --pg-dump-option)"');
+      expect(text, file).toContain("CLASSROOM_EXCLUSION: ${{ steps.policy.outputs.classroom_exclusion }}");
+      expect(text, file).toContain("-e CLASSROOM_EXCLUSION \\");
+      expect(text, file).toMatch(/does not protect classroom data/);
+      // The policy is read after the checkout and before the dump.
+      expect(text.indexOf("actions/checkout@")).toBeLessThan(text.indexOf("scripts/backup-policy.mjs"));
+      expect(text.indexOf("scripts/backup-policy.mjs")).toBeLessThan(text.indexOf("pg_dump"));
     }
     expect(await read(".github/workflows/daily-application-backup.yml")).not.toContain("BACKUP_INCLUDE_CLASSROOM");
+  });
+});
+
+describe("the classroom backup policy (H8 option 2)", () => {
+  it("accepts only an exact true or false, and names the one pg_dump option it adds", async () => {
+    const { parseBackupPolicy, pgDumpOptionFor, CLASSROOM_EXCLUSION_OPTION } = await import("../scripts/backup-policy.mjs");
+    expect(CLASSROOM_EXCLUSION_OPTION).toBe("--exclude-table-data=public.classroom_*");
+    expect(pgDumpOptionFor(parseBackupPolicy('{ "excludeClassroomData": false }'))).toBe("");
+    expect(pgDumpOptionFor(parseBackupPolicy('{ "excludeClassroomData": true }'))).toBe(CLASSROOM_EXCLUSION_OPTION);
+    for (const bad of ["", "{", "[]", "null", '{ "excludeClassroomData": "true" }', '{ "excludeClassroomData": 1 }', '{ "excludeClassroomData": true, "other": 1 }', '{ "exclude": true }']) {
+      expect(() => parseBackupPolicy(bad), bad).toThrow(/backup-policy\.json/);
+    }
+  });
+
+  it("from the command line: nothing while off, the option once on, and a stop on a damaged file", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const path = await import("node:path");
+    const dir = await mkdtemp(path.join(tmpdir(), "ihear-policy-"));
+    try {
+      const run = async text => {
+        const file = path.join(dir, "policy.json");
+        await writeFile(file, text);
+        return spawnSync(process.execPath, ["scripts/backup-policy.mjs", "--pg-dump-option", "--file", file], { encoding: "utf8" });
+      };
+      expect(spawnSync(process.execPath, ["scripts/backup-policy.mjs", "--pg-dump-option"], { encoding: "utf8" })).toMatchObject({ status: 0, stdout: "" });
+      expect(await run('{ "excludeClassroomData": true }')).toMatchObject({ status: 0, stdout: "--exclude-table-data=public.classroom_*" });
+      const damaged = await run('{ "excludeClassroomData": "yes" }');
+      expect(damaged.status).toBe(1);
+      expect(damaged.stdout).toBe("");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("the workflows' own pg_dump line passes the option as one quoted word only when it is set", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const path = await import("node:path");
+    const dir = await mkdtemp(path.join(tmpdir(), "ihear-dumpline-"));
+    try {
+      // A file whose name the unquoted pattern would match must not change anything.
+      await writeFile(path.join(dir, "--exclude-table-data=public.classroom_x"), "");
+      for (const file of [".github/workflows/weekly-postgres-backup.yml", ".github/workflows/monthly-restore-drill.yml"]) {
+        const line = (await read(file)).split("\n").find(item => item.includes("sh -eu -c 'pg_dump "));
+        const command = /sh -eu -c '(.+)'\s*$/.exec(line)[1];
+        // pg_dump replaced by a function that prints each argument it gets on its own line.
+        const argsOf = env => spawnSync("bash", ["-euc", `pg_dump() { printf '%s\\n' "$@"; }; ${command}`], { cwd: dir, encoding: "utf8", env: { ...process.env, BACKUP_DATABASE_URL: "postgres://user@host/db", ...env } }).stdout.trim().split("\n");
+        const off = argsOf({ CLASSROOM_EXCLUSION: "" });
+        const on = argsOf({ CLASSROOM_EXCLUSION: "--exclude-table-data=public.classroom_*" });
+        expect(off.filter(arg => /classroom/.test(arg)), file).toEqual([]);
+        expect(on.filter(arg => /classroom/.test(arg)), file).toEqual(["--exclude-table-data=public.classroom_*"]);
+        expect(on.length, file).toBe(off.length + 1);
+        expect(off).toContain("--exclude-table-data=public.api_rate_limits");
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

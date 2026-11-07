@@ -6,6 +6,7 @@ data/*
 !data/layout-slots.json
 !data/academy-fields.json
 !data/classroom-entry.json
+!data/backup-policy.json
 backups/
 scheduling/
 node_modules/

@@ -28,16 +28,31 @@ jobs:
           test -n "$BACKUP_DATABASE_URL" || { echo "BACKUP_DATABASE_URL is not configured"; exit 1; }
           test -n "$BACKUP_ENCRYPTION_PASSWORD" || { echo "BACKUP_ENCRYPTION_PASSWORD is not configured"; exit 1; }
 
+      # data/backup-policy.json (H8): with excludeClassroomData true (option 2), the nine classroom
+      # tables keep their structure, constraints, indexes and row level security in this backup,
+      # but none of their rows, so this backup does not protect classroom data. False until iHear
+      # approves option 2; an invalid policy file stops the backup.
+      - name: Read the classroom backup policy
+        id: policy
+        shell: bash
+        run: |
+          option="$(node scripts/backup-policy.mjs --pg-dump-option)"
+          echo "classroom_exclusion=$option" >> "$GITHUB_OUTPUT"
+          if [ -n "$option" ]; then echo "Classroom rows are left out of this backup (H8 option 2)."; else echo "Classroom rows are included in this backup."; fi
+
       - name: Create read-only logical dump
         shell: bash
+        env:
+          CLASSROOM_EXCLUSION: ${{ steps.policy.outputs.classroom_exclusion }}
         run: |
           rm -rf backup-output
           mkdir -p backup-output
           docker run --rm \
             -e BACKUP_DATABASE_URL \
+            -e CLASSROOM_EXCLUSION \
             -v "$PWD/backup-output:/backup" \
             postgres:17-alpine \
-            sh -eu -c 'pg_dump "$BACKUP_DATABASE_URL" --format=custom --no-owner --no-privileges --schema=public --exclude-table-data=public.api_rate_limits --file=/backup/production-public.dump'
+            sh -eu -c 'pg_dump "$BACKUP_DATABASE_URL" --format=custom --no-owner --no-privileges --schema=public --exclude-table-data=public.api_rate_limits ${CLASSROOM_EXCLUSION:+"$CLASSROOM_EXCLUSION"} --file=/backup/production-public.dump'
           docker run --rm \
             -v "$PWD/backup-output:/backup" \
             postgres:17-alpine \
