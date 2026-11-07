@@ -7,7 +7,7 @@ import {
   type ClassroomMediaAdapter, type ConnectionState, type DeviceKind, type DeviceProblem, type DeviceState, type MediaEvent, type MediaSystemCheck, type SyntheticScenario,
 } from "../../../lib/classroom-media";
 import { classroomDeviceOf, deviceLimits, type CapabilityName, type ClassroomDevice } from "../../../lib/classroom-capabilities";
-import { rejoinRoom, requestJoin, type JoinedSession } from "../../../lib/classroom-join-client";
+import { entryEndedBy, rejoinRoom, requestJoin, type JoinedSession } from "../../../lib/classroom-join-client";
 import { browserClassroomLocale, CLASSROOM_LOCALES, htmlLangOf, intlLocaleOf, LOCALE_NAMES, type ClassroomLocale } from "../../../lib/classroom-locale";
 import { roomCopy as copy, vendorCopy } from "./classroom-copy";
 
@@ -154,9 +154,17 @@ export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: stri
         return HEARTBEAT_MS;
       }
       const data = await response.json().catch(() => null);
+      // The lesson was cancelled: leave the room (this page's own leaving; see entryEndedBy).
+      const ended = entryEndedBy({ status: response.status, code: data?.code }, { role: "tutor", hasKey: false });
+      if (ended) {
+        setReason(ended);
+        setPhase("blocked");
+        return HEARTBEAT_MS;
+      }
       if (!response.ok || !data?.ok) {
         setHostProblem("unstable");
-        return RETRY_MS;
+        // A refusal or a rate limit is not helped by asking again at once.
+        return response.status === 403 || response.status === 429 ? HEARTBEAT_MS : RETRY_MS;
       }
       setHostProblem("");
       const status = String(data.recording?.status ?? "");
@@ -269,6 +277,14 @@ export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: stri
           body: JSON.stringify(joinKey ? { key: joinKey } : {}),
         });
         const data = await response.json().catch(() => null);
+        // The lesson was cancelled, or this link was revoked or replaced: leave the room.
+        const ended = entryEndedBy({ status: response.status, code: data?.code }, { role: "student", hasKey: Boolean(joinKey) });
+        if (ended) {
+          stopped = true;
+          setReason(ended);
+          setPhase("blocked");
+          return;
+        }
         if (response.ok && data?.ok) {
           setStatusProblem(false);
           setRecording({ decided: data.recordingDecided === true, allowed: data.recordingAllowed === true, status: String(data.recording?.status ?? ""), basis: String(data.recording?.basis ?? "") });

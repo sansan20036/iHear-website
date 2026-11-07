@@ -98,8 +98,16 @@ export type LessonAccessAction = (typeof LESSON_ACCESS_ACTIONS)[number];
 // An owner's change to who can enter a lesson. Cancelling stops the link and the tutor's
 // sign-in alike; revoking replaces the student's key with one nobody is given; reissuing replaces
 // it with a new one, shown in this answer only. Either way the old link gets no session token
-// from then on: entering, reconnecting and the status all go through the same check. Someone
-// already in the room keeps the token they hold (at most 30 minutes) until they leave.
+// from then on: entering, reconnecting and the status all go through the same check.
+//
+// It does not disconnect anyone at once (2026-11-08). The classroom page leaves the room by
+// itself when its next check is refused: the student's status every 15 seconds, the tutor's
+// report every 10–30 seconds on a cancel. A page that does not cooperate stays in the room until
+// the session ends, and a session token handed out before the change still lets someone back in
+// until it expires (Zoom's shortest is 30 minutes). Zoom's REST API has no call to remove one
+// person from a Video SDK session, and ending the session needs Zoom's session id, which the
+// server learns only from webhooks. A reissued link names the same participant, so the room
+// cannot tell the old link from the new one.
 export async function changeLessonAccess({ store, lessonId, action, studentCode }: {
   store: ClassroomStore; lessonId: string; action: unknown; studentCode?: unknown;
 }) {
@@ -245,12 +253,24 @@ export async function classroomStatus({ store, lessonId, key, sessionEmail, now 
   };
 }
 
+// The tutor's page reports while its room can be open: from when the door opens until an hour
+// after it closes. A lesson may run over, and its last "left the room" may come late; a token
+// handed out at the last moment lasts 30 minutes, which the hour covers. Reports outside that
+// time, or for a cancelled lesson, are refused before anything is stored, so they never set off
+// the lesson's work (and its calls to the provider). Told the lesson is cancelled, the tutor's
+// page leaves the room.
+export const HOST_REPORT_AFTER_MS = 60 * 60_000;
+
 export async function recordHostReport({ store, provider, drive, lessonId, sessionEmail, report, now }: {
   store: ClassroomStore; provider: ClassroomProvider; drive: ClassroomDrive; lessonId: string; sessionEmail: string; report: unknown; now: number;
 }) {
   const lesson = await store.lesson(lessonId);
   const tutor = lesson?.participants.find((entry) => entry.role === "tutor");
   if (!lesson || !tutor || !sessionEmail || tutor.staffEmail !== sessionEmail) return { status: 403, body: { error: "Only this lesson's tutor can report", code: "FORBIDDEN" } };
+  if (lesson.cancelled) return { status: 403, body: { error: "The lesson is cancelled", code: "LESSON_CANCELLED" } };
+  const opensAt = Date.parse(lesson.startsAt) - JOIN_WINDOW_BEFORE_MS;
+  const lastReportAt = Date.parse(lesson.endsAt) + JOIN_WINDOW_AFTER_MS + HOST_REPORT_AFTER_MS;
+  if (!(now >= opensAt && now <= lastReportAt)) return { status: 403, body: { error: "The classroom is not open now", code: "OUTSIDE_JOIN_WINDOW" } };
   const result = await ingestHostReport({ report, lessonId, tutorId: tutor.id, now, store });
   if (result.status !== 200) return result;
   await runClassroomTick({ store, provider, drive, now, lessonIds: [lessonId], workerId: `host-${lessonId}` });

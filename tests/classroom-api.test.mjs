@@ -46,6 +46,7 @@ const statusRoute = await import("../app/api/classroom/[lessonId]/status/route")
 const webhook = await import("../app/api/recordings/zoom/webhook/route");
 const scheduledRoute = await import("../app/api/classroom/scheduled-tick/route");
 const { classroomStore } = await import("../lib/classroom-store");
+const { entryEndedBy } = await import("../lib/classroom-join-client");
 
 // Planted in the synthetic Zoom payloads; none of them may be stored or shown.
 const PLANTED = ["Synthetic Display Name", "+886-2-0000-0000", "example.invalid", "synthetic-download-token-not-real", "203.0.113.7"];
@@ -322,9 +323,12 @@ describe("classroom access", () => {
     expect(await hostReport(lesson.lessonId, { type: "heartbeat" }, null)).toMatchObject({ status: 401, body: { code: "SIGN_IN_REQUIRED" } });
     expect(await hostReport(lesson.lessonId, { type: "heartbeat" }, "someone@example.test")).toMatchObject({ status: 403, body: { code: "FORBIDDEN" } });
     expect((await hostReport(lesson.lessonId, { type: "something_else" })).status).toBe(400);
-    // Hours before the lesson nothing is decided yet, which is not the same as "not recorded".
+    // Before the door opens no page can be in the room, so a report is refused and stores nothing
+    // (2026-11-08; "not decided yet" before the decision is checked through the status above).
     at("2026-11-20T05:00:00Z");
-    expect(await hostReport(lesson.lessonId, { type: "heartbeat" })).toMatchObject({ status: 200, body: { ok: true, recordingAllowed: false, recordingDecided: false } });
+    const before = JSON.stringify(await classroomStore().eventsFor([lesson.lessonId]));
+    expect(await hostReport(lesson.lessonId, { type: "heartbeat" })).toMatchObject({ status: 403, body: { code: "OUTSIDE_JOIN_WINDOW" } });
+    expect(JSON.stringify(await classroomStore().eventsFor([lesson.lessonId]))).toBe(before);
     at("2026-11-20T07:50:00Z");
     expect(await hostReport(lesson.lessonId, { type: "heartbeat" })).toMatchObject({ status: 200, body: { ok: true, recordingAllowed: false, recordingDecided: true, recording: { status: "BLOCKED" } } });
   });
@@ -807,5 +811,195 @@ describe("who may preview the classroom entry (/api/classroom/entry)", () => {
     enforceRateLimit.mockResolvedValueOnce({ limited: true, response: new Response(JSON.stringify({ error: "Too many requests" }), { status: 429 }) });
     expect((await entry(OWNER, { isAdmin: true })).status).toBe(429);
     expect(enforceRateLimit).toHaveBeenCalledWith(expect.any(Request), expect.objectContaining({ scope: "classroom-entry" }));
+  });
+});
+
+// P3-Auth (2026-11-08): every role against every classroom route, tampered links, the time
+// window, the tutor's reports, one link on two devices, and what cancelling or revoking does and
+// does not do. Synthetic identities (example.test) only; the synthetic provider stands in for Zoom.
+describe("P3-Auth: roles, links and abuse", () => {
+  const STRANGER = "someone@example.test";
+  const OTHER_TUTOR = "other-tutor@example.test";
+  const limited = () => ({ limited: true, response: new Response(JSON.stringify({ error: "Too many requests", code: "RATE_LIMITED" }), { status: 429 }) });
+  const rawPost = (pathname, body, headers = {}) => new Request(`${ORIGIN}${pathname}`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
+  const joinWith = async (lessonId, body) => { signedIn(null); return read(await joinRoute.POST(post(`/api/classroom/${lessonId}/join`, body), params(lessonId))); };
+  const asEditorToo = () => findAdminAccount.mockImplementation(async email => (email === EDITOR ? { email: EDITOR, enabled: true } : null));
+
+  test("every role against every classroom route: only the lesson's own people enter, only owners manage, and refusals issue nothing", async () => {
+    at("2026-11-23T01:50:00Z");
+    const lesson = await createLesson({ date: "2026-11-23", code: "TEST-A1", time: "10:00", tutorCode: "TEST-AT1", studentCode: "TEST-AS1" });
+    const other = await createLesson({ date: "2026-11-23", code: "TEST-A2", time: "10:00", tutorCode: "TEST-AT2", studentCode: "TEST-AS2", tutorEmail: OTHER_TUTOR });
+    asEditorToo();
+    const manage = email => lessonAccess(lesson.lessonId, { action: "drop" }, { email });
+    // Signed out, a stranger, an editor, an owner who is not the tutor, and the other lesson's
+    // tutor and student: none of them enters, reads the room or reports for it.
+    const outsiders = [
+      { who: "signed out", email: null, host: 401, manage: 403 },
+      { who: "stranger", email: STRANGER, host: 403, manage: 403 },
+      { who: "editor", email: EDITOR, host: 403, manage: 403 },
+      { who: "owner", email: OWNER, host: 403, manage: 400 },
+      { who: "other tutor", email: OTHER_TUTOR, host: 403, manage: 403 },
+      { who: "other student", key: other.key, email: null, host: 401, manage: 403 },
+    ];
+    for (const person of outsiders) {
+      const entered = await join(lesson.lessonId, { key: person.key, email: person.email });
+      expect(entered, person.who).toMatchObject({ status: 403, body: { code: "NOT_ON_ROSTER" } });
+      expect(Object.keys(entered.body).sort(), person.who).toEqual(["code", "error"]);
+      expect((await roomStatus(lesson.lessonId, { key: person.key, email: person.email })).status, person.who).toBe(403);
+      expect((await hostReport(lesson.lessonId, { type: "heartbeat" }, person.email)).status, person.who).toBe(person.host);
+      // Owners get past the permission check (400: the action is not one of theirs to name).
+      expect((await manage(person.email)).status, person.who).toBe(person.manage);
+    }
+    expect(await classroomStore().listJoinTokens(lesson.lessonId)).toEqual([]);
+    // The lesson's own tutor and student enter as themselves and nothing more.
+    expect(await join(lesson.lessonId, { email: TUTOR })).toMatchObject({ status: 200, body: { role: "tutor", participantCode: "TEST-AT1" } });
+    expect(await join(lesson.lessonId, { key: lesson.key })).toMatchObject({ status: 200, body: { role: "student", participantCode: "TEST-AS1" } });
+    expect((await hostReport(lesson.lessonId, { type: "heartbeat" })).status).toBe(200);
+    expect((await roomStatus(lesson.lessonId, { key: lesson.key })).status).toBe(200);
+    // The student's key is no sign-in: it cannot report for the tutor.
+    signedIn(null);
+    expect((await read(await hostRoute.POST(post(`/api/classroom/${lesson.lessonId}/host-events`, { type: "heartbeat", key: lesson.key }), params(lesson.lessonId)))).status).toBe(401);
+    // Neither manages the lesson.
+    for (const email of [TUTOR, null]) expect((await manage(email)).status).toBe(403);
+    expect((await classroomStore().listJoinTokens(lesson.lessonId)).length).toBe(2);
+  });
+
+  test("a tampered, shortened, lengthened, padded or wrongly typed key, or a changed lesson id, gets nothing and leaves no token", async () => {
+    at("2026-11-23T02:50:00Z");
+    const lesson = await createLesson({ date: "2026-11-23", code: "TEST-A3", time: "11:00", tutorCode: "TEST-AT3", studentCode: "TEST-AS3" });
+    const flipped = `${lesson.key.slice(0, -1)}${lesson.key.endsWith("A") ? "B" : "A"}`;
+    const keys = [flipped, lesson.key.slice(0, -1), `${lesson.key}x`, ` ${lesson.key}`, `${lesson.key}${"x".repeat(300)}`, lesson.key.toUpperCase(), hashOf(lesson.key), [lesson.key], { k: lesson.key }, 12345];
+    for (const key of keys) {
+      expect(await joinWith(lesson.lessonId, { key }), String(key).slice(0, 12)).toMatchObject({ status: 403, body: { code: "NOT_ON_ROSTER" } });
+    }
+    expect(await joinWith(lesson.lessonId.toUpperCase(), { key: lesson.key })).toMatchObject({ status: 404, body: { code: "LESSON_NOT_FOUND" } });
+    expect(await joinWith(`${lesson.lessonId}0`, { key: lesson.key })).toMatchObject({ status: 404 });
+    expect(await classroomStore().listJoinTokens(lesson.lessonId)).toEqual([]);
+    expect(await joinWith(lesson.lessonId, { key: lesson.key })).toMatchObject({ status: 200 });
+  });
+
+  test("the door opens 15 minutes before and closes 15 minutes after; the last token handed out runs 30 minutes beyond", async () => {
+    // 12:00–13:00 Taipei is 04:00–05:00Z: the door is open from 03:45:00Z to 05:15:00Z.
+    at("2026-11-23T03:00:00Z");
+    const lesson = await createLesson({ date: "2026-11-23", code: "TEST-A4", time: "12:00", tutorCode: "TEST-AT4", studentCode: "TEST-AS4" });
+    at("2026-11-23T03:44:59Z");
+    expect(await join(lesson.lessonId, { key: lesson.key })).toMatchObject({ status: 403, body: { code: "OUTSIDE_JOIN_WINDOW" } });
+    at("2026-11-23T03:45:00Z");
+    expect((await join(lesson.lessonId, { key: lesson.key })).status).toBe(200);
+    at("2026-11-23T05:15:00Z");
+    const last = await join(lesson.lessonId, { email: TUTOR });
+    expect(last.status).toBe(200);
+    const claims = claimsOf(last.body.session.token);
+    expect(claims.exp - claims.iat).toBe(1800);
+    expect(claims.exp * 1000).toBe(Date.parse("2026-11-23T05:45:00Z"));
+    at("2026-11-23T05:15:01Z");
+    for (const who of [{ key: lesson.key }, { email: TUTOR }]) expect(await join(lesson.lessonId, who)).toMatchObject({ status: 403, body: { code: "OUTSIDE_JOIN_WINDOW" } });
+  });
+
+  test("tutor reports: rate limited per account and lesson; refused signed out, cross-site, cancelled or outside their hours, and a refusal stores nothing and calls no provider", async () => {
+    // 13:00–14:00 Taipei is 05:00–06:00Z: reports are taken from 04:45Z to 07:15Z.
+    at("2026-11-23T04:50:00Z");
+    const lesson = await createLesson({ date: "2026-11-23", code: "TEST-A5", time: "13:00", tutorCode: "TEST-AT5", studentCode: "TEST-AS5" });
+    const cancelled = await createLesson({ date: "2026-11-23", code: "TEST-A6", time: "13:00", tutorCode: "TEST-AT6", studentCode: "TEST-AS6" });
+    const snapshot = async lessonId => JSON.stringify([await classroomStore().eventsFor([lessonId]), await syntheticCalls(lessonId)]);
+    expect((await hostReport(lesson.lessonId, { type: "heartbeat" })).status).toBe(200);
+    expect(enforceRateLimit).toHaveBeenCalledWith(expect.any(Request), expect.objectContaining({ scope: "classroom-host", limit: 60, windowSeconds: 60, identifier: `${TUTOR}:${lesson.lessonId}` }));
+    // Signed out: refused before the limit or the store is touched.
+    enforceRateLimit.mockClear();
+    expect((await hostReport(lesson.lessonId, { type: "heartbeat" }, null)).status).toBe(401);
+    expect(enforceRateLimit).not.toHaveBeenCalled();
+    signedIn(TUTOR);
+    expect((await hostRoute.POST(post(`/api/classroom/${lesson.lessonId}/host-events`, { type: "heartbeat" }, { origin: "https://evil.example" }), params(lesson.lessonId))).status).toBe(403);
+    // Over the limit: 429, nothing stored and no tick.
+    let before = await snapshot(lesson.lessonId);
+    enforceRateLimit.mockResolvedValueOnce(limited());
+    expect(await hostReport(lesson.lessonId, { type: "connection", state: "Connected" })).toMatchObject({ status: 429, body: { code: "RATE_LIMITED" } });
+    expect(await snapshot(lesson.lessonId)).toBe(before);
+    // A cancelled lesson takes no report; a stranger is told only that they cannot report.
+    expect((await hostReport(cancelled.lessonId, { type: "heartbeat" })).status).toBe(200);
+    expect((await lessonAccess(cancelled.lessonId, { action: "cancel" })).status).toBe(200);
+    before = await snapshot(cancelled.lessonId);
+    expect(await hostReport(cancelled.lessonId, { type: "connection", state: "Connected" })).toMatchObject({ status: 403, body: { code: "LESSON_CANCELLED" } });
+    expect(await hostReport(cancelled.lessonId, { type: "heartbeat" }, STRANGER)).toMatchObject({ status: 403, body: { code: "FORBIDDEN" } });
+    expect(await snapshot(cancelled.lessonId)).toBe(before);
+    // Up to an hour after the door closes (06:15Z) the page may still report; after that, not.
+    at("2026-11-23T07:15:00Z");
+    expect((await hostReport(lesson.lessonId, { type: "connection", state: "Closed" })).status).toBe(200);
+    at("2026-11-23T07:15:01Z");
+    before = await snapshot(lesson.lessonId);
+    expect(await hostReport(lesson.lessonId, { type: "connection", state: "Closed" })).toMatchObject({ status: 403, body: { code: "OUTSIDE_JOIN_WINDOW" } });
+    expect(await snapshot(lesson.lessonId)).toBe(before);
+  });
+
+  test("one personal link on two devices: both enter as the same person; after a revoke both are refused and told to leave, but the server disconnects no one", async () => {
+    at("2026-11-23T06:50:00Z");
+    const lesson = await createLesson({ date: "2026-11-23", code: "TEST-A7", time: "15:00", tutorCode: "TEST-AT7", studentCode: "TEST-AS7" });
+    const phone = await join(lesson.lessonId, { key: lesson.key });
+    at("2026-11-23T06:50:05Z");
+    const laptop = await join(lesson.lessonId, { key: lesson.key });
+    for (const device of [phone, laptop]) expect(device).toMatchObject({ status: 200, body: { role: "student", participantCode: "TEST-AS7" } });
+    const [first, second] = [claimsOf(phone.body.session.token), claimsOf(laptop.body.session.token)];
+    // The room sees one person twice: the same user_key, two different tokens, both recorded.
+    expect(first.user_key).toBe(second.user_key);
+    expect(phone.body.session.token).not.toBe(laptop.body.session.token);
+    expect((await classroomStore().listJoinTokens(lesson.lessonId)).filter(token => token.participantId === first.user_key)).toHaveLength(2);
+    expect((await lessonAccess(lesson.lessonId, { action: "revoke_link" })).status).toBe(200);
+    for (let device = 0; device < 2; device += 1) {
+      const answer = await roomStatus(lesson.lessonId, { key: lesson.key });
+      expect(answer).toMatchObject({ status: 403, body: { code: "NOT_ON_ROSTER" } });
+      expect(entryEndedBy({ status: answer.status, code: answer.body.code }, { role: "student", hasKey: true })).toBe("LINK_REVOKED");
+    }
+    // Nothing reaches the provider, and the tokens already handed out still run to their expiry.
+    expect(await syntheticCalls(lesson.lessonId)).toEqual([]);
+    expect(second.exp * 1000).toBeGreaterThan(Date.now());
+  });
+
+  test("cancelling with both people in the room: no provider call and no claim of a disconnection; both pages are told to leave at their next check", async () => {
+    at("2026-11-23T07:50:00Z");
+    const lesson = await createLesson({ date: "2026-11-23", code: "TEST-A8", time: "16:00", tutorCode: "TEST-AT8", studentCode: "TEST-AS8" });
+    const student = await join(lesson.lessonId, { key: lesson.key });
+    expect((await join(lesson.lessonId, { email: TUTOR })).status).toBe(200);
+    expect((await hostReport(lesson.lessonId, { type: "heartbeat" })).status).toBe(200);
+    const calls = await syntheticCalls(lesson.lessonId);
+    const answer = await lessonAccess(lesson.lessonId, { action: "cancel" });
+    expect(answer).toEqual(expect.objectContaining({ status: 200, body: { ok: true, cancelled: true, changed: true } }));
+    expect(await syntheticCalls(lesson.lessonId)).toEqual(calls);
+    const status = await roomStatus(lesson.lessonId, { key: lesson.key });
+    expect(entryEndedBy({ status: status.status, code: status.body.code }, { role: "student", hasKey: true })).toBe("LESSON_CANCELLED");
+    const report = await hostReport(lesson.lessonId, { type: "heartbeat" });
+    expect(entryEndedBy({ status: report.status, code: report.body.code }, { role: "tutor", hasKey: false })).toBe("LESSON_CANCELLED");
+    expect(claimsOf(student.body.session.token).exp * 1000).toBeGreaterThan(Date.now());
+  });
+
+  test("answers carry nothing secret: each person gets only their own token; no signing secret, e-mail, key or hash anywhere", async () => {
+    at("2026-11-23T08:50:00Z");
+    const lesson = await createLesson({ date: "2026-11-23", code: "TEST-A9", time: "17:00", tutorCode: "TEST-AT9", studentCode: "TEST-AS9" });
+    const answers = {
+      student: await join(lesson.lessonId, { key: lesson.key }),
+      tutor: await join(lesson.lessonId, { email: TUTOR }),
+      status: await roomStatus(lesson.lessonId, { key: lesson.key }),
+      report: await hostReport(lesson.lessonId, { type: "heartbeat" }),
+      refused: await join(lesson.lessonId, { key: "not-the-key" }),
+    };
+    for (const [name, answer] of Object.entries(answers)) {
+      const text = JSON.stringify(answer.body);
+      for (const secret of ["classroom-token-test-only", SECRET, lesson.key, hashOf(lesson.key), "@", "staffEmail", "joinKeyHash"]) expect(text, `${name}: ${secret}`).not.toContain(secret);
+    }
+    expect(Object.keys(claimsOf(answers.student.body.session.token)).sort()).toEqual(["app_key", "exp", "iat", "role_type", "session_key", "tpc", "user_key", "version"]);
+    expect(Object.keys(claimsOf(answers.tutor.body.session.token)).sort()).toEqual(["app_key", "cloud_recording_option", "exp", "iat", "role_type", "session_key", "tpc", "user_key", "version"]);
+    expect(claimsOf(answers.student.body.session.token).user_key).not.toBe(claimsOf(answers.tutor.body.session.token).user_key);
+  });
+
+  test("a request without an Origin header is not a way around anything: it still needs the sign-in or the personal key", async () => {
+    at("2026-11-23T09:50:00Z");
+    const created = await createLesson({ date: "2026-11-23", code: "TEST-A10", time: "18:00", tutorCode: "TEST-AT10", studentCode: "TEST-AS10" });
+    const lesson = await classroomStore().lesson(created.lessonId);
+    signedIn(null);
+    expect((await joinRoute.POST(rawPost(`/api/classroom/${lesson.id}/join`, {}), params(lesson.id))).status).toBe(403);
+    expect((await hostRoute.POST(rawPost(`/api/classroom/${lesson.id}/host-events`, { type: "heartbeat" }), params(lesson.id))).status).toBe(401);
+    const route = await import("../app/api/admin/classrooms/[lessonId]/route");
+    const patch = new Request(`${ORIGIN}/api/admin/classrooms/${lesson.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "cancel" }) });
+    expect((await route.PATCH(patch, params(lesson.id))).status).toBe(403);
+    expect((await classroomStore().lesson(lesson.id)).cancelled).toBe(false);
   });
 });

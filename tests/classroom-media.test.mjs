@@ -3,7 +3,7 @@ import { describe, expect, test, vi } from "vitest";
 import {
   createMediaAdapter, hostReportFor, MEDIA_PROVIDERS, MediaAdapterUnavailableError, SYNTHETIC_SCENARIOS, SyntheticMediaAdapter,
 } from "../lib/classroom-media";
-import { rejoinRoom, requestJoin } from "../lib/classroom-join-client";
+import { entryEndedBy, rejoinRoom, requestJoin } from "../lib/classroom-join-client";
 
 // The browser side of the classroom's video provider, with the synthetic stand-in only. Passing
 // shows the page gets the states a video SDK reports, and the tutor's reports follow from them.
@@ -204,5 +204,35 @@ describe("reconnecting asks the join check again", () => {
     expect(await rejoinRoom(adapter, ask, room)).toEqual({ ok: false, code: "CONNECT_FAILED" });
     expect((await rejoinRoom(adapter, ask, room)).ok).toBe(true);
     expect(joins.map(join => join.sessionToken)).toEqual(["token-1", "token-2"]);
+  });
+});
+
+// P3-Auth (2026-11-08): when the page leaves the room by itself. Only the server's refusal of
+// this person counts; anything that may pass (network, 503, rate limit, the door closing while a
+// lesson runs over) keeps the lesson going. Leaving relies on the page cooperating.
+describe("leaving the room when the entry has ended", () => {
+  const student = { role: "student", hasKey: true };
+  const tutor = { role: "tutor", hasKey: false };
+
+  test("the student leaves when the lesson is cancelled or the personal link was revoked or replaced", () => {
+    expect(entryEndedBy({ status: 403, code: "LESSON_CANCELLED" }, student)).toBe("LESSON_CANCELLED");
+    expect(entryEndedBy({ status: 403, code: "NOT_ON_ROSTER" }, student)).toBe("LINK_REVOKED");
+    expect(entryEndedBy({ status: 403, code: "NOT_ON_ROSTER" }, { role: "student", hasKey: false })).toBe("NOT_ON_ROSTER");
+    expect(entryEndedBy({ status: 403, code: "IDENTITY_UNVERIFIED" }, student)).toBe("IDENTITY_UNVERIFIED");
+    expect(entryEndedBy({ status: 404, code: "LESSON_NOT_FOUND" }, student)).toBe("LESSON_NOT_FOUND");
+  });
+
+  test("the tutor leaves only when the lesson is cancelled", () => {
+    expect(entryEndedBy({ status: 403, code: "LESSON_CANCELLED" }, tutor)).toBe("LESSON_CANCELLED");
+    for (const code of ["FORBIDDEN", "OUTSIDE_JOIN_WINDOW", "NOT_ON_ROSTER"]) expect(entryEndedBy({ status: 403, code }, tutor)).toBeNull();
+  });
+
+  test("nothing that may pass makes anyone leave", () => {
+    const passing = [
+      { status: 200, code: undefined }, { status: 403, code: "OUTSIDE_JOIN_WINDOW" }, { status: 429, code: "RATE_LIMITED" },
+      { status: 503, code: "PROVIDER_UNAVAILABLE" }, { status: 503, code: "LESSON_CANCELLED" }, { status: 0, code: undefined },
+      { status: 403, code: undefined }, { status: 403, code: { toString: () => "LESSON_CANCELLED" } },
+    ];
+    for (const answer of passing) for (const person of [student, tutor]) expect(entryEndedBy(answer, person), JSON.stringify(answer)).toBeNull();
   });
 });

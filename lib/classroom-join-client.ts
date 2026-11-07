@@ -32,6 +32,23 @@ export async function requestJoin(lessonId: string, joinKey: string | null, fetc
   }
 }
 
+// Whether an answer from the room's regular check (the student's status, the tutor's report) says
+// this person may no longer be in the room, and why; null otherwise (2026-11-08). The page then
+// leaves the room. Only a refusal by the server counts: a slow network, a 503 or a rate limit
+// never does, nor does the entry window closing (a lesson may run over). The student leaves when
+// the lesson is cancelled or the personal link was revoked or replaced (LINK_REVOKED); the tutor
+// when the lesson is cancelled. This relies on the page cooperating: it is not a disconnection the
+// server can enforce.
+const STUDENT_ENTRY_ENDED = new Set(["LESSON_CANCELLED", "LESSON_NOT_FOUND", "NOT_ON_ROSTER", "IDENTITY_UNVERIFIED"]);
+
+export function entryEndedBy(answer: { status: number; code?: unknown }, person: { role: MediaRole; hasKey: boolean }): string | null {
+  if (answer.status !== 403 && answer.status !== 404) return null;
+  const code = typeof answer.code === "string" ? answer.code : "";
+  if (person.role === "tutor") return code === "LESSON_CANCELLED" ? code : null;
+  if (!STUDENT_ENTRY_ENDED.has(code)) return null;
+  return code === "NOT_ON_ROSTER" && person.hasKey ? "LINK_REVOKED" : code;
+}
+
 // One reconnect per room at a time: a second press while one is running gets the same result.
 const rejoining = new WeakMap<ClassroomMediaAdapter, Promise<RejoinResult>>();
 
