@@ -26,6 +26,9 @@ export const TIMING = Object.freeze({
   staleAfterMs: 5 * 60_000,
   tutorAbsentStopMs: 5 * 60_000,
   tutorAbsentEndMs: 15 * 60_000,
+  // Recording stops this long after the lesson's scheduled end (a grace for the last words), and
+  // never starts after it.
+  lessonEndStopMs: 5 * 60_000,
   overrunAfterMs: 15 * 60_000,
   fileOverdueWarnMs: 30 * 60_000,
   fileOverdueErrorMs: 6 * 60 * 60_000,
@@ -36,10 +39,11 @@ export const TIMING = Object.freeze({
   clockSkewMs: 2 * 60_000,
 });
 
-const CONFIRMING_SOURCES = new Set(['zoom_webhook', 'zoom_api', 'host_sdk']);
-const SOURCE_RANK = { zoom_webhook: 0, zoom_api: 1, host_sdk: 2, server: 3, p1: 4 };
+// What the vendor itself reports confirms; a vendor's callback ranks with Zoom's webhook.
+const CONFIRMING_SOURCES = new Set(['zoom_webhook', 'lcic_callback', 'zoom_api', 'host_sdk']);
+const SOURCE_RANK = { zoom_webhook: 0, lcic_callback: 0, zoom_api: 1, host_sdk: 2, server: 3, p1: 4 };
 const TYPE_ORDER = [
-  'server.consent_changed', 'server.recording_eligibility', 'server.consent_withdrawn', 'session.started', 'session.user_joined', 'host.user_added',
+  'server.consent_changed', 'server.recording_eligibility', 'server.consent_withdrawn', 'server.emergency_stop', 'server.lesson_cancelled', 'session.started', 'session.user_joined', 'host.user_added',
   'host.heartbeat', 'host.connection', 'api.snapshot', 'server.start_requested', 'server.start_response',
   'session.recording_started', 'session.recording_resumed', 'host.recording_status', 'session.recording_paused',
   'server.stop_requested', 'session.recording_stopped', 'host.participant_failover', 'session.user_left', 'host.user_removed',
@@ -77,8 +81,10 @@ function analyze(lesson, events, now) {
   const tutor = [...people.values()].find(entry => entry.role === 'tutor');
   const f = {
     sessions: new Map(), lastConfirmedAt: null, recording: [], startRequests: [], startResponses: [], stopRequests: [],
-    endRequests: [], eligibility: null, consentChangedAt: null, withdrawal: null, unknown: [], joinBlocked: 0, alerts: [], completed: new Map(),
-    completedAt: null, filings: new Map(), partOrderAt: null, lastSnapshotAt: null, snapshotPresent: new Set(), performed: new Set(),
+    endRequests: [], eligibility: null, consentChangedAt: null, withdrawal: null, emergency: null, unknown: [], joinBlocked: 0, alerts: [], completed: new Map(),
+    completedAt: null, filings: new Map(), partOrderAt: null, refusedAt: null, sessionRejectedAt: null, lastSnapshotAt: null, snapshotPresent: new Set(), performed: new Set(),
+    // Cancelled: the lesson's own flag, and the recorded cancellation (with its time) once stored.
+    cancelledFlag: lesson.cancelled === true, cancellation: null,
   };
   const session = id => {
     const key = id || 'session';
@@ -147,6 +153,15 @@ function analyze(lesson, events, now) {
       case 'server.consent_withdrawn':
         if (!f.withdrawal) f.withdrawal = { at };
         break;
+      // An administrator pressed the emergency stop: the lesson is never recorded again.
+      case 'server.emergency_stop':
+        if (!f.emergency) f.emergency = { at };
+        break;
+      // The lesson was cancelled (P3's cancel, or the tick noticing the lesson's flag): the
+      // lesson is never recorded again, and any recording is stopped like an emergency stop.
+      case 'server.lesson_cancelled':
+        if (!f.cancellation) f.cancellation = { at };
+        break;
       case 'server.start_requested':
         f.startRequests.push({ attempt: event.attempt, at });
         break;
@@ -162,12 +177,21 @@ function analyze(lesson, events, now) {
       case 'server.join_blocked':
         f.joinBlocked += 1;
         break;
-      case 'p1.filing':
-        // A resumed filing is simply pending again.
-        f.filings.set(event.providerFileId, { status: event.status === 'RESUMED' ? 'PENDING' : event.status, reason: event.reason ?? null, at });
+      case 'p1.filing': {
+        // A resumed filing is simply pending again. Where a copy went (its name, folder, size,
+        // checksum and Drive id) comes with the final outcome and is kept with it.
+        const placed = event.driveFileId ? { name: event.name ?? null, folder: event.folder ?? null, size: event.size ?? null, md5: event.md5 ?? null, driveFileId: event.driveFileId, destination: event.destination ?? null } : {};
+        f.filings.set(event.providerFileId, { status: event.status === 'RESUMED' ? 'PENDING' : event.status, reason: event.reason ?? null, at, ...placed });
         break;
+      }
       case 'p1.part_order':
         f.partOrderAt = earliest(f.partOrderAt, at);
+        break;
+      case 'server.recording_refused':
+        f.refusedAt = earliest(f.refusedAt, at);
+        break;
+      case 'server.session_rejected':
+        f.sessionRejectedAt = earliest(f.sessionRejectedAt, at);
         break;
       default:
         break;
@@ -201,6 +225,9 @@ function analyze(lesson, events, now) {
     recording,
     filing,
     withdrawal: f.withdrawal ? { at: f.withdrawal.at, captureStopped: !captureMayBeOn(f) } : null,
+    emergency: f.emergency ? { at: f.emergency.at, stopState: emergencyStopState(f) } : null,
+    // `at` is null while the cancellation is only the lesson's flag, not yet recorded.
+    cancellation: f.cancellation || f.cancelledFlag ? { at: f.cancellation?.at ?? null, stopState: emergencyStopState(f) } : null,
     anomalies,
     dataState: { value: errors ? 'ANOMALY' : quiet || waiting || inferred || overdue ? 'DELAYED' : 'REALTIME', lastConfirmedAt: f.lastConfirmedAt },
   };
@@ -273,6 +300,17 @@ function captureMayBeOn(f) {
   return !!accepted && !endedAfter(accepted.at);
 }
 
+// After an emergency stop, what is known, never more:
+//   CONFIRMED           Zoom said the recording stopped (or the session ended) — a confirmation
+//   WAITING             recording may still be on: the stop is asked for, Zoom has not confirmed
+//   NO_RECORDING_KNOWN  nothing was known to be recording; that is not a confirmation either
+function emergencyStopState(f) {
+  const last = f.recording[f.recording.length - 1];
+  const anyCapture = Boolean(last) || f.startResponses.some(response => response.ok);
+  if (captureMayBeOn(f) || last?.status === 'Paused') return 'WAITING';
+  return anyCapture ? 'CONFIRMED' : 'NO_RECORDING_KNOWN';
+}
+
 function recordingOf(f, phase, now) {
   const last = f.recording[f.recording.length - 1];
   if (f.completed.size) return { status: 'COMPLETED', basis: 'confirmed', since: f.completedAt, source: 'zoom' };
@@ -291,6 +329,8 @@ function recordingOf(f, phase, now) {
     }
     return { status: last.status === 'Paused' ? 'PAUSED' : 'STOPPED', ...shared };
   }
+  if (f.emergency) return { status: 'BLOCKED', basis: 'confirmed', since: f.emergency.at, reason: 'EMERGENCY_STOP' };
+  if (f.cancellation || f.cancelledFlag) return { status: 'BLOCKED', basis: 'confirmed', since: f.cancellation?.at ?? null, reason: 'LESSON_CANCELLED' };
   if (!f.eligibility) return { status: 'NOT_REQUESTED', basis: 'confirmed', since: null };
   if (!f.eligibility.eligible) return { status: 'BLOCKED', basis: 'confirmed', since: f.eligibility.at, reason: f.eligibility.reason };
   if (f.withdrawal) return { status: 'BLOCKED', basis: 'confirmed', since: f.withdrawal.at, reason: 'CONSENT_WITHDRAWN' };
@@ -313,7 +353,7 @@ function recordingOf(f, phase, now) {
 
 function filingOf(f) {
   const kept = [...f.completed.values()].filter(isKeptRecording);
-  if (!kept.length) return { status: 'NONE', files: 0, stored: 0 };
+  if (!kept.length) return { status: 'NONE', files: 0, stored: 0, items: [] };
   const entries = kept.map(file => f.filings.get(file.providerFileId) ?? { status: 'PENDING' });
   const statuses = entries.map(entry => entry.status);
   const stored = statuses.filter(status => status === 'STORED').length;
@@ -322,11 +362,30 @@ function filingOf(f) {
   else if (statuses.includes('BLOCKED')) status = 'BLOCKED';
   else if (stored === kept.length) status = 'STORED';
   else if (!statuses.includes('PENDING')) status = 'HELD';
-  const filing = { status, files: kept.length, stored, basis: status === 'PENDING' ? 'requested' : 'confirmed' };
-  // Why filing is paused (Drive full, access revoked...) and since when.
-  if (status === 'BLOCKED') {
-    const blocked = entries.filter(entry => entry.status === 'BLOCKED').sort((a, b) => a.at - b.at)[0];
-    Object.assign(filing, { reason: blocked.reason, since: blocked.at });
+  // Each kept file and what became of it, oldest recording first.
+  const items = kept
+    .map((file, index) => ({ file, entry: entries[index] }))
+    .sort((a, b) => (a.file.recordingStart ?? 0) - (b.file.recordingStart ?? 0))
+    .map(({ file, entry }) => ({
+      extension: file.extension ?? null,
+      recordingStart: file.recordingStart ?? null,
+      recordingEnd: file.recordingEnd ?? null,
+      status: entry.status,
+      reason: entry.reason ?? null,
+      at: entry.at ?? null,
+      name: entry.name ?? null,
+      folder: entry.folder ?? null,
+      size: entry.size ?? file.size ?? null,
+      md5: entry.md5 ?? null,
+      driveFileId: entry.driveFileId ?? null,
+      destination: entry.destination ?? null,
+    }));
+  const filing = { status, files: kept.length, stored, basis: status === 'PENDING' ? 'requested' : 'confirmed', items };
+  // Why filing is paused (Drive full, access revoked...) or failed for good (the file is gone, or
+  // not the size the vendor said), and since when.
+  if (status === 'BLOCKED' || status === 'FAILED') {
+    const first = entries.filter(entry => entry.status === status).sort((a, b) => a.at - b.at)[0];
+    Object.assign(filing, { reason: first.reason, since: first.at });
   }
   return filing;
 }
@@ -370,15 +429,32 @@ function anomaliesOf({ f, phase, attendance, recording, filing, start, end, now 
   const unapproved = startTransitions(f).find(entry =>
     !f.startRequests.some(request => request.at <= entry.at + TIMING.clockSkewMs)
     || f.eligibility?.eligible !== true
-    || (f.withdrawal && entry.at > f.withdrawal.at + TIMING.clockSkewMs));
+    || (f.withdrawal && entry.at > f.withdrawal.at + TIMING.clockSkewMs)
+    || (f.emergency && entry.at > f.emergency.at + TIMING.clockSkewMs)
+    || (f.cancellation && entry.at > f.cancellation.at + TIMING.clockSkewMs));
   if (unapproved) add('UNAPPROVED_RECORDING_START', 'error', unapproved.at);
+  // A stop that ended the session and still was not confirmed a minute later.
+  const unconfirmedAfterEnd = reason => {
+    const endRequest = f.endRequests.find(request => reason == null || request.reason === reason);
+    return endRequest && captureMayBeOn(f) && now - endRequest.at >= TIMING.endConfirmMs ? endRequest.at + TIMING.endConfirmMs : null;
+  };
   if (f.withdrawal) {
     add('CONSENT_WITHDRAWN', 'warning', f.withdrawal.at);
-    const endRequest = f.endRequests[0];
-    if (endRequest && captureMayBeOn(f) && now - endRequest.at >= TIMING.endConfirmMs) {
-      add('WITHDRAWAL_STOP_UNCONFIRMED', 'error', endRequest.at + TIMING.endConfirmMs);
-    }
+    const since = unconfirmedAfterEnd(null);
+    if (since != null) add('WITHDRAWAL_STOP_UNCONFIRMED', 'error', since);
   }
+  if (f.emergency) {
+    add('EMERGENCY_STOP', 'warning', f.emergency.at);
+    const since = unconfirmedAfterEnd('emergency_stop');
+    if (since != null) add('EMERGENCY_STOP_UNCONFIRMED', 'error', since);
+  }
+  if (f.cancellation) {
+    add('LESSON_CANCELLED', 'warning', f.cancellation.at);
+    const since = unconfirmedAfterEnd('lesson_cancelled');
+    if (since != null) add('LESSON_CANCELLED_STOP_UNCONFIRMED', 'error', since);
+  }
+  const lessonEndUnconfirmed = unconfirmedAfterEnd('lesson_end');
+  if (lessonEndUnconfirmed != null) add('LESSON_END_STOP_UNCONFIRMED', 'error', lessonEndUnconfirmed);
   const waitingSince = fileWaitSince(f, phase);
   if (waitingSince != null) {
     const waited = now - waitingSince;
@@ -392,6 +468,11 @@ function anomaliesOf({ f, phase, attendance, recording, filing, start, end, now 
     add('FILING_DELAYED', now - f.completedAt >= TIMING.filingStuckMs ? 'error' : 'warning', f.completedAt + TIMING.filingOverdueMs);
   }
   if (f.partOrderAt != null) add('PART_OUT_OF_ORDER', 'warning', f.partOrderAt);
+  // The vendor's notice broke the Recording Adapter contract, so its recordings never reached P1.
+  if (f.refusedAt != null) add('RECORDING_REFUSED', 'error', f.refusedAt);
+  // The tutor's page reported a session the vendor does not know as this lesson's: it is never
+  // used, and recording cannot be controlled until a confirmed session is known.
+  if (f.sessionRejectedAt != null) add('SESSION_REJECTED', 'error', f.sessionRejectedAt);
   if (f.unknown.length) add('UNKNOWN_PARTICIPANT', 'error', f.unknown[0].at, { count: f.unknown.length });
   if (phase.value === 'LIVE' && (f.lastConfirmedAt == null || now - f.lastConfirmedAt > TIMING.staleAfterMs)) {
     add('STALE_DATA', 'warning', f.lastConfirmedAt ?? phase.since);
@@ -429,10 +510,18 @@ export function planActions(lesson, events, now) {
   const tutor = state.attendance.find(entry => entry.role === 'tutor');
   const live = state.phase.value === 'LIVE';
   const recording = state.recording;
-  // Start only when the whole roster consented, nobody withdrew, the session is live, and both
-  // the tutor (the host) and a student are confirmed in the room.
+  // Start only when the whole roster consented, nobody withdrew, nobody pressed the emergency
+  // stop, the lesson is not past its end, the session is live, and both the tutor (the host) and
+  // a student are confirmed in the room.
   const studentHere = state.attendance.some(entry => entry.role === 'student' && entry.status === 'PRESENT' && entry.basis === 'confirmed');
-  if (f.eligibility?.eligible === true && !f.withdrawal && live && tutor?.status === 'PRESENT' && tutor.basis === 'confirmed' && studentHere) {
+  const endStopAt = toMs(lesson.endsAt) + TIMING.lessonEndStopMs;
+  // A cancelled lesson whose cancellation is not stored yet (the request that cancelled it
+  // failed to store it, or another path set the flag): store it now, with the time it was found.
+  // Its key is the one P3's cancel uses, so it is stored once whichever comes first.
+  if (f.cancelledFlag && !f.cancellation) want(cancellationKey(id), 'RECORD_CANCELLATION');
+  const cancelled = Boolean(f.cancellation || f.cancelledFlag);
+  if (f.eligibility?.eligible === true && !f.withdrawal && !f.emergency && !cancelled && now < endStopAt
+    && live && tutor?.status === 'PRESENT' && tutor.basis === 'confirmed' && studentHere) {
     const attempt = f.startRequests.length ? Math.max(...f.startRequests.map(request => request.attempt)) : 0;
     const response = f.startResponses.find(entry => entry.attempt === attempt);
     if (recording.status === 'NOT_REQUESTED') want(`start:${id}:1`, 'START_RECORDING', { attempt: 1 });
@@ -448,9 +537,24 @@ export function planActions(lesson, events, now) {
   const trigger = stopTrigger(state, f);
   if (trigger && captureMayBeOn(f)) {
     const channels = ['rest', 'host'];
-    want(`stop:${id}:${trigger.reason}:1`, 'STOP_RECORDING', { reason: trigger.reason, attempt: 1, channels });
-    if (now >= trigger.at + TIMING.stopRetryMs) want(`stop:${id}:${trigger.reason}:2`, 'STOP_RECORDING', { reason: trigger.reason, attempt: 2, channels });
-    if (now >= trigger.at + TIMING.endSessionMs) want(`end:${id}:${trigger.reason}`, 'END_SESSION', { reason: trigger.reason });
+    // A recording that starts again after the stop (Zoom's automatic recording, the host, a
+    // late start) is a new round with its own keys and times, so it is stopped again too. The
+    // first round keeps the keys it always had.
+    const restart = trigger.at == null ? null : startTransitions(f).filter(entry => entry.at > trigger.at).pop();
+    const round = restart ? `:r${restart.at}` : '';
+    const since = restart ? restart.at : trigger.at;
+    want(`stop:${id}:${trigger.reason}${round}:1`, 'STOP_RECORDING', { reason: trigger.reason, attempt: 1, channels });
+    // Retries and the session end are timed from the stored cancellation; a cancellation that is
+    // only the lesson's flag gets the first stop now and the rest once it is stored (same tick).
+    if (since != null && now >= since + TIMING.stopRetryMs) want(`stop:${id}:${trigger.reason}${round}:2`, 'STOP_RECORDING', { reason: trigger.reason, attempt: 2, channels });
+    if (since != null && now >= since + TIMING.endSessionMs) want(`end:${id}:${trigger.reason}${round}`, 'END_SESSION', { reason: trigger.reason });
+  }
+  // The lesson is over: stop recording once its scheduled end and the grace have passed, again
+  // after 30 seconds, and end the session after 60 seconds if Zoom still has not confirmed.
+  if (!trigger && now >= endStopAt && captureMayBeOn(f)) {
+    want(`stop:${id}:lesson_end:1`, 'STOP_RECORDING', { reason: 'lesson_end', attempt: 1, channels: ['rest'] });
+    if (now >= endStopAt + TIMING.stopRetryMs) want(`stop:${id}:lesson_end:2`, 'STOP_RECORDING', { reason: 'lesson_end', attempt: 2, channels: ['rest'] });
+    if (now >= endStopAt + TIMING.endSessionMs) want(`end:${id}:lesson_end`, 'END_SESSION', { reason: 'lesson_end' });
   }
   // The tutor has gone: stop recording after 5 minutes and end the session after 15.
   if (tutor?.status === 'LEFT' && tutor.basis === 'confirmed' && live) {
@@ -464,7 +568,13 @@ export function planActions(lesson, events, now) {
   return actions;
 }
 
+// The key under which a lesson's cancellation is stored, by P3's cancel and by the tick alike.
+export const cancellationKey = lessonId => `server.lesson_cancelled:${lessonId}`;
+
 function stopTrigger(state, f) {
+  if (f.emergency) return { reason: 'emergency_stop', at: f.emergency.at };
+  if (f.cancellation) return { reason: 'lesson_cancelled', at: f.cancellation.at };
+  if (f.cancelledFlag) return { reason: 'lesson_cancelled', at: null };
   if (f.withdrawal) return { reason: 'consent_withdrawn', at: f.withdrawal.at };
   if (f.unknown.length) return { reason: 'unknown_participant', at: f.unknown[0].at };
   const unapproved = state.anomalies.find(entry => entry.code === 'UNAPPROVED_RECORDING_START');
@@ -494,7 +604,9 @@ export function dueReconciliations(lessons, eventsByLesson, now, { lastReconcile
 
 function reconcileReason(lesson, state, f, now, last) {
   const tutor = state.attendance.find(entry => entry.role === 'tutor');
-  if (f.withdrawal && f.stopRequests.length && captureMayBeOn(f)) return { reason: 'stop_unconfirmed', priority: 0, waitingSince: f.stopRequests[0].at };
+  // A protective or end-of-lesson stop Zoom has not confirmed yet is checked first.
+  const protectiveStop = f.withdrawal || f.emergency || f.cancellation || f.stopRequests.some(request => request.reason === 'lesson_end');
+  if (protectiveStop && f.stopRequests.length && captureMayBeOn(f)) return { reason: 'stop_unconfirmed', priority: 0, waitingSince: f.stopRequests[0].at };
   if (state.recording.status === 'START_REQUESTED' && now - state.recording.since >= TIMING.startReconcileMs) {
     return { reason: 'start_unconfirmed', priority: 1, waitingSince: state.recording.since };
   }

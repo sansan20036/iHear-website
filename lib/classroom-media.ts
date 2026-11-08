@@ -34,7 +34,10 @@ export type MediaEvent =
   | { type: "remote"; present: boolean; camera: boolean; microphone: boolean; userKey: string | null; at: number }
   // Materials and the whiteboard: what this page is showing or sending right now.
   | { type: "share"; state: "none" | "sending" | "receiving"; at: number }
-  | { type: "whiteboard"; state: "none" | "presenting" | "viewing"; at: number };
+  | { type: "whiteboard"; state: "none" | "presenting" | "viewing"; at: number }
+  // The vendor's id for the session this page joined. Nothing on the page shows it; the tutor's
+  // page reports it where the server confirms such ids with the vendor.
+  | { type: "session"; sessionId: string; at: number };
 
 export type MediaCapabilities = {
   // True only for an adapter that really carries audio and video.
@@ -242,6 +245,8 @@ export type ZoomClient = {
   getWhiteboardClient(): ZoomWhiteboard;
   getCurrentUserInfo(): { userId: number; audio?: string } | null;
   getAllUser(): ZoomParticipant[];
+  // Video SDK 2.6.0: SessionInfo.sessionId, Zoom's id for the session joined.
+  getSessionInfo?(): { sessionId?: string } | null;
   on(event: string, handler: (payload: unknown) => void): void;
   off(event: string, handler: (payload: unknown) => void): void;
 };
@@ -443,6 +448,10 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
       this.stream = zoom.getMediaStream();
       for (const ready of [...this.streamWaiters]) ready();
       this.setConnection("connected");
+      // Zoom's id for this session, for the server to confirm and then use without webhooks. An
+      // SDK without it (or an empty id) just says nothing.
+      const sessionId = client.getSessionInfo?.()?.sessionId;
+      if (typeof sessionId === "string" && sessionId) this.emit({ type: "session", sessionId, at: this.now() });
       this.reportRemote();
       const sharing = this.stream.getActiveShareUserId();
       if (sharing) await this.remoteShare({ state: "Active", userId: sharing });
@@ -832,5 +841,7 @@ export function hostReportFor(event: MediaEvent): Record<string, unknown> | null
     return state ? { type: "connection", state } : null;
   }
   if (event.type === "remote" && event.userKey) return { type: event.present ? "user_added" : "user_removed", userKey: event.userKey };
+  // Sent only when the join answer asked for it (classroom-entry.tsx); the server confirms it.
+  if (event.type === "session") return { type: "session", sessionId: event.sessionId };
   return null;
 }

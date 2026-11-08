@@ -93,6 +93,8 @@ describe("the provider-neutral media adapter", () => {
     expect(hostReportFor({ type: "connection", state: "failed", at })).toEqual({ type: "connection", state: "Fail" });
     expect(hostReportFor({ type: "connection", state: "connecting", at })).toBeNull();
     expect(hostReportFor({ type: "device", kind: "camera", state: "on", at })).toBeNull();
+    // The vendor's session id, as is; the page sends it only when its join answer asked for it.
+    expect(hostReportFor({ type: "session", sessionId: "oiFKKKL/RyGdm9W1r1Ll6w==", at })).toEqual({ type: "session", sessionId: "oiFKKKL/RyGdm9W1r1Ll6w==" });
     // The synthetic room has no real other person, so it never invents a join.
     expect(hostReportFor({ type: "remote", present: true, camera: true, microphone: true, userKey: null, at })).toBeNull();
     expect(hostReportFor({ type: "remote", present: true, camera: true, microphone: true, userKey: "P-1", at })).toEqual({ type: "user_added", userKey: "P-1" });

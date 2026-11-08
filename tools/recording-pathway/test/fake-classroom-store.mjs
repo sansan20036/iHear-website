@@ -22,7 +22,7 @@ export function createClassroomStore({ lessons = [] } = {}) {
     eligibility: id => [...current.events.values()]
       .filter(event => event.lessonId === id && event.type === 'server.recording_eligibility')
       .sort((a, b) => a.occurredAt - b.occurredAt).pop() ?? null,
-    withdrawalAt: id => earliestAt(current, event => event.lessonId === id && event.type === 'server.consent_withdrawn'),
+    withdrawalAt: id => earliestAt(current, event => event.lessonId === id && ['server.consent_withdrawn', 'server.emergency_stop'].includes(event.type)),
     unknownJoinAt: id => {
       const roster = new Set((lessonById.get(id)?.participants ?? []).map(entry => entry.id));
       return earliestAt(current, event => event.lessonId === id
@@ -242,6 +242,18 @@ export function createDrive({ quotaLimit = null, clock = null, msPerByte = 0 } =
     },
     folderName(id) {
       return [...folders.entries()].find(([, value]) => value === id)?.[0].split('/').slice(1).join('/') ?? null;
+    },
+    // The folder's names from below the root down to it, joined like the overview shows them.
+    folderPath(id) {
+      const names = [];
+      for (let current = id; ;) {
+        const entry = [...folders.entries()].find(([, value]) => value === current);
+        if (!entry) break;
+        const cut = entry[0].indexOf('/');
+        names.unshift(entry[0].slice(cut + 1));
+        current = entry[0].slice(0, cut);
+      }
+      return names.join(' / ');
     },
     listNames(folderId) {
       return [...files.values()].filter(file => !file.trashed && file.parentId === folderId).map(file => file.name);

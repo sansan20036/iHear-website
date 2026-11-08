@@ -16,14 +16,16 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 // A static import, so bundlers include P1's rules; Core.js stays a plain Apps Script file.
 import Core from '../apps-script/Core.js';
 import { filingEvent, runsPast } from './recording-filing.mjs';
+import { isFiledKind, LESSON_ID, neutralKind, validateRecordingFact } from './recording-adapter.mjs';
 
 export { fileRecording, JOB_LEASE_MS, MAX_JOB_ATTEMPTS, processJobs, QUARANTINE_FOLDER } from './recording-filing.mjs';
 
 export const MAX_REQUEST_AGE_MS = 5 * 60 * 1000;
 export const STORE_BUDGET_MS = 2000;           // leaves room inside Zoom's 3-second limit
-// Only the combined lesson video is filed: Zoom's combined view, and LCIC's mixed recording (one
-// file per class). To check against real recordings of each.
-export const KEPT_RECORDING_TYPES = ['shared_screen_with_speaker_view', 'lcic_mixed'];
+// Which recordings are filed is decided on the neutral kinds of recording-adapter.mjs: only the
+// combined lesson video ('composite': Zoom's combined view, LCIC's mixed recording). Each
+// vendor's own type names are mapped there. To check against real recordings of each.
+const ZOOM = 'zoom-video-sdk';
 const HELD_AT_ZOOM = ['AFTER_WITHDRAWAL', 'UNKNOWN_PARTICIPANT', 'NO_CONSENT', 'UNKNOWN_SESSION'];
 
 const RECORDING_EVENTS = {
@@ -60,8 +62,9 @@ export function leaveReasonCode(reason) {
 }
 
 // Keeps only identifiers, times and codes. Names, IP addresses, devices, download URLs and the
-// download token are dropped here, before anything is stored.
-export function minimizeZoomEvent(event, receivedAt) {
+// download token are dropped here, before anything is stored. Recording files leave as the
+// Recording Adapter's neutral facts: the vendor named, each file's type as a neutral kind.
+export function minimizeZoomEvent(event, receivedAt, { provider = ZOOM } = {}) {
   const object = event?.payload?.object ?? {};
   const user = object.user ?? {};
   const base = {
@@ -92,7 +95,7 @@ export function minimizeZoomEvent(event, receivedAt) {
     case 'session.recording_completed': {
       const files = (object.recording_files || []).map(file => ({
         providerFileId: String(file.id),
-        kind: file.recording_type || null,
+        kind: neutralKind(provider, file.recording_type),
         extension: String(file.file_extension || file.file_type || '').toLowerCase(),
         size: Number(file.file_size) || 0,
         status: file.status || null,
@@ -100,7 +103,7 @@ export function minimizeZoomEvent(event, receivedAt) {
         recordingEnd: toMs(file.recording_end),
       }));
       const ends = files.map(file => file.recordingEnd).filter(value => value != null);
-      fact = { ...base, files, occurredAt: ends.length ? Math.max(...ends) : event.event_ts };
+      fact = { ...base, provider, files, occurredAt: ends.length ? Math.max(...ends) : event.event_ts };
       break;
     }
     case 'session.alert':
@@ -139,7 +142,7 @@ export function dedupeKeyOf(event) {
 }
 
 export function isKeptRecording(file) {
-  return KEPT_RECORDING_TYPES.includes(file.kind) && Core.extensionOf(`recording.${file.extension}`, null) !== null;
+  return isFiledKind(file.kind) && Core.extensionOf(`recording.${file.extension}`, null) !== null;
 }
 
 function withTimeout(promise, ms) {
@@ -154,7 +157,39 @@ export function ingestFacts({ store, facts, budgetMs = STORE_BUDGET_MS }) {
   return persist(store, facts, budgetMs);
 }
 
+// What is kept of a refused recording fact: where it came from and why, never its files. Its key
+// is the fact's, so the same notice delivered again is recorded once.
+function refusalOf({ event, problems }) {
+  const at = Number.isFinite(event?.receivedAt) ? event.receivedAt : Date.now();
+  const session = typeof event?.providerSessionId === 'string' ? event.providerSessionId.slice(0, 200) : null;
+  const lessonId = typeof event?.lessonId === 'string' && LESSON_ID.test(event.lessonId) ? event.lessonId : null;
+  return {
+    source: 'server',
+    type: 'server.recording_refused',
+    lessonId,
+    providerSessionId: session,
+    provider: typeof event?.provider === 'string' ? event.provider.slice(0, 40) : null,
+    problems: problems.slice(0, 20).map(problem => problem.slice(0, 200)),
+    occurredAt: at,
+    receivedAt: at,
+    key: `server.recording_refused:${String(event?.key ?? session ?? lessonId ?? at).slice(0, 500)}`,
+  };
+}
+
 async function persist(store, events, budgetMs) {
+  // Recording facts from any vendor's adapter must keep the Recording Adapter contract. A batch
+  // holding one that does not is refused whole, before any of it is stored (422: retrying would
+  // not change it). The refusal itself is recorded, so the overview raises it at once instead of
+  // hours later as a missing file.
+  const refused = events.filter(event => event?.type === 'session.recording_completed')
+    .map(event => ({ event, problems: validateRecordingFact(event) }))
+    .filter(entry => entry.problems.length);
+  if (refused.length) {
+    await withTimeout(store.transaction(async tx => {
+      for (const entry of refused) await tx.insertEvent(refusalOf(entry));
+    }), budgetMs).catch(() => undefined);
+    return { status: 422, body: { error: 'recording facts break the Recording Adapter contract', problems: refused.flatMap(entry => entry.problems) } };
+  }
   try {
     const stored = await withTimeout(store.transaction(async tx => {
       const results = [];
@@ -185,13 +220,19 @@ export async function ingestWebhook({ headers, rawBody, secret, now, store, budg
   return persist(store, [fact], budgetMs);
 }
 
+// A session id as a vendor gives it: Zoom's are base64 (letters, digits, + / =).
+export const SESSION_ID = /^[A-Za-z0-9+/=_-]{1,100}$/;
+
 // The tutor's browser relays Video SDK events (heartbeat, recording status, people joining or
-// leaving, connection changes). The route has already checked the tutor's sign-in and lesson.
-// Reports are self-reported, so they are kept with source host_sdk and the server's own clock
-// wins when the browser's clock is far off.
+// leaving, connection changes, and the id of the session it joined). The route has already
+// checked the tutor's sign-in and lesson. Reports are self-reported, so they are kept with
+// source host_sdk and the server's own clock wins when the browser's clock is far off. A session
+// id is kept only as reported: nothing acts on it until the server has confirmed it with the
+// vendor (lib/classroom-service.ts), so a page cannot point the server at another session.
 export async function ingestHostReport({ report, lessonId, tutorId, now, store, budgetMs = STORE_BUDGET_MS }) {
-  const types = ['heartbeat', 'recording_status', 'user_added', 'user_removed', 'connection', 'participant_failover'];
+  const types = ['heartbeat', 'recording_status', 'user_added', 'user_removed', 'connection', 'participant_failover', 'session'];
   if (!types.includes(report?.type)) return { status: 400, body: { error: 'unknown report' } };
+  if (report.type === 'session' && !SESSION_ID.test(String(report.sessionId ?? ''))) return { status: 400, body: { error: 'invalid session id' } };
   const reported = toMs(report.at);
   const occurredAt = reported != null && reported <= now && now - reported <= MAX_REQUEST_AGE_MS ? reported : now;
   const subject = ['user_added', 'user_removed', 'participant_failover'].includes(report.type) ? String(report.userKey || '') : tutorId;
@@ -205,38 +246,73 @@ export async function ingestHostReport({ report, lessonId, tutorId, now, store, 
   };
   if (report.type === 'recording_status') fact.status = ['Recording', 'Paused', 'Stopped'].includes(report.status) ? report.status : 'Unknown';
   if (report.type === 'connection') fact.state = String(report.state || '');
-  // Heartbeats are not history: only the latest one per lesson is kept.
+  if (report.type === 'session') fact.reportedSessionId = String(report.sessionId);
+  // Heartbeats are not history: only the latest one per lesson is kept. A session id is kept
+  // once, however often the page reports it.
   fact.key = report.type === 'heartbeat'
     ? `host:host.heartbeat:${lessonId}`
-    : `host:${fact.type}:${lessonId}:${occurredAt}:${fact.participantId || ''}:${fact.status || fact.state || ''}`;
+    : report.type === 'session'
+      ? `host:host.session:${lessonId}:${fact.reportedSessionId}`
+      : `host:${fact.type}:${lessonId}:${occurredAt}:${fact.participantId || ''}:${fact.status || fact.state || ''}`;
   return persist(store, [fact], budgetMs);
 }
 
+// How long a finished lesson video waits for its session's other files (an audio track, a
+// timeline) before it is reported without them, when the vendor is asked rather than notifying.
+export const SIDE_FILE_GRACE_MS = 30 * 60_000;
+
+// Which of one session's listed files can be reported as finished. All of them done is the clean
+// case. Otherwise every lesson video of the session must be done and the last of them must have
+// ended SIDE_FILE_GRACE_MS ago; then the files that are done are reported, so a side file that
+// never finishes cannot hold the lesson back. A file that is not done is never reported.
+function finishedFiles(recordings, observedAt, provider) {
+  const done = recordings.filter(file => String(file.status || '').toLowerCase() === 'completed');
+  if (!done.length || done.length === recordings.length) return done;
+  const videos = recordings.filter(file => isFiledKind(neutralKind(provider, file.recording_type)));
+  if (!videos.length || videos.some(file => !done.includes(file))) return [];
+  const ends = videos.map(file => toMs(file.recording_end)).filter(Number.isFinite);
+  return ends.length === videos.length && observedAt - Math.max(...ends) >= SIDE_FILE_GRACE_MS ? done : [];
+}
+
 // A REST reconciliation snapshot becomes the same kind of facts a webhook would have given,
-// with the same keys, plus one api.snapshot fact saying who was present when we looked.
-export function normalizeApiSnapshot({ lessonId, providerSessionId, details, users = [], recordings = [], observedAt }) {
+// with the same keys, plus one api.snapshot fact saying who was present when we looked. The
+// answer is in Zoom's REST shape (the synthetic stand-in imitates it); `provider` names the
+// vendor, so its recording types map to the right neutral kinds. LCIC's DescribeRoom answer has
+// no file size or status yet, so its recordings are not found this way (see the integration plan).
+//
+// `details` is null when the vendor would not describe the session (a past session it no longer
+// shows, say): then nothing is said about the session or who was there, only its recordings.
+// `sessions` lists the lesson's earlier sessions whose recordings were asked for too: a lesson
+// can run in several sessions (everyone left and came back, or the session was ended after a
+// withdrawal), and each session's recordings are its own facts.
+export function normalizeApiSnapshot({ lessonId, providerSessionId, details, users = [], recordings = [], sessions = [], observedAt, provider = ZOOM }) {
   const base = { source: 'zoom_api', lessonId, providerSessionId, receivedAt: observedAt };
   const facts = [];
   const add = fact => facts.push({ ...fact, key: dedupeKeyOf(fact) });
   if (details?.start_time) add({ ...base, type: 'session.started', occurredAt: toMs(details.start_time) });
   if (details?.end_time) add({ ...base, type: 'session.ended', occurredAt: toMs(details.end_time) });
-  for (const user of users) {
+  for (const user of details ? users : []) {
     const who = { participantId: user.user_key || null, participantUuid: user.participant_uuid || null };
     if (user.join_time) add({ ...base, ...who, type: 'session.user_joined', occurredAt: toMs(user.join_time) });
     if (user.leave_time) add({ ...base, ...who, type: 'session.user_left', occurredAt: toMs(user.leave_time), leaveReason: leaveReasonCode(user.leave_reason) });
   }
-  const files = recordings.filter(file => String(file.status || '').toLowerCase() === 'completed');
-  if (files.length && files.length === recordings.length) {
-    add(minimizeZoomEvent({ event: 'session.recording_completed', event_ts: observedAt, payload: { object: { session_id: providerSessionId, session_key: lessonId, recording_files: files } } }, observedAt));
+  // Earlier sessions first (they are listed oldest first): P1 numbers a lesson's parts in the
+  // order their facts arrive, so this keeps the parts in recording order.
+  for (const session of [...sessions, { providerSessionId, recordings }]) {
+    const files = finishedFiles(session.recordings ?? [], observedAt, provider);
+    if (!files.length || !session.providerSessionId) continue;
+    add(minimizeZoomEvent({ event: 'session.recording_completed', event_ts: observedAt, payload: { object: { session_id: session.providerSessionId, session_key: lessonId, recording_files: files } } }, observedAt, { provider }));
   }
   facts.forEach(fact => { fact.source = 'zoom_api'; });
-  add({
-    ...base,
-    type: 'api.snapshot',
-    occurredAt: observedAt,
-    live: !details?.end_time,
-    present: users.filter(user => user.join_time && !user.leave_time).map(user => user.user_key).filter(Boolean).sort(),
-  });
+  if (details) {
+    add({
+      ...base,
+      type: 'api.snapshot',
+      occurredAt: observedAt,
+      live: !details.end_time,
+      present: users.filter(user => user.join_time && !user.leave_time).map(user => user.user_key).filter(Boolean).sort(),
+    });
+  }
   return facts;
 }
 
@@ -268,6 +344,7 @@ async function recordFiles(tx, event) {
     if (await tx.fileRecord(file.providerFileId)) continue;
     const record = {
       ...file,
+      provider: event.provider ?? null,
       lessonId: lesson ? lesson.id : null,
       providerSessionId: event.providerSessionId,
       status: 'PENDING',

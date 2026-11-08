@@ -3,7 +3,10 @@
 // callback reference (2026-10-30): POST JSON {SdkAppId, Timestamp, ExpireTime, Sign, EventType,
 // EventData}, answered with {"error_code":0}. Fields of MemberJoin/MemberQuit (RoomId, UserId) and
 // the unit of RecordSize are NOT confirmed yet; check them against real deliveries.
+import { neutralKind } from './recording-adapter.mjs';
 import { dedupeKeyOf } from './webhook-ingest.mjs';
+
+const LCIC = 'tencent-lcic';
 
 const toMs = seconds => (Number.isFinite(Number(seconds)) && Number(seconds) > 0 ? Number(seconds) * 1000 : null);
 
@@ -40,10 +43,12 @@ export async function minimizeLcicCallback(body, { lookup, receivedAt }) {
       const url = typeof data.RecordUrl === 'string' ? data.RecordUrl : '';
       const extension = (/\.([a-z0-9]{2,5})(?:\?|$)/i.exec(url)?.[1] ?? 'mp4').toLowerCase();
       // One mixed recording per class. The address itself is not stored: the download reads it
-      // fresh from DescribeRoom, so no signed link sits in iHear's database.
+      // fresh from DescribeRoom, so no signed link sits in iHear's database. A missing size
+      // becomes 0, which the Recording Adapter contract refuses: P1 verifies every copy against
+      // the size, so it must be the file's real byte count (the unit is still to be confirmed).
       fact = {
-        ...base, type: 'session.recording_completed', occurredAt,
-        files: [{ providerFileId: `lcic-${roomId}`, kind: 'lcic_mixed', extension, size: Number(data.RecordSize) || 0, status: 'completed', recordingStart: null, recordingEnd: occurredAt }],
+        ...base, provider: LCIC, type: 'session.recording_completed', occurredAt,
+        files: [{ providerFileId: `lcic-${roomId}`, kind: neutralKind(LCIC, 'lcic_mixed'), extension, size: Number(data.RecordSize) || 0, status: 'completed', recordingStart: null, recordingEnd: occurredAt }],
       };
       break;
     }

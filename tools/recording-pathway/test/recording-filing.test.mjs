@@ -102,11 +102,17 @@ const jobOf = (w, id) => w.store.jobs().find(job => job.id === id);
 const stateOf = (w, lesson) => deriveLesson(lesson, w.store.eventsFor(lesson.id), w.clock.now());
 const anomalyOf = (w, lesson, code) => stateOf(w, lesson).anomalies.find(entry => entry.code === code);
 
-function assertStoredOnce(w, file, { name, folder = MONTH } = {}) {
+// The month's folder, then the lesson's own folder (its date and code) inside it.
+const lessonFolderOf = (w, file) => {
+  const lesson = w.lessons.find(entry => entry.id === w.store.fileRecord(file.id).lessonId);
+  return `${MONTH} / ${lesson.date}_${lesson.code}`;
+};
+
+function assertStoredOnce(w, file, { name, folder = lessonFolderOf(w, file) } = {}) {
   const copies = copiesOf(w, file.id);
   assert.equal(copies.length, 1, `${file.id}: one copy in Drive`);
   assert.ok(w.drive.contentOf(copies[0].id).equals(syntheticContent(file.id, 0, file.file_size)), `${file.id}: every byte right`);
-  assert.equal(w.drive.folderName(copies[0].parentId), folder);
+  assert.equal(w.drive.folderPath(copies[0].parentId), folder);
   if (name) assert.equal(copies[0].name, name);
   const record = w.store.fileRecord(file.id);
   assert.deepEqual([record.status, record.driveFileId], ['STORED', copies[0].id]);
@@ -167,7 +173,7 @@ test('a notice that arrives after a later recording keeps unique part numbers an
 
 test('a file someone else put in the folder under our name is left alone; ours takes the next part', async () => {
   const w = await world();
-  const folder = w.drive.ensureFolder(ROOT, MONTH);
+  const folder = w.drive.ensureFolder(w.drive.ensureFolder(ROOT, MONTH), '2026-11-03_TEST-L001');
   const foreign = w.drive.addFile({ name: '2026-11-03_TEST-S01_TEST-T01_P01.mp4', parentId: folder, appProperties: {}, size: 5 });
   const file = video('f-video', 1, 59, 150);
   await deliver(w, completed('L-TEST-001', 'sess-1', [file], w.clock.now()));

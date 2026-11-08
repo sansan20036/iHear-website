@@ -5,12 +5,13 @@ import { getJoinEligibility, getRecordingEligibility, JOIN_WINDOW_AFTER_MS, JOIN
 // @ts-ignore - shared classroom logic, plain JavaScript tested with node --test.
 import { fileRecording, ingestApiSnapshot, ingestHostReport, processJobs, storeEvent } from "../tools/recording-pathway/classroom/webhook-ingest.mjs";
 // @ts-ignore - shared classroom logic, plain JavaScript tested with node --test.
-import { deriveLesson, dueReconciliations, planActions } from "../tools/recording-pathway/classroom/lesson-state.mjs";
+import { cancellationKey, deriveLesson, dueReconciliations, planActions } from "../tools/recording-pathway/classroom/lesson-state.mjs";
 // @ts-ignore - shared classroom logic, plain JavaScript tested with node --test.
 import { buildDashboard, LABELS } from "../tools/recording-pathway/classroom/live-dashboard.mjs";
 import type { ClassroomDrive } from "./classroom-drive";
 import type { ClassroomProvider } from "./classroom-provider";
 import type { ClassroomEvent, ClassroomLesson, ClassroomStore, RecordingFile } from "./classroom-store";
+import { sessionReportsEnabled, vendorDeletionEnabled } from "./classroom-switches";
 
 const RECORDING_LABELS: Record<string, string> = LABELS.recording;
 const ANOMALY_LABELS: Record<string, string> = LABELS.anomaly;
@@ -214,18 +215,86 @@ export async function joinClassroom({ store, provider, lessonId, key, sessionEma
       session: token.kind === "embed"
         ? { kind: "embed", embedUrl: token.embedUrl, recordingDisabled: token.recordingDisabled, expiresAt: new Date(token.expiresAt).toISOString() }
         : { kind: "sdk", token: token.token, ...(token.sessionName ? { sessionName: token.sessionName } : {}), expiresAt: new Date(token.expiresAt).toISOString() },
+      // Only the tutor's page reports the vendor's session id, and only where it is confirmed.
+      ...(participant!.role === "tutor" && sessionReportsEnabled() ? { sessionReports: true } : {}),
     },
   };
 }
 
 // Whether the lesson may be recorded right now, from what the server decided: the whole
-// roster's consent and no withdrawal since. The tutor's page stops recording when it is not
-// allowed, and says "not decided yet" rather than "not recorded" before the decision.
+// roster's consent, no withdrawal since, no emergency stop and no cancellation. The tutor's page
+// stops recording when it is not allowed, and says "not decided yet" rather than "not recorded"
+// before the decision.
+const NO_MORE_RECORDING = new Set(["server.consent_withdrawn", "server.emergency_stop", "server.lesson_cancelled"]);
 export function recordingDecision(events: ClassroomEvent[]) {
   const decision = events.filter((event) => event.type === "server.recording_eligibility").sort((a, b) => a.occurredAt - b.occurredAt).pop();
   return {
     decided: Boolean(decision),
-    allowed: decision?.eligible === true && !events.some((event) => event.type === "server.consent_withdrawn"),
+    allowed: decision?.eligible === true && !events.some((event) => NO_MORE_RECORDING.has(String(event.type))),
+  };
+}
+
+// A cancelled lesson's recording is stopped by the server (2026-11-08, P1+P3 integration). P3's
+// cancel calls this right after marking the lesson cancelled: the cancellation is stored with its
+// time (the same key the tick uses, so it is stored once), and the lesson's tick runs at once,
+// which sends the stop on both channels. The tick sends it again at 30 seconds and ends the
+// session at 60 seconds if the provider has not confirmed, and never starts a recording for the
+// lesson again. If this call fails part-way, the scheduled tick finds the lesson's cancelled flag
+// and does the same, so the stop never depends on this request or on any browser.
+export async function stopRecordingForCancelledLesson({ store, provider, drive, lessonId, now }: {
+  store: ClassroomStore; provider: ClassroomProvider; drive: ClassroomDrive; lessonId: string; now: number;
+}) {
+  const lesson = await store.lesson(lessonId);
+  if (!lesson) return { status: 404, body: { error: "Lesson not found", code: "LESSON_NOT_FOUND" } };
+  if (!lesson.cancelled) return { status: 409, body: { error: "The lesson is not cancelled", code: "NOT_CANCELLED" } };
+  await serverEvent(store, [{ source: "server", type: "server.lesson_cancelled", lessonId, occurredAt: now, receivedAt: now, key: cancellationKey(lessonId) }]);
+  let ticked = true;
+  try {
+    await runClassroomTick({ store, provider, drive, now, lessonIds: [lessonId], workerId: `cancel-${lessonId}` });
+  } catch {
+    // The cancellation is stored; the next scheduled tick sends the stop.
+    ticked = false;
+  }
+  const events = await store.eventsFor([lessonId]);
+  const state = deriveLesson(forRules(lesson), events, now);
+  return {
+    status: 200,
+    body: {
+      ok: true,
+      ticked,
+      stopRequested: events.some((event) => event.type === "server.stop_requested" && event.reason === "lesson_cancelled"),
+      // CONFIRMED only on the provider's word; WAITING while a recording may still be on.
+      stopState: state.cancellation?.stopState ?? null,
+      recording: { status: state.recording.status, basis: state.recording.basis, label: RECORDING_LABELS[state.recording.status] ?? state.recording.status },
+    },
+  };
+}
+
+// An administrator's emergency stop: from now on the lesson is never recorded. The stop goes to
+// the provider at once (the same protective sequence as a withdrawal: both channels now, again
+// at 30 seconds, and the session is ended at 60 seconds if the provider has not confirmed), the
+// tutor's page is told recording is no longer allowed, and anything recorded is kept out of the
+// normal folders. Pressing it again changes nothing.
+export async function emergencyStopRecording({ store, provider, drive, lessonId, now }: {
+  store: ClassroomStore; provider: ClassroomProvider; drive: ClassroomDrive; lessonId: string; now: number;
+}) {
+  const lesson = await store.lesson(lessonId);
+  if (!lesson) return { status: 404, body: { error: "Lesson not found", code: "LESSON_NOT_FOUND" } };
+  const already = (await store.eventsFor([lessonId])).some((event) => event.type === "server.emergency_stop");
+  if (!already) {
+    await serverEvent(store, [{ source: "server", type: "server.emergency_stop", lessonId, occurredAt: now, receivedAt: now, key: `server.emergency_stop:${lessonId}` }]);
+  }
+  await runClassroomTick({ store, provider, drive, now, lessonIds: [lessonId], workerId: `emergency-${lessonId}` });
+  const events = await store.eventsFor([lessonId]);
+  const state = deriveLesson(forRules(lesson), events, now);
+  return {
+    status: 200,
+    body: {
+      ok: true,
+      alreadyStopped: already,
+      stopRequested: events.some((event) => event.type === "server.stop_requested" && event.reason === "emergency_stop"),
+      recording: { status: state.recording.status, basis: state.recording.basis, label: RECORDING_LABELS[state.recording.status] ?? state.recording.status },
+    },
   };
 }
 
@@ -271,8 +340,13 @@ export async function recordHostReport({ store, provider, drive, lessonId, sessi
   const opensAt = Date.parse(lesson.startsAt) - JOIN_WINDOW_BEFORE_MS;
   const lastReportAt = Date.parse(lesson.endsAt) + JOIN_WINDOW_AFTER_MS + HOST_REPORT_AFTER_MS;
   if (!(now >= opensAt && now <= lastReportAt)) return { status: 403, body: { error: "The classroom is not open now", code: "OUTSIDE_JOIN_WINDOW" } };
-  const result = await ingestHostReport({ report, lessonId, tutorId: tutor.id, now, store });
-  if (result.status !== 200) return result;
+  // A session id is kept only where reported ids are confirmed with the vendor; elsewhere it is
+  // answered like any report and dropped.
+  const dropped = (report as { type?: unknown } | null)?.type === "session" && !sessionReportsEnabled();
+  if (!dropped) {
+    const result = await ingestHostReport({ report, lessonId, tutorId: tutor.id, now, store });
+    if (result.status !== 200) return result;
+  }
   await runClassroomTick({ store, provider, drive, now, lessonIds: [lessonId], workerId: `host-${lessonId}` });
   const events = await store.eventsFor([lessonId]);
   const state = deriveLesson(forRules(lesson), events, now);
@@ -343,6 +417,11 @@ async function perform({ store, provider, lesson, action, now }: { store: Classr
       await serverEvent(store, [{ ...base, type: "server.remove_requested", userKey: action.userKey, ok: result.ok, key: action.key }]);
       return;
     }
+    case "RECORD_CANCELLATION":
+      // The lesson is cancelled but its cancellation was not stored: store it now, so that the
+      // stop's retries and the session end are timed from here.
+      await serverEvent(store, [{ ...base, type: "server.lesson_cancelled", key: action.key }]);
+      return;
     case "NOTIFY_ADMIN":
       // No e-mail in the MVP: the record itself is the notice, and the overview shows it at once.
       await serverEvent(store, [{ ...base, type: "server.admin_notified", code: action.code, key: action.key }]);
@@ -352,9 +431,49 @@ async function perform({ store, provider, lesson, action, now }: { store: Classr
   }
 }
 
+const RECONCILED = new Set(["api.snapshot", "server.reconcile_failed", "server.reconcile_partial"]);
 function lastReconciled(events: ClassroomEvent[]) {
-  const times = events.filter((event) => event.type === "api.snapshot" || event.type === "server.reconcile_failed").map((event) => event.occurredAt);
+  const times = events.filter((event) => RECONCILED.has(event.type)).map((event) => event.occurredAt);
   return times.length ? Math.max(...times) : null;
+}
+
+// What a reconciliation stored. An answer that held recordings but no details of the session
+// (the vendor no longer describes it) is noted too, so the next look waits its turn.
+async function noteReconciliation(store: ClassroomStore, lessonId: string, stored: { status: number }, snapshot: { details: unknown } | null, now: number) {
+  const minute = Math.floor(now / 60_000);
+  if (stored.status !== 200) {
+    await serverEvent(store, [{ source: "server", type: "server.reconcile_failed", lessonId, occurredAt: now, receivedAt: now, key: `server.reconcile_failed:${lessonId}:${minute}` }]);
+  } else if (!snapshot?.details) {
+    await serverEvent(store, [{ source: "server", type: "server.reconcile_partial", lessonId, occurredAt: now, receivedAt: now, key: `server.reconcile_partial:${lessonId}:${minute}` }]);
+  }
+}
+
+// Session ids the tutor's page reported, checked with the vendor before anything acts on them.
+// A confirmed id becomes trusted (server.session_verified, which knownSessions reads); an id the
+// vendor does not know, or knows as another lesson's, is refused (server.session_rejected, which
+// the overview raises). Each id is asked about once and, while the vendor cannot answer, at most
+// once a minute.
+async function confirmReportedSessions({ store, provider, lesson, events, now }: {
+  store: ClassroomStore; provider: ClassroomProvider; lesson: ClassroomLesson; events: ClassroomEvent[]; now: number;
+}) {
+  if (!provider.verifySession) return 0;
+  const minute = Math.floor(now / 60_000);
+  const settled = new Set(events.filter((event) => event.type === "server.session_verified" || event.type === "server.session_rejected").map((event) => String(event.reportedSessionId)));
+  const askedNow = new Set(events.filter((event) => event.type === "server.session_unconfirmed" && event.minute === minute).map((event) => String(event.reportedSessionId)));
+  const reported = [...new Set(events.filter((event) => event.type === "host.session").map((event) => String(event.reportedSessionId)))];
+  let asked = 0;
+  for (const id of reported) {
+    if (settled.has(id) || askedNow.has(id)) continue;
+    const check = await provider.verifySession(lesson, id).catch(() => null);
+    const base = { source: "server", lessonId: lesson.id, reportedSessionId: id, occurredAt: now, receivedAt: now };
+    let event: ClassroomEvent;
+    if (check?.verified) event = { ...base, type: "server.session_verified", providerSessionId: id, ended: check.ended, key: `server.session_verified:${lesson.id}:${id}` };
+    else if (check) event = { ...base, type: "server.session_rejected", reason: check.reason, key: `server.session_rejected:${lesson.id}:${id}` };
+    else event = { ...base, type: "server.session_unconfirmed", minute, key: `server.session_unconfirmed:${lesson.id}:${id}:${minute}` };
+    await serverEvent(store, [event]);
+    asked += 1;
+  }
+  return asked;
 }
 
 const groupByLesson = (lessons: ClassroomLesson[], events: ClassroomEvent[]) => {
@@ -393,7 +512,12 @@ export async function runClassroomTick({ store, provider, drive, now, lessonIds,
     : await lessonsInView(store, now);
   const ids = lessons.map((lesson) => lesson.id);
   let byLesson = groupByLesson(lessons, await store.eventsFor(ids));
-  const summary = { lessons: lessons.length, actions: 0, reconciliations: 0, jobs: 0, continued: 0 };
+  const summary = { lessons: lessons.length, sessionsChecked: 0, actions: 0, reconciliations: 0, jobs: 0, continued: 0 };
+  // Reported session ids first, so a confirmed one can be used by this tick's actions.
+  if (sessionReportsEnabled()) {
+    for (const lesson of lessons) summary.sessionsChecked += await confirmReportedSessions({ store, provider, lesson, events: byLesson.get(lesson.id) ?? [], now });
+    if (summary.sessionsChecked) byLesson = groupByLesson(lessons, await store.eventsFor(ids));
+  }
   for (const lesson of lessons) {
     for (const action of planActions(forRules(lesson), byLesson.get(lesson.id) ?? [], now) as Action[]) {
       await perform({ store, provider, lesson, action, now });
@@ -405,10 +529,9 @@ export async function runClassroomTick({ store, provider, drive, now, lessonIds,
   for (const due of dueReconciliations(lessons.map(forRules), byLesson, now, { lastReconciledAt, heavyBudget }) as { lessonId: string }[]) {
     const lesson = lessons.find((entry) => entry.id === due.lessonId)!;
     const snapshot = await provider.snapshot(lesson).catch(() => null);
-    const stored = snapshot ? await ingestApiSnapshot({ snapshot, now, store }) : { status: 503 };
-    if (stored.status !== 200) {
-      await serverEvent(store, [{ source: "server", type: "server.reconcile_failed", lessonId: lesson.id, occurredAt: now, receivedAt: now, key: `server.reconcile_failed:${lesson.id}:${Math.floor(now / 60_000)}` }]);
-    }
+    // Named, so the Recording Adapter maps this vendor's recording types.
+    const stored = snapshot ? await ingestApiSnapshot({ snapshot: { ...snapshot, provider: provider.name }, now, store }) : { status: 503 };
+    await noteReconciliation(store, lesson.id, stored, snapshot, now);
     summary.reconciliations += 1;
   }
   const results: { status?: string }[] = await processJobs({
@@ -432,7 +555,15 @@ export async function runClassroomTick({ store, provider, drive, now, lessonIds,
           rootFolderId: drive.rootFolderId,
           options: { safetyMs: filingSafetyMs },
         }),
-      delete_vendor_copy: async ({ job, leaseVersion }: { job: { id: string; providerFileId: string | null }; leaseVersion: number }) => {
+      delete_vendor_copy: async ({ job, leaseVersion }: { job: { id: string; providerFileId: string | null; lessonId?: string | null }; leaseVersion: number }) => {
+        // Deleting the vendor's copy is off (lib/classroom-switches.ts): the copy is kept, the
+        // vendor is not asked, and that it was kept is recorded.
+        if (!vendorDeletionEnabled()) {
+          const at = clock();
+          await serverEvent(store, [{ source: "p1", type: "p1.vendor_copy_kept", lessonId: job.lessonId ?? null, providerFileId: job.providerFileId, occurredAt: at, receivedAt: at, key: `p1.vendor_copy_kept:${job.providerFileId}` }]);
+          await store.completeJob({ jobId: job.id, leaseVersion });
+          return { status: "VENDOR_COPY_KEPT" };
+        }
         const result = await provider.deleteRecording(job);
         if (!result.ok) throw new Error(`vendor copy not deleted (${result.httpStatus})`);
         await store.completeJob({ jobId: job.id, leaseVersion });
@@ -458,16 +589,31 @@ export async function reconcileLessonNow({ store, provider, drive, lessonId, now
   const lesson = await store.lesson(lessonId);
   if (!lesson) return { status: 404, body: { error: "Lesson not found", code: "LESSON_NOT_FOUND" } };
   const snapshot = await provider.snapshot(lesson).catch(() => null);
-  const stored = snapshot ? await ingestApiSnapshot({ snapshot, now, store }) : { status: 503 };
-  if (stored.status !== 200) {
-    await serverEvent(store, [{ source: "server", type: "server.reconcile_failed", lessonId, occurredAt: now, receivedAt: now, key: `server.reconcile_failed:${lessonId}:${Math.floor(now / 60_000)}` }]);
-  }
+  const stored = snapshot ? await ingestApiSnapshot({ snapshot: { ...snapshot, provider: provider.name }, now, store }) : { status: 503 };
+  await noteReconciliation(store, lessonId, stored, snapshot, now);
   await runClassroomTick({ store, provider, drive, now, lessonIds: [lessonId], workerId: `reconcile-${lessonId}` });
   return { status: 200, body: { ok: true, reconciled: stored.status === 200 } };
 }
 
 // What the administrators' overview shows: the four groups of cards (codes only), the anomaly
 // records with how they were handled, and the lessons in the window.
+type FilingItemCard = { driveFileId: string | null; destination: string | null; link?: string | null };
+type DashboardCard = { filing: { items: FilingItemCard[] } };
+
+// Where each filed copy can be opened: a Google Drive file's page for a copy filed in Google Drive
+// (an owner of the test folder sees it there); nothing for a copy in the local stand-in, whose
+// files are on this computer. It goes by where each copy was filed, not by today's setting.
+function withDriveLinks(dashboard: { groups: Record<string, DashboardCard[]> }) {
+  for (const cards of Object.values(dashboard.groups)) {
+    for (const card of cards) {
+      for (const item of card.filing.items) {
+        item.link = item.destination === "google" && item.driveFileId ? `https://drive.google.com/file/d/${encodeURIComponent(item.driveFileId)}/view` : null;
+      }
+    }
+  }
+  return dashboard;
+}
+
 export async function classroomOverview({ store, now }: { store: ClassroomStore; now: number }) {
   const lessons = await lessonsInView(store, now);
   const ids = lessons.map((lesson) => lesson.id);
@@ -475,7 +621,7 @@ export async function classroomOverview({ store, now }: { store: ClassroomStore;
   const codeOf = new Map(lessons.map((lesson) => [lesson.id, lesson.code]));
   const iso = (ms: number | null) => (ms == null ? null : new Date(ms).toISOString());
   return {
-    dashboard: buildDashboard({ lessons: lessons.map(forRules), events, now }),
+    dashboard: withDriveLinks(buildDashboard({ lessons: lessons.map(forRules), events, now })),
     anomalies: anomalies.map((item) => ({
       lessonCode: codeOf.get(item.lessonId) ?? null,
       lessonId: item.lessonId,

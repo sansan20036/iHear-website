@@ -7,8 +7,9 @@ import os from 'node:os';
 import path from 'node:path';
 import postgres from 'postgres';
 import { changeLessonAccess, joinClassroom, myClassroomLessons } from '../lib/classroom-service';
+import { knownSessions } from '../lib/classroom-provider';
 import { createPostgresClassroomStore } from '../lib/classroom-store';
-import { fileRecording, ingestWebhook, signZoomRequest, storeEvent } from '../tools/recording-pathway/classroom/webhook-ingest.mjs';
+import { dedupeKeyOf, fileRecording, ingestFacts, ingestHostReport, ingestWebhook, signZoomRequest, storeEvent } from '../tools/recording-pathway/classroom/webhook-ingest.mjs';
 import { createDrive, syntheticDownload } from '../tools/recording-pathway/test/fake-classroom-store.mjs';
 import { classroomStoreContract, contractLesson } from './helpers/classroom-store-contract.mjs';
 
@@ -168,6 +169,59 @@ describe('the shared filing logic on PostgreSQL', () => {
     expect(await sql`SELECT id FROM public.classroom_jobs WHERE type = 'delete_vendor_copy' AND provider_file_id = 'SYN-RACE-V1'`).toHaveLength(1);
     const stored = JSON.stringify(await sql`SELECT data FROM public.classroom_events WHERE lesson_id = ${lesson.id}`);
     for (const planted of ['synthetic-download-token-not-real', 'example.invalid']) expect(stored).not.toContain(planted);
+  });
+
+  test('each recording is stored under its vendor as 028 names it; a vendor 028 does not list, or a fact that breaks the contract, stores nothing', async () => {
+    const lesson = contractLesson('L-vendor', 'TEST-V');
+    await store.createLesson(lesson);
+    const START = Date.parse(lesson.startsAt);
+    await store.transaction(tx => storeEvent(tx, { source: 'server', type: 'server.recording_eligibility', lessonId: lesson.id, occurredAt: START - 15 * MIN, receivedAt: START - 15 * MIN, key: `decide:${lesson.id}`, eligible: true }));
+    const fact = (provider, source, id, size = 64) => {
+      const value = {
+        source, type: 'session.recording_completed', provider, lessonId: lesson.id, providerSessionId: `SYN-SESSION-${id}`, occurredAt: START + 60 * MIN, receivedAt: START + 70 * MIN,
+        files: [{ providerFileId: id, kind: 'composite', extension: 'mp4', size, status: 'completed', recordingStart: START + MIN, recordingEnd: START + 60 * MIN }],
+      };
+      return { ...value, key: dedupeKeyOf(value) };
+    };
+    expect((await ingestFacts({ store, facts: [fact('zoom-video-sdk', 'zoom_api', 'SYN-VENDOR-Z')] })).status).toBe(200);
+    expect((await ingestFacts({ store, facts: [fact('synthetic', 'zoom_api', 'SYN-VENDOR-S')] })).status).toBe(200);
+    // LCIC keeps the contract, but 028 allows neither its event source nor its vendor name yet: refused whole.
+    expect((await ingestFacts({ store, facts: [fact('tencent-lcic', 'lcic_callback', 'lcic-1')] })).status).toBe(503);
+    expect((await ingestFacts({ store, facts: [fact('tencent-lcic', 'zoom_api', 'lcic-2')] })).status).toBe(503);
+    // A lesson video of unknown size breaks the contract: only the refusal is kept.
+    expect((await ingestFacts({ store, facts: [fact('zoom-video-sdk', 'zoom_api', 'SYN-VENDOR-0', 0)] })).status).toBe(422);
+    const files = await sql`SELECT provider_file_id, provider, kind FROM public.classroom_recording_files WHERE lesson_id = ${lesson.id} ORDER BY provider_file_id`;
+    expect(files.map(row => [row.provider_file_id, row.provider, row.kind])).toEqual([['SYN-VENDOR-S', 'synthetic', 'composite'], ['SYN-VENDOR-Z', 'zoom', 'composite']]);
+    expect(await sql`SELECT id FROM public.classroom_jobs WHERE provider_file_id IN ('lcic-1', 'lcic-2', 'SYN-VENDOR-0')`).toHaveLength(0);
+    const events = await sql`SELECT type, source FROM public.classroom_events WHERE lesson_id = ${lesson.id} AND type <> 'p1.filing' ORDER BY type, key`;
+    expect(events.map(row => [row.type, row.source])).toEqual([
+      ['server.recording_eligibility', 'server'], ['server.recording_refused', 'server'],
+      ['session.recording_completed', 'zoom_api'], ['session.recording_completed', 'zoom_api'],
+    ]);
+  });
+
+  test('a lesson without webhooks: a reported session id, its confirmation or refusal and a kept vendor copy fit 028, and read back as the trusted sessions', async () => {
+    const lesson = contractLesson('L-sessions', 'TEST-SS');
+    await store.createLesson(lesson);
+    const START = Date.parse(lesson.startsAt);
+    const id = 'oiFKKKL/RyGdm9W1r1Ll6w==';
+    expect((await ingestHostReport({ report: { type: 'session', sessionId: id }, lessonId: lesson.id, tutorId: `${lesson.id}-T`, now: START, store })).status).toBe(200);
+    const base = { source: 'server', lessonId: lesson.id, occurredAt: START + 1000, receivedAt: START + 1000 };
+    await store.transaction(async tx => {
+      await storeEvent(tx, { ...base, type: 'server.session_verified', reportedSessionId: id, providerSessionId: id, ended: false, key: `server.session_verified:${lesson.id}:${id}` });
+      await storeEvent(tx, { ...base, type: 'server.session_rejected', reportedSessionId: 'SOMEONE-ELSE', reason: 'MISMATCH', key: `server.session_rejected:${lesson.id}:SOMEONE-ELSE` });
+      await storeEvent(tx, { ...base, type: 'server.reconcile_partial', key: `server.reconcile_partial:${lesson.id}:1` });
+      await storeEvent(tx, { ...base, source: 'p1', type: 'p1.vendor_copy_kept', providerFileId: 'SYN-KEPT-1', key: 'p1.vendor_copy_kept:SYN-KEPT-1' });
+    });
+    const stored = await store.eventsFor([lesson.id]);
+    expect(knownSessions(stored)).toEqual([{ id, ended: false, recordingsKnown: false }]);
+    const reported = stored.find(event => event.type === 'host.session');
+    expect(reported).toMatchObject({ source: 'host_sdk', reportedSessionId: id });
+    expect(reported.providerSessionId ?? null).toBeNull();
+    const rows = await sql`SELECT type, source FROM public.classroom_events WHERE lesson_id = ${lesson.id} ORDER BY type`;
+    expect(rows.map(row => [row.type, row.source])).toEqual([
+      ['host.session', 'host_sdk'], ['p1.vendor_copy_kept', 'p1'], ['server.reconcile_partial', 'server'], ['server.session_rejected', 'server'], ['server.session_verified', 'server'],
+    ]);
   });
 });
 

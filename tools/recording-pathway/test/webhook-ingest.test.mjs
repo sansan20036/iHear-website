@@ -201,7 +201,7 @@ test('a job left behind by a crash before processing is done exactly once later'
   assert.equal(filingEvents(store).filter(event => event.status === 'STORED').length, 1);
   const [copy] = copiesOf(drive, 'f-video');
   assert.equal(copy.name, '2026-11-03_TEST-S01_TEST-T01_P01.mp4');
-  assert.equal(drive.folderName(copy.parentId), '[iHear] 11.2026.Zoom Recordings');
+  assert.equal(drive.folderPath(copy.parentId), '[iHear] 11.2026.Zoom Recordings / 2026-11-03_TEST-L001');
 });
 
 test('two workers racing on one filing job, with the lease running out, keep one copy and one STORED', async () => {

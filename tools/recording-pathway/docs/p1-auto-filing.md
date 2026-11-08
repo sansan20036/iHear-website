@@ -11,6 +11,7 @@
 - [`p1-p3-handoff-spec.md`](p1-p3-handoff-spec.md)：P1↔P3 交接規格
 - [`recording-failure-rules.md`](recording-failure-rules.md)：失敗處理規則（第 7 節已依本文件更新）
 - [`live-classroom-dashboard.md`](live-classroom-dashboard.md)：管理員即時教室總覽
+- [`recording-adapter.md`](recording-adapter.md)：Recording Adapter，P1 與視訊供應商之間的介面（2026-10-31）
 
 ## 1. 流程
 

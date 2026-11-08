@@ -144,6 +144,10 @@ export type ClassroomStore = {
 export class ClassroomLessonConflictError extends Error {}
 
 const FINAL_FILE_STATUSES = ["STORED", "QUARANTINED", "HOLD", "FAILED"];
+// Protection starts at the earliest of these (withdrawalAt): consent withdrawn, an
+// administrator's emergency stop, or the lesson cancelled. A recording that runs past it stays
+// with the vendor and is never filed; one that ended before it is filed into _待確認 only.
+const PROTECTIVE_STOPS = ["server.consent_withdrawn", "server.emergency_stop", "server.lesson_cancelled"];
 // Never before Retry-After, when the service gave one.
 const backoffMs = (attempts: number, retryAfterMs = 0) => Math.max(retryAfterMs, Math.min(30 * 60_000, 30_000 * 2 ** Math.max(0, attempts - 1)));
 const clone = <T>(value: T): T => structuredClone(value);
@@ -193,7 +197,7 @@ function readers(state: FileState) {
     eligibility: (id: string) => clone(Object.values(state.events)
       .filter((event) => event.lessonId === id && event.type === "server.recording_eligibility")
       .sort((a, b) => a.occurredAt - b.occurredAt).pop() ?? null),
-    withdrawalAt: (id: string) => earliest(id, (event) => event.type === "server.consent_withdrawn"),
+    withdrawalAt: (id: string) => earliest(id, (event) => PROTECTIVE_STOPS.includes(String(event.type))),
     unknownJoinAt: (id: string) => {
       const roster = new Set((state.lessons.find((item) => item.id === id)?.participants ?? []).map((entry) => entry.id));
       return earliest(id, (event) => (event.type === "session.user_joined" || event.type === "host.user_added") && !roster.has(String(event.participantId)));
@@ -456,12 +460,26 @@ const FILE_COLUMNS: Record<string, string> = {
 };
 const TIME_COLUMNS = new Set(["recording_start", "recording_end", "filed_at"]);
 
+// The vendor a recording came from, as migration 028 stores it ('zoom' or 'synthetic'). A vendor
+// 028 does not list is refused here rather than stored under another vendor's name; letting
+// more vendors in needs the migration change in the P1/P3 integration plan first.
+const DATABASE_PROVIDERS: Record<string, string> = { "zoom-video-sdk": "zoom", zoom: "zoom", synthetic: "synthetic" };
+export function databaseProvider(provider: unknown) {
+  // Records made before facts named their vendor came only from Zoom's webhook.
+  if (provider == null) return "zoom";
+  // Own keys only: '__proto__' or 'constructor' must not read as a vendor.
+  const stored = Object.hasOwn(DATABASE_PROVIDERS, String(provider)) ? DATABASE_PROVIDERS[String(provider)] : null;
+  if (!stored) throw new Error(`Recordings from ${String(provider)} cannot be stored yet: migration 028 allows only zoom and synthetic`);
+  return stored;
+}
+
 function fileColumns(record: Partial<RecordingFile>) {
   const columns: Record<string, unknown> = {};
   for (const [field, column] of Object.entries(FILE_COLUMNS)) {
     if (!(field in record)) continue;
     const value = record[field];
-    columns[column] = TIME_COLUMNS.has(column) ? asDate(value as number | null) : value ?? null;
+    // The vendor as 028 stores it, whichever write carries it.
+    columns[column] = column === "provider" ? databaseProvider(value) : TIME_COLUMNS.has(column) ? asDate(value as number | null) : value ?? null;
   }
   return columns;
 }
@@ -573,7 +591,7 @@ function postgresTransaction(sql: postgres.TransactionSql): ClassroomTransaction
       return rows.length > 0;
     },
     async insertFileRecord(record) {
-      const columns = { provider_file_id: record.providerFileId, provider: String(record.provider ?? "zoom"), ...fileColumns(record) };
+      const columns = { provider_file_id: record.providerFileId, provider: databaseProvider(record.provider), ...fileColumns(record) };
       const rows = await sql`
         INSERT INTO public.classroom_recording_files ${sql(columns)}
         ON CONFLICT (provider_file_id) DO NOTHING
@@ -601,7 +619,7 @@ function postgresTransaction(sql: postgres.TransactionSql): ClassroomTransaction
       `;
       return row ? fromEventRow(row) : null;
     },
-    withdrawalAt: (id) => earliestEvent(sql, id, ["server.consent_withdrawn"]),
+    withdrawalAt: (id) => earliestEvent(sql, id, PROTECTIVE_STOPS),
     unknownJoinAt: (id) => unknownJoinAt(sql, id),
   };
 }
@@ -710,7 +728,7 @@ export function createPostgresClassroomStore(sql: postgres.Sql): ClassroomStore 
       return row ? fromFileRow(row) : null;
     },
     lesson: (id) => readLesson(sql, id),
-    withdrawalAt: (id) => earliestEvent(sql, id, ["server.consent_withdrawn"]),
+    withdrawalAt: (id) => earliestEvent(sql, id, PROTECTIVE_STOPS),
     unknownJoinAt: (id) => unknownJoinAt(sql, id),
     async eventsFor(lessonIds) {
       if (!lessonIds.length) return [];

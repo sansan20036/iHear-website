@@ -43,9 +43,12 @@ export const FAILURE = Object.freeze({
   SESSION_GONE: 'SESSION_GONE',                 // the resumable session expired: start a new one
   VENDOR_AUTH: 'VENDOR_AUTH',                   // blocked until Zoom access is restored
   VENDOR_FILE_GONE: 'VENDOR_FILE_GONE',         // Zoom no longer has the file: fail now
+  SIZE_MISMATCH: 'SIZE_MISMATCH',               // the vendor's file is not the size its notice said: fail now
   INVALID: 'INVALID',                           // a malformed request or a bug: retried, counted
 });
 const BLOCKING = new Set([FAILURE.DRIVE_QUOTA, FAILURE.DRIVE_AUTH, FAILURE.DRIVE_FOLDER_MISSING, FAILURE.VENDOR_AUTH]);
+// Retrying cannot change these: the filing fails at once.
+const FINAL_FAILURES = new Set([FAILURE.VENDOR_FILE_GONE, FAILURE.SIZE_MISMATCH]);
 
 export class FilingError extends Error {
   constructor(code, message = code, { retryAfterMs = 0, restartSession = false } = {}) {
@@ -111,6 +114,7 @@ export function driveUploadState({ status, range = null, fileId = null }) {
 
 // Zoom recording download answers. To be checked against real downloads, including whether
 // Zoom honours Range requests at all.
+/** @param {{ status: number, retryAfter?: string | null }} input */
 export function classifyVendorResponse({ status, retryAfter = null }) {
   const retryAfterMs = retryAfterMsOf(retryAfter);
   if (!status || status >= 500) return { code: FAILURE.TRANSIENT, retryAfterMs };
@@ -120,12 +124,42 @@ export function classifyVendorResponse({ status, retryAfter = null }) {
   return { code: FAILURE.INVALID, retryAfterMs };
 }
 
+// A vendor's answer to one byte range [start, end) of a recording, checked before any byte is
+// passed on; `size` is the file's size from the vendor's own notice, which P1 checks every copy
+// against. A 206 must say in Content-Range which bytes it sent and how big the whole file is. A
+// whole file of another size means the notice was wrong (a size in another unit, say): filing
+// stops for good rather than store part of a recording as if it were all of it. A 200 is the
+// whole file, taken only for a range from byte 0 and only at the notice's size. Anything else is
+// classified like any other vendor answer.
+/**
+ * @param {{ status: number, contentRange?: string | null, retryAfter?: string | null, bytes: Buffer, start: number, end: number, size: number }} input
+ * @returns {Buffer}
+ */
+export function checkVendorRange({ status, contentRange = null, retryAfter = null, bytes, start, end, size }) {
+  if (status === 206) {
+    const match = /^bytes (\d+)-(\d+)\/(\d+|\*)$/.exec(String(contentRange ?? '').trim());
+    if (!match) throw new FilingError(FAILURE.TRANSIENT, 'the vendor sent part of the file without saying which part');
+    if (match[3] === '*') throw new FilingError(FAILURE.TRANSIENT, 'the vendor did not say how big the file is');
+    if (Number(match[3]) !== size) throw new FilingError(FAILURE.SIZE_MISMATCH, `the vendor holds ${match[3]} bytes; its notice said ${size}`);
+    if (Number(match[1]) !== start || Number(match[2]) !== end - 1 || bytes.length !== end - start) {
+      throw new FilingError(FAILURE.TRANSIENT, `asked for bytes ${start}-${end - 1}, the vendor sent ${match[1]}-${match[2]} (${bytes.length} bytes)`);
+    }
+    return bytes;
+  }
+  if (status === 200 && start === 0) {
+    if (bytes.length !== size) throw new FilingError(FAILURE.SIZE_MISMATCH, `the vendor sent the whole file, ${bytes.length} bytes; its notice said ${size}`);
+    return bytes.subarray(0, end);
+  }
+  const failure = classifyVendorResponse({ status, retryAfter });
+  throw new FilingError(failure.code, `the vendor answered ${status} to bytes ${start}-${end - 1}`, failure);
+}
+
 // Recorded at or after the moment protection started (a withdrawal, or someone unknown joining).
 export const runsPast = (file, at) => at != null && (file.recordingEnd == null || file.recordingEnd > at);
 
 // The P1 filing fact the overview reads. Final outcomes have one fixed key each; a block or a
 // resumption can happen more than once, so their keys carry the time.
-export function filingEvent(record, status, at, { reason = null, repeatable = false } = {}) {
+export function filingEvent(record, status, at, { reason = null, repeatable = false, placed = null } = {}) {
   const event = {
     source: 'p1',
     type: 'p1.filing',
@@ -137,8 +171,15 @@ export function filingEvent(record, status, at, { reason = null, repeatable = fa
     key: `p1.filing:${record.providerFileId}:${status}${repeatable ? `:${reason ?? ''}:${at}` : ''}`,
   };
   if (reason) event.reason = reason;
+  // Where the copy went, for the overview: P1's own name and folder (codes and dates only), the
+  // size, Drive's checksum where it gives one, and the Drive file id.
+  if (placed) Object.assign(event, { name: placed.name, folder: placed.folder, size: placed.size, md5: placed.md5 ?? null, driveFileId: placed.driveFileId, destination: placed.destination ?? null });
   return event;
 }
+
+// Each lesson's recordings get their own folder inside the month's folder, named by the lesson's
+// date and code (both checked when the lesson was made: digits, letters and hyphens only).
+export const lessonFolderName = lesson => `${lesson.date}_${lesson.code}`;
 
 // Workers claim stored jobs one at a time under a lease, and stop claiming before the deadline.
 // A worker that crashes simply loses its lease; the job becomes claimable again when the lease
@@ -187,30 +228,30 @@ async function settleFailure({ store, job, leaseVersion, error, at }) {
     const ok = await store.rescheduleJob({ jobId: job.id, leaseVersion, availableAt: at + FILING_DEFAULTS.blockedRecheckMs, refundAttempt: true, blockedReason: code, error: message, events });
     return { status: ok ? 'BLOCKED' : 'LEASE_LOST', reason: code };
   }
-  const gone = code === FAILURE.VENDOR_FILE_GONE;
+  const final = FINAL_FAILURES.has(code);
   const giveUp = filing ? { fileChanges: { status: 'FAILED' }, events: [filingEvent(job, 'FAILED', at, { reason: code })] } : {};
   const ok = await store.failJob({
     jobId: job.id,
     leaseVersion,
     now: at,
     error: message,
-    maxAttempts: gone ? 0 : MAX_JOB_ATTEMPTS,
+    maxAttempts: final ? 0 : MAX_JOB_ATTEMPTS,
     retryAfterMs: error?.retryAfterMs || 0,
     giveUp,
   });
-  return { status: !ok ? 'LEASE_LOST' : gone ? 'FAILED' : 'RETRY', reason: code };
+  return { status: !ok ? 'LEASE_LOST' : final ? 'FAILED' : 'RETRY', reason: code };
 }
 
 // One fenced write finishes a filing: the record's outcome, the P1 filing event the dashboard
 // reads and, once a copy is safely stored, the job that may delete Zoom's copy. It only
 // succeeds while the worker still holds the job's lease.
-function finish(store, record, job, leaseVersion, status, driveFileId, now) {
+function finish(store, record, job, leaseVersion, status, driveFileId, now, placed = null) {
   return store.finishFiling({
     jobId: job.id,
     leaseVersion,
     providerFileId: record.providerFileId,
     changes: { status, driveFileId, filedAt: now },
-    events: [filingEvent(record, status, now)],
+    events: [filingEvent(record, status, now, { placed })],
     jobs: status === 'STORED'
       ? [{ id: `delete-vendor:${record.providerFileId}`, type: 'delete_vendor_copy', lessonId: record.lessonId, providerFileId: record.providerFileId }]
       : [],
@@ -250,7 +291,7 @@ async function ensureRoom(drive, bytes) {
 
 // Moves the recording into Drive chunk by chunk through one resumable session. Returns
 // UPLOADED with the Drive file, CONTINUE when the time budget is used up, or LEASE_LOST.
-async function transfer({ store, drive, download, job, leaseVersion, record, folderName, time, deadline, leaseMs, chunkBytes, safetyMs, rootFolderId }) {
+async function transfer({ store, drive, download, job, leaseVersion, record, folderPath, time, deadline, leaseMs, chunkBytes, safetyMs, rootFolderId }) {
   let resumed = job.blockedReason ? [filingEvent(job, 'RESUMED', time(), { repeatable: true })] : [];
   let uri = record.uploadSessionUri || null;
   let offset = 0;
@@ -267,7 +308,9 @@ async function transfer({ store, drive, download, job, leaseVersion, record, fol
   }
   if (!uri) {
     await ensureRoom(drive, record.size);
-    const folderId = await drive.ensureFolder(rootFolderId, folderName);
+    // Found or made one level at a time under the test folder (Drive's root for the app).
+    let folderId = rootFolderId;
+    for (const name of folderPath) folderId = await drive.ensureFolder(folderId, name);
     const name = await freeName(drive, folderId, record.plannedName, record.extension);
     uri = await drive.startUpload({ name, parentId: folderId, size: record.size, appProperties: { providerFileId: record.providerFileId, lessonId: record.lessonId } });
     if (!(await save(0))) return { status: 'LEASE_LOST', fileId: null };
@@ -317,24 +360,25 @@ export async function fileRecording({ store, drive, download, job, leaseVersion,
     await finish(store, record, job, leaseVersion, record.status, record.driveFileId, time());
     return { status: 'ALREADY_DONE' };
   }
-  // A withdrawal or an unknown participant reported after the recording was registered still
-  // applies.
+  // A protective stop (consent withdrawn, or the emergency stop: withdrawalAt gives the earlier)
+  // or an unknown participant reported after the recording was registered still applies.
   const withdrawnAt = await store.withdrawalAt(record.lessonId);
   if (runsPast(record, withdrawnAt) || runsPast(record, await store.unknownJoinAt(record.lessonId))) {
     await finish(store, record, job, leaseVersion, 'HOLD', null, time());
     return { status: 'HOLD' };
   }
-  const quarantine = record.hold === 'CONSENT_WITHDRAWN' || withdrawnAt != null;
+  const lesson = await store.lesson(record.lessonId);
+  // Without its lesson a recording cannot be named into a lesson folder: it waits in _待確認 too.
+  const quarantine = record.hold === 'CONSENT_WITHDRAWN' || withdrawnAt != null || !lesson;
   const outcome = quarantine ? 'QUARANTINED' : 'STORED';
+  const folderPath = quarantine ? [QUARANTINE_FOLDER] : [Core.monthlyFolderName(lesson.date), lessonFolderName(lesson)];
 
   // Already uploaded, for example by a worker that was stopped after its upload but before
   // writing to the database: adopt that copy, upload nothing.
   let copies = await verifiedCopies(drive, record);
   let mine = null;
   if (!copies.length) {
-    const lesson = await store.lesson(record.lessonId);
-    const folderName = quarantine ? QUARANTINE_FOLDER : Core.monthlyFolderName(lesson.date);
-    const moved = await transfer({ store, drive, download, job, leaseVersion, record, folderName, time, deadline, leaseMs, chunkBytes, safetyMs, rootFolderId });
+    const moved = await transfer({ store, drive, download, job, leaseVersion, record, folderPath, time, deadline, leaseMs, chunkBytes, safetyMs, rootFolderId });
     if (moved.status === 'CONTINUE') return moved;
     if (moved.status === 'LEASE_LOST') return dropOurExtraCopy(store, drive, record, moved.fileId);
     mine = moved.fileId;
@@ -347,7 +391,10 @@ export async function fileRecording({ store, drive, download, job, leaseVersion,
     }
   }
   const keep = copies[0];
-  if (await finish(store, record, job, leaseVersion, outcome, keep.id, time())) {
+  // Which Drive it is (google, or the local stand-in for synthetic tests), so a stand-in copy is
+  // never shown as stored in Google Drive.
+  const placed = { name: keep.name ?? null, folder: folderPath.join(' / '), size: keep.size, md5: keep.md5 ?? null, driveFileId: keep.id, destination: drive.kind ?? null };
+  if (await finish(store, record, job, leaseVersion, outcome, keep.id, time(), placed)) {
     for (const copy of await drive.findByAppProperty('providerFileId', record.providerFileId)) if (copy.id !== keep.id) await drive.trash(copy.id);
     return { status: outcome, driveFileId: keep.id };
   }

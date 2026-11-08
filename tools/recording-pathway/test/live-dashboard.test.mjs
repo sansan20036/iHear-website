@@ -29,7 +29,7 @@ const recording = (status, at, source = 'zoom_webhook', fields = {}) => (source 
   ? fact('host.recording_status', at, { status, participantId: TUTOR, ...fields }, 'host_sdk')
   : fact({ Recording: 'session.recording_started', Paused: 'session.recording_paused', Stopped: 'session.recording_stopped' }[status], at, { status, ...fields }));
 const endedFact = (at, session = 'sess-1') => fact('session.ended', at, { providerSessionId: session });
-const videoFile = { providerFileId: 'f-video', kind: 'shared_screen_with_speaker_view', extension: 'mp4', size: 64, status: 'completed', recordingStart: T + MIN, recordingEnd: T + 60 * MIN };
+const videoFile = { providerFileId: 'f-video', kind: 'composite', extension: 'mp4', size: 64, status: 'completed', recordingStart: T + MIN, recordingEnd: T + 60 * MIN };
 const completedFact = at => fact('session.recording_completed', at, { files: [videoFile] });
 const filed = (status, at) => fact('p1.filing', at, { providerFileId: 'f-video', status, key: `p1.filing:f-video:${status}` }, 'p1');
 function asked(attempt, at, ok = true) {
@@ -92,9 +92,11 @@ test('2, 5 and 10 concurrent lessons each end in their own expected state, as if
         expected,
         `${size} rooms, ${name}`,
       );
-      // Same lesson alone: the same final card. Concurrency changes nothing for any room.
+      // Same lesson alone: the same final card. Concurrency changes nothing for any room, except
+      // the Drive file ids, which the stand-in Drive numbers across all rooms.
       const alone = await runSimulation({ scenarios: [name], indexes: [index] });
-      assert.deepEqual(cardsByCode(alone.final).get(card.lessonCode).card, card, `${name} alone vs with ${size} rooms`);
+      const withoutDriveIds = entry => ({ ...entry, filing: { ...entry.filing, items: entry.filing.items.map(item => ({ ...item, driveFileId: item.driveFileId ? 'id' : null })) } });
+      assert.deepEqual(withoutDriveIds(cardsByCode(alone.final).get(card.lessonCode).card), withoutDriveIds(card), `${name} alone vs with ${size} rooms`);
     }
     // Every stored recording has exactly one copy in Drive.
     const stored = run.store.fileRecords().filter(record => record.status === 'STORED' || record.status === 'QUARANTINED');

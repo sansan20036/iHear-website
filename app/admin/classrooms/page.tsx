@@ -29,6 +29,10 @@ const copy = {
     consent: "Synthetic consent (local testing only)", consentIntro: "The consent policy is still to be approved; these records are synthetic.",
     trialConsentIntro: "Vendor trial: test consent can be set only for TEST- codes (adult testers). Real students cannot be recorded.", personCode: "Person code", role: "Role", status: "Status",
     granted: "Consented", withdrawn: "Withdrawn", staffNotice: "Tutor notice acknowledged", setConsent: "Save",
+    files: "Files", openFile: "Open in Google Drive",
+    emergencyStop: "Emergency stop recording", stopping: "Stopping…",
+    emergencyConfirm: "Stop recording this lesson now? It will not be recorded again in this lesson, and anything already recorded is kept out of the normal folders until an owner reviews it.",
+    emergencyPressed: "Emergency stop pressed",
   },
   zhHant: {
     title: "教室總覽", intro: "今天各堂一對一課程的即時狀態。錄影與歸檔要有視訊服務或 P1 的確認才算完成。",
@@ -49,16 +53,25 @@ const copy = {
     consent: "合成同意資料（僅限本機測試）", consentIntro: "錄影同意政策尚待確認；這裡的紀錄都是合成資料。",
     trialConsentIntro: "廠商試用：只能替 TEST- 代碼（成人測試者）設定測試同意，真實學生無法錄影。", personCode: "人員代碼", role: "角色", status: "狀態",
     granted: "已同意", withdrawn: "已撤回", staffNotice: "小老師已確認告知", setConsent: "儲存",
+    files: "錄影檔", openFile: "在 Google 雲端硬碟開啟",
+    emergencyStop: "緊急停止錄影", stopping: "停止中…",
+    emergencyConfirm: "確定要立即停止這堂課的錄影嗎？停止後這堂課不會再錄影；已經錄到的內容會先隔離，不放進一般資料夾，等擁有者確認。",
+    emergencyPressed: "已按下緊急停止",
   },
 };
 
 type Person = { code: string; status: string; basis: string; label: string };
+// One recording file and where it was filed: P1's name and folder, size, Drive's checksum.
+type FilingItem = { extension: string | null; status: string; destination: string | null; label: string; reasonLabel: string | null; name: string | null; folder: string | null; size: number | null; md5: string | null; link?: string | null };
+const megabytes = (bytes: number | null) => (bytes == null ? "" : `${(bytes / 1024 / 1024).toFixed(1)} MB`);
 type Card = {
   lessonCode: string; scheduledStart: string | null; actualStart: string | null;
   phase: { value: string; basis: string; label: string };
   tutor: Person | null; students: Person[];
   recording: { status: string; basis: string; basisLabel: string; source: string | null; label: string };
-  filing: { status: string; label: string; reasonLabel?: string | null };
+  filing: { status: string; label: string; reasonLabel?: string | null; items?: FilingItem[] };
+  // stopState: CONFIRMED (the video service said so), WAITING, or NO_RECORDING_KNOWN; the label says which.
+  emergency?: { pressedAt: string | null; stopState: string | null; stopLabel: string | null; available: boolean };
   anomalies: { code: string; severity: string; label: string }[];
   dataState: { value: string; label: string; lastConfirmedAt: string | null; ageSeconds: number | null };
 };
@@ -82,6 +95,7 @@ export default function ClassroomsPage() {
   const [tickFailed, setTickFailed] = useState(false);
   const [refreshedAt, setRefreshedAt] = useState<string | null>(null);
   const [checking, setChecking] = useState("");
+  const [stopping, setStopping] = useState("");
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [lesson, setLesson] = useState(emptyLesson);
   const [busy, setBusy] = useState(false);
@@ -134,6 +148,19 @@ export default function ClassroomsPage() {
       setChecking("");
     }
   });
+  // One press, one confirmation: the server stops recording at once and keeps it stopped.
+  const emergencyStop = (code: string) => {
+    if (!window.confirm(text.emergencyConfirm)) return;
+    return mutate(async () => {
+      setStopping(code);
+      try {
+        await adminFetch(`/api/admin/classrooms/${encodeURIComponent(lessonIdOf(code))}/stop-recording`, { method: "POST", body: "{}" });
+        await refresh();
+      } finally {
+        setStopping("");
+      }
+    });
+  };
   const handle = (item: Anomaly) => mutate(async () => {
     const id = `${item.lessonId}:${item.code}`;
     await adminFetch("/api/admin/classrooms/anomalies", { method: "POST", body: JSON.stringify({ lessonId: item.lessonId, code: item.code, note: notes[id] ?? "" }) });
@@ -204,11 +231,32 @@ export default function ClassroomsPage() {
                   {card.students.map((student) => <div key={student.code}><dt>{text.student}</dt><dd>{student.code}　{student.label}</dd></div>)}
                   <div><dt>{text.recording}</dt><dd>{card.recording.label}{card.recording.basis === "confirmed" && card.recording.source ? <span className="classroom-basis">（{SOURCE[card.recording.source] ?? card.recording.source}確認）</span> : null}</dd></div>
                   {card.filing.label && <div><dt>{text.filing}</dt><dd>{card.filing.label}{card.filing.reasonLabel ? `（${card.filing.reasonLabel}）` : null}</dd></div>}
+                  {card.filing.items && card.filing.items.length > 0 && (
+                    <div><dt>{text.files}</dt><dd>
+                      <ul className="classroom-files">
+                        {card.filing.items.map((item, index) => (
+                          <li key={`${item.name ?? item.extension}-${index}`}>
+                            <span className={`classroom-file-status ${item.status}`}>{item.label}{item.reasonLabel ? `（${item.reasonLabel}）` : ""}</span>
+                            {item.name && <span className="classroom-file-name">{item.folder ? `${item.folder} / ` : ""}{item.name}</span>}
+                            {item.size != null && <span className="classroom-basis">{megabytes(item.size)}</span>}
+                            {item.md5 && <span className="classroom-basis" title={item.md5}>md5 {item.md5.slice(0, 8)}…</span>}
+                            {item.link && <a href={item.link} target="_blank" rel="noreferrer noopener">{text.openFile}</a>}
+                          </li>
+                        ))}
+                      </ul>
+                    </dd></div>
+                  )}
                   <div><dt>{text.data}</dt><dd>{card.dataState.lastConfirmedAt ? taipei(card.dataState.lastConfirmedAt) : "—"}</dd></div>
                 </dl>
                 {card.anomalies.length > 0 && <ul className="classroom-alerts">{card.anomalies.map((item) => <li key={item.code} className={item.severity}>{item.label}</li>)}</ul>}
+                {card.emergency?.pressedAt && (
+                  <p className={`classroom-emergency${card.emergency.stopState === "CONFIRMED" ? " is-confirmed" : ""}`} role="status">{text.emergencyPressed}（{taipei(card.emergency.pressedAt)}）：{card.emergency.stopLabel}</p>
+                )}
                 <div className="admin-card-actions">
                   <button type="button" className="admin-button secondary" disabled={busy || !lessonIdOf(card.lessonCode)} onClick={() => checkNow(card.lessonCode)}>{checking === card.lessonCode ? text.checking : text.check}</button>
+                  {card.emergency?.available && (
+                    <button type="button" className="admin-button danger" disabled={busy || !lessonIdOf(card.lessonCode)} onClick={() => emergencyStop(card.lessonCode)}>{stopping === card.lessonCode ? text.stopping : text.emergencyStop}</button>
+                  )}
                 </div>
               </article>
             ))}

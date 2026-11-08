@@ -49,7 +49,7 @@ async function filing(drive, size, { chunkBytes = 256 * KiB } = {}) {
   await store.transaction(tx => storeEvent(tx, { source: 'server', type: 'server.recording_eligibility', lessonId: lesson.id, occurredAt: 0, receivedAt: 0, key: 'decide', eligible: true }));
   await store.transaction(tx => storeEvent(tx, {
     source: 'zoom_api', type: 'session.recording_completed', lessonId: lesson.id, providerSessionId: 'S', receivedAt: 1, occurredAt: 1, key: 'completed',
-    files: [{ providerFileId: 'F-AD1', kind: 'shared_screen_with_speaker_view', extension: 'mp4', size, status: 'completed', recordingStart: 0, recordingEnd: 60_000 }],
+    provider: 'synthetic', files: [{ providerFileId: 'F-AD1', kind: 'composite', extension: 'mp4', size, status: 'completed', recordingStart: 0, recordingEnd: 60_000 }],
   }));
   let later = 0;
   const call = () => processJobs({

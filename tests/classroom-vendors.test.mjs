@@ -5,7 +5,9 @@ import { CLASSROOM_CAPABILITIES, classroomDeviceOf, deviceLimits } from "../lib/
 import { LcicEmbedAdapter, LCIC_FRAME_PERMISSIONS, MediaAdapterUnavailableError, ZoomVideoSdkMediaAdapter } from "../lib/classroom-media";
 import { ClassroomProviderUnavailableError, classroomProvider } from "../lib/classroom-provider";
 import { isTestLesson, LcicApiError, lcicStatusOf, memoryRoomRegistry, tc3Sign, tencentLcicConfig, tencentLcicProvider, verifyLcicCallback } from "../lib/classroom-vendors/tencent-lcic";
-import { zoomApiToken, zoomVideoSdkConfig, zoomVideoSdkProvider } from "../lib/classroom-vendors/zoom-video-sdk";
+import { zoomApiToken, zoomSessionPath, zoomVideoSdkConfig, zoomVideoSdkProvider } from "../lib/classroom-vendors/zoom-video-sdk";
+import { roomNameOf } from "../tools/recording-pathway/classroom/eligibility.mjs";
+import { FAILURE, FilingError } from "../tools/recording-pathway/classroom/recording-filing.mjs";
 
 // The two vendor adapters (Zoom Video SDK, Tencent LCIC) against stand-ins: every HTTP request
 // is recorded by a fake transport and every SDK call by a fake SDK. Passing shows iHear sends what
@@ -34,10 +36,14 @@ afterEach(() => { vi.unstubAllEnvs(); });
 describe("Zoom Video SDK, server side", () => {
   const env = { ZOOM_VIDEO_SDK_KEY: "synthetic-sdk-key", ZOOM_VIDEO_SDK_SECRET: "synthetic-sdk-secret-not-real", ZOOM_VIDEO_SDK_API_KEY: "synthetic-api-key", ZOOM_VIDEO_SDK_API_SECRET: "synthetic-api-secret-not-real", ZOOM_VIDEO_SDK_WEBHOOK_SECRET: "synthetic-webhook-not-real" };
   const config = zoomVideoSdkConfig(env);
-  const provider = (answer = () => ({ status: 202, body: "" }), sessionId = "sess-TEST-1") => {
+  // `sessions`: the lesson's trusted sessions, oldest first; a string is one live session.
+  const provider = (answer = () => ({ status: 202, body: "" }), sessions = "sess-TEST-1") => {
     const fake = fakeTransport(answer);
-    return { ...fake, provider: zoomVideoSdkProvider(config, { transport: fake.transport, sessionIdOf: async () => sessionId, now: () => NOW }) };
+    const known = sessions == null ? [] : typeof sessions === "string" ? [{ id: sessions, ended: false, recordingsKnown: false }] : sessions;
+    return { ...fake, provider: zoomVideoSdkProvider(config, { transport: fake.transport, sessionsOf: async () => known, now: () => NOW }) };
   };
+  const listing = files => ({ status: 200, body: JSON.stringify({ recording_files: files }) });
+  const videoFile = (id, extra = {}) => ({ id, download_url: `https://zoom.example.invalid/rec/${id}`, ...extra });
 
   test("configuration needs all five values", () => {
     expect(config).toMatchObject({ sdkKey: "synthetic-sdk-key", apiBase: "https://api.zoom.us/v2" });
@@ -84,20 +90,155 @@ describe("Zoom Video SDK, server side", () => {
   test("before Zoom reports the session there is nothing to control; undocumented calls answer 501 without a request", async () => {
     const none = provider(undefined, null);
     expect(await none.provider.startRecording(lesson)).toEqual({ ok: false, httpStatus: 409 });
+    expect(await none.provider.stopRecording(lesson)).toEqual({ ok: false, httpStatus: 409 });
+    expect(await none.provider.endSession(lesson)).toEqual({ ok: false, httpStatus: 409 });
     expect(await none.provider.removeUser(lesson, student.id)).toEqual({ ok: false, httpStatus: 501 });
     expect(await none.provider.deleteRecording({ providerFileId: "f-1" })).toEqual({ ok: false, httpStatus: 501 });
+    // Nothing to look up either (the round-1 trial, with no webhook and no confirmed session).
+    expect(await none.provider.snapshot(lesson)).toBeNull();
     expect(none.requests).toEqual([]);
   });
 
-  test("a recording range is downloaded from the address listed for the file, with a Range header", async () => {
+  test("a recording range is downloaded from the address listed for the file, with a Range header, and the answer is checked", async () => {
     const { provider: zoom, requests } = provider((request) => request.url.endsWith("/recordings")
-      ? { status: 200, body: JSON.stringify({ recording_files: [{ id: "f-video", download_url: "https://zoom.example.invalid/rec/f-video" }] }) }
-      : { status: 206, body: "", bytes: Buffer.alloc(16, 7) });
-    const bytes = await zoom.download({ providerFileId: "f-video", lessonId: lesson.id, status: "PENDING" }, { start: 16, end: 32 });
+      ? listing([videoFile("f-video")])
+      : { status: 206, body: "", bytes: Buffer.alloc(16, 7), headers: { "content-range": "bytes 16-31/64" } });
+    const record = { providerFileId: "f-video", providerSessionId: "sess-TEST-1", lessonId: lesson.id, status: "PENDING", size: 64 };
+    const bytes = await zoom.download(record, { start: 16, end: 32 });
     expect(bytes.length).toBe(16);
-    expect(requests[1]).toMatchObject({ method: "GET", url: "https://zoom.example.invalid/rec/f-video", headers: { Range: "bytes=16-31" } });
-    const insecure = provider((request) => request.url.endsWith("/recordings") ? { status: 200, body: JSON.stringify({ recording_files: [{ id: "f-video", download_url: "http://plain.example.invalid/f" }] }) } : { status: 206, body: "" });
-    await expect(insecure.provider.download({ providerFileId: "f-video", lessonId: lesson.id, status: "PENDING" }, { start: 0, end: 16 })).rejects.toThrow(/not available/);
+    expect(requests.map(request => request.url)).toEqual(["https://api.zoom.us/v2/videosdk/sessions/sess-TEST-1/recordings", "https://zoom.example.invalid/rec/f-video"]);
+    expect(requests[1]).toMatchObject({ method: "GET", headers: { Range: "bytes=16-31" } });
+    const insecure = provider((request) => request.url.endsWith("/recordings") ? listing([{ id: "f-video", download_url: "http://plain.example.invalid/f" }]) : { status: 206, body: "" });
+    await expect(insecure.provider.download(record, { start: 0, end: 16 })).rejects.toThrow(/not available/);
+  });
+
+  // --- P-4: session ids in paths --------------------------------------------------------------
+
+  test("session ids go into paths as Zoom's reference asks: twice when the rule for that call says so", async () => {
+    // Zoom's own sample id has one "/": the recordings calls want it encoded twice, the others once.
+    const sample = "oiFKKKL/RyGdm9W1r1Ll6w==";
+    expect(zoomSessionPath(sample, "recordings")).toBe("oiFKKKL%252FRyGdm9W1r1Ll6w%253D%253D");
+    expect(zoomSessionPath(sample, "session")).toBe("oiFKKKL%2FRyGdm9W1r1Ll6w%3D%3D");
+    // Beginning with "/" or holding "//": twice for every call.
+    for (const id of ["/Q4zHkBcRYGrW8q2xZ6wgQ==", "ab//cdEF12=="]) {
+      expect(zoomSessionPath(id, "session")).toBe(encodeURIComponent(encodeURIComponent(id)));
+      expect(zoomSessionPath(id, "recordings")).toBe(encodeURIComponent(encodeURIComponent(id)));
+    }
+    // No "/": once.
+    for (const id of ["abcDEF123==", "+lead0123=="]) for (const rule of ["session", "recordings"]) expect(zoomSessionPath(id, rule)).toBe(encodeURIComponent(id));
+    const answer = request => (request.url.includes("/recordings") ? listing([]) : request.method === "PATCH" ? { status: 202, body: "" } : { status: 404, body: "{}" });
+    const { provider: zoom, requests } = provider(answer, sample);
+    await zoom.startRecording(lesson);
+    await zoom.snapshot(lesson);
+    expect(requests.map(request => request.url)).toEqual([
+      "https://api.zoom.us/v2/videosdk/sessions/oiFKKKL%2FRyGdm9W1r1Ll6w%3D%3D/events",
+      "https://api.zoom.us/v2/videosdk/sessions/oiFKKKL%2FRyGdm9W1r1Ll6w%3D%3D?type=live",
+      "https://api.zoom.us/v2/videosdk/sessions/oiFKKKL%2FRyGdm9W1r1Ll6w%3D%3D?type=past",
+      "https://api.zoom.us/v2/videosdk/sessions/oiFKKKL%252FRyGdm9W1r1Ll6w%253D%253D/recordings",
+    ]);
+  });
+
+  // --- P-1: a reported session is used only once Zoom confirms it ---------------------------------
+
+  test("a session id the tutor's page reported is confirmed only when Zoom says the session is this lesson's", async () => {
+    const answers = (live, past) => request => (request.url.endsWith("?type=live") ? live : past);
+    const ours = { status: 200, body: JSON.stringify({ id: "s-1", session_key: lesson.id, session_name: roomNameOf(lesson.id) }) };
+    const live = provider(answers(ours, { status: 500, body: "" }), []);
+    expect(await live.provider.verifySession(lesson, "s-1")).toEqual({ verified: true, ended: false });
+    expect(live.requests.map(request => request.url)).toEqual(["https://api.zoom.us/v2/videosdk/sessions/s-1?type=live"]);
+    // Ended already: Zoom describes it only as a past session.
+    const past = provider(answers({ status: 404, body: "{}" }, { status: 200, body: JSON.stringify({ id: "s-1", session_name: roomNameOf(lesson.id) }) }), []);
+    expect(await past.provider.verifySession(lesson, "s-1")).toEqual({ verified: true, ended: true });
+    expect(past.requests.map(request => request.url.split("?")[1])).toEqual(["type=live", "type=past"]);
+    // Another lesson's session, or one that says nothing about whose it is: refused.
+    const other = provider(answers({ status: 200, body: JSON.stringify({ id: "s-9", session_key: "L-OTHER", session_name: roomNameOf(lesson.id) }) }, null), []);
+    expect(await other.provider.verifySession(lesson, "s-9")).toEqual({ verified: false, reason: "MISMATCH" });
+    const silent = provider(answers({ status: 200, body: JSON.stringify({ id: "s-8" }) }, null), []);
+    expect(await silent.provider.verifySession(lesson, "s-8")).toEqual({ verified: false, reason: "MISMATCH" });
+    // Unknown to Zoom under either type: refused. No answer, or no access: asked again later.
+    expect(await provider(() => ({ status: 404, body: "{}" }), []).provider.verifySession(lesson, "s-7")).toEqual({ verified: false, reason: "NOT_FOUND" });
+    const locked = provider(() => ({ status: 401, body: "{}" }), []);
+    expect(await locked.provider.verifySession(lesson, "s-6")).toBeNull();
+    expect(locked.requests).toHaveLength(1);
+    expect(await provider(() => { throw new Error("offline"); }, []).provider.verifySession(lesson, "s-5")).toBeNull();
+  });
+
+  // --- P-2: ended sessions ------------------------------------------------------------------------
+
+  test("an ended session is asked about as past, and its recordings are asked for whatever the details say", async () => {
+    const files = [videoFile("f-1", { status: "completed" })];
+    const answer = request => {
+      if (request.url.includes("/recordings")) return listing(files);
+      if (request.url.includes("/users")) return { status: 200, body: JSON.stringify({ users: [{ user_key: tutor.id, join_time: "2026-11-03T02:00:00Z", leave_time: "2026-11-03T03:00:00Z" }] }) };
+      return request.url.endsWith("?type=past") ? { status: 200, body: JSON.stringify({ id: "s-1", end_time: "2026-11-03T03:00:00Z" }) } : { status: 404, body: "{}" };
+    };
+    const ended = provider(answer, [{ id: "s-1", ended: true, recordingsKnown: false }]);
+    const snapshot = await ended.provider.snapshot(lesson);
+    expect(ended.requests.map(request => request.url.replace("https://api.zoom.us/v2/videosdk/sessions/", ""))).toEqual(["s-1?type=past", "s-1/users?type=past", "s-1/recordings"]);
+    expect(snapshot).toMatchObject({ providerSessionId: "s-1", details: { end_time: "2026-11-03T03:00:00Z" }, users: [{ user_key: tutor.id }], recordings: files, sessions: [] });
+    // Zoom no longer describes the session, but still lists its recordings: they are kept.
+    const forgotten = provider(request => (request.url.includes("/recordings") ? listing(files) : { status: 404, body: "{}" }), [{ id: "s-1", ended: true, recordingsKnown: false }]);
+    expect(await forgotten.provider.snapshot(lesson)).toMatchObject({ details: null, users: [], recordings: files });
+    // Nothing at all answers: no snapshot.
+    expect(await provider(() => ({ status: 500, body: "" }), "s-1").provider.snapshot(lesson)).toBeNull();
+  });
+
+  // --- P-3: a lesson in several sessions ----------------------------------------------------------
+
+  test("a lesson in several sessions: earlier sessions' recordings are asked for until known, each file from its own session", async () => {
+    const sessions = [
+      { id: "s-1", ended: true, recordingsKnown: false },
+      { id: "s-2", ended: true, recordingsKnown: true },
+      { id: "s-3", ended: false, recordingsKnown: false },
+    ];
+    const byId = { "s-1": [videoFile("f-1", { status: "completed" })], "s-2": [videoFile("f-2")], "s-3": [] };
+    const answer = request => {
+      const id = /sessions\/([^/?]+)/.exec(request.url)?.[1];
+      if (request.url.includes("/recordings")) return listing(byId[id]);
+      if (request.url.startsWith("https://zoom.example.invalid/")) return { status: 206, body: "", bytes: Buffer.alloc(8, 1), headers: { "content-range": "bytes 0-7/8" } };
+      return { status: 200, body: JSON.stringify({ id, session_key: lesson.id }) };
+    };
+    const { provider: zoom, requests } = provider(answer, sessions);
+    const snapshot = await zoom.snapshot(lesson);
+    expect(snapshot.providerSessionId).toBe("s-3");
+    expect(snapshot.sessions).toEqual([{ providerSessionId: "s-1", recordings: byId["s-1"] }]);
+    expect(requests.some(request => request.url.includes("/s-2/recordings"))).toBe(false);
+    // A file is fetched from its own session, never from the lesson's latest one.
+    requests.length = 0;
+    expect((await zoom.download({ providerFileId: "f-1", providerSessionId: "s-1", lessonId: lesson.id, size: 8 }, { start: 0, end: 8 })).length).toBe(8);
+    expect(requests.map(request => request.url)).toEqual(["https://api.zoom.us/v2/videosdk/sessions/s-1/recordings", "https://zoom.example.invalid/rec/f-1"]);
+    // A record that does not name its session: every known session, the newest first.
+    requests.length = 0;
+    await zoom.download({ providerFileId: "f-2", lessonId: lesson.id, size: 8 }, { start: 0, end: 8 });
+    expect(requests.map(request => request.url.replace("https://api.zoom.us/v2/videosdk/sessions/", ""))).toEqual(["s-3/recordings", "s-2/recordings", "https://zoom.example.invalid/rec/f-2"]);
+    // A file no session lists any more is gone: the filing fails for good.
+    const gone = await zoom.download({ providerFileId: "f-404", providerSessionId: "s-1", lessonId: lesson.id, size: 8 }, { start: 0, end: 8 }).catch(error => error);
+    expect([gone instanceof FilingError, gone.code]).toEqual([true, FAILURE.VENDOR_FILE_GONE]);
+  });
+
+  // --- P-5 and P-7: download answers ----------------------------------------------------------------
+
+  test("download answers are told apart, and a file that is not the size Zoom's notice gave is never stored", async () => {
+    const record = { providerFileId: "f-1", providerSessionId: "s-1", lessonId: lesson.id, size: 64 };
+    const failureOf = async (listed, downloaded) => {
+      const { provider: zoom } = provider(request => (request.url.includes("/recordings") ? listed : downloaded), "s-1");
+      return zoom.download(record, { start: 0, end: 16 }).then(() => null, error => [error instanceof FilingError, error.code, error.retryAfterMs]);
+    };
+    const ok = listing([videoFile("f-1")]);
+    expect(await failureOf({ status: 401, body: "" }, null)).toEqual([true, FAILURE.VENDOR_AUTH, 0]);
+    expect(await failureOf({ status: 429, body: "", headers: { "retry-after": "30" } }, null)).toEqual([true, FAILURE.RATE_LIMITED, 30_000]);
+    expect(await failureOf({ status: 503, body: "" }, null)).toEqual([true, FAILURE.TRANSIENT, 0]);
+    expect(await failureOf(ok, { status: 404, body: "" })).toEqual([true, FAILURE.VENDOR_FILE_GONE, 0]);
+    expect(await failureOf(ok, { status: 403, body: "" })).toEqual([true, FAILURE.VENDOR_AUTH, 0]);
+    // Zoom holds a file of another size than its notice said (a size in another unit, say).
+    expect(await failureOf(ok, { status: 206, body: "", bytes: Buffer.alloc(16), headers: { "content-range": "bytes 0-15/65536" } })).toEqual([true, FAILURE.SIZE_MISMATCH, 0]);
+    expect(await failureOf(ok, { status: 200, body: "", bytes: Buffer.alloc(32) })).toEqual([true, FAILURE.SIZE_MISMATCH, 0]);
+    // A part without saying which, or a different part: tried again.
+    expect(await failureOf(ok, { status: 206, body: "", bytes: Buffer.alloc(16) })).toEqual([true, FAILURE.TRANSIENT, 0]);
+    expect(await failureOf(ok, { status: 206, body: "", bytes: Buffer.alloc(16), headers: { "content-range": "bytes 16-31/64" } })).toEqual([true, FAILURE.TRANSIENT, 0]);
+    // The whole file at the notice's size, for a range from byte 0: the range is cut from it.
+    const { provider: whole } = provider(request => (request.url.includes("/recordings") ? ok : { status: 200, body: "", bytes: Buffer.alloc(64, 3) }), "s-1");
+    expect((await whole.download(record, { start: 0, end: 16 })).length).toBe(16);
   });
 
   test("the provider refuses to start without its configuration", () => {
@@ -120,7 +261,7 @@ describe("Tencent LCIC, server side", () => {
     KickUserFromRoom: () => ({ RequestId: "r" }), DeleteRecord: () => ({ RequestId: "r" }),
   };
   // Each fake application numbers its rooms from 345678; "answer" may replace Tencent's reply.
-  const lcic = ({ allowed = false, verified = false, answer } = {}) => {
+  const lcic = ({ allowed = false, verified = false, deletion = false, answer } = {}) => {
     let created = 0;
     const standard = request => {
       const action = request.headers["X-TC-Action"];
@@ -130,7 +271,7 @@ describe("Tencent LCIC, server side", () => {
     const fake = fakeTransport(answer ? request => answer(request, standard) : standard);
     const rooms = memoryRoomRegistry();
     const recordingAllowed = async () => (typeof allowed === "function" ? allowed() : allowed);
-    return { ...fake, rooms, provider: tencentLcicProvider(config, { transport: fake.transport, rooms, recordingAllowed, midClassStopVerified: verified, now: () => NOW }) };
+    return { ...fake, rooms, provider: tencentLcicProvider(config, { transport: fake.transport, rooms, recordingAllowed, midClassStopVerified: verified, deletionEnabled: deletion, now: () => NOW }) };
   };
   const actions = requests => requests.map(request => request.headers["X-TC-Action"]);
   const tencentError = code => ({ status: 200, body: JSON.stringify({ Response: { Error: { Code: code, Message: "details that may repeat the request" }, RequestId: "r" } }) });
@@ -257,8 +398,14 @@ describe("Tencent LCIC, server side", () => {
     expect(requests.length).toBe(before);
   });
 
-  test("deleting a recording deletes the room's files (DeleteRecord); another vendor's file id is not sent", async () => {
+  test("deleting a recording is off unless switched on: nothing is sent", async () => {
     const { provider, requests } = lcic();
+    expect(await provider.deleteRecording({ providerFileId: "lcic-345678" })).toEqual({ ok: false, httpStatus: 501 });
+    expect(requests).toEqual([]);
+  });
+
+  test("switched on, deleting a recording deletes the room's files (DeleteRecord); another vendor's file id is not sent", async () => {
+    const { provider, requests } = lcic({ deletion: true });
     expect(await provider.deleteRecording({ providerFileId: "lcic-345678" })).toEqual({ ok: true, httpStatus: 202 });
     expect([requests.at(-1).headers["X-TC-Action"], JSON.parse(requests.at(-1).body)]).toEqual(["DeleteRecord", { RoomId: 345678, SdkAppId: 1400000000 }]);
     const before = requests.length;
@@ -303,7 +450,7 @@ describe("browser adapters", () => {
     };
     return { doc, root: doc.createElement("div") };
   }
-  function fakeZoom({ joinError = null, videoError = null, shareError = null, canBoard = true, sharingAtJoin = 0, videoHangs = 0, audioHangs = 0, slowJoin = false, failedJoins = 0 } = {}) {
+  function fakeZoom({ joinError = null, videoError = null, shareError = null, canBoard = true, sharingAtJoin = 0, videoHangs = 0, audioHangs = 0, slowJoin = false, failedJoins = 0, sessionId = "" } = {}) {
     const calls = [];
     const handlers = new Map();
     // Every listener registered and not yet removed, per event: a second one for the same event
@@ -353,6 +500,8 @@ describe("browser adapters", () => {
       },
       leave: async () => calls.push("leave"), getMediaStream: () => stream, getWhiteboardClient: () => whiteboard,
       getCurrentUserInfo: () => ({ userId: 1 }), getAllUser: () => users,
+      // Video SDK 2.6.0's SessionInfo; Zoom's id of the session once joined.
+      getSessionInfo: () => ({ topic: "ihear-l-test-v01", isInMeeting: true, sessionId }),
       on: (name, handler) => { handlers.set(name, handler); if (!live.has(name)) live.set(name, new Set()); live.get(name).add(handler); },
       off: (name, handler) => { calls.push(`off:${name}`); live.get(name)?.delete(handler); if (handlers.get(name) === handler) handlers.delete(name); },
     };
@@ -391,6 +540,15 @@ describe("browser adapters", () => {
     expect(events.at(-1)).toMatchObject({ type: "connection", state: "reconnecting" });
     expect(await adapter.setDevice("camera", true)).toBe("on");
     expect(videos.children.map(child => child.tag)).toEqual(["video:1"]);
+  });
+
+  test("Zoom: once joined, the page says which Zoom session it is in (getSessionInfo), and nothing when Zoom does not say", async () => {
+    const withId = await joined({ sessionId: "oiFKKKL/RyGdm9W1r1Ll6w==" });
+    const reported = withId.events.filter(event => event.type === "session");
+    expect(reported).toEqual([{ type: "session", sessionId: "oiFKKKL/RyGdm9W1r1Ll6w==", at: 1 }]);
+    // After Zoom has given the media stream: the id comes with the room, not before it.
+    expect(withId.events.findIndex(event => event.type === "session")).toBeGreaterThan(withId.events.findIndex(event => event.type === "connection" && event.state === "connected"));
+    expect((await joined()).events.some(event => event.type === "session")).toBe(false);
   });
 
   test("Zoom: videos and a shared screen go into separate <video-player-container>s, as Zoom requires", async () => {

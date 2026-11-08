@@ -36,7 +36,8 @@ const ACTIVE = new Set(["START_REQUESTED", "RECORDING", "PAUSED"]);
 const DOWN = new Set<ConnectionState>(["reconnecting", "disconnected", "failed"]);
 
 type Phase = "ready" | "joining" | "joined" | "blocked" | "left";
-type Joined = { provider: string; lesson: { code: string; startsAt: string; endsAt: string }; role: "tutor" | "student"; participantCode: string };
+// sessionReports: the join answer asked this (tutor's) page to report the vendor's session id.
+type Joined = { provider: string; lesson: { code: string; startsAt: string; endsAt: string }; role: "tutor" | "student"; participantCode: string; sessionReports: boolean };
 type Recording = { decided: boolean; allowed: boolean; status: string; basis: string };
 type Media = {
   available: boolean;
@@ -131,7 +132,7 @@ export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: stri
     const answer = await requestJoin(lessonId, joinKey);
     if (answer.ok) {
       session.current = answer.session;
-      setJoined({ provider: answer.provider, lesson: answer.lesson, role: answer.role, participantCode: answer.participantCode });
+      setJoined({ provider: answer.provider, lesson: answer.lesson, role: answer.role, participantCode: answer.participantCode, sessionReports: answer.sessionReports === true });
       setRecording(null);
       setMedia(initialMedia());
       setPhase("joined");
@@ -206,12 +207,13 @@ export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: stri
         setMedia((state) => ({ ...state, remote: { present: event.present, camera: event.camera, microphone: event.microphone, seen: state.remote.seen || event.present } }));
       } else if (event.type === "share") {
         setMedia((state) => ({ ...state, share: event.state }));
-      } else {
+      } else if (event.type === "whiteboard") {
         setMedia((state) => ({ ...state, whiteboard: event.state }));
       }
+      // A session id changes nothing on screen; it is reported only when the join answer asked.
       if (joined.role === "tutor") {
         const body = hostReportFor(event);
-        if (body) void report(body);
+        if (body && (body.type !== "session" || joined.sessionReports)) void report(body);
       }
     });
     if (vendorStage.current && current.mount) current.mount(vendorStage.current);

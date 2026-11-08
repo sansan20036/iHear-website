@@ -100,13 +100,19 @@ export async function authorize({ clientFile, tokenFile, endpoints = GOOGLE, ope
 }
 
 // Access tokens from the saved refresh token, renewed a minute before they expire. A refused
-// refresh (revoked, expired after 7 days in Testing) is DRIVE_AUTH: filing pauses.
-export function tokenProvider({ clientFile, tokenFile, endpoint = GOOGLE.token, fetchImpl = globalThis.fetch }) {
+// refresh (revoked, expired after 7 days in Testing) is DRIVE_AUTH: filing pauses. With
+// `requireScope`, a grant whose scopes are not exactly that one is refused the same way, both as
+// saved and as Google states it on each refresh, so a broader grant is never used.
+/** @param {{ clientFile: string, tokenFile: string, endpoint?: string, fetchImpl?: typeof fetch, requireScope?: string | null }} input */
+export function tokenProvider({ clientFile, tokenFile, endpoint = GOOGLE.token, fetchImpl = globalThis.fetch, requireScope = null }) {
   let cached = null;
+  const exactly = scope => String(scope ?? '').split(/\s+/).filter(Boolean).join(' ') === requireScope;
   return async () => {
     if (cached && cached.expiresAt - 60_000 > Date.now()) return cached.token;
     const client = await readClient(clientFile);
-    const { refresh_token: refreshToken } = JSON.parse(await readFile(tokenFile, 'utf8'));
+    const saved = JSON.parse(await readFile(tokenFile, 'utf8'));
+    const refreshToken = saved.refresh_token;
+    if (requireScope && !exactly(saved.scope)) throw new FilingError(FAILURE.DRIVE_AUTH, 'the saved grant is not limited to the one scope allowed');
     let response;
     try {
       response = await fetchImpl(endpoint, {
@@ -119,6 +125,7 @@ export function tokenProvider({ clientFile, tokenFile, endpoint = GOOGLE.token, 
     }
     const body = await response.json().catch(() => ({}));
     if (!response.ok) throw new FilingError(response.status === 400 || response.status === 401 ? FAILURE.DRIVE_AUTH : FAILURE.TRANSIENT, `token refresh refused (${body.error ?? response.status})`);
+    if (requireScope && body.scope != null && !exactly(body.scope)) throw new FilingError(FAILURE.DRIVE_AUTH, 'the refreshed token carries scopes beyond the one allowed');
     cached = { token: body.access_token, expiresAt: Date.now() + Number(body.expires_in ?? 0) * 1000 };
     return cached.token;
   };

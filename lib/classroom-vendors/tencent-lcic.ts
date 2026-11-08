@@ -2,9 +2,11 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
+// @ts-ignore - shared classroom logic, plain JavaScript tested with node --test.
+import { checkVendorRange } from "../../tools/recording-pathway/classroom/recording-filing.mjs";
 import type { ClassroomProvider, ProviderCall } from "../classroom-provider";
 import type { ClassroomLesson, ClassroomParticipant } from "../classroom-store";
-import { fetchTransport, setting, type VendorTransport } from "./http";
+import { fetchTransport, headerOf, setting, type VendorTransport } from "./http";
 
 // Tencent LCIC (Low-code Interactive Classroom) on the server. LCIC is a complete classroom
 // page (video, courseware, whiteboard, recording) that iHear embeds in an iframe; the iHear
@@ -141,6 +143,9 @@ type Options = {
   // Set (LCIC_MIDCLASS_STOP_VERIFIED=1) only after a trial has shown StopRecord stops a recording
   // mid-class. Until then only lessons whose every participant is a TEST- code may record.
   midClassStopVerified?: boolean;
+  // Deleting a room's recording at Tencent (CLASSROOM_VENDOR_DELETION=on). Off: DeleteRecord is
+  // never sent, the more so as LCIC's RecordSize unit is not confirmed yet.
+  deletionEnabled?: boolean;
   now?: () => number;
 };
 
@@ -260,6 +265,8 @@ export function tencentLcicProvider(config: TencentLcicConfig, options: Options)
       return { lessonId: lesson.id, providerSessionId: `lcic-${room.roomId}`, details, users: [], recordings: typeof details.RecordUrl === "string" && details.RecordUrl ? [{ id: `lcic-${room.roomId}`, recording_type: "lcic_mixed" }] : [] };
     },
     // The recording address comes from DescribeRoom each time (it exists only after the class).
+    // The answer is checked like Zoom's: a whole file of another size than RecordSize stops the
+    // filing for good instead of storing part of it.
     async download(record, { start, end }) {
       const room = record.lessonId ? await options.rooms.get(String(record.lessonId)) : null;
       if (!room) throw new Error("No LCIC room for this recording");
@@ -267,11 +274,15 @@ export function tencentLcicProvider(config: TencentLcicConfig, options: Options)
       const url = typeof details.RecordUrl === "string" ? details.RecordUrl : "";
       if (!url.startsWith("https://")) throw new Error("The recording's address is not available yet");
       const response = await transport({ method: "GET", url, headers: { Range: `bytes=${start}-${end - 1}` } });
-      if (response.status !== 206 && !(response.status === 200 && start === 0)) throw new Error(`Download answered ${response.status}`);
-      return response.bytes ?? Buffer.from(response.body);
+      return checkVendorRange({
+        status: response.status, contentRange: headerOf(response, "content-range"), retryAfter: headerOf(response, "retry-after"),
+        bytes: response.bytes ?? Buffer.from(response.body), start, end, size: Number(record.size),
+      });
     },
-    // A room's recording files are deleted together (the file id is lcic-<RoomId>).
+    // A room's recording files are deleted together (the file id is lcic-<RoomId>). Off unless
+    // deletion is switched on: nothing is sent.
     async deleteRecording(record) {
+      if (options.deletionEnabled !== true) return { ok: false, httpStatus: 501 };
       const roomId = Number(/^lcic-(\d+)$/.exec(String(record.providerFileId ?? ""))?.[1]);
       if (!Number.isSafeInteger(roomId)) return { ok: false, httpStatus: 404 };
       return control("DeleteRecord", { RoomId: roomId, SdkAppId: config.sdkAppId });

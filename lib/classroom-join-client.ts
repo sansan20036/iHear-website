@@ -8,7 +8,8 @@ import type { ClassroomMediaAdapter, MediaRole } from "./classroom-media";
 
 export type JoinedSession = { kind?: "sdk" | "embed"; token?: string; sessionName?: string; embedUrl?: string; recordingDisabled?: boolean; expiresAt: string };
 export type JoinAnswer =
-  | { ok: true; provider: string; lesson: { code: string; startsAt: string; endsAt: string }; role: MediaRole; participantCode: string; session: JoinedSession | null }
+  // sessionReports: the server asks this (tutor's) page to report the vendor's session id (P1).
+  | { ok: true; provider: string; lesson: { code: string; startsAt: string; endsAt: string }; role: MediaRole; participantCode: string; session: JoinedSession | null; sessionReports?: boolean }
   | { ok: false; code: string };
 export type RejoinResult = { ok: true; session: JoinedSession } | { ok: false; code: string };
 
@@ -23,7 +24,10 @@ export async function requestJoin(lessonId: string, joinKey: string | null, fetc
     });
     const data = await response.json().catch(() => ({}));
     if (response.ok && data?.ok) {
-      return { ok: true, provider: data.provider, lesson: data.lesson, role: data.role, participantCode: data.participantCode, session: data.session ?? null };
+      return {
+        ok: true, provider: data.provider, lesson: data.lesson, role: data.role, participantCode: data.participantCode, session: data.session ?? null,
+        ...(data.sessionReports === true ? { sessionReports: true } : {}),
+      };
     }
     const code = response.status === 429 ? "RATE_LIMITED" : typeof data?.code === "string" ? data.code : "UNAVAILABLE";
     return { ok: false, code: code === "NOT_ON_ROSTER" && joinKey ? "NOT_ON_ROSTER_LINK" : code };

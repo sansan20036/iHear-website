@@ -26,7 +26,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Core from '../apps-script/Core.js';
 import { createGoogleDrive } from '../classroom/google-drive.mjs';
-import { FAILURE, FilingError, fileRecording, processJobs, QUARANTINE_FOLDER, classifyDriveResponse } from '../classroom/recording-filing.mjs';
+import { FAILURE, FilingError, fileRecording, lessonFolderName, processJobs, QUARANTINE_FOLDER, classifyDriveResponse } from '../classroom/recording-filing.mjs';
 import { storeEvent } from '../classroom/webhook-ingest.mjs';
 import { createClassroomStore, Killed } from '../test/fake-classroom-store.mjs';
 import { authorize, DRIVE_FILE_SCOPE, ensurePrivateDir, GOOGLE, readClient, revokeSaved, tokenProvider } from './oauth.mjs';
@@ -113,8 +113,8 @@ async function workerFor(drive, rootFolderId, files, paths) {
   const store = createClassroomStore({ lessons: [LESSON] });
   await store.transaction(tx => storeEvent(tx, { source: 'server', type: 'server.recording_eligibility', lessonId: LESSON.id, occurredAt: 0, receivedAt: 0, key: 'decide:A1', eligible: true }));
   const fact = {
-    source: 'zoom_api', type: 'session.recording_completed', lessonId: LESSON.id, providerSessionId: 'SESSION-TEST-A1', receivedAt: Date.now(), occurredAt: Date.now(),
-    files: files.map(entry => ({ providerFileId: entry.id, kind: 'shared_screen_with_speaker_view', extension: 'mp4', size: entry.size, status: 'completed', recordingStart: entry.startMs, recordingEnd: entry.startMs + 60_000 })),
+    source: 'zoom_api', provider: 'synthetic', type: 'session.recording_completed', lessonId: LESSON.id, providerSessionId: 'SESSION-TEST-A1', receivedAt: Date.now(), occurredAt: Date.now(),
+    files: files.map(entry => ({ providerFileId: entry.id, kind: 'composite', extension: 'mp4', size: entry.size, status: 'completed', recordingStart: entry.startMs, recordingEnd: entry.startMs + 60_000 })),
   };
   fact.key = `session.recording_completed:A1:${files.map(entry => entry.id).join(',')}`;
   await store.transaction(tx => storeEvent(tx, fact));
@@ -195,15 +195,18 @@ export async function runTests(config, { apiBase = 'https://www.googleapis.com',
   const rootId = await drive.ensureFolder('root', ROOT_NAME);
   const monthName = Core.monthlyFolderName(LESSON.date);
   const monthId = await drive.ensureFolder(rootId, monthName);
+  // Each lesson has its own folder inside the month folder: its date and code (2026-11-08).
+  const lessonName = lessonFolderName(LESSON);
+  const lessonFolderId = await drive.ensureFolder(monthId, lessonName);
   const quarantineId = await drive.ensureFolder(rootId, QUARANTINE_FOLDER);
   // A second process (no memory of the first) must find the same folders through search, 3 s later.
   await sleep(3000);
   const fresh = connect(config, { apiBase, endpoints }).drive;
-  const again = [await fresh.findFolders('root', ROOT_NAME), await fresh.findFolders(rootId, monthName), await fresh.findFolders(rootId, QUARANTINE_FOLDER)];
+  const again = [await fresh.findFolders('root', ROOT_NAME), await fresh.findFolders(rootId, monthName), await fresh.findFolders(monthId, lessonName), await fresh.findFolders(rootId, QUARANTINE_FOLDER)];
   const d2 = {
     rootFolderStartsWithTest: ROOT_NAME.startsWith('[測試]'),
     foundAgainBySearch: again.map(ids => ids.length),
-    sameIdsFromAnotherProcess: again.map(ids => ids[0]).join() === [rootId, monthId, quarantineId].join(),
+    sameIdsFromAnotherProcess: again.map(ids => ids[0]).join() === [rootId, monthId, lessonFolderId, quarantineId].join(),
   };
   if (record('D2', '測試資料夾', d2.rootFolderStartsWithTest && d2.sameIdsFromAnotherProcess ? 'PASS' : 'FAIL', d2) !== 'PASS') return stop();
 
@@ -225,10 +228,10 @@ export async function runTests(config, { apiBase = 'https://www.googleapis.com',
       name: copy?.name,
       // An exact part when given; otherwise P1's pattern (earlier steps already used the low parts).
       nameMatches: part ? copy?.name === `2026-11-05_TEST-S01_TEST-T01_P0${part}.mp4` : /^2026-11-05_TEST-S01_TEST-T01_P\d{2}\.mp4$/.test(copy?.name ?? ''),
-      inMonthFolder: copy?.parentId === monthId,
+      inLessonFolder: copy?.parentId === lessonFolderId,
     };
   };
-  const good = check => check.status === 'STORED' && check.sizeMatches && check.md5Matches && check.nameMatches && check.inMonthFolder;
+  const good = check => check.status === 'STORED' && check.sizeMatches && check.md5Matches && check.nameMatches && check.inLessonFolder;
 
   // D3: chunked upload of both videos (256 KiB chunks, then the default 8 MiB).
   const small = fileOf('small', 'D3a', base);
@@ -333,7 +336,7 @@ export async function runTests(config, { apiBase = 'https://www.googleapis.com',
   // D8: copies left by earlier attempts converge to the earliest verified one, nothing re-sent.
   const dup = fileOf('small', 'D8', base);
   const putCopy = async bytes => {
-    const target8 = await drive.startUpload({ name: `leftover-${run}.mp4`, parentId: monthId, size: bytes.length, appProperties: { providerFileId: dup.id, lessonId: LESSON.id } });
+    const target8 = await drive.startUpload({ name: `leftover-${run}.mp4`, parentId: lessonFolderId, size: bytes.length, appProperties: { providerFileId: dup.id, lessonId: LESSON.id } });
     let at = 0;
     let id8 = null;
     while (!id8) {

@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { createHash, createHmac } from "node:crypto";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -40,6 +40,7 @@ const tickRoute = await import("../app/api/admin/classrooms/tick/route");
 const consents = await import("../app/api/admin/classrooms/consents/route");
 const anomalies = await import("../app/api/admin/classrooms/anomalies/route");
 const reconcile = await import("../app/api/admin/classrooms/[lessonId]/reconcile/route");
+const stopRecording = await import("../app/api/admin/classrooms/[lessonId]/stop-recording/route");
 const joinRoute = await import("../app/api/classroom/[lessonId]/join/route");
 const hostRoute = await import("../app/api/classroom/[lessonId]/host-events/route");
 const statusRoute = await import("../app/api/classroom/[lessonId]/status/route");
@@ -47,6 +48,7 @@ const webhook = await import("../app/api/recordings/zoom/webhook/route");
 const scheduledRoute = await import("../app/api/classroom/scheduled-tick/route");
 const { classroomStore } = await import("../lib/classroom-store");
 const { entryEndedBy } = await import("../lib/classroom-join-client");
+const { knownSessions } = await import("../lib/classroom-provider");
 
 // Planted in the synthetic Zoom payloads; none of them may be stored or shown.
 const PLANTED = ["Synthetic Display Name", "+886-2-0000-0000", "example.invalid", "synthetic-download-token-not-real", "203.0.113.7"];
@@ -194,6 +196,7 @@ describe("classroom access", () => {
     expect((await consents.POST(post("/api/admin/classrooms/consents", { personCode: "TEST-S1" }))).status).toBe(403);
     expect((await anomalies.POST(post("/api/admin/classrooms/anomalies", { lessonId: "L-x", code: "STALE_DATA", note: "x" }))).status).toBe(403);
     expect((await reconcile.POST(post("/api/admin/classrooms/L-x/reconcile"), params("L-x"))).status).toBe(403);
+    expect((await stopRecording.POST(post("/api/admin/classrooms/L-x/stop-recording"), params("L-x"))).status).toBe(403);
     signedIn(OWNER);
     const response = await lessons.GET(request());
     expect(response.status).toBe(200);
@@ -422,8 +425,11 @@ describe("a recorded lesson, synthetic end to end", () => {
     expect(filed).toHaveLength(1);
     // P1's naming: date, student code, tutor code, part.
     expect(filed[0]).toMatchObject({ name: "2026-11-20_TEST-S1_TEST-T1_P01.mp4", size: 1024, appProperties: { providerFileId: "SYN-FILE-V1" } });
-    expect(await syntheticCalls("SYN-FILE-V1")).toEqual(["recording.delete"]);
+    // Deleting Zoom's copy is off by default: Zoom is not asked, and the kept copy is recorded.
+    expect(await syntheticCalls("SYN-FILE-V1")).toEqual([]);
     expect(await syntheticCalls("SYN-FILE-A1")).toEqual([]);
+    const kept = (await classroomStore().eventsFor([lesson.lessonId])).filter(event => event.type === "p1.vendor_copy_kept");
+    expect(kept.map(event => event.providerFileId)).toEqual(["SYN-FILE-V1"]);
 
     // Codes only: no e-mail address, personal link, token or planted personal data.
     const shown = JSON.stringify(view);
@@ -433,6 +439,8 @@ describe("a recorded lesson, synthetic end to end", () => {
   });
 
   test("the scheduled tick files what no request got to, waits out a full Drive, and keeps the lesson in view until it is filed", async () => {
+    // With deleting the vendor's copy switched on, it happens only after the copy is stored.
+    vi.stubEnv("CLASSROOM_VENDOR_DELETION", "on");
     const SCHEDULED = "scheduled-tick-secret-test-only-0123456789";
     const scheduled = async authorization => read(await scheduledRoute.GET(new Request(`${ORIGIN}/api/classroom/scheduled-tick`, { headers: authorization ? { authorization } : {} })));
     vi.stubEnv("CRON_SECRET", "");
@@ -479,6 +487,7 @@ describe("a recorded lesson, synthetic end to end", () => {
     const record = (await classroomStore().listAnomalies([lesson.lessonId])).find(entry => entry.code === "FILING_BLOCKED");
     expect(record).toMatchObject({ severity: "error", resolvedAt: Date.parse("2026-11-24T12:31:00Z") });
     expect(cardOf(await overview(), "TEST-L10")).toBeNull();
+    vi.stubEnv("CLASSROOM_VENDOR_DELETION", "");
   });
 
   test("a student without consent attends as usual; the whole lesson is simply not recorded", async () => {
@@ -1001,5 +1010,244 @@ describe("P3-Auth: roles, links and abuse", () => {
     const patch = new Request(`${ORIGIN}/api/admin/classrooms/${lesson.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "cancel" }) });
     expect((await route.PATCH(patch, params(lesson.id))).status).toBe(403);
     expect((await classroomStore().lesson(lesson.id)).cancelled).toBe(false);
+  });
+});
+
+// 2026-11-08: recording stops on its own when the lesson is over, and an owner can stop it at once.
+describe("recording controls, synthetic end to end", () => {
+  const press = async lessonId => read(await stopRecording.POST(post(`/api/admin/classrooms/${lessonId}/stop-recording`), params(lessonId)));
+
+  test("emergency stop: owners only; stop at once on both channels, again at 30 s, end at 60 s; never recorded again, and what ran past it stays with the vendor", async () => {
+    at("2026-11-28T07:50:00Z");
+    const lesson = { ...(await createLesson({ date: "2026-11-28", code: "TEST-L40", time: "16:00", tutorCode: "TEST-T40", studentCode: "TEST-S40" })), sessionId: "SYN-SESSION-40" };
+    await setConsent("TEST-S40", "student");
+    await setConsent("TEST-T40", "tutor");
+    at("2026-11-28T07:56:00Z");
+    await startLesson(lesson, ["UUID-T40", "UUID-S40"]);
+    for (const time of ["07:56:10", "07:56:20"]) {
+      at(`2026-11-28T${time}Z`);
+      await tick();
+    }
+    at("2026-11-28T07:56:30Z");
+    await zoom("session.recording_started", lesson, { recording_file: { recording_start: new Date().toISOString() } });
+    expect(await syntheticCalls(lesson.lessonId)).toEqual(["recording.start"]);
+
+    at("2026-11-28T08:20:00Z");
+    // Nobody but an owner can press it, and a refused press sends nothing.
+    signedIn(EDITOR);
+    findAdminAccount.mockResolvedValue({ email: EDITOR, enabled: true });
+    expect((await press(lesson.lessonId)).status).toBe(403);
+    expect(await syntheticCalls(lesson.lessonId)).toEqual(["recording.start"]);
+    signedIn(OWNER);
+    expect(await press(lesson.lessonId)).toMatchObject({ status: 200, body: { ok: true, alreadyStopped: false, stopRequested: true } });
+    expect(await syntheticCalls(lesson.lessonId)).toEqual(["recording.start", "recording.stop"]);
+    expect(appendAdminActivity).toHaveBeenCalledWith(expect.objectContaining({ action: "classroom.emergency_stop", entityId: lesson.lessonId, entityStatus: "stop-requested", actorEmail: OWNER }));
+    // The tutor's page is told at once, so it stops on its side too.
+    at("2026-11-28T08:20:05Z");
+    expect(await hostReport(lesson.lessonId, { type: "heartbeat" })).toMatchObject({ status: 200, body: { recordingAllowed: false } });
+    // Pressing again changes nothing.
+    signedIn(OWNER);
+    expect((await press(lesson.lessonId)).body).toMatchObject({ ok: true, alreadyStopped: true });
+    expect(await syntheticCalls(lesson.lessonId)).toEqual(["recording.start", "recording.stop"]);
+    // Asked, not confirmed: the overview never says stopped before the video service does.
+    expect(cardOf(await overview(), "TEST-L40").emergency).toMatchObject({ stopState: "WAITING", stopLabel: "已送出停止請求，等待視訊服務確認（尚未確認停止）" });
+    // Zoom has not confirmed: again at 30 s, and the session is ended at 60 s.
+    at("2026-11-28T08:20:31Z");
+    await tick();
+    expect(await syntheticCalls(lesson.lessonId)).toEqual(["recording.start", "recording.stop", "recording.stop"]);
+    at("2026-11-28T08:21:01Z");
+    await tick();
+    expect(await syntheticCalls(lesson.lessonId)).toEqual(["recording.start", "recording.stop", "recording.stop", "session.end"]);
+    at("2026-11-28T08:21:10Z");
+    await zoom("session.recording_stopped", lesson, { recording_file: { recording_end: "2026-11-28T08:21:05Z" } });
+    let card = cardOf(await overview(), "TEST-L40");
+    // The session.end request (60 s) alone was not taken as a stop; Zoom's own word is.
+    expect(card.emergency).toEqual({ pressedAt: "2026-11-28T08:20:00.000Z", stopState: "CONFIRMED", stopLabel: "視訊服務已確認錄影停止", available: false });
+    expect(card.anomalies.map(entry => entry.code)).toContain("EMERGENCY_STOP");
+    expect(card.anomalies.map(entry => entry.code)).not.toContain("EMERGENCY_STOP_UNCONFIRMED");
+
+    // Everyone comes back to a new session of the same lesson: it is never recorded again.
+    const rejoined = { ...lesson, sessionId: "SYN-SESSION-40B" };
+    at("2026-11-28T08:23:00Z");
+    await zoom("session.started", rejoined, { start_time: new Date().toISOString() });
+    await zoom("session.user_joined", rejoined, zoomUser(lesson.tutorId, "UUID-T40B", { join_time: new Date().toISOString() }));
+    await zoom("session.user_joined", rejoined, zoomUser(lesson.studentId, "UUID-S40B", { join_time: new Date().toISOString() }));
+    for (const time of ["08:23:10", "08:23:20", "08:24:30"]) {
+      at(`2026-11-28T${time}Z`);
+      await tick();
+    }
+    expect((await syntheticCalls(lesson.lessonId)).filter(type => type === "recording.start")).toHaveLength(1);
+
+    // The recording ran past the press: it stays with the vendor, and not a byte goes to Drive.
+    at("2026-11-28T09:05:00Z");
+    const video = { id: "SYN-FILE-E40", recording_type: "shared_screen_with_speaker_view", file_extension: "MP4", file_type: "MP4", file_size: 1024, status: "completed", recording_start: "2026-11-28T07:56:30Z", recording_end: "2026-11-28T08:21:05Z" };
+    afterResponse.length = 0;
+    expect((await zoom("session.recording_completed", lesson, { recording_files: [video] })).status).toBe(200);
+    await runAfterResponse();
+    card = cardOf(await overview(), "TEST-L40");
+    expect(card.filing.items).toMatchObject([{ status: "HOLD", label: "保留在視訊服務，不歸檔", name: null, driveFileId: null }]);
+    const drive = JSON.parse(await readFile(path.join(directory, "synthetic-drive", "index.json"), "utf8"));
+    expect(Object.values(drive.files).filter(entry => entry.appProperties.providerFileId === "SYN-FILE-E40")).toEqual([]);
+  });
+
+  test("class over: recording stops five minutes after the scheduled end, and is filed into the lesson's own folder, which the overview lists", async () => {
+    at("2026-11-29T07:50:00Z");
+    const lesson = { ...(await createLesson({ date: "2026-11-29", code: "TEST-L41", time: "16:00", tutorCode: "TEST-T41", studentCode: "TEST-S41" })), sessionId: "SYN-SESSION-41" };
+    await setConsent("TEST-S41", "student");
+    await setConsent("TEST-T41", "tutor");
+    at("2026-11-29T07:56:00Z");
+    await startLesson(lesson, ["UUID-T41", "UUID-S41"]);
+    for (const time of ["07:56:10", "07:56:20"]) {
+      at(`2026-11-29T${time}Z`);
+      await tick();
+    }
+    at("2026-11-29T07:56:30Z");
+    await zoom("session.recording_started", lesson, { recording_file: { recording_start: new Date().toISOString() } });
+
+    // The lesson ends at 09:00; they are still talking. Nothing is stopped before 09:05.
+    at("2026-11-29T09:04:59Z");
+    await tick();
+    expect(await syntheticCalls(lesson.lessonId)).toEqual(["recording.start"]);
+    at("2026-11-29T09:05:00Z");
+    await tick();
+    expect(await syntheticCalls(lesson.lessonId)).toEqual(["recording.start", "recording.stop"]);
+    expect(cardOf(await overview(), "TEST-L41").recording).toMatchObject({ status: "RECORDING", label: "錄影中（已送出停止請求）" });
+    at("2026-11-29T09:05:30Z");
+    await tick();
+    expect(await syntheticCalls(lesson.lessonId)).toEqual(["recording.start", "recording.stop", "recording.stop"]);
+    // Zoom confirms: the session is not ended for them.
+    at("2026-11-29T09:05:40Z");
+    await zoom("session.recording_stopped", lesson, { recording_file: { recording_end: "2026-11-29T09:05:35Z" } });
+    at("2026-11-29T09:06:30Z");
+    await tick();
+    expect(await syntheticCalls(lesson.lessonId)).toEqual(["recording.start", "recording.stop", "recording.stop"]);
+    await zoom("session.user_left", lesson, zoomUser(lesson.studentId, "UUID-S41", { leave_time: "2026-11-29T09:07:00Z", leave_reason: "left the session" }));
+    await zoom("session.user_left", lesson, zoomUser(lesson.tutorId, "UUID-T41", { leave_time: "2026-11-29T09:07:05Z", leave_reason: "left the session" }));
+    await zoom("session.ended", lesson, { end_time: "2026-11-29T09:07:10Z" });
+
+    at("2026-11-29T09:20:00Z");
+    const video = { id: "SYN-FILE-V41", recording_type: "shared_screen_with_speaker_view", file_extension: "MP4", file_type: "MP4", file_size: 2048, status: "completed", recording_start: "2026-11-29T07:56:30Z", recording_end: "2026-11-29T09:05:35Z" };
+    afterResponse.length = 0;
+    expect((await zoom("session.recording_completed", lesson, { recording_files: [video] })).status).toBe(200);
+    await runAfterResponse();
+
+    const card = cardOf(await overview(), "TEST-L41");
+    expect(card).toMatchObject({ group: "ENDED", recording: { status: "COMPLETED" }, filing: { status: "STORED" } });
+    expect(card.filing.items).toEqual([{
+      extension: "mp4", recordingStart: "2026-11-29T07:56:30.000Z", recordingEnd: "2026-11-29T09:05:35.000Z",
+      // Synthetic: the local stand-in, never shown as Google Drive.
+      status: "STORED", destination: "local", label: "已存入本機模擬 Drive（合成測試，不是 Google Drive）", reason: null, reasonLabel: null, at: "2026-11-29T09:20:00.000Z",
+      name: "2026-11-29_TEST-S41_TEST-T41_P01.mp4", folder: "[iHear] 11.2026.Zoom Recordings / 2026-11-29_TEST-L41", size: 2048, md5: null,
+      driveFileId: expect.stringMatching(/^local-file-/),
+      // The local stand-in has no page to open; Google Drive gets one.
+      link: null,
+    }]);
+    // In the stand-in Drive: the month folder, then the lesson's folder, then the file, once.
+    const drive = JSON.parse(await readFile(path.join(directory, "synthetic-drive", "index.json"), "utf8"));
+    const filed = Object.values(drive.files).filter(entry => !entry.trashed && entry.appProperties.providerFileId === "SYN-FILE-V41");
+    expect(filed).toHaveLength(1);
+    const monthId = drive.folders["root/[iHear] 11.2026.Zoom Recordings"];
+    expect(drive.folders[`${monthId}/2026-11-29_TEST-L41`]).toBe(filed[0].parentId);
+  });
+});
+
+// P-1 (2026-10-31): without webhooks the server learns the vendor's session id from the tutor's
+// page, and uses it only once the vendor has confirmed it is this lesson's session. The switch
+// (CLASSROOM_SESSION_REPORTS=verify) is off by default, so nothing changes elsewhere.
+describe("the vendor's session id without webhooks", () => {
+  const eventsOf = async lessonId => classroomStore().eventsFor([lessonId]);
+
+  test("switched off (the default): the page is not asked, and a session report is answered but not kept", async () => {
+    at("2026-11-26T07:55:00Z");
+    const lesson = await createLesson({ code: "TEST-L20", date: "2026-11-26", time: "16:00", tutorCode: "TEST-T20", studentCode: "TEST-S20" });
+    const tutor = await join(lesson.lessonId, { email: TUTOR });
+    expect(tutor.status).toBe(200);
+    expect(tutor.body.sessionReports).toBeUndefined();
+    const answer = await hostReport(lesson.lessonId, { type: "session", sessionId: `SYN-SESSION-${lesson.lessonId}` });
+    expect(answer).toMatchObject({ status: 200, body: { ok: true } });
+    expect((await eventsOf(lesson.lessonId)).filter(event => /session_|host\.session/.test(event.type))).toEqual([]);
+    expect(knownSessions(await eventsOf(lesson.lessonId))).toEqual([]);
+  });
+
+  test("switched on: only the tutor's page is asked; an id is used once the vendor confirms it, and another lesson's is refused and raised", async () => {
+    vi.stubEnv("CLASSROOM_SESSION_REPORTS", "verify");
+    try {
+      at("2026-11-27T07:55:00Z");
+      const lesson = await createLesson({ code: "TEST-L21", date: "2026-11-27", time: "16:00", tutorCode: "TEST-T21", studentCode: "TEST-S21" });
+      const student = await join(lesson.lessonId, { key: lesson.key });
+      const tutor = await join(lesson.lessonId, { email: TUTOR });
+      expect([student.body.sessionReports, tutor.body.sessionReports]).toEqual([undefined, true]);
+      // A report is kept only as reported; the tick that follows asks the vendor and confirms it.
+      const own = `SYN-SESSION-${lesson.lessonId}`;
+      expect((await hostReport(lesson.lessonId, { type: "session", sessionId: own })).status).toBe(200);
+      let events = await eventsOf(lesson.lessonId);
+      const reported = events.find(event => event.type === "host.session");
+      expect(reported).toMatchObject({ source: "host_sdk", reportedSessionId: own });
+      expect("providerSessionId" in reported).toBe(false);
+      expect(events.find(event => event.type === "server.session_verified")).toMatchObject({ source: "server", providerSessionId: own, reportedSessionId: own });
+      expect(knownSessions(events)).toEqual([{ id: own, ended: false, recordingsKnown: false }]);
+      // Reported again: kept once, confirmed once.
+      await hostReport(lesson.lessonId, { type: "session", sessionId: own });
+      events = await eventsOf(lesson.lessonId);
+      expect(events.filter(event => event.type === "host.session")).toHaveLength(1);
+      expect(events.filter(event => event.type === "server.session_verified")).toHaveLength(1);
+      // Another lesson's session: refused, never used, and on the overview at once.
+      const other = "SYN-SESSION-L-SOMEONE-ELSE";
+      await hostReport(lesson.lessonId, { type: "session", sessionId: other });
+      events = await eventsOf(lesson.lessonId);
+      expect(events.find(event => event.type === "server.session_rejected")).toMatchObject({ reportedSessionId: other, reason: "MISMATCH" });
+      expect(knownSessions(events).map(session => session.id)).toEqual([own]);
+      expect(cardOf(await overview(), "TEST-L21").anomalies).toEqual(expect.arrayContaining([expect.objectContaining({ code: "SESSION_REJECTED", severity: "error" })]));
+      // Malformed ids are refused before anything is kept; only the lesson's tutor reports.
+      expect((await hostReport(lesson.lessonId, { type: "session", sessionId: "not an id!" })).status).toBe(400);
+      expect((await hostReport(lesson.lessonId, { type: "session", sessionId: own }, "someone@example.test")).status).toBe(403);
+    } finally {
+      vi.stubEnv("CLASSROOM_SESSION_REPORTS", "");
+    }
+  });
+
+  test("polling a lesson that ran in two sessions files both sessions' videos, even after the vendor stops describing the session", async () => {
+    at("2026-11-28T07:50:00Z");
+    const lesson = await createLesson({ code: "TEST-L22", date: "2026-11-28", time: "16:00", tutorCode: "TEST-T22", studentCode: "TEST-S22" });
+    expect((await setConsent("TEST-S22", "student")).status).toBe(200);
+    expect((await setConsent("TEST-T22", "tutor")).status).toBe(200);
+    at("2026-11-28T07:56:00Z");
+    await tick();
+    const iso = value => new Date(value).toISOString();
+    const T = Date.parse("2026-11-28T08:00:00Z");
+    const MIN = 60_000;
+    const video = (id, from, to) => ({
+      id, recording_type: "shared_screen_with_speaker_view", file_extension: "MP4", file_type: "MP4", file_size: 512, status: "completed",
+      recording_start: iso(T + from * MIN), recording_end: iso(T + to * MIN), download_url: "https://example.invalid/synthetic",
+    });
+    // What the vendor's API gives: the current session is no longer described (details: null), its
+    // video is done while its timeline is still processing, and an earlier session has its own video.
+    const file = path.join(directory, "synthetic-zoom.json");
+    const state = JSON.parse(await readFile(file, "utf8").catch(() => '{"calls":[]}'));
+    state.snapshots = {
+      ...state.snapshots,
+      [lesson.lessonId]: {
+        lessonId: lesson.lessonId, providerSessionId: "SYN-SESSION-B", details: null, users: [],
+        recordings: [video("SYN-L22-B1", 31, 59), { id: "SYN-L22-B2", recording_type: "timeline", file_extension: "JSON", file_size: 10, status: "processing" }],
+        sessions: [{ providerSessionId: "SYN-SESSION-A", recordings: [video("SYN-L22-A1", 1, 29)] }],
+      },
+    };
+    await writeFile(file, `${JSON.stringify(state, null, 2)}\n`);
+    at("2026-11-28T09:30:00Z");
+    signedIn(OWNER);
+    const result = await read(await reconcile.POST(post(`/api/admin/classrooms/${lesson.lessonId}/reconcile`), params(lesson.lessonId)));
+    expect(result).toMatchObject({ status: 200, body: { ok: true, reconciled: true } });
+    await tick();
+    // Parts numbered in recording order: the earlier session's video is P01.
+    const drive = JSON.parse(await readFile(path.join(directory, "synthetic-drive", "index.json"), "utf8"));
+    const names = Object.values(drive.files).filter(entry => !entry.trashed && /^SYN-L22-/.test(entry.appProperties.providerFileId))
+      .map(entry => [entry.appProperties.providerFileId, entry.name]).sort();
+    expect(names).toEqual([["SYN-L22-A1", "2026-11-28_TEST-S22_TEST-T22_P01.mp4"], ["SYN-L22-B1", "2026-11-28_TEST-S22_TEST-T22_P02.mp4"]]);
+    const events = await eventsOf(lesson.lessonId);
+    expect(events.filter(event => event.type === "session.recording_completed").map(event => event.providerSessionId).sort()).toEqual(["SYN-SESSION-A", "SYN-SESSION-B"]);
+    expect(events.some(event => event.type === "p1.part_order")).toBe(false);
+    // The answer without session details is noted, and nothing is said about who was there.
+    expect(events.some(event => event.type === "server.reconcile_partial")).toBe(true);
+    expect(events.some(event => event.type === "api.snapshot")).toBe(false);
   });
 });

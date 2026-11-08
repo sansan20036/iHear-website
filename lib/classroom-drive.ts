@@ -2,13 +2,17 @@ import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 // @ts-ignore - shared classroom logic, plain JavaScript tested with node --test.
+import { createGoogleDrive } from "../tools/recording-pathway/classroom/google-drive.mjs";
+// @ts-ignore - shared classroom logic, plain JavaScript tested with node --test.
 import { FAILURE, FilingError } from "../tools/recording-pathway/classroom/recording-filing.mjs";
+// @ts-ignore - the test sign-in's token handling (Desktop client, drive.file only), tested with node --test.
+import { DRIVE_FILE_SCOPE, GOOGLE, tokenProvider } from "../tools/recording-pathway/drive-test/oauth.mjs";
 
-// Where finished recordings are filed. Until a test account's authorization is approved there
-// is only a local folder standing in for Google Drive, with the behaviour the filing logic
-// depends on: appProperties to find an upload again, resumable sessions that take a file in
-// chunks and say how much they hold, a storage quota (CLASSROOM_DRIVE_LOCAL_QUOTA_BYTES, to
-// try a full Drive locally) and a trash. The Google Drive adapter (drive.file scope, a folder
+// Where finished recordings are filed: a local folder standing in for Google Drive (local), or
+// Google Drive itself for the local recording test (google). The stand-in keeps the behaviour the
+// filing logic depends on: appProperties to find an upload again, resumable sessions that take a
+// file in chunks and say how much they hold, a storage quota (CLASSROOM_DRIVE_LOCAL_QUOTA_BYTES,
+// to try a full Drive locally) and a trash. The Google Drive adapter (drive.file scope, a folder
 // the app creates) maps Drive's answers with classifyDriveResponse.
 
 export type DriveFile = {
@@ -25,6 +29,9 @@ export type DriveFile = {
 export type UploadStatus = { state: "active"; received: number } | { state: "complete"; fileId: string } | { state: "gone" };
 
 export type ClassroomDrive = {
+  // Which Drive this is, recorded with each filed copy: Google Drive, or the local stand-in that
+  // synthetic tests use (never shown as Google Drive).
+  kind: "local" | "google";
   rootFolderId: string;
   quota(): Promise<{ limit: number | null; usage: number }>;
   ensureFolder(parentId: string, name: string): Promise<string>;
@@ -79,6 +86,7 @@ export function createLocalDrive(directory: string, { quotaLimit = null }: { quo
   }
   const usage = (index: DriveIndex) => Object.values(index.files).filter((file) => !file.trashed).reduce((sum, file) => sum + file.size, 0);
   return {
+    kind: "local",
     rootFolderId: "root",
     quota: () => run((index) => ({ limit: quotaLimit, usage: usage(index) }), false),
     ensureFolder: (parentId, name) => run((index) => {
@@ -133,6 +141,74 @@ export function createLocalDrive(directory: string, { quotaLimit = null }: { quo
   };
 }
 
+// The folder the recording test files into, under the test account's My Drive. Its name says
+// it is a test, so nothing filed there is mistaken for a real lesson's recording.
+export const GOOGLE_TEST_ROOT_NAME = "[測試] iHear P1 錄影測試";
+// Stands for that folder until its id is known: the filing worker passes it back to ensureFolder.
+const GOOGLE_ROOT = "google-test-root";
+
+// A file the test's grant lives in: named in the environment, outside the site's folder (so it
+// is never committed) and outside OneDrive (which copies files to the cloud).
+function privateFile(env: Record<string, string | undefined>, name: string, siteFolder: string) {
+  const value = env[name];
+  if (!value || !path.isAbsolute(value)) throw new ClassroomDriveUnavailableError(`Set ${name} to the full path of the file`);
+  const resolved = path.resolve(value);
+  if (!path.relative(siteFolder, resolved).startsWith("..")) throw new ClassroomDriveUnavailableError(`${name} must be outside the site's folder`);
+  if (/[\\/]OneDrive[^\\/]*[\\/]/i.test(resolved)) throw new ClassroomDriveUnavailableError(`${name} must not be in a OneDrive folder`);
+  return resolved;
+}
+
+// Google's address, or the local stand-in's (tools/recording-pathway/drive-test/mock-drive-server.mjs)
+// for tests; no other address is accepted, so a token is never sent anywhere else.
+function googleAddress(value: string | undefined, google: string) {
+  if (!value) return google;
+  if (!/^http:\/\/127\.0\.0\.1:\d{2,5}(\/[A-Za-z0-9/_-]*)?$/.test(value)) throw new ClassroomDriveUnavailableError("Only Google itself or the local stand-in may be named");
+  return value;
+}
+
+/**
+ * Google Drive for the local P1 recording test only (2026-10-31). The grant is a test account's,
+ * made with a Desktop OAuth client for drive.file and nothing else (the A1 sign-in,
+ * tools/recording-pathway/drive-test); its two files (the client file as Google gives it, and the
+ * token file the sign-in wrote) are named by CLASSROOM_GOOGLE_CLIENT_FILE and
+ * CLASSROOM_GOOGLE_TOKEN_FILE. Recordings go into a folder this app creates
+ * (CLASSROOM_DRIVE_ROOT_NAME, starting "[測試]"), so nothing else in that Drive is visible to it.
+ * A grant that is not exactly drive.file pauses filing (DRIVE_AUTH). Never on a hosted site until
+ * a production grant is approved.
+ */
+export function googleClassroomDrive(env: Record<string, string | undefined>, { fetchImpl = globalThis.fetch, siteFolder = process.cwd() }: { fetchImpl?: typeof fetch; siteFolder?: string } = {}): ClassroomDrive {
+  if (env.VERCEL || env.VERCEL_ENV || env.NETLIFY) throw new ClassroomDriveUnavailableError("Google Drive filing runs only in the local recording test until a production grant is approved");
+  const clientFile = privateFile(env, "CLASSROOM_GOOGLE_CLIENT_FILE", siteFolder);
+  const tokenFile = privateFile(env, "CLASSROOM_GOOGLE_TOKEN_FILE", siteFolder);
+  const rootName = (env.CLASSROOM_DRIVE_ROOT_NAME || GOOGLE_TEST_ROOT_NAME).trim();
+  if (!rootName.startsWith("[測試] ") || rootName.length > 100) throw new ClassroomDriveUnavailableError("The test folder's name starts with \"[測試] \"");
+  const accessToken = tokenProvider({
+    clientFile, tokenFile, fetchImpl, requireScope: DRIVE_FILE_SCOPE,
+    endpoint: googleAddress(env.CLASSROOM_GOOGLE_TOKEN_ENDPOINT, GOOGLE.token),
+  });
+  const drive = createGoogleDrive({ accessToken, fetchImpl, apiBase: googleAddress(env.CLASSROOM_GOOGLE_API_BASE, "https://www.googleapis.com") });
+  // The test folder's id, found or made once (and again after a failure).
+  let root: Promise<string> | null = null;
+  const rootId = () => {
+    root ??= drive.ensureFolder("root", rootName).catch((error: unknown) => { root = null; throw error; });
+    return root;
+  };
+  return {
+    kind: "google",
+    rootFolderId: GOOGLE_ROOT,
+    quota: () => drive.quota(),
+    ensureFolder: async (parentId, name) => drive.ensureFolder(parentId === GOOGLE_ROOT ? await rootId() : parentId, name),
+    listNames: (folderId) => drive.listNames(folderId),
+    findByAppProperty: (key, value) => drive.findByAppProperty(key, value),
+    getFile: (id) => drive.getFile(id),
+    startUpload: (meta) => drive.startUpload(meta),
+    // The adapter's answers have these shapes (driveUploadState; a chunk either moves or throws).
+    uploadStatus: (uri) => drive.uploadStatus(uri) as Promise<UploadStatus>,
+    uploadChunk: (uri, chunk) => drive.uploadChunk(uri, chunk) as Promise<{ received: number; fileId: string | null }>,
+    trash: (id) => drive.trash(id),
+  };
+}
+
 export function classroomDrive(): ClassroomDrive {
   const kind = process.env.CLASSROOM_DRIVE || "";
   if (kind === "local") {
@@ -141,7 +217,6 @@ export function classroomDrive(): ClassroomDrive {
     const quota = Number(process.env.CLASSROOM_DRIVE_LOCAL_QUOTA_BYTES || "");
     return createLocalDrive(path.join(directory, "synthetic-drive"), { quotaLimit: Number.isFinite(quota) && quota > 0 ? quota : null });
   }
-  throw new ClassroomDriveUnavailableError(kind === "google"
-    ? "The Google Drive adapter is added after a test account's authorization is approved"
-    : "No recording destination is configured");
+  if (kind === "google") return googleClassroomDrive(process.env);
+  throw new ClassroomDriveUnavailableError("No recording destination is configured");
 }
