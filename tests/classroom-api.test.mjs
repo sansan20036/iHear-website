@@ -1185,7 +1185,8 @@ describe("the vendor's session id without webhooks", () => {
       expect(reported).toMatchObject({ source: "host_sdk", reportedSessionId: own });
       expect("providerSessionId" in reported).toBe(false);
       expect(events.find(event => event.type === "server.session_verified")).toMatchObject({ source: "server", providerSessionId: own, reportedSessionId: own });
-      expect(knownSessions(events)).toEqual([{ id: own, ended: false, recordingsKnown: false }]);
+      // The stand-in names no session, so its name and room generation are unknown (G-5).
+      expect(knownSessions(events)).toEqual([{ id: own, ended: false, recordingsKnown: false, name: null, generation: null }]);
       // Reported again: kept once, confirmed once.
       await hostReport(lesson.lessonId, { type: "session", sessionId: own });
       events = await eventsOf(lesson.lessonId);

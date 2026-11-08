@@ -2,7 +2,9 @@ import { NextResponse } from "next/server";
 
 import { authorizeAdminRequest } from "../../../../../lib/admin-auth";
 import { appendAdminActivity } from "../../../../../lib/admin-store";
-import { changeLessonAccess } from "../../../../../lib/classroom-service";
+import { classroomDrive } from "../../../../../lib/classroom-drive";
+import { classroomProvider } from "../../../../../lib/classroom-provider";
+import { changeLessonAccess, stopRecordingForCancelledLesson } from "../../../../../lib/classroom-service";
 import { classroomStore } from "../../../../../lib/classroom-store";
 import { withRateLimitHeaders } from "../../../../../lib/rate-limit";
 import { NO_STORE_HEADERS } from "../../../../../lib/response-headers";
@@ -20,6 +22,11 @@ const ACTIVITY: Record<string, { action: string; status: string; fields: string[
 // Cancel a lesson, or revoke or reissue its student's personal link: owners only, from this site,
 // rate limited, recorded in the activity log (codes only, never a key or its hash). A reissued
 // link is in this answer only.
+//
+// A cancel then stops recording and ends the lesson's live sessions on the server (D-2): the
+// cancellation is stored and the lesson's tick runs at once. If that part cannot run now (the
+// provider is not configured, or it fails), the cancel still stands and the scheduled tick does
+// it from the lesson's cancelled flag; the answer is the same either way.
 export async function PATCH(request: Request, context: Context) {
   const access = await authorizeAdminRequest(request, { owner: true, mutation: true });
   if ("response" in access) return access.response;
@@ -27,7 +34,15 @@ export async function PATCH(request: Request, context: Context) {
   const { lessonId } = await context.params;
   try {
     const input = await request.json().catch(() => ({}));
-    const result = await changeLessonAccess({ store: classroomStore(), lessonId, action: input?.action, studentCode: input?.studentCode });
+    const now = Date.now();
+    const result = await changeLessonAccess({ store: classroomStore(), lessonId, action: input?.action, studentCode: input?.studentCode, now });
+    if (input?.action === "cancel" && result.status === 200) {
+      try {
+        await stopRecordingForCancelledLesson({ store: classroomStore(), provider: classroomProvider(), drive: classroomDrive(), lessonId, now });
+      } catch {
+        // Left to the scheduled tick (see above).
+      }
+    }
     const logged = ACTIVITY[String(input?.action)];
     if (result.status === 200 && logged && (result.body as { changed?: boolean }).changed !== false) {
       await appendAdminActivity({

@@ -9,8 +9,8 @@ import path from "node:path";
 // intake, lesson state, tick) against a fake Zoom behind the HTTP transport: no request leaves
 // this machine, nothing here says how the real Zoom behaves, and every id is synthetic.
 //
-// test.fails marks a gap: the test states what the design requires, and fails today. When the
-// gap is fixed the test passes and vitest asks for the marker to be removed.
+// G-1 to G-5 were found by this file as gaps (test.fails, commit b3b1ad3) and fixed in the P1+P3
+// integration (2026-11-08); they are now ordinary regression tests.
 const directory = await mkdtemp(path.join(os.tmpdir(), "ihear-p0-session-"));
 vi.stubEnv("IHEAR_FORCE_FILE_STORE", "1");
 vi.stubEnv("IHEAR_TEST_DATA_DIR", directory);
@@ -189,11 +189,19 @@ describe("P0: the session id from Zoom's webhook (main path)", () => {
     expect(ctx.zoom.calls).toEqual([]);
   });
 
-  test.fails("G-5: the stored session.started keeps Zoom's session name, so a generation (its tpc) can be told apart", async () => {
+  test("G-5: the stored session.started keeps Zoom's session name, so a generation (its tpc) can be told apart; any other name is dropped", async () => {
     const ctx = await setup();
     await ctx.sessionStarts("ZS-NAME", ctx.start);
     const [started] = await ctx.events("session.started");
     expect(started.sessionName).toBe(roomNameOf(ctx.lesson.id));
+    expect(knownSessions(await store.eventsFor([ctx.lesson.id]))).toEqual([expect.objectContaining({ id: "ZS-NAME", name: roomNameOf(ctx.lesson.id), generation: 0 })]);
+    // A later generation's room is told apart by its name.
+    await ctx.deliver("session.started", { id: "ZS-NAME-G2", session_id: "ZS-NAME-G2", session_name: roomNameOf(ctx.lesson.id, 2), start_time: iso(ctx.start + MIN) }, ctx.start + MIN);
+    expect(knownSessions(await store.eventsFor([ctx.lesson.id])).map(session => [session.id, session.generation])).toEqual([["ZS-NAME", 0], ["ZS-NAME-G2", 2]]);
+    // Free text where the name should be (it could be someone's) never reaches a stored fact.
+    await ctx.deliver("session.started", { id: "ZS-FREE", session_id: "ZS-FREE", session_name: "Synthetic Person's Room", start_time: iso(ctx.start + 2 * MIN) }, ctx.start + 2 * MIN);
+    // (Compared without case: a kept name is stored lower-cased.)
+    expect(JSON.stringify(await store.eventsFor([ctx.lesson.id])).toLowerCase()).not.toContain("synthetic person");
   });
 });
 
@@ -272,17 +280,30 @@ describe("P0: cancelling, stopping and ending under failure", () => {
     expect(ctx.zoom.sessions.get("ZS-8")).toMatchObject({ live: true, recording: "Recording" });
   });
 
-  test.fails("G-2: after the end request failed, the server keeps trying (with a back-off) until Zoom confirms", async () => {
+  test("G-2: after the end request failed, the server keeps trying (2, 5, 10, 30 minutes after the last) and flags it until Zoom confirms", async () => {
     const ctx = await setup();
     await recordingInSession(ctx, "ZS-8b");
     ctx.zoom.failures.push({ method: "PATCH", suffix: "/events", status: 500 }, { method: "PATCH", suffix: "/events", status: 500 }, { method: "PUT", suffix: "/status", status: 500 });
     const at = ctx.start + 20 * MIN;
     await ctx.cancel(at);
-    for (const later of [at + 30 * SEC, at + 60 * SEC, at + 5 * MIN, at + 10 * MIN]) await ctx.tick(later);
+    for (const later of [at + 30 * SEC, at + 60 * SEC, at + 2 * MIN + 30 * SEC]) await ctx.tick(later);
+    // The end failed (500): requested is not ended, so it is flagged and nothing says it ended.
+    expect((await store.listAnomalies([ctx.lesson.id])).find(entry => entry.code === "SESSION_END_UNCONFIRMED")).toMatchObject({ severity: "error" });
+    expect(ctx.zoom.sessions.get("ZS-8b").live).toBe(true);
+    // Two minutes after the failed end it is asked again, under its own key; this time Zoom takes it.
+    await ctx.tick(at + 60 * SEC + 2 * MIN);
+    expect((await ctx.events("server.session_end_requested")).map(event => [event.key.split(":").slice(2).join(":"), event.ok]))
+      .toEqual([["lesson_cancelled@ZS-8b", false], ["lesson_cancelled@ZS-8b:retry1", true]]);
     expect(ctx.zoom.sessions.get("ZS-8b").live).toBe(false);
+    // Zoom's 204 is still only a request: the server asks once more after 5 minutes unless Zoom
+    // says the session ended. Its notice comes, and nothing more is sent or flagged.
+    await ctx.deliver("session.ended", { id: "ZS-8b", session_id: "ZS-8b", end_time: iso(at + 3 * MIN + 10 * SEC) }, at + 3 * MIN + 10 * SEC);
+    for (const later of [at + 10 * MIN, at + 40 * MIN]) await ctx.tick(later);
+    expect(ctx.zoom.sent("PUT", "/status")).toHaveLength(2);
+    expect((await store.listAnomalies([ctx.lesson.id])).find(entry => entry.code === "SESSION_END_UNCONFIRMED")?.resolvedAt).toBeTruthy();
   });
 
-  test.fails("G-1: a stop asked for before Zoom's session id was known is sent once the id becomes known", async () => {
+  test("G-1: a stop asked for before Zoom's session id was known is sent once the id becomes known", async () => {
     const ctx = await setup();
     // Recording known only from the tutor's page (Zoom's automatic recording, say); no webhook yet.
     await ctx.sessionStarts("ZS-5", ctx.start, { webhook: false });
@@ -298,7 +319,7 @@ describe("P0: cancelling, stopping and ending under failure", () => {
     expect(ctx.zoom.sent("PATCH", "/events", call => call.body.method === "recording.stop" && call.path.includes("ZS-5")).length).toBeGreaterThan(0);
   });
 
-  test.fails("G-3: with two live sessions (an old generation still open), cancel stops and ends every one of them", async () => {
+  test("G-3: with two live sessions (an old generation still open), cancel stops the recording one and ends every one of them", async () => {
     const ctx = await setup();
     await recordingInSession(ctx, "ZS-9A");
     // A newer session of the same lesson starts while the old one is still live.
@@ -306,17 +327,22 @@ describe("P0: cancelling, stopping and ending under failure", () => {
     const at = ctx.start + 20 * MIN;
     await ctx.cancel(at);
     for (const later of [at + 30 * SEC, at + 60 * SEC]) await ctx.tick(later);
-    expect(ctx.zoom.sent("PATCH", "/events", call => call.body.method === "recording.stop").map(call => call.path)).toContain("/videosdk/sessions/ZS-9A/events");
+    // The stops go to the session that is recording, never to the newest just because it is newest.
+    expect([...new Set(ctx.zoom.sent("PATCH", "/events", call => call.body.method === "recording.stop").map(call => call.path))]).toEqual(["/videosdk/sessions/ZS-9A/events"]);
     expect(ctx.zoom.sessions.get("ZS-9A").live).toBe(false);
     expect(ctx.zoom.sessions.get("ZS-9B").live).toBe(false);
   });
 
-  test.fails("G-4 (D-2): cancelling ends the lesson's live Zoom session even when nothing is recording", async () => {
+  test("G-4 (D-2): cancelling ends the lesson's live Zoom session at once even when nothing is recording; once Zoom says it ended, nothing more", async () => {
     const ctx = await setup();
     await ctx.sessionStarts("ZS-11", ctx.start - 3 * MIN);
     await ctx.joined("ZS-11", ctx.tutor, "u-t", ctx.start - 3 * MIN);
     await ctx.cancel(ctx.start + 5 * MIN);
-    for (const later of [ctx.start + 6 * MIN, ctx.start + 7 * MIN]) await ctx.tick(later);
+    // In the cancel's own tick, with no stop (nothing was recording).
     expect(ctx.zoom.sent("PUT", "/status").map(call => call.path)).toEqual(["/videosdk/sessions/ZS-11/status"]);
+    expect(ctx.zoom.sent("PATCH", "/events")).toEqual([]);
+    await ctx.deliver("session.ended", { id: "ZS-11", session_id: "ZS-11", end_time: iso(ctx.start + 5 * MIN + 2 * SEC) }, ctx.start + 5 * MIN + 2 * SEC);
+    for (const later of [ctx.start + 6 * MIN, ctx.start + 9 * MIN, ctx.start + 40 * MIN]) await ctx.tick(later);
+    expect(ctx.zoom.sent("PUT", "/status")).toHaveLength(1);
   });
 });

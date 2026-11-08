@@ -73,14 +73,17 @@ describe("a cancelled lesson's recording is stopped by the server", () => {
     expect(await calls(lesson.id)).toEqual(["recording.stop"]);
     const first = (await ofType(lesson.id, "server.stop_requested"))[0];
     expect(first).toMatchObject({ reason: "lesson_cancelled", attempt: 1, channels: ["rest", "host"], occurredAt: at });
-    for (const [later, expected] of [[at + 10_000, ["recording.stop"]], [at + 30_000, ["recording.stop", "recording.stop"]], [at + 60_000, ["recording.stop", "recording.stop", "session.end"]], [at + 5 * MIN, ["recording.stop", "recording.stop", "session.end"]]]) {
+    for (const [later, expected] of [[at + 10_000, ["recording.stop"]], [at + 30_000, ["recording.stop", "recording.stop"]], [at + 60_000, ["recording.stop", "recording.stop", "session.end"]], [at + 5 * MIN, ["recording.stop", "recording.stop", "session.end", "session.end"]]]) {
       await runClassroomTick({ store, provider, drive, now: later, lessonIds: [lesson.id] });
       expect(await calls(lesson.id), `at +${(later - at) / 1000} s`).toEqual(expected);
     }
+    // The end Zoom never confirmed was asked again after 2 minutes (G-2), under a retry key.
+    expect((await ofType(lesson.id, "server.session_end_requested")).map(event => event.key))
+      .toEqual([`end:${lesson.id}:lesson_cancelled@SYN-SESSION-C`, `end:${lesson.id}:lesson_cancelled@SYN-SESSION-C:retry1`]);
     // Pressing cancel again (or a retried request) stores nothing new and sends nothing new.
     await stopRecordingForCancelledLesson({ store, provider, drive, lessonId: lesson.id, now: at + 6 * MIN });
     expect(await ofType(lesson.id, "server.lesson_cancelled")).toHaveLength(1);
-    expect(await calls(lesson.id)).toEqual(["recording.stop", "recording.stop", "session.end"]);
+    expect(await calls(lesson.id)).toEqual(["recording.stop", "recording.stop", "session.end", "session.end"]);
     expect(recordingDecision(await events(lesson.id)).allowed).toBe(false);
   });
 
@@ -91,7 +94,9 @@ describe("a cancelled lesson's recording is stopped by the server", () => {
     await stopRecordingForCancelledLesson({ store, provider, drive, lessonId: lesson.id, now: at });
     await store.transaction(tx => storeEvent(tx, zoom("session.recording_stopped", at + 4_000, { status: "Stopped" })));
     for (const later of [at + 30_000, at + MIN, at + 10 * MIN, at + 30 * MIN]) await runClassroomTick({ store, provider, drive, now: later, lessonIds: [lesson.id] });
-    expect(await calls(lesson.id)).toEqual(["recording.stop"]);
+    // No start, ever. Once the stop is confirmed the session is ended (D-2), and asked again while
+    // Zoom does not say it ended (G-2): at 30 s, then 2 and 5 minutes after the last request.
+    expect(await calls(lesson.id)).toEqual(["recording.stop", "session.end", "session.end", "session.end"]);
     const answer = await stopRecordingForCancelledLesson({ store, provider, drive, lessonId: lesson.id, now: at + 31 * MIN });
     expect(answer.body.stopState).toBe("CONFIRMED");
   });

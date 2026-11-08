@@ -50,17 +50,20 @@ function serve(target, events, times) {
 }
 const sentKeys = events => events.filter(event => event.source === 'server' && /^(stop|end):/.test(event.key)).map(event => event.key);
 
-test('cancelled while recording: stop on both channels at once, again at 30 s, end the session at 60 s; each once', () => {
+test('cancelled while recording: stop on both channels at once, again at 30 s, end the session at 60 s; each once, and the end asked again while Zoom does not confirm it', () => {
   const at = T + 20 * MIN;
   const times = [at, at + 10 * SEC, at + 30 * SEC, at + 45 * SEC, at + 60 * SEC, at + 90 * SEC];
   const events = serve(cancelledLesson, [...recordingLesson(), ...beats(T, T + 25 * MIN), cancellation(at)], times);
-  assert.deepEqual(sentKeys(events), [`stop:${lesson.id}:lesson_cancelled:1`, `stop:${lesson.id}:lesson_cancelled:2`, `end:${lesson.id}:lesson_cancelled`]);
+  // D-2: the session is ended in its own right (its id in the key), not only as a fallback.
+  assert.deepEqual(sentKeys(events), [`stop:${lesson.id}:lesson_cancelled:1`, `stop:${lesson.id}:lesson_cancelled:2`, `end:${lesson.id}:lesson_cancelled@sess-1`]);
   const first = events.find(event => event.key === `stop:${lesson.id}:lesson_cancelled:1`);
   assert.deepEqual(first.channels, ['rest', 'host']);
   assert.equal(first.occurredAt, at, 'the first stop goes out in the same tick as the cancellation');
-  // Planning again changes nothing: every action has a fixed key.
-  assert.deepEqual(of(planActions(cancelledLesson, events, at + 5 * MIN), 'STOP_RECORDING'), []);
-  assert.deepEqual(of(planActions(cancelledLesson, events, at + 5 * MIN), 'END_SESSION'), []);
+  // Planning again sends no stop twice; the only thing asked again is the end Zoom has not
+  // confirmed (G-2), under its own retry key.
+  const later = planActions(cancelledLesson, events, at + 5 * MIN);
+  assert.deepEqual(of(later, 'STOP_RECORDING'), []);
+  assert.deepEqual(of(later, 'END_SESSION').map(action => [action.key, action.targets]), [[`end:${lesson.id}:lesson_cancelled@sess-1:retry1`, ['sess-1']]]);
 });
 
 test('Zoom never confirms: the stop is not trusted and becomes an error a minute after the session end request', () => {
@@ -77,11 +80,16 @@ test('Zoom never confirms: the stop is not trusted and becomes an error a minute
   assert.ok(notices.includes('LESSON_CANCELLED_STOP_UNCONFIRMED'));
 });
 
-test('Zoom confirms the stop: nothing more is sent, nothing flagged, and the card says the video service confirmed it', () => {
+test('Zoom confirms the stop: the session is then ended at once (D-2); once Zoom says it ended, nothing more is sent or flagged', () => {
   const at = T + 20 * MIN;
   let events = serve(cancelledLesson, [...recordingLesson(), ...beats(T, T + 25 * MIN), cancellation(at)], [at]);
   events = [...events, status('Stopped', at + 4 * SEC)];
-  for (const time of [at + 30 * SEC, at + 60 * SEC, at + 5 * MIN]) {
+  events = serve(cancelledLesson, events, [at + 30 * SEC]);
+  assert.deepEqual(sentKeys(events), [`stop:${lesson.id}:lesson_cancelled:1`, `end:${lesson.id}:lesson_cancelled@sess-1`]);
+  // Asked is not ended: until Zoom says so the end is flagged (and asked again, G-2).
+  assert.ok(codes(deriveLesson(cancelledLesson, events, at + 2 * MIN)).includes('SESSION_END_UNCONFIRMED'));
+  events = [...events, fact('session.ended', at + 40 * SEC)];
+  for (const time of [at + 60 * SEC, at + 5 * MIN]) {
     const actions = planActions(cancelledLesson, events, time);
     assert.deepEqual([...of(actions, 'STOP_RECORDING'), ...of(actions, 'END_SESSION')], []);
   }
@@ -98,8 +106,9 @@ test('cancelled before recording started: no start is ever sent, even with conse
   assert.deepEqual([state.recording.status, state.recording.reason], ['BLOCKED', 'LESSON_CANCELLED']);
   assert.equal(state.cancellation.stopState, 'NO_RECORDING_KNOWN');
   assert.equal(lessonCard(state, T + MIN).recording.label, '課程已取消，這堂課不再錄影');
-  // Nothing was recording, so no stop is sent either.
+  // Nothing was recording, so no stop is sent either; the live session is ended at once (G-4, D-2).
   assert.deepEqual(of(planActions(cancelledLesson, events, T + MIN), 'STOP_RECORDING'), []);
+  assert.deepEqual(of(planActions(cancelledLesson, events, T + MIN), 'END_SESSION').map(action => [action.key, action.targets]), [[`end:${lesson.id}:lesson_cancelled@sess-1`, ['sess-1']]]);
   // The same lesson, not cancelled, would start.
   assert.equal(of(planActions(lesson, events.filter(event => event.type !== 'server.lesson_cancelled'), T + MIN), 'START_RECORDING').length, 1);
 });
@@ -115,7 +124,7 @@ test('the cancelled flag without a stored cancellation (the cancel request faile
   assert.deepEqual([...of(first, 'END_SESSION'), ...of(first, 'STOP_RECORDING').filter(action => action.attempt === 2)], []);
   const events = serve(cancelledLesson, before, [found, found + 30 * SEC, found + 60 * SEC]);
   assert.equal(events.filter(event => event.type === 'server.lesson_cancelled').length, 1);
-  assert.deepEqual(sentKeys(events), [`stop:${lesson.id}:lesson_cancelled:1`, `stop:${lesson.id}:lesson_cancelled:2`, `end:${lesson.id}:lesson_cancelled`]);
+  assert.deepEqual(sentKeys(events), [`stop:${lesson.id}:lesson_cancelled:1`, `stop:${lesson.id}:lesson_cancelled:2`, `end:${lesson.id}:lesson_cancelled@sess-1`]);
 });
 
 test('P3 stored the cancellation and the tick also sees the flag: the cancellation and the first stop are each stored once', () => {
@@ -135,9 +144,11 @@ test('a recording that starts again after the cancellation is flagged as unappro
   const state = deriveLesson(cancelledLesson, events, again + SEC);
   assert.ok(codes(state).includes('UNAPPROVED_RECORDING_START'));
   events = serve(cancelledLesson, events, [again + SEC, again + 31 * SEC, again + 61 * SEC]);
+  // The new round stops it again; the session itself is ended under the cancellation's own rule
+  // (D-2), once: more than a minute has passed since the cancellation.
   assert.deepEqual(sentKeys(events), [
     `stop:${lesson.id}:lesson_cancelled:1`,
-    `stop:${lesson.id}:lesson_cancelled:r${again}:1`, `stop:${lesson.id}:lesson_cancelled:r${again}:2`, `end:${lesson.id}:lesson_cancelled:r${again}`,
+    `stop:${lesson.id}:lesson_cancelled:r${again}:1`, `end:${lesson.id}:lesson_cancelled@sess-1`, `stop:${lesson.id}:lesson_cancelled:r${again}:2`,
   ]);
   // The server itself never asked for a start after the cancellation.
   assert.equal(events.filter(event => event.type === 'server.start_requested' && event.occurredAt > at).length, 0);

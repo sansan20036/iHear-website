@@ -144,11 +144,12 @@ describe("Zoom Video SDK, server side", () => {
     const answers = (live, past) => request => (request.url.endsWith("?type=live") ? live : past);
     const ours = { status: 200, body: JSON.stringify({ id: "s-1", session_key: lesson.id, session_name: roomNameOf(lesson.id) }) };
     const live = provider(answers(ours, { status: 500, body: "" }), []);
-    expect(await live.provider.verifySession(lesson, "s-1")).toEqual({ verified: true, ended: false });
+    // Confirmed with the room name Zoom gave, which tells the room's generation (G-5).
+    expect(await live.provider.verifySession(lesson, "s-1")).toEqual({ verified: true, ended: false, name: roomNameOf(lesson.id) });
     expect(live.requests.map(request => request.url)).toEqual(["https://api.zoom.us/v2/videosdk/sessions/s-1?type=live"]);
     // Ended already: Zoom describes it only as a past session.
     const past = provider(answers({ status: 404, body: "{}" }, { status: 200, body: JSON.stringify({ id: "s-1", session_name: roomNameOf(lesson.id) }) }), []);
-    expect(await past.provider.verifySession(lesson, "s-1")).toEqual({ verified: true, ended: true });
+    expect(await past.provider.verifySession(lesson, "s-1")).toEqual({ verified: true, ended: true, name: roomNameOf(lesson.id) });
     expect(past.requests.map(request => request.url.split("?")[1])).toEqual(["type=live", "type=past"]);
     // Another lesson's session, or one that says nothing about whose it is: refused.
     const other = provider(answers({ status: 200, body: JSON.stringify({ id: "s-9", session_key: "L-OTHER", session_name: roomNameOf(lesson.id) }) }, null), []);

@@ -29,8 +29,21 @@ async function check(name, action) {
 const shot = (page, name) => page.screenshot({ path: path.join(directory, `${name}.png`), fullPage: true });
 const context = options => localContext(browser, origin, { external: report.externalRequests, secret, ...options });
 const expectedRefusal = text => /Failed to load resource: the server responded with a status of (401|403)/.test(text);
+// The open overview asks for a tick every 15 seconds and after each change, from the owner's
+// 30-a-minute admin allowance it shares with real changes. This run makes about 30 such requests
+// in its first minute (the 4bab9e3 build too, measured 2026-11-08), so the overview's own tick may
+// be refused with 429 (the page then says it may lag). That one refusal is allowed; a limit hit
+// on any other request is still a failure.
+const LIMIT_TOLERATED = '/api/admin/classrooms/tick';
+const limited = [];
+let limitedConsole = 0;
 function watch(page) {
-  page.on('console', message => { if (message.type() === 'error' && !expectedRefusal(message.text())) consoleProblems.push(message.text()); });
+  page.on('response', item => { if (item.status() === 429) limited.push(new URL(item.url()).pathname); });
+  page.on('console', message => {
+    if (message.type() !== 'error' || expectedRefusal(message.text())) return;
+    if (/Failed to load resource: the server responded with a status of 429/.test(message.text())) limitedConsole += 1;
+    else consoleProblems.push(message.text());
+  });
   page.on('pageerror', error => consoleProblems.push(error.message));
   return page;
 }
@@ -542,6 +555,9 @@ try {
     for (const value of [tutor, lesson.key, linkLesson.key, linkLesson.newKey, 'Synthetic Display Name', '203.0.113.7']) expect(shown).not.toContain(value);
     expect(report.externalRequests).toEqual([]);
     expect(consoleProblems).toEqual([]);
+    expect(limited.filter(pathname => pathname !== LIMIT_TOLERATED)).toEqual([]);
+    expect(limitedConsole).toBeLessThanOrEqual(limited.length);
+    report.limitedTicks = limited.length;
   });
   report.status = 'passed';
 } catch (error) {

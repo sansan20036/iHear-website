@@ -1,7 +1,7 @@
 import { createHmac } from "node:crypto";
 
 // @ts-ignore - shared classroom logic, plain JavaScript tested with node --test.
-import { buildSessionTokenClaims, roomNameOf, signSessionToken } from "../../tools/recording-pathway/classroom/eligibility.mjs";
+import { buildSessionTokenClaims, generationOfRoom, roomNameOf, signSessionToken } from "../../tools/recording-pathway/classroom/eligibility.mjs";
 // @ts-ignore - shared classroom logic, plain JavaScript tested with node --test.
 import { checkVendorRange, classifyVendorResponse, FAILURE, FilingError } from "../../tools/recording-pathway/classroom/recording-filing.mjs";
 import type { ClassroomProvider, KnownSession, ProviderCall } from "../classroom-provider";
@@ -88,11 +88,13 @@ export function zoomVideoSdkProvider(config: ZoomVideoSdkConfig, options: Option
     }
   };
   const sessionPath = (id: string, suffix = "") => `/videosdk/sessions/${zoomSessionPath(id, suffix === "/recordings" ? "recordings" : "session")}${suffix}`;
-  const control = async (lesson: ClassroomLesson, method: "PATCH" | "PUT", suffix: string, body: unknown): Promise<ProviderCall> => {
-    const session = (await options.sessionsOf(lesson)).at(-1);
+  // A request for one session: the one named (G-3: the server names each session it means), or
+  // without a name the lesson's latest known session, as before.
+  const control = async (lesson: ClassroomLesson, method: "PATCH" | "PUT", suffix: string, body: unknown, sessionId?: string): Promise<ProviderCall> => {
+    const id = sessionId ?? (await options.sessionsOf(lesson)).at(-1)?.id;
     // No confirmed session yet (nobody joined, or the id is still being checked): nothing to control.
-    if (!session) return { ok: false, httpStatus: 409 };
-    const response = await request(method, sessionPath(session.id, suffix), body);
+    if (!id) return { ok: false, httpStatus: 409 };
+    const response = await request(method, sessionPath(id, suffix), body);
     return { ok: response.status >= 200 && response.status < 300, httpStatus: response.status };
   };
   // A session's details. Zoom describes a session only under its own type (live by default), so
@@ -117,18 +119,18 @@ export function zoomVideoSdkProvider(config: ZoomVideoSdkConfig, options: Option
   return {
     name: "zoom-video-sdk",
     webhookSecret: config.webhookSecret,
-    sessionToken({ lesson, participant, now: at }) {
-      const claims = buildSessionTokenClaims({ lesson, participant, appKey: config.sdkKey, now: at });
+    sessionToken({ lesson, participant, now: at, generation = 0 }) {
+      const claims = buildSessionTokenClaims({ lesson, participant, appKey: config.sdkKey, now: at, generation });
       return { token: signSessionToken(claims, config.sdkSecret), issuedAt: claims.iat * 1000, expiresAt: claims.exp * 1000 };
     },
-    async prepareJoin({ lesson, participant, now: at }) {
-      const token = this.sessionToken({ lesson, participant, now: at });
-      // The browser must join the same topic (tpc) the token names.
-      return { kind: "sdk", ...token, sessionName: roomNameOf(lesson.id) };
+    async prepareJoin({ lesson, participant, now: at, generation = 0 }) {
+      const token = this.sessionToken({ lesson, participant, now: at, generation });
+      // The browser must join the same topic (tpc) the token names: the room's current generation.
+      return { kind: "sdk", ...token, sessionName: roomNameOf(lesson.id, generation) };
     },
-    startRecording: (lesson) => control(lesson, "PATCH", "/events", { method: "recording.start" }),
-    stopRecording: (lesson) => control(lesson, "PATCH", "/events", { method: "recording.stop" }),
-    endSession: (lesson) => control(lesson, "PUT", "/status", { action: "end" }),
+    startRecording: (lesson, sessionId) => control(lesson, "PATCH", "/events", { method: "recording.start" }, sessionId),
+    stopRecording: (lesson, sessionId) => control(lesson, "PATCH", "/events", { method: "recording.stop" }, sessionId),
+    endSession: (lesson, sessionId) => control(lesson, "PUT", "/status", { action: "end" }, sessionId),
     // Not offered as a REST call for Video SDK sessions: the tutor's page removes a person
     // through the SDK, and the overview flags anyone it could not remove.
     removeUser: notOffered,
@@ -140,9 +142,10 @@ export function zoomVideoSdkProvider(config: ZoomVideoSdkConfig, options: Option
       if (!found.found) return found.status === 400 || found.status === 404 ? { verified: false, reason: "NOT_FOUND" } : null;
       const key = found.body?.session_key, name = found.body?.session_name;
       const keyMatches = typeof key === "string" && key ? key === lesson.id : null;
-      const nameMatches = typeof name === "string" && name ? name === roomNameOf(lesson.id) : null;
+      // Any generation of this lesson's room (D-1) is this lesson's; another name is not.
+      const nameMatches = typeof name === "string" && name ? generationOfRoom(lesson.id, name) !== null : null;
       if (keyMatches === false || nameMatches === false || (keyMatches === null && nameMatches === null)) return { verified: false, reason: "MISMATCH" };
-      return { verified: true, ended: found.type === "past" };
+      return { verified: true, ended: found.type === "past", ...(nameMatches ? { name: String(name).toLowerCase() } : {}) };
     },
     // The current session's details and people (as past once it has ended), its recordings, and
     // the recordings of any earlier session whose files are not known yet. Recordings are asked

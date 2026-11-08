@@ -142,15 +142,26 @@ try {
     const phone = await studentPage(revoked.link, 'student phone TEST-AR');
     const laptop = await studentPage(revoked.link, 'student laptop TEST-AR');
     const teacher = await tutorPage(revoked);
+    // D-1/D-5 (P1+P3 integration): the revoke opens a new generation of the room, and the tutor's
+    // page moves there by itself with a new token (a new join request) at its next report.
+    const moves = [];
+    teacher.on('response', async item => {
+      if (!item.url().endsWith('/join') || item.request().method() !== 'POST') return;
+      try { moves.push({ at: Date.now(), room: (await item.json()).session?.sessionName ?? null }); } catch { /* not JSON */ }
+    });
     const action = await ownerAction(revoked, '撤銷學生連結');
     expect(action.body).toMatchObject({ ok: true, revoked: true });
     await leftWith(phone, '這個個人連結已失效（已撤銷或已更換），所以已離開教室。', 25_000);
     await leftWith(laptop, '這個個人連結已失效（已撤銷或已更換），所以已離開教室。', 25_000);
     report.timings.revokeBothDevicesLeftSeconds = seconds(Date.now() - action.at);
-    // The tutor's next report (every 30 seconds) is accepted: the tutor stays in the room.
+    await expect.poll(() => moves.length, { timeout: 45_000 }).toBeGreaterThan(0);
+    expect(moves[0].room).toBe(`ihear-${revoked.id.toLowerCase()}-g1`);
+    report.timings.tutorMovedToNewRoomSeconds = seconds(moves[0].at - action.at);
+    // The tutor stays in class, now in the new room, and its later reports are accepted.
     await teacher.waitForResponse(item => item.url().endsWith('/host-events') && item.status() === 200, { timeout: 40_000 });
     await inRoom(teacher);
     await expect(teacher.locator('.classroom-room-connection')).toHaveText('已連線');
+    expect(moves).toHaveLength(1);
     const calls = await providerCalls(revoked.id);
     for (const call of ['session.end', 'user.remove']) expect(calls).not.toContain(call);
     await shot(laptop, 'revoke-student');

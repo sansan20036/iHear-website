@@ -130,6 +130,10 @@ export type ClassroomStore = {
   // Owners' changes to who can enter: false when there is no such lesson (or student row).
   setLessonCancelled(id: string): Promise<boolean>;
   replaceStudentKeyHash(lessonId: string, participantId: string, keyHash: string): Promise<boolean>;
+  // D-4: a reissued link gives the student a new participant id. The id and key change, and the
+  // rotation fact is stored, in one step; false when the student no longer has `fromId` (another
+  // change came first), and then nothing changed.
+  rotateStudent(lessonId: string, fromId: string, toId: string, keyHash: string, rotation: ClassroomEvent): Promise<boolean>;
   listConsents(codes: string[]): Promise<ClassroomConsent[]>;
   setConsent(consent: ClassroomConsent): Promise<void>;
   listStaffNotices(codes: string[]): Promise<ClassroomStaffNotice[]>;
@@ -367,6 +371,15 @@ export function createFileClassroomStore(filePath: string): ClassroomStore {
         .find((entry) => entry.id === participantId && entry.role === "student");
       if (!student) return false;
       student.joinKeyHash = keyHash;
+      return true;
+    }),
+    rotateStudent: (lessonId, fromId, toId, keyHash, rotation) => run((state) => {
+      const lesson = state.lessons.find((item) => item.id === lessonId);
+      const student = lesson?.participants.find((entry) => entry.id === fromId && entry.role === "student");
+      if (!lesson || !student || lesson.participants.some((entry) => entry.id === toId)) return false;
+      student.id = toId;
+      student.joinKeyHash = keyHash;
+      if (!state.events[rotation.key]) state.events[rotation.key] = clone(rotation);
       return true;
     }),
     listConsents: (codes) => run((state) => clone(state.consents.filter((item) => codes.includes(item.personCode))), false),
@@ -793,6 +806,21 @@ export function createPostgresClassroomStore(sql: postgres.Sql): ClassroomStore 
         RETURNING participant_id
       `;
       return rows.length > 0;
+    },
+    async rotateStudent(lessonId, fromId, toId, keyHash, rotation) {
+      // One transaction: the row keeps its code and consent link (person_code); only its id and
+      // key change, and only if it still has the id this request read. Nothing references the id
+      // by a foreign key, so no other row moves.
+      return sql.begin(async (tx) => {
+        const rows = await tx`
+          UPDATE public.classroom_participants SET participant_id = ${toId}, join_key_hash = ${keyHash}
+          WHERE lesson_id = ${lessonId} AND participant_id = ${fromId} AND role = 'student'
+          RETURNING participant_id
+        `;
+        if (!rows.length) return false;
+        await postgresTransaction(tx).insertEvent(rotation);
+        return true;
+      }) as Promise<boolean>;
     },
     async listConsents(codes) {
       if (!codes.length) return [];

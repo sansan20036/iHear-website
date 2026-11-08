@@ -15,8 +15,24 @@ export const TOKEN_LIFETIME_S = 1800;
 
 const toMs = value => (typeof value === 'number' ? value : Date.parse(value));
 
-export function roomNameOf(lessonId) {
-  return `ihear-${String(lessonId).toLowerCase()}`;
+// The Video SDK session name (the token's tpc) of a lesson's room. Generation 0 is the name every
+// lesson has always had; each later generation (D-1, 2026-11-08: a new room after a link is
+// revoked or reissued) gets "-g<n>". A session already running keeps its name: a new generation
+// only changes where new tokens lead.
+export function roomNameOf(lessonId, generation = 0) {
+  const base = `ihear-${String(lessonId).toLowerCase()}`;
+  return generation > 0 ? `${base}-g${generation}` : base;
+}
+
+// Which generation of this lesson's room a session name is, or null when it is not this
+// lesson's (or not a name we issue). Zoom lower-cases the name.
+export function generationOfRoom(lessonId, name) {
+  if (typeof name !== 'string' || !name) return null;
+  const base = roomNameOf(lessonId);
+  const value = name.toLowerCase();
+  if (value === base) return 0;
+  const suffix = value.startsWith(`${base}-g`) ? value.slice(base.length + 2) : null;
+  return suffix && /^[1-9]\d{0,5}$/.test(suffix) ? Number(suffix) : null;
 }
 
 export function getJoinEligibility({ lesson, participantId, identity, now }) {
@@ -86,13 +102,13 @@ function refuse(problems) {
 // event can be matched to the roster without names: session_key = lessonId, user_key =
 // participantId (both at most 36 characters). cloud_recording_option 0 is the default single
 // combined video; 1 would give a file per person and needs Zoom to enable it.
-export function buildSessionTokenClaims({ lesson, participant, appKey, now }) {
+export function buildSessionTokenClaims({ lesson, participant, appKey, now, generation = 0 }) {
   if (String(lesson.id).length > 36 || String(participant.id).length > 36) throw new Error('identifier longer than 36 characters');
   const iat = Math.floor(now / 1000);
   const claims = {
     app_key: appKey,
     role_type: participant.role === 'tutor' ? 1 : 0,
-    tpc: roomNameOf(lesson.id),
+    tpc: roomNameOf(lesson.id, generation),
     version: 1,
     session_key: lesson.id,
     user_key: participant.id,

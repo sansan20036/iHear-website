@@ -6,7 +6,8 @@ import { copyFile, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } 
 import os from 'node:os';
 import path from 'node:path';
 import postgres from 'postgres';
-import { changeLessonAccess, joinClassroom, myClassroomLessons } from '../lib/classroom-service';
+import { changeLessonAccess, joinClassroom, myClassroomLessons, stopRecordingForCancelledLesson } from '../lib/classroom-service';
+import { roomNameOf } from '../tools/recording-pathway/classroom/eligibility.mjs';
 import { knownSessions } from '../lib/classroom-provider';
 import { createPostgresClassroomStore } from '../lib/classroom-store';
 import { dedupeKeyOf, fileRecording, ingestFacts, ingestHostReport, ingestWebhook, signZoomRequest, storeEvent } from '../tools/recording-pathway/classroom/webhook-ingest.mjs';
@@ -214,7 +215,8 @@ describe('the shared filing logic on PostgreSQL', () => {
       await storeEvent(tx, { ...base, source: 'p1', type: 'p1.vendor_copy_kept', providerFileId: 'SYN-KEPT-1', key: 'p1.vendor_copy_kept:SYN-KEPT-1' });
     });
     const stored = await store.eventsFor([lesson.id]);
-    expect(knownSessions(stored)).toEqual([{ id, ended: false, recordingsKnown: false }]);
+    // No room name was reported, so the generation is unknown (G-5).
+    expect(knownSessions(stored)).toEqual([{ id, ended: false, recordingsKnown: false, name: null, generation: null }]);
     const reported = stored.find(event => event.type === 'host.session');
     expect(reported).toMatchObject({ source: 'host_sdk', reportedSessionId: id });
     expect(reported.providerSessionId ?? null).toBeNull();
@@ -371,6 +373,79 @@ describe('student links and my lessons on PostgreSQL', () => {
     const log = spawnSync('docker', ['logs', container], { encoding: 'utf8', windowsHide: true, timeout: 30000 });
     expect(log.status).toBe(0);
     for (const key of keys) expect(`${log.stdout}${log.stderr}`).not.toContain(key);
+  });
+});
+
+// P1+P3 integration (2026-11-08) on PostgreSQL: a reissue's new participant id is written with
+// its record in one transaction (D-4), the room's generations (D-1), and a cancelled lesson's
+// live session ended by the server (D-2). Synthetic data only; a stand-in provider records calls.
+describe('P1+P3 on PostgreSQL: participant rotation, room generations and a cancellation\'s cleanup', () => {
+  const NOW = Date.parse('2026-11-20T07:55:00Z');
+  const hashOf = value => createHash('sha256').update(value).digest('hex');
+  const rotation = (lessonId, from, to) => ({ source: 'server', type: 'server.participant_rotated', lessonId, from, to, occurredAt: NOW, receivedAt: NOW, key: `server.participant_rotated:${lessonId}:${to}` });
+  const studentRow = async lessonId => (await sql`SELECT participant_id, join_key_hash FROM public.classroom_participants WHERE lesson_id = ${lessonId} AND role = 'student'`).map(row => ({ id: row.participant_id, hash: row.join_key_hash.trim() }));
+
+  test('a rotation changes the id and key and stores its record in one transaction; one from an id the student no longer has changes nothing; of two at once exactly one wins', async () => {
+    const lesson = contractLesson('L-pg-rot', 'TEST-PRT');
+    await store.createLesson(lesson);
+    const from = lesson.participants.find(entry => entry.role === 'student').id;
+    expect(await store.rotateStudent(lesson.id, from, 'P-pg-rot-1', hashOf('key-1'), rotation(lesson.id, from, 'P-pg-rot-1'))).toBe(true);
+    expect(await studentRow(lesson.id)).toEqual([{ id: 'P-pg-rot-1', hash: hashOf('key-1') }]);
+    expect((await store.eventsFor([lesson.id])).filter(event => event.type === 'server.participant_rotated').map(event => [event.from, event.to])).toEqual([[from, 'P-pg-rot-1']]);
+    // From the old id again: refused, and neither the row nor the records change.
+    expect(await store.rotateStudent(lesson.id, from, 'P-pg-rot-2', hashOf('key-2'), rotation(lesson.id, from, 'P-pg-rot-2'))).toBe(false);
+    expect(await studentRow(lesson.id)).toEqual([{ id: 'P-pg-rot-1', hash: hashOf('key-1') }]);
+    expect((await store.eventsFor([lesson.id])).filter(event => event.type === 'server.participant_rotated')).toHaveLength(1);
+    // Two at once from the same id: one wins, and the row and records agree with it.
+    const results = await Promise.all(['P-pg-rot-3', 'P-pg-rot-4'].map(to => store.rotateStudent(lesson.id, 'P-pg-rot-1', to, hashOf(to), rotation(lesson.id, 'P-pg-rot-1', to))));
+    expect(results.filter(Boolean)).toHaveLength(1);
+    const [row] = await studentRow(lesson.id);
+    expect(['P-pg-rot-3', 'P-pg-rot-4']).toContain(row.id);
+    expect(row.hash).toBe(hashOf(row.id));
+    expect((await store.eventsFor([lesson.id])).filter(event => event.type === 'server.participant_rotated').map(event => event.to).sort()).toEqual(['P-pg-rot-1', row.id].sort());
+  });
+
+  test('a reissue: generation 1, a new participant id, the old key refused, the new key entering under the new id in the new room', async () => {
+    const lesson = contractLesson('L-pg-gen', 'TEST-PG1');
+    await store.createLesson(lesson);
+    const provider = { name: 'synthetic', sessionToken: ({ participant, now, generation = 0 }) => ({ token: `synthetic-token-${participant.id}-${now}-${generation}`, issuedAt: now, expiresAt: now + 30 * MIN }) };
+    const before = (await studentRow(lesson.id))[0].id;
+    const answer = await changeLessonAccess({ store, lessonId: lesson.id, action: 'reissue_link', now: NOW });
+    expect(answer).toMatchObject({ status: 200, body: { reissued: true } });
+    const key = new URLSearchParams(answer.body.studentLink.split('#')[1]).get('k');
+    const after = (await studentRow(lesson.id))[0].id;
+    expect(after).not.toBe(before);
+    expect((await store.eventsFor([lesson.id])).filter(event => event.type === 'server.room_generation').map(event => event.generation)).toEqual([1]);
+    expect((await joinClassroom({ store, provider, lessonId: lesson.id, key: `${lesson.id}-link`, now: NOW })).status).toBe(403);
+    const entered = await joinClassroom({ store, provider, lessonId: lesson.id, key, now: NOW });
+    expect(entered).toMatchObject({ status: 200, body: { role: 'student', session: { sessionName: roomNameOf(lesson.id, 1) } } });
+    expect(entered.body.session.token).toContain(`synthetic-token-${after}-`);
+  });
+
+  test('a cancelled lesson\'s live session is ended by the server, once, even with nothing recording (D-2)', async () => {
+    const lesson = contractLesson('L-pg-end', 'TEST-PEN');
+    await store.createLesson(lesson);
+    const sent = [];
+    const provider = {
+      name: 'synthetic', webhookSecret: null,
+      sessionToken: () => ({ token: 'x', issuedAt: NOW, expiresAt: NOW + 30 * MIN }),
+      startRecording: async (_lesson, sessionId) => { sent.push(['start', sessionId]); return { ok: true, httpStatus: 202 }; },
+      stopRecording: async (_lesson, sessionId) => { sent.push(['stop', sessionId]); return { ok: true, httpStatus: 202 }; },
+      endSession: async (_lesson, sessionId) => { sent.push(['end', sessionId]); return { ok: true, httpStatus: 204 }; },
+      removeUser: async () => ({ ok: false, httpStatus: 501 }),
+      snapshot: async () => null,
+      download: async () => Buffer.alloc(0),
+      deleteRecording: async () => ({ ok: false, httpStatus: 501 }),
+    };
+    await store.transaction(tx => storeEvent(tx, { source: 'zoom_webhook', type: 'session.started', lessonId: lesson.id, providerSessionId: 'ZS-PG-1', sessionName: roomNameOf(lesson.id), occurredAt: NOW - MIN, receivedAt: NOW - MIN, key: `session.started:ZS-PG-1` }));
+    expect(await store.setLessonCancelled(lesson.id)).toBe(true);
+    const answer = await stopRecordingForCancelledLesson({ store, provider, drive: createDrive(), lessonId: lesson.id, now: NOW });
+    expect(answer).toMatchObject({ status: 200, body: { ok: true, ticked: true, stopRequested: false } });
+    expect(sent).toEqual([['end', 'ZS-PG-1']]);
+    await stopRecordingForCancelledLesson({ store, provider, drive: createDrive(), lessonId: lesson.id, now: NOW + 10_000 });
+    expect(sent).toEqual([['end', 'ZS-PG-1']]);
+    const [ended] = (await store.eventsFor([lesson.id])).filter(event => event.type === 'server.session_end_requested');
+    expect(ended).toMatchObject({ reason: 'lesson_cancelled', targets: ['ZS-PG-1'], ok: true });
   });
 });
 

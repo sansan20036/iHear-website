@@ -315,6 +315,8 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
   // its way that the room was left (or rejoined) meanwhile.
   private joining: Promise<void> | null = null;
   private attempt = 0;
+  // The room (session name) this page joined last; a join to another room moves there (D-5).
+  private sessionName: string | null = null;
   // This page's camera and microphone, the latest press of each, and the press now waiting for Zoom.
   private readonly devices: Record<DeviceKind, DeviceState> = { camera: "off", microphone: "off" };
   private readonly presses: Record<DeviceKind, number> = { camera: 0, microphone: 0 };
@@ -360,10 +362,13 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
   // reconnecting by itself, is left alone. After a failure the old client is finished: it is
   // released first and a new one joins with the new token. (R-2, 2026-11-06: before, join()
   // returned at once because the old client was still set, so "Connect again" did nothing.)
+  // A join to another room (a new generation, D-1/D-5) leaves the current one first: the same
+  // release-and-join as after a failure, never two sessions at once.
   async join(input: MediaJoin) {
     if (!input.sessionToken || !input.sessionName) throw new Error("A Zoom join token and its session name are required");
     if (this.joining) return this.joining;
-    if (this.client && ZOOM_IN_SESSION.has(this.connection)) return;
+    if (this.client && ZOOM_IN_SESSION.has(this.connection) && input.sessionName === this.sessionName) return;
+    this.sessionName = input.sessionName;
     const joining = this.connect({ ...input, sessionName: input.sessionName });
     this.joining = joining;
     try {

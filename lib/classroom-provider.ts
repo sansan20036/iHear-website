@@ -3,7 +3,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 // @ts-ignore - shared classroom logic, plain JavaScript tested with node --test.
-import { buildSessionTokenClaims, signSessionToken } from "../tools/recording-pathway/classroom/eligibility.mjs";
+import { buildSessionTokenClaims, generationOfRoom, signSessionToken } from "../tools/recording-pathway/classroom/eligibility.mjs";
 import { MEDIA_PROVIDERS, type MediaProviderName } from "./classroom-media";
 import { recordingDecision } from "./classroom-service";
 import { classroomStore, type ClassroomEvent, type ClassroomLesson, type ClassroomParticipant, type RecordingFile } from "./classroom-store";
@@ -32,11 +32,12 @@ export type ProviderSnapshot = {
   // Earlier sessions of the lesson whose recordings were asked for as well.
   sessions?: { providerSessionId: string; recordings: Record<string, unknown>[] }[];
 };
-// A vendor session of a lesson, from trusted facts only (see knownSessions).
-export type KnownSession = { id: string; ended: boolean; recordingsKnown: boolean };
+// A vendor session of a lesson, from trusted facts only (see knownSessions), with its name and
+// room generation when the vendor gave one (G-5).
+export type KnownSession = { id: string; ended: boolean; recordingsKnown: boolean; name?: string | null; generation?: number | null };
 // The vendor's answer about a session id the tutor's page reported; null when it could not be
 // asked now.
-export type SessionCheck = { verified: true; ended: boolean } | { verified: false; reason: "NOT_FOUND" | "MISMATCH" } | null;
+export type SessionCheck = { verified: true; ended: boolean; name?: string } | { verified: false; reason: "NOT_FOUND" | "MISMATCH" } | null;
 export type SessionToken = { token: string; issuedAt: number; expiresAt: number };
 // What the browser needs to enter: a token for an SDK (Zoom, synthetic), or the address of the
 // vendor's classroom page (LCIC). The token's hash is what iHear stores, never the token.
@@ -48,12 +49,15 @@ export type ClassroomProvider = {
   name: MediaProviderName;
   webhookSecret: string | null;
   // The token the browser's media adapter joins with; it names the participant by our id.
-  sessionToken(input: { lesson: ClassroomLesson; participant: ClassroomParticipant; now: number }): SessionToken;
+  // generation: which generation of the lesson's room it leads to (D-1); 0 by default.
+  sessionToken(input: { lesson: ClassroomLesson; participant: ClassroomParticipant; now: number; generation?: number }): SessionToken;
   // A provider whose entry needs the vendor's API (LCIC creates the room and logs people in).
-  prepareJoin?(input: { lesson: ClassroomLesson; participant: ClassroomParticipant; now: number }): Promise<PreparedJoin>;
-  startRecording(lesson: ClassroomLesson): Promise<ProviderCall>;
-  stopRecording(lesson: ClassroomLesson): Promise<ProviderCall>;
-  endSession(lesson: ClassroomLesson): Promise<ProviderCall>;
+  prepareJoin?(input: { lesson: ClassroomLesson; participant: ClassroomParticipant; now: number; generation?: number }): Promise<PreparedJoin>;
+  // sessionId names the vendor session a request is for (G-3); without one the provider uses the
+  // lesson's latest known session, as before.
+  startRecording(lesson: ClassroomLesson, sessionId?: string): Promise<ProviderCall>;
+  stopRecording(lesson: ClassroomLesson, sessionId?: string): Promise<ProviderCall>;
+  endSession(lesson: ClassroomLesson, sessionId?: string): Promise<ProviderCall>;
   removeUser(lesson: ClassroomLesson, userKey: string): Promise<ProviderCall>;
   snapshot(lesson: ClassroomLesson): Promise<ProviderSnapshot | null>;
   // Whether a session id the tutor's page reported is really this lesson's session.
@@ -78,11 +82,21 @@ export function knownSessions(events: ClassroomEvent[]): KnownSession[] {
     .sort((a, b) => a.occurredAt - b.occurredAt);
   const ids = [...new Set(trusted.map((event) => String(event.providerSessionId)))];
   const about = (id: string) => events.filter((event) => event.providerSessionId === id);
-  return ids.map((id) => ({
-    id,
-    ended: about(id).some((event) => event.type === "session.ended" || (event.type === "server.session_verified" && event.ended === true)),
-    recordingsKnown: about(id).some((event) => event.type === "session.recording_completed"),
-  }));
+  return ids.map((id) => {
+    const own = trusted.filter((event) => event.providerSessionId === id);
+    const name = own.map((event) => event.sessionName).filter((value): value is string => typeof value === "string" && value.length > 0).pop() ?? null;
+    const lessonId = String(own[0]?.lessonId ?? "");
+    return {
+      id,
+      // Zoom's own word that it is over: its notice, a verified past session, or an answer
+      // describing it as no longer live (G-2).
+      ended: about(id).some((event) => event.type === "session.ended" || (event.type === "server.session_verified" && event.ended === true)
+        || (event.type === "api.snapshot" && event.live === false && TRUSTED_SOURCES.has(event.source))),
+      recordingsKnown: about(id).some((event) => event.type === "session.recording_completed"),
+      name,
+      generation: lessonId && name ? generationOfRoom(lessonId, name) : null,
+    };
+  });
 }
 
 export class ClassroomProviderUnavailableError extends Error {}
@@ -123,14 +137,15 @@ function syntheticProvider(): ClassroomProvider {
   return {
     name: "synthetic",
     webhookSecret: process.env.CLASSROOM_WEBHOOK_SECRET || null,
-    sessionToken({ lesson, participant, now }) {
-      const claims = buildSessionTokenClaims({ lesson, participant, appKey: "synthetic-app-key", now });
+    sessionToken({ lesson, participant, now, generation = 0 }) {
+      const claims = buildSessionTokenClaims({ lesson, participant, appKey: "synthetic-app-key", now, generation });
       const token = signSessionToken(claims, process.env.CLASSROOM_SYNTHETIC_SECRET || generatedSecret);
       return { token, issuedAt: claims.iat * 1000, expiresAt: claims.exp * 1000 };
     },
-    startRecording: (lesson) => accepted("recording.start", lesson.id),
-    stopRecording: (lesson) => accepted("recording.stop", lesson.id),
-    endSession: (lesson) => accepted("session.end", lesson.id),
+    // The stand-in records which session a request named, when it named one.
+    startRecording: (lesson, sessionId) => accepted("recording.start", lesson.id, sessionId),
+    stopRecording: (lesson, sessionId) => accepted("recording.stop", lesson.id, sessionId),
+    endSession: (lesson, sessionId) => accepted("session.end", lesson.id, sessionId),
     removeUser: (lesson, userKey) => accepted("user.remove", lesson.id, userKey),
     async snapshot(lesson) {
       return (await readSynthetic()).snapshots[lesson.id] ?? null;

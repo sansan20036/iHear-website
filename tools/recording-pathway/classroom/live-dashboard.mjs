@@ -74,8 +74,11 @@ export const LABELS = Object.freeze({
     WITHDRAWAL_STOP_UNCONFIRMED: '撤回同意後仍無法確認錄影已停止',
     EMERGENCY_STOP: '管理員已按下緊急停止錄影',
     EMERGENCY_STOP_UNCONFIRMED: '緊急停止後仍無法確認錄影已停止',
-    LESSON_CANCELLED: '課程已取消（伺服器已要求停止錄影）',
+    LESSON_CANCELLED: '課程已取消（伺服器已要求停止錄影並結束教室）',
     LESSON_CANCELLED_STOP_UNCONFIRMED: '課程取消後仍無法確認錄影已停止',
+    // Requested is not ended: only Zoom's own notice or answer confirms an end (G-2).
+    SESSION_END_UNCONFIRMED: '已要求結束教室，視訊服務尚未確認結束（伺服器會再試）',
+    OLD_ROOM_SUSPECT: '舊教室中有不在名單上或使用舊連結的人（伺服器正在停止錄影並結束舊教室）',
     LESSON_END_STOP_UNCONFIRMED: '下課後仍無法確認錄影已停止',
     FILE_OVERDUE: '錄影檔逾時未到',
     FILING_FAILED: '歸檔失敗',

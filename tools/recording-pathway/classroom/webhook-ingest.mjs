@@ -35,6 +35,9 @@ const RECORDING_EVENTS = {
   'session.recording_stopped': 'Stopped',
 };
 const toMs = value => (value == null || value === '' ? null : typeof value === 'number' ? value : Date.parse(value));
+// A room name iHear gives its sessions (eligibility.mjs roomNameOf), lower-cased; null otherwise.
+const ROOM_NAME = /^ihear-[a-z0-9-]{1,120}$/i;
+export const roomName = value => (typeof value === 'string' && ROOM_NAME.test(value) ? value.toLowerCase() : null);
 const headerOf = (headers, name) => headers[name] ?? headers[name.toLowerCase()];
 
 export function signZoomRequest(secret, timestamp, rawBody) {
@@ -73,6 +76,10 @@ export function minimizeZoomEvent(event, receivedAt, { provider = ZOOM } = {}) {
     lessonId: object.session_key || null,
     providerSessionId: object.session_id || object.id || null,
     receivedAt,
+    // The session's name tells which generation of the lesson's room this session is (G-5,
+    // 2026-11-08). Only a name of the shape iHear gives its rooms (its tpc) is kept: any other
+    // text a vendor sends there could be someone's, and is dropped like the rest.
+    ...(roomName(object.session_name) ? { sessionName: roomName(object.session_name) } : {}),
   };
   let fact;
   switch (base.type) {
@@ -286,7 +293,8 @@ function finishedFiles(recordings, observedAt, provider) {
 // can run in several sessions (everyone left and came back, or the session was ended after a
 // withdrawal), and each session's recordings are its own facts.
 export function normalizeApiSnapshot({ lessonId, providerSessionId, details, users = [], recordings = [], sessions = [], observedAt, provider = ZOOM }) {
-  const base = { source: 'zoom_api', lessonId, providerSessionId, receivedAt: observedAt };
+  const name = roomName(details?.session_name) ? { sessionName: roomName(details.session_name) } : {};
+  const base = { source: 'zoom_api', lessonId, providerSessionId, receivedAt: observedAt, ...name };
   const facts = [];
   const add = fact => facts.push({ ...fact, key: dedupeKeyOf(fact) });
   if (details?.start_time) add({ ...base, type: 'session.started', occurredAt: toMs(details.start_time) });

@@ -1,7 +1,7 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 
 // @ts-ignore - shared classroom logic, plain JavaScript tested with node --test.
-import { getJoinEligibility, getRecordingEligibility, JOIN_WINDOW_AFTER_MS, JOIN_WINDOW_BEFORE_MS } from "../tools/recording-pathway/classroom/eligibility.mjs";
+import { getJoinEligibility, getRecordingEligibility, JOIN_WINDOW_AFTER_MS, JOIN_WINDOW_BEFORE_MS, roomNameOf } from "../tools/recording-pathway/classroom/eligibility.mjs";
 // @ts-ignore - shared classroom logic, plain JavaScript tested with node --test.
 import { fileRecording, ingestApiSnapshot, ingestHostReport, processJobs, storeEvent } from "../tools/recording-pathway/classroom/webhook-ingest.mjs";
 // @ts-ignore - shared classroom logic, plain JavaScript tested with node --test.
@@ -101,16 +101,27 @@ export type LessonAccessAction = (typeof LESSON_ACCESS_ACTIONS)[number];
 // it with a new one, shown in this answer only. Either way the old link gets no session token
 // from then on: entering, reconnecting and the status all go through the same check.
 //
-// It does not disconnect anyone at once (2026-11-08). The classroom page leaves the room by
-// itself when its next check is refused: the student's status every 15 seconds, the tutor's
-// report every 10–30 seconds on a cancel. A page that does not cooperate stays in the room until
-// the session ends, and a session token handed out before the change still lets someone back in
-// until it expires (Zoom's shortest is 30 minutes). Zoom's REST API has no call to remove one
-// person from a Video SDK session, and ending the session needs Zoom's session id, which the
-// server learns only from webhooks. A reissued link names the same participant, so the room
-// cannot tell the old link from the new one.
-export async function changeLessonAccess({ store, lessonId, action, studentCode }: {
-  store: ClassroomStore; lessonId: string; action: unknown; studentCode?: unknown;
+// The page itself leaves the room when its next check is refused: the student's status every 15
+// seconds, the tutor's report every 10–30 seconds on a cancel. Beyond that (2026-11-08, P1+P3):
+//   D-1  revoking or reissuing opens a new generation of the lesson's room: new tokens lead
+//        there, and the legitimate people's pages move to it at their next check. A session
+//        already running keeps its name; tokens handed out before the change still lead to the
+//        old room only, until they expire (Zoom's shortest is 30 minutes).
+//   D-4  reissuing gives the student a new participant id, so in the old room the old link's
+//        holder is no longer this student, and is treated as someone who should not be there.
+//   D-5  the tick then ends the old room once everyone legitimate has moved (sooner, and with any
+//        recording there stopped at once, when someone who should not be there is in it).
+//   D-2  cancelling stops recording and ends every live session of the lesson (the route runs
+//        stopRecordingForCancelledLesson right after).
+// Ending a session needs Zoom's session id, which the server learns from webhooks or a verified
+// report from the tutor's page; until then nothing can be ended at Zoom and the tick retries.
+export const roomGenerationKey = (lessonId: string, generation: number) => `room_generation:${lessonId}:${generation}`;
+export function roomGeneration(events: ClassroomEvent[]) {
+  return events.filter((event) => event.type === "server.room_generation").reduce((top, event) => Math.max(top, Number(event.generation) || 0), 0);
+}
+
+export async function changeLessonAccess({ store, lessonId, action, studentCode, now = Date.now() }: {
+  store: ClassroomStore; lessonId: string; action: unknown; studentCode?: unknown; now?: number;
 }) {
   if (!LESSON_ACCESS_ACTIONS.includes(action as LessonAccessAction)) {
     return { status: 400, body: { error: `Use one of: ${LESSON_ACCESS_ACTIONS.join(", ")}`, code: "INVALID_ACTION" } };
@@ -130,12 +141,38 @@ export async function changeLessonAccess({ store, lessonId, action, studentCode 
   if (action === "reissue_link" && lesson.cancelled) {
     return { status: 409, body: { error: "The lesson is cancelled", code: "LESSON_CANCELLED" } };
   }
+  // D-1: a new generation of the room first, so that whatever happens next no new token leads to
+  // the room the old link may still be in. Two changes at once share the same next generation.
+  const generation = roomGeneration(await store.eventsFor([lesson.id])) + 1;
+  await serverEvent(store, [{ source: "server", type: "server.room_generation", lessonId: lesson.id, generation, reason: String(action), occurredAt: now, receivedAt: now, key: roomGenerationKey(lesson.id, generation) }]);
   const joinKey = randomBytes(32).toString("base64url");
-  if (!(await store.replaceStudentKeyHash(lesson.id, student.id, hashKey(joinKey)))) {
+  // Another change may have given the student a new id since this request read it (D-4): look
+  // the student up again by code before giving up.
+  const again = async () => (await store.lesson(lesson.id))?.participants.find((entry) => entry.role === "student" && entry.code === student.code);
+  if (action === "revoke_link") {
+    let target: typeof student | undefined = student;
+    for (let attempt = 0; target && attempt < 3; attempt += 1) {
+      if (await store.replaceStudentKeyHash(lesson.id, target.id, hashKey(joinKey))) {
+        return { status: 200, body: { ok: true, revoked: true, studentCode: student.code } };
+      }
+      target = await again();
+    }
     return { status: 404, body: { error: "No such student in this lesson", code: "STUDENT_NOT_FOUND" } };
   }
-  if (action === "revoke_link") return { status: 200, body: { ok: true, revoked: true, studentCode: student.code } };
-  return { status: 200, body: { ok: true, reissued: true, studentCode: student.code, studentLink: studentLinkOf(lesson.id, joinKey) } };
+  // D-4: the reissued link belongs to a new participant id. If another change rotated the
+  // student first, read the student again and rotate from there (the later link wins).
+  let current = student;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const toId = shortId("P");
+    const rotation: ClassroomEvent = { source: "server", type: "server.participant_rotated", lessonId: lesson.id, from: current.id, to: toId, occurredAt: now, receivedAt: now, key: `server.participant_rotated:${lesson.id}:${toId}` };
+    if (await store.rotateStudent(lesson.id, current.id, toId, hashKey(joinKey), rotation)) {
+      return { status: 200, body: { ok: true, reissued: true, studentCode: student.code, studentLink: studentLinkOf(lesson.id, joinKey) } };
+    }
+    const fresh = await again();
+    if (!fresh) break;
+    current = fresh;
+  }
+  return { status: 404, body: { error: "No such student in this lesson", code: "STUDENT_NOT_FOUND" } };
 }
 
 // "My lessons" on /classroom: the signed-in tutor's own lessons from a day ago to two weeks
@@ -199,9 +236,13 @@ export async function joinClassroom({ store, provider, lessonId, key, sessionEma
     return { status: 403, body: { error: "You cannot enter this classroom", code: decision.reason } };
   }
   const rules = forRules(lesson) as ClassroomLesson;
-  const token = provider.prepareJoin
-    ? await provider.prepareJoin({ lesson: rules, participant: participant!, now })
-    : { kind: "sdk" as const, ...provider.sessionToken({ lesson: rules, participant: participant!, now }) };
+  // New tokens lead to the room's current generation (D-1).
+  const generation = roomGeneration(await store.eventsFor([lesson.id]));
+  const prepared = provider.prepareJoin
+    ? await provider.prepareJoin({ lesson: rules, participant: participant!, now, generation })
+    : { kind: "sdk" as const, ...provider.sessionToken({ lesson: rules, participant: participant!, now, generation }) };
+  // The page compares this name with the room it is in, so every SDK answer carries it.
+  const token = prepared.kind === "sdk" ? { ...prepared, sessionName: prepared.sessionName ?? roomNameOf(lesson.id, generation) } : prepared;
   await store.recordJoinToken({ tokenHash: hashKey(token.token), lessonId: lesson.id, participantId: participant!.id, issuedAt: token.issuedAt, expiresAt: token.expiresAt });
   return {
     status: 200,
@@ -318,6 +359,8 @@ export async function classroomStatus({ store, lessonId, key, sessionEmail, now 
       recordingAllowed: recording.allowed,
       recordingDecided: recording.decided,
       recording: { status: state.recording.status, basis: state.recording.basis, label: RECORDING_LABELS[state.recording.status] ?? state.recording.status },
+      // The room new tokens lead to (D-1); a page in another room moves there (D-5).
+      room: roomNameOf(lesson.id, roomGeneration(events)),
     },
   };
 }
@@ -358,11 +401,13 @@ export async function recordHostReport({ store, provider, drive, lessonId, sessi
       recordingAllowed: decision.allowed,
       recordingDecided: decision.decided,
       recording: { status: state.recording.status, basis: state.recording.basis, label: RECORDING_LABELS[state.recording.status] ?? state.recording.status },
+      // The room new tokens lead to (D-1); the tutor's page in another room moves there (D-5).
+      room: roomNameOf(lesson.id, roomGeneration(events)),
     },
   };
 }
 
-type Action = { key: string; type: string; lessonId: string; attempt?: number; reason?: string; channels?: string[]; userKey?: string; code?: string };
+type Action = { key: string; type: string; lessonId: string; attempt?: number; reason?: string; channels?: string[]; userKey?: string; code?: string; targets?: string[] };
 
 async function serverEvent(store: ClassroomStore, events: ClassroomEvent[]) {
   await store.transaction(async (tx) => {
@@ -376,6 +421,22 @@ async function callSafely(call: () => Promise<{ ok: boolean; httpStatus: number 
   } catch {
     return { ok: false, httpStatus: 0 };
   }
+}
+
+// One request per session the plan named (G-3), each answer kept; with none named, one request
+// for the provider's latest known session (Zoom's adapter answers 409 when it knows none, G-1).
+// What is stored says which sessions were named, so a later plan knows which ones it reached.
+async function toSessions(targets: string[] | undefined, call: (sessionId?: string) => Promise<{ ok: boolean; httpStatus: number }>) {
+  if (!targets?.length) {
+    const result = await callSafely(() => call(undefined));
+    return { ok: result.ok, httpStatus: result.httpStatus, ...(targets ? { targets, results: [] } : {}) };
+  }
+  const results: { sessionId: string; ok: boolean; httpStatus: number }[] = [];
+  for (const sessionId of targets) {
+    const result = await callSafely(() => call(sessionId));
+    results.push({ sessionId, ok: result.ok, httpStatus: result.httpStatus });
+  }
+  return { ok: results.every((result) => result.ok), httpStatus: results[0].httpStatus, targets, results };
 }
 
 async function perform({ store, provider, lesson, action, now }: { store: ClassroomStore; provider: ClassroomProvider; lesson: ClassroomLesson; action: Action; now: number }) {
@@ -395,21 +456,24 @@ async function perform({ store, provider, lesson, action, now }: { store: Classr
     }
     case "START_RECORDING": {
       // The request and the provider's answer are stored together; 202 only means "accepted".
-      const result = await callSafely(() => provider.startRecording(lesson));
+      const { targets, results, ...result } = await toSessions(action.targets, (sessionId) => provider.startRecording(lesson, sessionId));
+      const named = targets ? { targets, results } : {};
       await serverEvent(store, [
-        { ...base, type: "server.start_requested", attempt: action.attempt, key: action.key },
-        { ...base, type: "server.start_response", attempt: action.attempt, ok: result.ok, httpStatus: result.httpStatus, key: `${action.key}:response` },
+        { ...base, type: "server.start_requested", attempt: action.attempt, key: action.key, ...named },
+        { ...base, type: "server.start_response", attempt: action.attempt, ok: result.ok, httpStatus: result.httpStatus, key: `${action.key}:response`, ...named },
       ]);
       return;
     }
     case "STOP_RECORDING": {
-      const result = await callSafely(() => provider.stopRecording(lesson));
-      await serverEvent(store, [{ ...base, type: "server.stop_requested", reason: action.reason, attempt: action.attempt, channels: action.channels, ok: result.ok, key: action.key }]);
+      // Accepted (202) is a request, never a stop: only Zoom's own word confirms it.
+      const { targets, results, ok } = await toSessions(action.targets, (sessionId) => provider.stopRecording(lesson, sessionId));
+      await serverEvent(store, [{ ...base, type: "server.stop_requested", reason: action.reason, attempt: action.attempt, channels: action.channels, ok, key: action.key, ...(targets ? { targets, results } : {}) }]);
       return;
     }
     case "END_SESSION": {
-      const result = await callSafely(() => provider.endSession(lesson));
-      await serverEvent(store, [{ ...base, type: "server.session_end_requested", reason: action.reason, ok: result.ok, key: action.key }]);
+      // Accepted (204) is a request, never an end: only Zoom's notice or answer confirms it (G-2).
+      const { targets, results, ok } = await toSessions(action.targets, (sessionId) => provider.endSession(lesson, sessionId));
+      await serverEvent(store, [{ ...base, type: "server.session_end_requested", reason: action.reason, ok, key: action.key, ...(targets ? { targets, results } : {}) }]);
       return;
     }
     case "REMOVE_USER": {
@@ -467,7 +531,7 @@ async function confirmReportedSessions({ store, provider, lesson, events, now }:
     const check = await provider.verifySession(lesson, id).catch(() => null);
     const base = { source: "server", lessonId: lesson.id, reportedSessionId: id, occurredAt: now, receivedAt: now };
     let event: ClassroomEvent;
-    if (check?.verified) event = { ...base, type: "server.session_verified", providerSessionId: id, ended: check.ended, key: `server.session_verified:${lesson.id}:${id}` };
+    if (check?.verified) event = { ...base, type: "server.session_verified", providerSessionId: id, ended: check.ended, ...(check.name ? { sessionName: check.name } : {}), key: `server.session_verified:${lesson.id}:${id}` };
     else if (check) event = { ...base, type: "server.session_rejected", reason: check.reason, key: `server.session_rejected:${lesson.id}:${id}` };
     else event = { ...base, type: "server.session_unconfirmed", minute, key: `server.session_unconfirmed:${lesson.id}:${id}:${minute}` };
     await serverEvent(store, [event]);

@@ -95,6 +95,14 @@ export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: stri
   const [toolProblem, setToolProblem] = useState<"" | "share" | "board">("");
   // The provider's session token. It is never shown; it goes only to the media adapter.
   const session = useRef<JoinedSession | null>(null);
+  // D-5 (2026-11-08): the server's regular answers say which room new tokens lead to. A page in
+  // another room (its lesson's link was revoked or reissued, D-1) moves there with a new token:
+  // the same protected request as "Connect again", never a token it already had.
+  const moveRoom = useRef<() => void>(() => undefined);
+  const followRoom = useCallback((room: unknown) => {
+    const here = session.current?.sessionName;
+    if (typeof room === "string" && room && here && room !== here) moveRoom.current();
+  }, []);
   // "Connect again" on its way, and why the join check refused it (its code), if it did.
   const [rejoining, setRejoining] = useState(false);
   const [rejoinProblem, setRejoinProblem] = useState("");
@@ -170,12 +178,13 @@ export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: stri
       setHostProblem("");
       const status = String(data.recording?.status ?? "");
       setRecording({ decided: data.recordingDecided === true, allowed: data.recordingAllowed === true, status, basis: String(data.recording?.basis ?? "") });
+      followRoom(data.room);
       return ACTIVE.has(status) ? RECORDING_HEARTBEAT_MS : HEARTBEAT_MS;
     } catch {
       setHostProblem("unstable");
       return RETRY_MS;
     }
-  }, [hostUrl]);
+  }, [hostUrl, followRoom]);
 
   const isTutor = phase === "joined" && joined?.role === "tutor";
   const isStudent = phase === "joined" && joined?.role === "student";
@@ -290,6 +299,7 @@ export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: stri
         if (response.ok && data?.ok) {
           setStatusProblem(false);
           setRecording({ decided: data.recordingDecided === true, allowed: data.recordingAllowed === true, status: String(data.recording?.status ?? ""), basis: String(data.recording?.basis ?? "") });
+          followRoom(data.room);
         } else {
           setStatusProblem(true);
         }
@@ -303,7 +313,7 @@ export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: stri
       stopped = true;
       clearTimeout(timer);
     };
-  }, [isStudent, statusUrl, joinKey]);
+  }, [isStudent, statusUrl, joinKey, followRoom]);
 
   async function toggle(kind: DeviceKind) {
     const current = adapter.current;
@@ -348,6 +358,10 @@ export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: stri
     if (result.ok) session.current = result.session;
     else if (result.code !== "CONNECT_FAILED") setRejoinProblem(result.code);
   }
+  // Moving to the room the server names is this same request (see moveRoom above).
+  useEffect(() => {
+    moveRoom.current = () => { void reconnect(); };
+  });
 
   async function leave() {
     // Leaving the media room reports "Closed" through the adapter; without one, say it directly.
