@@ -23,10 +23,15 @@ export function createClassroomStore({ lessons = [] } = {}) {
       .filter(event => event.lessonId === id && event.type === 'server.recording_eligibility')
       .sort((a, b) => a.occurredAt - b.occurredAt).pop() ?? null,
     withdrawalAt: id => earliestAt(current, event => event.lessonId === id && ['server.consent_withdrawn', 'server.emergency_stop'].includes(event.type)),
+    // An id a revoke or reissue took away still counts as the student for joins up to that change.
     unknownJoinAt: id => {
       const roster = new Set((lessonById.get(id)?.participants ?? []).map(entry => entry.id));
+      const rotatedAt = new Map([...current.events.values()]
+        .filter(event => event.lessonId === id && event.type === 'server.participant_rotated')
+        .map(event => [String(event.from), event.occurredAt]));
       return earliestAt(current, event => event.lessonId === id
-        && (event.type === 'session.user_joined' || event.type === 'host.user_added') && !roster.has(event.participantId));
+        && (event.type === 'session.user_joined' || event.type === 'host.user_added') && !roster.has(event.participantId)
+        && !(rotatedAt.has(String(event.participantId)) && event.occurredAt <= rotatedAt.get(String(event.participantId))));
     },
   });
 

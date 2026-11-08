@@ -107,8 +107,10 @@ export type LessonAccessAction = (typeof LESSON_ACCESS_ACTIONS)[number];
 //        there, and the legitimate people's pages move to it at their next check. A session
 //        already running keeps its name; tokens handed out before the change still lead to the
 //        old room only, until they expire (Zoom's shortest is 30 minutes).
-//   D-4  reissuing gives the student a new participant id, so in the old room the old link's
-//        holder is no longer this student, and is treated as someone who should not be there.
+//   D-4  revoking and reissuing both give the student a new participant id (revoking too, since
+//        2026-11-08), so in the old room the old link's holder is no longer this student once it
+//        changed, and is treated as someone who should not be there; the old id never gets a
+//        token for any room again.
 //   D-5  the tick then ends the old room once everyone legitimate has moved (sooner, and with any
 //        recording there stopped at once, when someone who should not be there is in it).
 //   D-2  cancelling stops recording and ends every live session of the lesson (the route runs
@@ -141,38 +143,36 @@ export async function changeLessonAccess({ store, lessonId, action, studentCode,
   if (action === "reissue_link" && lesson.cancelled) {
     return { status: 409, body: { error: "The lesson is cancelled", code: "LESSON_CANCELLED" } };
   }
-  // D-1: a new generation of the room first, so that whatever happens next no new token leads to
-  // the room the old link may still be in. Two changes at once share the same next generation.
-  const generation = roomGeneration(await store.eventsFor([lesson.id])) + 1;
-  await serverEvent(store, [{ source: "server", type: "server.room_generation", lessonId: lesson.id, generation, reason: String(action), occurredAt: now, receivedAt: now, key: roomGenerationKey(lesson.id, generation) }]);
+  // D-1 and D-4 in one step (2026-11-08): revoking and reissuing alike give the student a new
+  // participant id and a new key, and open the room's next generation; the store does all of it
+  // or none of it. So no moment exists, not even after a crash, in which the new room can be
+  // entered with the old id, or the old key works for the new room. Revoking gives the new key to
+  // nobody; reissuing shows it in this answer only. The facts say which change it was, never the
+  // key or the link.
+  //
+  // Another change may come first (it took this generation, or already changed the student's id):
+  // then nothing of this one happened, and it reads the student and the generation again and
+  // retries on top of the other (the later change wins).
   const joinKey = randomBytes(32).toString("base64url");
-  // Another change may have given the student a new id since this request read it (D-4): look
-  // the student up again by code before giving up.
-  const again = async () => (await store.lesson(lesson.id))?.participants.find((entry) => entry.role === "student" && entry.code === student.code);
-  if (action === "revoke_link") {
-    let target: typeof student | undefined = student;
-    for (let attempt = 0; target && attempt < 3; attempt += 1) {
-      if (await store.replaceStudentKeyHash(lesson.id, target.id, hashKey(joinKey))) {
-        return { status: 200, body: { ok: true, revoked: true, studentCode: student.code } };
-      }
-      target = await again();
-    }
-    return { status: 404, body: { error: "No such student in this lesson", code: "STUDENT_NOT_FOUND" } };
-  }
-  // D-4: the reissued link belongs to a new participant id. If another change rotated the
-  // student first, read the student again and rotate from there (the later link wins).
-  let current = student;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  const keyHash = hashKey(joinKey);
+  let current: typeof student | undefined = student;
+  for (let attempt = 0; current && attempt < 5; attempt += 1) {
+    const generation = roomGeneration(await store.eventsFor([lesson.id])) + 1;
     const toId = shortId("P");
-    const rotation: ClassroomEvent = { source: "server", type: "server.participant_rotated", lessonId: lesson.id, from: current.id, to: toId, occurredAt: now, receivedAt: now, key: `server.participant_rotated:${lesson.id}:${toId}` };
-    if (await store.rotateStudent(lesson.id, current.id, toId, hashKey(joinKey), rotation)) {
-      return { status: 200, body: { ok: true, reissued: true, studentCode: student.code, studentLink: studentLinkOf(lesson.id, joinKey) } };
+    const facts: ClassroomEvent[] = [
+      { source: "server", type: "server.room_generation", lessonId: lesson.id, generation, reason: String(action), occurredAt: now, receivedAt: now, key: roomGenerationKey(lesson.id, generation) },
+      { source: "server", type: "server.participant_rotated", lessonId: lesson.id, from: current.id, to: toId, reason: String(action), generation, occurredAt: now, receivedAt: now, key: `server.participant_rotated:${lesson.id}:${toId}` },
+    ];
+    if (await store.rotateStudent(lesson.id, current.id, toId, keyHash, facts)) {
+      return action === "revoke_link"
+        ? { status: 200, body: { ok: true, revoked: true, studentCode: student.code } }
+        : { status: 200, body: { ok: true, reissued: true, studentCode: student.code, studentLink: studentLinkOf(lesson.id, joinKey) } };
     }
-    const fresh = await again();
-    if (!fresh) break;
-    current = fresh;
+    current = (await store.lesson(lesson.id))?.participants.find((entry) => entry.role === "student" && entry.code === student.code);
   }
-  return { status: 404, body: { error: "No such student in this lesson", code: "STUDENT_NOT_FOUND" } };
+  if (!current) return { status: 404, body: { error: "No such student in this lesson", code: "STUDENT_NOT_FOUND" } };
+  // Other changes kept coming first: nothing of this one happened.
+  return { status: 409, body: { error: "Another change to this link came first; try again", code: "CHANGED_CONCURRENTLY" } };
 }
 
 // "My lessons" on /classroom: the signed-in tutor's own lessons from a day ago to two weeks
@@ -202,6 +202,11 @@ export async function myClassroomLessons({ store, email, now }: { store: Classro
   });
 }
 
+// Whether a revoke or reissue took this participant id away from the student (D-4).
+function rotatedAway(events: ClassroomEvent[], participantId: string) {
+  return events.some((event) => event.type === "server.participant_rotated" && String(event.from) === participantId);
+}
+
 // Only what the shared rules need: never e-mail addresses or link hashes.
 function forRules(lesson: ClassroomLesson) {
   return { ...lesson, participants: lesson.participants.map(({ id, code, role }) => ({ id, code, role })) };
@@ -228,16 +233,30 @@ function admitted(lesson: ClassroomLesson, key: string | null | undefined, sessi
 export async function joinClassroom({ store, provider, lessonId, key, sessionEmail, now }: {
   store: ClassroomStore; provider: ClassroomProvider; lessonId: string; key?: string | null; sessionEmail?: string | null; now: number;
 }) {
-  const lesson = await store.lesson(lessonId);
+  let lesson = await store.lesson(lessonId);
   if (!lesson) return { status: 404, body: { error: "Lesson not found", code: "LESSON_NOT_FOUND" } };
-  const { participant, decision } = admitted(lesson, key, sessionEmail, now);
+  let { participant, decision } = admitted(lesson, key, sessionEmail, now);
+  let events = decision.allowed ? await store.eventsFor([lesson.id]) : [];
+  // A revoke or reissue may have changed the student between reading the lesson and reading its
+  // facts (2026-11-08): when the facts already say this id was taken away, the lesson is read
+  // again, so the old id never gets a token for the new room. If it still looks taken away, no.
+  if (decision.allowed && participant?.role === "student" && rotatedAway(events, participant.id)) {
+    lesson = await store.lesson(lessonId);
+    if (!lesson) return { status: 404, body: { error: "Lesson not found", code: "LESSON_NOT_FOUND" } };
+    ({ participant, decision } = admitted(lesson, key, sessionEmail, now));
+    events = decision.allowed ? await store.eventsFor([lesson.id]) : [];
+    if (decision.allowed && participant?.role === "student" && rotatedAway(events, participant.id)) {
+      decision = { allowed: false, reason: "NOT_ON_ROSTER" };
+    }
+  }
   if (!decision.allowed) {
-    await store.transaction((tx) => storeEvent(tx, blockedEvent(lesson.id, decision.reason, now)));
+    const blockedIn = lesson.id;
+    await store.transaction((tx) => storeEvent(tx, blockedEvent(blockedIn, decision.reason, now)));
     return { status: 403, body: { error: "You cannot enter this classroom", code: decision.reason } };
   }
   const rules = forRules(lesson) as ClassroomLesson;
   // New tokens lead to the room's current generation (D-1).
-  const generation = roomGeneration(await store.eventsFor([lesson.id]));
+  const generation = roomGeneration(events);
   const prepared = provider.prepareJoin
     ? await provider.prepareJoin({ lesson: rules, participant: participant!, now, generation })
     : { kind: "sdk" as const, ...provider.sessionToken({ lesson: rules, participant: participant!, now, generation }) };

@@ -130,10 +130,12 @@ export type ClassroomStore = {
   // Owners' changes to who can enter: false when there is no such lesson (or student row).
   setLessonCancelled(id: string): Promise<boolean>;
   replaceStudentKeyHash(lessonId: string, participantId: string, keyHash: string): Promise<boolean>;
-  // D-4: a reissued link gives the student a new participant id. The id and key change, and the
-  // rotation fact is stored, in one step; false when the student no longer has `fromId` (another
-  // change came first), and then nothing changed.
-  rotateStudent(lessonId: string, fromId: string, toId: string, keyHash: string, rotation: ClassroomEvent): Promise<boolean>;
+  // D-4: a revoked or reissued link gives the student a new participant id. The id and key
+  // change and the change's facts are stored (the rotation and the room's new generation), all in
+  // one step or not at all: false, with nothing changed, when the student no longer has `fromId`
+  // (another change came first) or any of the facts is already stored (another change took that
+  // generation).
+  rotateStudent(lessonId: string, fromId: string, toId: string, keyHash: string, events: ClassroomEvent[]): Promise<boolean>;
   listConsents(codes: string[]): Promise<ClassroomConsent[]>;
   setConsent(consent: ClassroomConsent): Promise<void>;
   listStaffNotices(codes: string[]): Promise<ClassroomStaffNotice[]>;
@@ -202,9 +204,20 @@ function readers(state: FileState) {
       .filter((event) => event.lessonId === id && event.type === "server.recording_eligibility")
       .sort((a, b) => a.occurredAt - b.occurredAt).pop() ?? null),
     withdrawalAt: (id: string) => earliest(id, (event) => PROTECTIVE_STOPS.includes(String(event.type))),
+    // Someone who was never on the roster: an id a revoke or reissue took away still counts as
+    // the student for joins up to that change (D-4), as the lesson's own state reads it.
     unknownJoinAt: (id: string) => {
       const roster = new Set((state.lessons.find((item) => item.id === id)?.participants ?? []).map((entry) => entry.id));
-      return earliest(id, (event) => (event.type === "session.user_joined" || event.type === "host.user_added") && !roster.has(String(event.participantId)));
+      const rotatedAt = new Map(Object.values(state.events)
+        .filter((event) => event.lessonId === id && event.type === "server.participant_rotated")
+        .map((event) => [String(event.from), event.occurredAt]));
+      return earliest(id, (event) => {
+        if (event.type !== "session.user_joined" && event.type !== "host.user_added") return false;
+        const participantId = String(event.participantId);
+        if (roster.has(participantId)) return false;
+        const until = rotatedAt.get(participantId);
+        return !(until !== undefined && event.occurredAt <= until);
+      });
     },
   };
 }
@@ -373,13 +386,15 @@ export function createFileClassroomStore(filePath: string): ClassroomStore {
       student.joinKeyHash = keyHash;
       return true;
     }),
-    rotateStudent: (lessonId, fromId, toId, keyHash, rotation) => run((state) => {
+    rotateStudent: (lessonId, fromId, toId, keyHash, events) => run((state) => {
       const lesson = state.lessons.find((item) => item.id === lessonId);
       const student = lesson?.participants.find((entry) => entry.id === fromId && entry.role === "student");
       if (!lesson || !student || lesson.participants.some((entry) => entry.id === toId)) return false;
+      // Every fact must be new (another change may have taken this generation): else nothing.
+      if (events.some((event) => state.events[event.key])) return false;
       student.id = toId;
       student.joinKeyHash = keyHash;
-      if (!state.events[rotation.key]) state.events[rotation.key] = clone(rotation);
+      for (const event of events) state.events[event.key] = clone(event);
       return true;
     }),
     listConsents: (codes) => run((state) => clone(state.consents.filter((item) => codes.includes(item.personCode))), false),
@@ -545,6 +560,8 @@ const earliestEvent = async (sql: Sql, lessonId: string, types: string[]) => {
   return asMs(row?.at);
 };
 
+// Someone who was never on the roster. An id a revoke or reissue took away (D-4) still counts as
+// the student for joins up to that change, as the lesson's own state reads it.
 async function unknownJoinAt(sql: Sql, lessonId: string) {
   const [row] = await sql`
     SELECT min(event.occurred_at) AS at
@@ -554,6 +571,11 @@ async function unknownJoinAt(sql: Sql, lessonId: string) {
       AND NOT EXISTS (
         SELECT 1 FROM public.classroom_participants AS participant
         WHERE participant.lesson_id = event.lesson_id AND participant.participant_id = event.data->>'participantId'
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM public.classroom_events AS rotation
+        WHERE rotation.lesson_id = event.lesson_id AND rotation.type = 'server.participant_rotated'
+          AND rotation.data->>'from' = event.data->>'participantId' AND event.occurred_at <= rotation.occurred_at
       )
   `;
   return asMs(row?.at);
@@ -807,20 +829,27 @@ export function createPostgresClassroomStore(sql: postgres.Sql): ClassroomStore 
       `;
       return rows.length > 0;
     },
-    async rotateStudent(lessonId, fromId, toId, keyHash, rotation) {
+    async rotateStudent(lessonId, fromId, toId, keyHash, events) {
       // One transaction: the row keeps its code and consent link (person_code); only its id and
       // key change, and only if it still has the id this request read. Nothing references the id
-      // by a foreign key, so no other row moves.
-      return sql.begin(async (tx) => {
-        const rows = await tx`
-          UPDATE public.classroom_participants SET participant_id = ${toId}, join_key_hash = ${keyHash}
-          WHERE lesson_id = ${lessonId} AND participant_id = ${fromId} AND role = 'student'
-          RETURNING participant_id
-        `;
-        if (!rows.length) return false;
-        await postgresTransaction(tx).insertEvent(rotation);
-        return true;
-      }) as Promise<boolean>;
+      // by a foreign key, so no other row moves. Every fact must be new; if one is already stored
+      // (another change took this generation), the whole change is rolled back.
+      const taken = new Error("a fact of this change is already stored");
+      try {
+        return await (sql.begin(async (tx) => {
+          const rows = await tx`
+            UPDATE public.classroom_participants SET participant_id = ${toId}, join_key_hash = ${keyHash}
+            WHERE lesson_id = ${lessonId} AND participant_id = ${fromId} AND role = 'student'
+            RETURNING participant_id
+          `;
+          if (!rows.length) return false;
+          for (const event of events) if (!(await postgresTransaction(tx).insertEvent(event))) throw taken;
+          return true;
+        }) as Promise<boolean>);
+      } catch (error) {
+        if (error === taken) return false;
+        throw error;
+      }
     },
     async listConsents(codes) {
       if (!codes.length) return [];

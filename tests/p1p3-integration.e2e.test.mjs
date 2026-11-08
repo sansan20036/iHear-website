@@ -241,32 +241,40 @@ describe("changes at the same time, and a server stopped half-way", () => {
     const working = [];
     for (const key of [lesson.key, ...links]) if ((await join(lesson, { key })).status === 200) working.push(key);
     expect(working.length).toBeLessThanOrEqual(1);
-    // Each rotation starts from the id the previous one left.
-    const rotations = (await eventsOf(lesson)).filter(event => event.type === "server.participant_rotated").sort((a, b) => a.occurredAt - b.occurredAt || 0);
-    const ids = new Set(rotations.map(event => event.to));
-    expect(ids.has(students[0].id) || rotations.length === 0).toBe(true);
-    for (const event of rotations) expect(event.from === rotations[0].from || ids.has(event.from)).toBe(true);
-    expect(Math.max(...(await eventsOf(lesson)).filter(event => event.type === "server.room_generation").map(event => event.generation))).toBeGreaterThanOrEqual(1);
+    // Each change took a generation of its own, together with its rotation (2026-11-08: one step),
+    // and each rotation starts from the id the previous one left: one chain ending at the roster.
+    const events = await eventsOf(lesson);
+    expect(events.filter(event => event.type === "server.room_generation").map(event => event.generation).sort()).toEqual([1, 2, 3]);
+    const rotations = events.filter(event => event.type === "server.participant_rotated").sort((a, b) => a.generation - b.generation);
+    expect(rotations.map(event => event.generation)).toEqual([1, 2, 3]);
+    for (let n = 1; n < rotations.length; n += 1) expect(rotations[n].from).toBe(rotations[n - 1].to);
+    expect(rotations.at(-1).to).toBe(students[0].id);
   });
 
-  test("the server stops after storing the new generation but before changing the link: the owner is told to retry, and the retry completes the revoke under a further generation", async () => {
+  test("the server stops in the middle of a revoke: nothing of it happened (no new room, no new id), the owner is told to retry, and the retry does all of it under generation 1", async () => {
     at("2026-12-03T07:50:00Z");
     const lesson = await lessonWithConsent();
     const store = classroomStore();
-    const original = store.replaceStudentKeyHash;
-    store.replaceStudentKeyHash = async () => { throw new Error("the function was stopped"); };
+    const studentBefore = (await store.lesson(lesson.id)).participants.find(entry => entry.role === "student").id;
+    const original = store.rotateStudent;
+    store.rotateStudent = async () => { throw new Error("the function was stopped"); };
     try {
       expect(await change(lesson, "revoke_link")).toMatchObject({ status: 503 });
     } finally {
-      store.replaceStudentKeyHash = original;
+      store.rotateStudent = original;
     }
-    // Not revoked yet (the change did not finish): the link still enters, into the new generation.
+    // Nothing changed: no new generation, the same id, and the link (not revoked yet) still
+    // enters the first room under the id it always had; never a newer room under the old id.
+    expect((await eventsOf(lesson)).filter(event => event.type === "server.room_generation")).toEqual([]);
+    expect((await store.lesson(lesson.id)).participants.find(entry => entry.role === "student").id).toBe(studentBefore);
     at("2026-12-03T07:56:00Z");
     const before = await join(lesson, { key: lesson.key });
-    expect(claimsOf(before.body.session.token).tpc).toBe(roomNameOf(lesson.id, 1));
+    expect(claimsOf(before.body.session.token)).toMatchObject({ tpc: roomNameOf(lesson.id, 0), user_key: studentBefore });
     expect(await change(lesson, "revoke_link")).toMatchObject({ status: 200, body: { revoked: true } });
     expect(await join(lesson, { key: lesson.key })).toMatchObject({ status: 403 });
-    expect((await eventsOf(lesson)).filter(event => event.type === "server.room_generation").map(event => event.generation).sort()).toEqual([1, 2]);
+    const events = await eventsOf(lesson);
+    expect(events.filter(event => event.type === "server.room_generation").map(event => event.generation)).toEqual([1]);
+    expect(events.filter(event => event.type === "server.participant_rotated").map(event => [event.from, event.reason, event.generation])).toEqual([[studentBefore, "revoke_link", 1]]);
   });
 });
 

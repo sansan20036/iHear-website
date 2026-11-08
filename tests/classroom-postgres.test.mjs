@@ -389,20 +389,76 @@ describe('P1+P3 on PostgreSQL: participant rotation, room generations and a canc
     const lesson = contractLesson('L-pg-rot', 'TEST-PRT');
     await store.createLesson(lesson);
     const from = lesson.participants.find(entry => entry.role === 'student').id;
-    expect(await store.rotateStudent(lesson.id, from, 'P-pg-rot-1', hashOf('key-1'), rotation(lesson.id, from, 'P-pg-rot-1'))).toBe(true);
+    expect(await store.rotateStudent(lesson.id, from, 'P-pg-rot-1', hashOf('key-1'), [rotation(lesson.id, from, 'P-pg-rot-1')])).toBe(true);
     expect(await studentRow(lesson.id)).toEqual([{ id: 'P-pg-rot-1', hash: hashOf('key-1') }]);
     expect((await store.eventsFor([lesson.id])).filter(event => event.type === 'server.participant_rotated').map(event => [event.from, event.to])).toEqual([[from, 'P-pg-rot-1']]);
     // From the old id again: refused, and neither the row nor the records change.
-    expect(await store.rotateStudent(lesson.id, from, 'P-pg-rot-2', hashOf('key-2'), rotation(lesson.id, from, 'P-pg-rot-2'))).toBe(false);
+    expect(await store.rotateStudent(lesson.id, from, 'P-pg-rot-2', hashOf('key-2'), [rotation(lesson.id, from, 'P-pg-rot-2')])).toBe(false);
     expect(await studentRow(lesson.id)).toEqual([{ id: 'P-pg-rot-1', hash: hashOf('key-1') }]);
     expect((await store.eventsFor([lesson.id])).filter(event => event.type === 'server.participant_rotated')).toHaveLength(1);
     // Two at once from the same id: one wins, and the row and records agree with it.
-    const results = await Promise.all(['P-pg-rot-3', 'P-pg-rot-4'].map(to => store.rotateStudent(lesson.id, 'P-pg-rot-1', to, hashOf(to), rotation(lesson.id, 'P-pg-rot-1', to))));
+    const results = await Promise.all(['P-pg-rot-3', 'P-pg-rot-4'].map(to => store.rotateStudent(lesson.id, 'P-pg-rot-1', to, hashOf(to), [rotation(lesson.id, 'P-pg-rot-1', to)])));
     expect(results.filter(Boolean)).toHaveLength(1);
     const [row] = await studentRow(lesson.id);
     expect(['P-pg-rot-3', 'P-pg-rot-4']).toContain(row.id);
     expect(row.hash).toBe(hashOf(row.id));
     expect((await store.eventsFor([lesson.id])).filter(event => event.type === 'server.participant_rotated').map(event => event.to).sort()).toEqual(['P-pg-rot-1', row.id].sort());
+  });
+
+  // 2026-11-08: the rotation and the room's new generation are one step; a generation another
+  // change already took rolls the whole change back.
+  test('a rotation with a generation another change already took changes nothing at all (row, key and facts), and the same rotation under the next generation goes through', async () => {
+    const lesson = contractLesson('L-pg-gen-taken', 'TEST-PGT');
+    await store.createLesson(lesson);
+    const from = lesson.participants.find(entry => entry.role === 'student').id;
+    const generation = (n, reason = 'revoke_link') => ({ source: 'server', type: 'server.room_generation', lessonId: lesson.id, generation: n, reason, occurredAt: NOW, receivedAt: NOW, key: `room_generation:${lesson.id}:${n}` });
+    await store.transaction(tx => storeEvent(tx, generation(1, 'reissue_link')));
+    const before = await studentRow(lesson.id);
+    expect(await store.rotateStudent(lesson.id, from, 'P-pg-taken-1', hashOf('taken'), [generation(1), rotation(lesson.id, from, 'P-pg-taken-1')])).toBe(false);
+    expect(await studentRow(lesson.id)).toEqual(before);
+    const facts = (await store.eventsFor([lesson.id])).filter(event => ['server.room_generation', 'server.participant_rotated'].includes(event.type));
+    expect(facts.map(event => [event.type, event.reason ?? null])).toEqual([['server.room_generation', 'reissue_link']]);
+    expect(await store.rotateStudent(lesson.id, from, 'P-pg-taken-2', hashOf('next'), [generation(2), rotation(lesson.id, from, 'P-pg-taken-2')])).toBe(true);
+    expect(await studentRow(lesson.id)).toEqual([{ id: 'P-pg-taken-2', hash: hashOf('next') }]);
+  });
+
+  test('revoke and reissue at once on PostgreSQL: both go through, generations 1 and 2, one chain of rotations, no key that works except the reissued one (if it came last), and the old id never gets a token', async () => {
+    const lesson = contractLesson('L-pg-both', 'TEST-PGB');
+    await store.createLesson(lesson);
+    const provider = { name: 'synthetic', sessionToken: ({ participant, now, generation = 0 }) => ({ token: `synthetic-token-${participant.id}-${now}-${generation}`, issuedAt: now, expiresAt: now + 30 * MIN }) };
+    const original = lesson.participants.find(entry => entry.role === 'student').id;
+    const answers = await Promise.all(['revoke_link', 'reissue_link'].map(action => changeLessonAccess({ store, lessonId: lesson.id, action, now: NOW })));
+    expect(answers.map(answer => answer.status)).toEqual([200, 200]);
+    const events = await store.eventsFor([lesson.id]);
+    expect(events.filter(event => event.type === 'server.room_generation').map(event => event.generation).sort()).toEqual([1, 2]);
+    const rotations = events.filter(event => event.type === 'server.participant_rotated').sort((a, b) => a.generation - b.generation);
+    expect(rotations[0].from).toBe(original);
+    expect(rotations[1].from).toBe(rotations[0].to);
+    expect((await studentRow(lesson.id))[0].id).toBe(rotations[1].to);
+    // The old link never enters, and no token anywhere carries the original id.
+    expect((await joinClassroom({ store, provider, lessonId: lesson.id, key: `${lesson.id}-link`, now: NOW })).status).toBe(403);
+    const key = new URLSearchParams(answers[1].body.studentLink.split('#')[1]).get('k');
+    const entered = await joinClassroom({ store, provider, lessonId: lesson.id, key, now: NOW });
+    if (rotations[1].reason === 'reissue_link') {
+      expect(entered).toMatchObject({ status: 200, body: { session: { sessionName: roomNameOf(lesson.id, 2) } } });
+      expect(entered.body.session.token).toContain(`synthetic-token-${rotations[1].to}-`);
+    } else {
+      expect(entered.status).toBe(403);
+    }
+    const tokens = await sql`SELECT participant_id FROM public.classroom_join_tokens WHERE lesson_id = ${lesson.id}`;
+    expect(tokens.map(row => row.participant_id)).not.toContain(original);
+  });
+
+  test('an old id\'s joins before its rotation are the student\'s, not someone unknown; after it they are unknown', async () => {
+    const lesson = contractLesson('L-pg-unknown', 'TEST-PUK');
+    await store.createLesson(lesson);
+    const from = lesson.participants.find(entry => entry.role === 'student').id;
+    const joined = (who, at, n) => ({ source: 'zoom_webhook', type: 'session.user_joined', lessonId: lesson.id, providerSessionId: 'ZS-PUK', participantId: who, occurredAt: at, receivedAt: at, key: `session.user_joined:ZS-PUK:${who}:${n}` });
+    await store.transaction(tx => storeEvent(tx, joined(from, NOW - 5 * MIN, 1)));
+    expect(await store.rotateStudent(lesson.id, from, 'P-pg-unknown-2', hashOf('u2'), [rotation(lesson.id, from, 'P-pg-unknown-2')])).toBe(true);
+    expect(await store.transaction(tx => tx.unknownJoinAt(lesson.id))).toBeNull();
+    await store.transaction(tx => storeEvent(tx, joined(from, NOW + MIN, 2)));
+    expect(await store.transaction(tx => tx.unknownJoinAt(lesson.id))).toBe(NOW + MIN);
   });
 
   test('a reissue: generation 1, a new participant id, the old key refused, the new key entering under the new id in the new room', async () => {
