@@ -15,6 +15,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 // A static import, so bundlers include P1's rules; Core.js stays a plain Apps Script file.
 import Core from '../apps-script/Core.js';
+import { blockBaseName, recordingSnapshot } from './block-naming.mjs';
 import { generationOfRoom } from './eligibility.mjs';
 import { filingEvent, runsPast } from './recording-filing.mjs';
 import { isFiledKind, LESSON_ID, neutralKind, validateRecordingFact } from './recording-adapter.mjs';
@@ -237,7 +238,8 @@ export const SESSION_ID = /^[A-Za-z0-9+/=_-]{1,100}$/;
 // source host_sdk and the server's own clock wins when the browser's clock is far off. A session
 // id is kept only as reported: nothing acts on it until the server has confirmed it with the
 // vendor (lib/classroom-service.ts), so a page cannot point the server at another session.
-export async function ingestHostReport({ report, lessonId, tutorId, now, store, budgetMs = STORE_BUDGET_MS }) {
+// perTutor (P3-Multi): a block's room may have several tutors, so each one's latest heartbeat is kept.
+export async function ingestHostReport({ report, lessonId, tutorId, now, store, budgetMs = STORE_BUDGET_MS, perTutor = false }) {
   const types = ['heartbeat', 'recording_status', 'user_added', 'user_removed', 'connection', 'participant_failover', 'session'];
   if (!types.includes(report?.type)) return { status: 400, body: { error: 'unknown report' } };
   if (report.type === 'session' && !SESSION_ID.test(String(report.sessionId ?? ''))) return { status: 400, body: { error: 'invalid session id' } };
@@ -258,7 +260,7 @@ export async function ingestHostReport({ report, lessonId, tutorId, now, store, 
   // Heartbeats are not history: only the latest one per lesson is kept. A session id is kept
   // once, however often the page reports it.
   fact.key = report.type === 'heartbeat'
-    ? `host:host.heartbeat:${lessonId}`
+    ? `host:host.heartbeat:${lessonId}${perTutor ? `:${tutorId}` : ''}`
     : report.type === 'session'
       ? `host:host.session:${lessonId}:${fact.reportedSessionId}`
       : `host:${fact.type}:${lessonId}:${occurredAt}:${fact.participantId || ''}:${fact.status || fact.state || ''}`;
@@ -386,8 +388,14 @@ async function recordFiles(tx, event) {
       await tx.insertFileRecord(record);
       continue;
     }
-    record.plannedName = lesson ? await planName(tx, lesson, record) : null;
+    const planned = lesson ? await planName(tx, lesson, record, generation) : null;
+    record.plannedName = planned?.name ?? null;
     await tx.insertFileRecord(record);
+    // P3-Multi (18.4): each recording of a block's room keeps who it covers, with the decision
+    // that covers it and the hold it got, under its own key (one per recording).
+    if (planned?.snapshot) {
+      await tx.insertEvent({ source: 'p1', type: 'p1.recording_snapshot', lessonId: lesson.id, providerFileId: record.providerFileId, occurredAt: event.receivedAt, receivedAt: event.receivedAt, key: `p1.recording_snapshot:${record.providerFileId}`, snapshot: { ...planned.snapshot, hold: record.hold ?? null } });
+    }
     if (record.recordingStart != null && earlier.some(entry => entry.recordingStart > record.recordingStart)) {
       await tx.insertEvent({ source: 'p1', type: 'p1.part_order', lessonId: lesson.id, providerFileId: record.providerFileId, occurredAt: event.receivedAt, receivedAt: event.receivedAt, key: `p1.part_order:${record.providerFileId}` });
     }
@@ -404,11 +412,26 @@ async function recordFiles(tx, event) {
 }
 
 // P1 naming rules, reused unchanged from Core.js: date, student codes, tutor code, part number.
-async function planName(tx, lesson, record) {
+// A block's room (P3-Multi) is named by the people the recording covers: see block-naming.mjs.
+async function planName(tx, lesson, record, generation = null) {
+  if (lesson.blockId) return planBlockName(tx, lesson, record, generation);
   const students = lesson.participants.filter(entry => entry.role === 'student').map(entry => Core.cleanName(entry.code, 20)).join('+');
   const tutor = lesson.participants.find(entry => entry.role === 'tutor');
   const base = Core.baseName(lesson.date, students, tutor.code);
   const planned = (await tx.fileRecordsForLesson(lesson.id)).map(entry => entry.plannedName).filter(Boolean);
-  return Core.fileName(base, Core.nextPart(planned, () => false, base, record.extension), record.extension);
+  return { name: Core.fileName(base, Core.nextPart(planned, () => false, base, record.extension), record.extension) };
+}
+
+async function planBlockName(tx, lesson, record, generation) {
+  const block = await tx.block(lesson.blockId);
+  const events = await tx.eventsOf(lesson.id);
+  const before = Number.isFinite(record.recordingStart) ? record.recordingStart + CONSENT_CLOCK_TOLERANCE_MS : undefined;
+  const decision = await tx.eligibility(lesson.id, generation ?? undefined, before);
+  const snapshot = recordingSnapshot({ lesson, block, events, record, generation, decision, withdrawnAt: await tx.withdrawalAt(lesson.id) });
+  const base = blockBaseName({ students: snapshot.names.students, tutors: snapshot.names.tutors, date: snapshot.date });
+  // The first recording with these names gets the plain name; each later one the next part.
+  const taken = (await tx.fileRecordsForLesson(lesson.id)).map(entry => entry.plannedName).filter(name => name === `${base}.${record.extension}` || String(name || '').startsWith(`${base}_P`));
+  const name = taken.length ? Core.fileName(base, taken.length + 1, record.extension) : `${base}.${record.extension}`;
+  return { name, snapshot };
 }
 

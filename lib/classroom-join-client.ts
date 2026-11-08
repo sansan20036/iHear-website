@@ -44,10 +44,15 @@ export async function requestJoin(lessonId: string, joinKey: string | null, fetc
 // when the lesson is cancelled. This relies on the page cooperating: it is not a disconnection the
 // server can enforce.
 const STUDENT_ENTRY_ENDED = new Set(["LESSON_CANCELLED", "LESSON_NOT_FOUND", "NOT_ON_ROSTER", "IDENTITY_UNVERIFIED"]);
+// P3-Multi (2026-11-09): in a block, the server no longer has this person in this room (moved,
+// recalled, the block ended or cancelled, a room now recording without their consent); the
+// block's page then asks where they belong. Only blocks give these codes.
+const BLOCK_ENTRY_ENDED = new Set(["NOT_ASSIGNED_HERE", "BLOCK_ENDED", "BLOCK_CANCELLED", "LOBBY_NOT_OPEN", "CONSENT_REQUIRED_FOR_RECORDING_ROOM", "STAFF_NOTICE_REQUIRED_FOR_RECORDING_ROOM"]);
 
 export function entryEndedBy(answer: { status: number; code?: unknown }, person: { role: MediaRole; hasKey: boolean }): string | null {
   if (answer.status !== 403 && answer.status !== 404) return null;
   const code = typeof answer.code === "string" ? answer.code : "";
+  if (BLOCK_ENTRY_ENDED.has(code)) return code;
   if (person.role === "tutor") return code === "LESSON_CANCELLED" ? code : null;
   if (!STUDENT_ENTRY_ENDED.has(code)) return null;
   return code === "NOT_ON_ROSTER" && person.hasKey ? "LINK_REVOKED" : code;

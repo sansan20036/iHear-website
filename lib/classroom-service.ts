@@ -1,7 +1,8 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 
 // @ts-ignore - shared classroom logic, plain JavaScript tested with node --test.
-import { getJoinEligibility, getRecordingEligibility, JOIN_WINDOW_AFTER_MS, JOIN_WINDOW_BEFORE_MS, roomNameOf } from "../tools/recording-pathway/classroom/eligibility.mjs";
+import { getJoinEligibility, getRecordingEligibility, JOIN_WINDOW_AFTER_MS, JOIN_WINDOW_BEFORE_MS, personConsentProblem, roomNameOf, staffNoticeProblem } from "../tools/recording-pathway/classroom/eligibility.mjs";
+import { memberOf, roomMayRecordByMode, rowIn, targetOf, type BlockTarget } from "./classroom-block-rules";
 // @ts-ignore - shared classroom logic, plain JavaScript tested with node --test.
 import { fileRecording, ingestApiSnapshot, ingestHostReport, processJobs, storeEvent } from "../tools/recording-pathway/classroom/webhook-ingest.mjs";
 // @ts-ignore - shared classroom logic, plain JavaScript tested with node --test.
@@ -12,7 +13,7 @@ import { buildDashboard, LABELS } from "../tools/recording-pathway/classroom/liv
 import { answerLost, mayHaveReachedZoom, OPERATED } from "../tools/recording-pathway/classroom/operations.mjs";
 import type { ClassroomDrive } from "./classroom-drive";
 import type { ClassroomProvider } from "./classroom-provider";
-import type { ClassroomEvent, ClassroomLesson, ClassroomStore, OperationState, RecordingFile } from "./classroom-store";
+import type { ClassroomBlock, ClassroomBlockMember, ClassroomEvent, ClassroomLesson, ClassroomStore, OperationState, RecordingFile } from "./classroom-store";
 import { sessionReportsEnabled, vendorDeletionEnabled } from "./classroom-switches";
 
 const RECORDING_LABELS: Record<string, string> = LABELS.recording;
@@ -185,7 +186,8 @@ const MY_LESSONS_AHEAD_MS = 14 * DAY_MS;
 
 export async function myClassroomLessons({ store, email, now }: { store: ClassroomStore; email: string; now: number }) {
   if (!email) return [];
-  const lessons = await store.listLessonsForStaff(email, { from: now - DAY_MS, to: now + MY_LESSONS_AHEAD_MS });
+  // A block's Lobby and rooms are entered through the block (P3-Multi), never listed one by one.
+  const lessons = (await store.listLessonsForStaff(email, { from: now - DAY_MS, to: now + MY_LESSONS_AHEAD_MS })).filter((lesson) => !lesson.blockId);
   return lessons.map((lesson) => {
     const opensAt = Date.parse(lesson.startsAt) - JOIN_WINDOW_BEFORE_MS;
     const closesAt = Date.parse(lesson.endsAt) + JOIN_WINDOW_AFTER_MS;
@@ -209,18 +211,100 @@ function rotatedAway(events: ClassroomEvent[], participantId: string) {
   return events.some((event) => event.type === "server.participant_rotated" && String(event.from) === participantId);
 }
 
-// Only what the shared rules need: never e-mail addresses or link hashes.
-function forRules(lesson: ClassroomLesson) {
-  return { ...lesson, participants: lesson.participants.map(({ id, code, role }) => ({ id, code, role })) };
+// Only what the shared rules need: never e-mail addresses or link hashes. A block's room (P3-Multi)
+// also says it is one (observers may enter), which seats were given up, and whether it may be
+// recorded at all: never the Lobby, and a room only when its block is Classroom + Recording
+// (from the room's own facts, when given).
+export function forRules(lesson: ClassroomLesson, events?: ClassroomEvent[]) {
+  const participants = lesson.participants.map(({ id, code, role, active }) => ({ id, code, role, ...(active === false ? { active: false } : {}) }));
+  if (!lesson.blockId) return { ...lesson, participants };
+  return { ...lesson, participants, observersEnabled: true, recordingDisabled: !roomMayRecordByMode(lesson, events ?? []) };
 }
 
 function blockedEvent(lessonId: string, reason: string, now: number): ClassroomEvent {
   return { source: "server", type: "server.join_blocked", lessonId, reason, occurredAt: now, receivedAt: now, key: `server.join_blocked:${lessonId}:${now}:${randomUUID()}` };
 }
 
+type Admission = {
+  participant: ClassroomLesson["participants"][number] | null;
+  decision: { allowed: boolean; reason: string; role?: string };
+  member?: { code: string; role: string } | null;
+};
+
 // The person behind a request: a student by the personal link, or the lesson's tutor by sign-in.
 // Entering the classroom and reading its status use the same check, which never looks at consent.
-function admitted(lesson: ClassroomLesson, key: string | null | undefined, sessionEmail: string | null | undefined, now: number) {
+// In a block's Lobby or room (P3-Multi) the block decides: see admittedToBlockLesson.
+async function admitted(store: ClassroomStore, lesson: ClassroomLesson, key: string | null | undefined, sessionEmail: string | null | undefined, now: number): Promise<Admission> {
+  if (lesson.blockId) return admittedToBlockLesson({ store, lesson, key, sessionEmail, now });
+  return admittedToLesson(lesson, key, sessionEmail, now);
+}
+
+// P3-Multi (2026-11-09): entering a block's Lobby or room, and reading its status, are allowed only
+// to a member of the block (a student by the personal link, staff by sign-in) whom the server has
+// placed in this very lesson now (targetOf: the Lobby, the assigned room, or a visit). Anything
+// else is refused: another room of the same block (NOT_ASSIGNED_HERE), before the Lobby opens,
+// after the block ended or was cancelled. Nothing the page sends besides the key or the sign-in
+// counts, so changing an address or a parameter never leads into another room. A room that may
+// be recording takes nobody whose consent (a student) or notice (staff) is not valid now.
+export async function admittedToBlockLesson({ store, lesson, key, sessionEmail, now }: {
+  store: ClassroomStore; lesson: ClassroomLesson; key?: string | null; sessionEmail?: string | null; now: number;
+}): Promise<Admission> {
+  const deny = (reason: string): Admission => ({ participant: null, decision: { allowed: false, reason }, member: null });
+  const block = await store.block(String(lesson.blockId));
+  if (!block || (lesson.id !== block.lobbyId && !block.roomIds.includes(lesson.id))) return deny("LESSON_NOT_FOUND");
+  const member = memberOf(block, key, sessionEmail);
+  if (!member) return deny(key ? "NOT_ON_ROSTER" : "IDENTITY_UNVERIFIED");
+  const lobbyEvents = await store.eventsFor([block.lobbyId]);
+  const rooms = (await Promise.all(block.roomIds.map((id) => store.lesson(id)))).filter((room): room is ClassroomLesson => Boolean(room));
+  const target = await effectiveTarget({ store, block, rooms, member, lobbyEvents, now });
+  if (target.kind === "cancelled") return deny("BLOCK_CANCELLED");
+  if (target.kind === "ended") return deny("BLOCK_ENDED");
+  if (target.kind === "wait") return deny("LOBBY_NOT_OPEN");
+  if (target.lessonId !== lesson.id) return deny("NOT_ASSIGNED_HERE");
+  const participant = rowIn(lesson, member);
+  if (!participant) return deny("NOT_ON_ROSTER");
+  const identity = { verified: true, participantId: participant.id, method: member.role === "student" ? "join_link" : "staff_login" };
+  const decision = getJoinEligibility({ lesson: forRules(lesson), participantId: participant.id, identity, now });
+  return { participant, decision, member: { code: member.code, role: member.role } };
+}
+
+// Where a member belongs now, as every door applies it: the block's answer (targetOf), except that
+// a room that may be recording takes nobody without a valid consent (a student) or notice (staff):
+// they wait in the Lobby instead, with the reason (18.2: a safe place, never the room).
+export async function effectiveTarget({ store, block, rooms, member, lobbyEvents, now }: {
+  store: ClassroomStore; block: ClassroomBlock; rooms: ClassroomLesson[]; member: ClassroomBlockMember; lobbyEvents: ClassroomEvent[]; now: number;
+}): Promise<BlockTarget> {
+  const target = targetOf({ block, rooms, member, lobbyEvents });
+  if (target.kind !== "room" || !target.lessonId) return target;
+  const room = rooms.find((entry) => entry.id === target.lessonId);
+  const gate = room ? await recordingRoomGate(store, room, member, now) : "NOT_A_ROOM";
+  return gate ? { kind: "lobby", lessonId: block.lobbyId, label: "Lobby", heldBack: gate } : target;
+}
+
+// Whether a room may be recording now, or may start any moment: a recording possibly on, or the
+// block in Classroom + Recording with the room's decision allowing it.
+export async function roomMayRecordNow(store: ClassroomStore, room: ClassroomLesson, now: number, events?: ClassroomEvent[]) {
+  const facts = events ?? await store.eventsFor([room.id]);
+  const state = deriveLesson(forRules(room, facts), facts, now);
+  const active = ["START_REQUESTED", "RECORDING", "PAUSED", "POSSIBLY_STOPPED"].includes(String(state.recording.status))
+    || (state.sessions ?? []).some((entry: { capture?: string }) => entry.capture && entry.capture !== "NONE");
+  return active || (roomMayRecordByMode(room, facts) && recordingDecision(facts).allowed);
+}
+
+// 18.2 step 7: someone without a valid consent (a student) or notice (staff) never enters a room
+// that may be recording; null when they may.
+export async function recordingRoomGate(store: ClassroomStore, room: ClassroomLesson, member: { code: string; role: string }, now: number) {
+  if (!(await roomMayRecordNow(store, room, now))) return null;
+  const policy = consentPolicy();
+  if (member.role === "student") {
+    const [record] = await store.listConsents([member.code]);
+    return personConsentProblem(record ?? null, policy, now) ? "CONSENT_REQUIRED_FOR_RECORDING_ROOM" : null;
+  }
+  const [notice] = await store.listStaffNotices([member.code]);
+  return staffNoticeProblem(notice ?? null, policy, now) ? "STAFF_NOTICE_REQUIRED_FOR_RECORDING_ROOM" : null;
+}
+
+function admittedToLesson(lesson: ClassroomLesson, key: string | null | undefined, sessionEmail: string | null | undefined, now: number): Admission {
   const keyHash = key ? hashKey(key) : null;
   const participant = (keyHash && lesson.participants.find((entry) => entry.role === "student" && entry.joinKeyHash === keyHash))
     || (sessionEmail && lesson.participants.find((entry) => entry.role === "tutor" && entry.staffEmail === sessionEmail))
@@ -237,7 +321,7 @@ export async function joinClassroom({ store, provider, lessonId, key, sessionEma
 }) {
   let lesson = await store.lesson(lessonId);
   if (!lesson) return { status: 404, body: { error: "Lesson not found", code: "LESSON_NOT_FOUND" } };
-  let { participant, decision } = admitted(lesson, key, sessionEmail, now);
+  let { participant, decision, member } = await admitted(store, lesson, key, sessionEmail, now);
   let events = decision.allowed ? await store.eventsFor([lesson.id]) : [];
   // A revoke or reissue may have changed the student between reading the lesson and reading its
   // facts (2026-11-08): when the facts already say this id was taken away, the lesson is read
@@ -245,7 +329,7 @@ export async function joinClassroom({ store, provider, lessonId, key, sessionEma
   if (decision.allowed && participant?.role === "student" && rotatedAway(events, participant.id)) {
     lesson = await store.lesson(lessonId);
     if (!lesson) return { status: 404, body: { error: "Lesson not found", code: "LESSON_NOT_FOUND" } };
-    ({ participant, decision } = admitted(lesson, key, sessionEmail, now));
+    ({ participant, decision, member } = await admitted(store, lesson, key, sessionEmail, now));
     events = decision.allowed ? await store.eventsFor([lesson.id]) : [];
     if (decision.allowed && participant?.role === "student" && rotatedAway(events, participant.id)) {
       decision = { allowed: false, reason: "NOT_ON_ROSTER" };
@@ -271,8 +355,11 @@ export async function joinClassroom({ store, provider, lessonId, key, sessionEma
       ok: true,
       provider: provider.name,
       lesson: { code: lesson.code, startsAt: lesson.startsAt, endsAt: lesson.endsAt },
-      role: participant!.role,
+      // An observer (a manager's visit, a tutor waiting in the Lobby) takes part as a participant
+      // does: no host controls, no reports (P3-Multi). Their block role is named apart.
+      role: participant!.role === "observer" ? "student" : participant!.role,
       participantCode: participant!.code,
+      ...(lesson.blockId ? { block: { roomKind: lesson.roomKind, roomLabel: lesson.roomLabel, memberRole: member?.role ?? null } } : {}),
       // The token goes only to the media adapter. LCIC's address carries its own login.
       session: token.kind === "embed"
         ? { kind: "embed", embedUrl: token.embedUrl, recordingDisabled: token.recordingDisabled, expiresAt: new Date(token.expiresAt).toISOString() }
@@ -421,7 +508,7 @@ export async function classroomStatus({ store, lessonId, key, sessionEmail, now 
 }) {
   const lesson = await store.lesson(lessonId);
   if (!lesson) return { status: 404, body: { error: "Lesson not found", code: "LESSON_NOT_FOUND" } };
-  const { decision } = admitted(lesson, key, sessionEmail, now);
+  const { decision } = await admitted(store, lesson, key, sessionEmail, now);
   if (!decision.allowed) return { status: 403, body: { error: "You cannot see this classroom", code: decision.reason } };
   const events = await store.eventsFor([lessonId]);
   const state = deriveLesson(forRules(lesson), events, now);
@@ -451,8 +538,19 @@ export async function recordHostReport({ store, provider, drive, lessonId, sessi
   store: ClassroomStore; provider: ClassroomProvider; drive: ClassroomDrive; lessonId: string; sessionEmail: string; report: unknown; now: number;
 }) {
   const lesson = await store.lesson(lessonId);
-  const tutor = lesson?.participants.find((entry) => entry.role === "tutor");
-  if (!lesson || !tutor || !sessionEmail || tutor.staffEmail !== sessionEmail) return { status: 403, body: { error: "Only this lesson's tutor can report", code: "FORBIDDEN" } };
+  let tutor = lesson?.blockId ? null : lesson?.participants.find((entry) => entry.role === "tutor");
+  // P3-Multi: in a block's room any of its tutors reports (a lead or a co-tutor), and only while
+  // the server has them in this room; a tutor moved elsewhere is told so and leaves.
+  if (lesson?.blockId) {
+    if (lesson.cancelled) return { status: 403, body: { error: "The lesson is cancelled", code: "LESSON_CANCELLED" } };
+    const admission = await admittedToBlockLesson({ store, lesson, sessionEmail, now });
+    if (!admission.decision.allowed) return { status: 403, body: { error: "You cannot report for this room", code: admission.decision.reason } };
+    if (admission.participant?.role !== "tutor") return { status: 403, body: { error: "Only this room's tutors can report", code: "FORBIDDEN" } };
+    tutor = admission.participant;
+  } else if (!lesson || !tutor || !sessionEmail || tutor.staffEmail !== sessionEmail) {
+    return { status: 403, body: { error: "Only this lesson's tutor can report", code: "FORBIDDEN" } };
+  }
+  if (!lesson || !tutor) return { status: 403, body: { error: "Only this lesson's tutor can report", code: "FORBIDDEN" } };
   if (lesson.cancelled) return { status: 403, body: { error: "The lesson is cancelled", code: "LESSON_CANCELLED" } };
   const opensAt = Date.parse(lesson.startsAt) - JOIN_WINDOW_BEFORE_MS;
   const lastReportAt = Date.parse(lesson.endsAt) + JOIN_WINDOW_AFTER_MS + HOST_REPORT_AFTER_MS;
@@ -461,7 +559,7 @@ export async function recordHostReport({ store, provider, drive, lessonId, sessi
   // answered like any report and dropped.
   const dropped = (report as { type?: unknown } | null)?.type === "session" && !sessionReportsEnabled();
   if (!dropped) {
-    const result = await ingestHostReport({ report, lessonId, tutorId: tutor.id, now, store });
+    const result = await ingestHostReport({ report, lessonId, tutorId: tutor.id, now, store, perTutor: Boolean(lesson.blockId) });
     if (result.status !== 200) return result;
   }
   await runClassroomTick({ store, provider, drive, now, lessonIds: [lessonId], workerId: `host-${lessonId}` });
@@ -516,14 +614,23 @@ async function toSessions(targets: string[] | undefined, call: (sessionId?: stri
 // Every student's consent and the tutor's notice as they are now, for the roster as it is now
 // (after a revoke or reissue the student has a new id; consent goes by the person's code).
 async function consentNow(store: ClassroomStore, lesson: ClassroomLesson, now: number) {
-  const students = lesson.participants.filter((entry) => entry.role === "student");
-  const tutor = lesson.participants.find((entry) => entry.role === "tutor");
+  // The room's roster as it is now: seats given up do not count (P3-Multi). Every staff member in
+  // it gives the notice: the tutor of a one-to-one lesson; in a block's room each lead and
+  // co-tutor and each observer there (第五部分 3).
+  const roster = lesson.participants.filter((entry) => entry.active !== false);
+  const students = roster.filter((entry) => entry.role === "student");
+  const staff = roster.filter((entry) => entry.role === "tutor" || entry.role === "observer");
   const consents = (await store.listConsents(students.map((entry) => entry.code))).flatMap((record) => {
     const student = students.find((entry) => entry.code === record.personCode);
     return student ? [{ participantId: student.id, status: record.status, version: record.version, grantedAt: record.grantedAt, withdrawnAt: record.withdrawnAt, expiresAt: record.expiresAt }] : [];
   });
-  const notices = tutor ? (await store.listStaffNotices([tutor.code])).map((record) => ({ participantId: tutor.id, version: record.version, acknowledgedAt: record.acknowledgedAt })) : [];
-  return getRecordingEligibility({ lesson: forRules(lesson), consents, notices, policy: consentPolicy(), now });
+  const notices = staff.length ? (await store.listStaffNotices(staff.map((entry) => entry.code))).flatMap((record) => {
+    const person = staff.find((entry) => entry.code === record.personCode);
+    return person ? [{ participantId: person.id, version: record.version, acknowledgedAt: record.acknowledgedAt }] : [];
+  }) : [];
+  // A block's room reads from its own facts whether its block may record now (18.6).
+  const events = lesson.blockId ? await store.eventsFor([lesson.id]) : undefined;
+  return getRecordingEligibility({ lesson: forRules(lesson, events), consents, notices, policy: consentPolicy(), now });
 }
 
 // G2 (2026-11-09): every start checks again just before Zoom is asked, in a lesson that never moved
@@ -538,6 +645,8 @@ async function checkBeforeStart({ store, lesson: planned, action, now, version }
   // The lesson and its facts as they are now, not as the tick read them when it planned.
   const lesson = await store.lesson(planned.id);
   if (!lesson) return refuse("LESSON_NOT_FOUND");
+  // P3-Multi: a block's Lobby is never recorded, whatever its facts say.
+  if (lesson.roomKind === "lobby") return refuse("LOBBY_NEVER_RECORDS");
   const events = await store.eventsFor([lesson.id]);
   const state = deriveLesson(forRules(lesson), events, now);
   const generation = roomGeneration(events);
@@ -809,7 +918,7 @@ export async function runClassroomTick({ store, provider, drive, now, lessonIds,
   }
   byLesson = groupByLesson(lessons, await store.eventsFor(ids));
   const lastReconciledAt = new Map(lessons.map((lesson) => [lesson.id, lastReconciled(byLesson.get(lesson.id) ?? []) ?? -Infinity]));
-  for (const due of dueReconciliations(lessons.map(forRules), byLesson, now, { lastReconciledAt, heavyBudget }) as { lessonId: string }[]) {
+  for (const due of dueReconciliations(lessons.map((lesson) => forRules(lesson)), byLesson, now, { lastReconciledAt, heavyBudget }) as { lessonId: string }[]) {
     const lesson = lessons.find((entry) => entry.id === due.lessonId)!;
     const snapshot = await provider.snapshot(lesson).catch(() => null);
     // Named, so the Recording Adapter maps this vendor's recording types.
@@ -904,7 +1013,7 @@ export async function classroomOverview({ store, now }: { store: ClassroomStore;
   const codeOf = new Map(lessons.map((lesson) => [lesson.id, lesson.code]));
   const iso = (ms: number | null) => (ms == null ? null : new Date(ms).toISOString());
   return {
-    dashboard: withDriveLinks(buildDashboard({ lessons: lessons.map(forRules), events, now })),
+    dashboard: withDriveLinks(buildDashboard({ lessons: lessons.map((lesson) => forRules(lesson)), events, now })),
     anomalies: anomalies.map((item) => ({
       lessonCode: codeOf.get(item.lessonId) ?? null,
       lessonId: item.lessonId,
@@ -936,7 +1045,9 @@ export async function classroomOverview({ store, now }: { store: ClassroomStore;
 // The lessons around now with this person in this role.
 async function lessonsWith(store: ClassroomStore, personCode: string, role: "student" | "tutor", now: number) {
   const lessons = await store.listLessons({ from: now - OVERVIEW_WINDOW_MS, to: now + OVERVIEW_WINDOW_MS });
-  return lessons.filter((lesson) => lesson.participants.some((entry) => entry.role === role && entry.code === personCode));
+  // A staff notice covers an observer too (a manager's visit, P3-Multi).
+  const roles = role === "tutor" ? ["tutor", "observer"] : [role];
+  return lessons.filter((lesson) => lesson.participants.some((entry) => roles.includes(entry.role) && entry.code === personCode));
 }
 
 // A consent or notice change is written to the person's lessons around now, so a lesson that

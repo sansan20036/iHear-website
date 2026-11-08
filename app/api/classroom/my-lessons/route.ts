@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 // @ts-ignore - auth.js is the existing Auth.js configuration.
 import { auth } from "../../../../auth.js";
 import { normalizeEmail } from "../../../../lib/admins";
+import { myClassroomBlocks } from "../../../../lib/classroom-blocks";
 import { classroomProvider } from "../../../../lib/classroom-provider";
 import { myClassroomLessons } from "../../../../lib/classroom-service";
 import { classroomStore } from "../../../../lib/classroom-store";
@@ -27,9 +28,12 @@ export async function GET(request: Request) {
   if (!email) return respond({ error: "Sign in to see your lessons", code: "SIGN_IN_REQUIRED" }, 401);
   try {
     const lessons = await myClassroomLessons({ store: classroomStore(), email, now: Date.now() });
+    // P3-Multi: the blocks this staff member is in (codes, times and their role only).
+    const blocks = await myClassroomBlocks({ store: classroomStore(), email, now: Date.now() });
     // auth.js's session callback marks administrators (isAdmin); Auth.js's own types do not name it.
     const admin = (session?.user as { isAdmin?: boolean } | undefined)?.isAdmin === true;
-    return respond({ ok: true, admin, lessons }, 200);
+    // Named only when there are some, so a one-to-one tutor's answer is exactly as before.
+    return respond({ ok: true, admin, lessons, ...(blocks.length ? { blocks } : {}) }, 200);
   } catch {
     return respond({ error: "Your lessons are temporarily unavailable", code: "UNAVAILABLE" }, 503);
   }

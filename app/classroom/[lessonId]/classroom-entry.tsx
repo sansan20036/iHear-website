@@ -79,9 +79,22 @@ function badgeOf(recording: Recording | null): "recording" | "starting" | "pause
   return "off";
 }
 
-export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: string; synthetic: boolean }) {
+// P3-Multi (2026-11-09): a block's page (app/classroom/b) shows this same room for the Lobby or the
+// room the server puts the person in, and switches by showing it again for the next one. It gives
+// the personal key itself (joinKey), enters at once once the person has entered before
+// (autoEnter), and hears when this room's entry ended so it can ask where to go now. Without these
+// the page is exactly the one-to-one lesson's.
+type BlockRoomProps = {
+  joinKey?: string | null; autoEnter?: boolean; roomLabel?: string | null; signInPath?: string;
+  onEntered?: () => void; onEntryEnded?: (code: string) => void;
+};
+
+export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey, autoEnter = false, roomLabel = null, signInPath, onEntered, onEntryEnded }: { lessonId: string; synthetic: boolean } & BlockRoomProps) {
   const [locale, setLocale] = useState<Locale>("zhHant");
-  const [joinKey, setJoinKey] = useState<string | null>(null);
+  const [joinKey, setJoinKey] = useState<string | null>(givenKey ?? null);
+  const blockMode = givenKey !== undefined;
+  const onEnded = useRef(onEntryEnded);
+  onEnded.current = onEntryEnded;
   const [phase, setPhase] = useState<Phase>("ready");
   const [reason, setReason] = useState("");
   const [joined, setJoined] = useState<Joined | null>(null);
@@ -113,13 +126,15 @@ export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: stri
   const text = copy[locale];
   const hostUrl = `/api/classroom/${encodeURIComponent(lessonId)}/host-events`;
   const statusUrl = `/api/classroom/${encodeURIComponent(lessonId)}/status`;
-  const signInUrl = `/api/auth/signin?callbackUrl=${encodeURIComponent(`/classroom/${lessonId}`)}`;
+  const signInUrl = `/api/auth/signin?callbackUrl=${encodeURIComponent(signInPath ?? `/classroom/${lessonId}`)}`;
 
   useEffect(() => {
     setLocale(browserClassroomLocale());
+    setDevice(classroomDeviceOf(navigator.userAgent, navigator.maxTouchPoints));
+    // In a block the block's page has taken the key from the address already.
+    if (blockMode) return;
     const key = takeJoinKey();
     if (key) setJoinKey(key);
-    setDevice(classroomDeviceOf(navigator.userAgent, navigator.maxTouchPoints));
     // A new link opened in a tab that already shows this room changes only the part after #,
     // which reloads nothing; its key is taken the same way.
     const onHash = () => {
@@ -128,7 +143,7 @@ export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: stri
     };
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
-  }, []);
+  }, [blockMode]);
   useEffect(() => {
     document.documentElement.lang = htmlLangOf(locale);
   }, [locale]);
@@ -144,11 +159,19 @@ export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: stri
       setRecording(null);
       setMedia(initialMedia());
       setPhase("joined");
+      onEntered?.();
       return;
     }
     setReason(answer.code);
     setPhase("blocked");
+    onEnded.current?.(answer.code);
   }
+  // In a block, after the person entered once, the next room is entered without another press.
+  const enterNow = useRef(enter);
+  enterNow.current = enter;
+  useEffect(() => {
+    if (autoEnter) void enterNow.current();
+  }, [autoEnter]);
 
   // One report from the tutor's page; the answer says how soon to report again.
   const report = useCallback(async (body: Record<string, unknown>) => {
@@ -168,6 +191,7 @@ export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: stri
       if (ended) {
         setReason(ended);
         setPhase("blocked");
+        onEnded.current?.(ended);
         return HEARTBEAT_MS;
       }
       if (!response.ok || !data?.ok) {
@@ -294,6 +318,7 @@ export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: stri
           stopped = true;
           setReason(ended);
           setPhase("blocked");
+          onEnded.current?.(ended);
           return;
         }
         if (response.ok && data?.ok) {
@@ -410,6 +435,7 @@ export default function ClassroomEntry({ lessonId, synthetic }: { lessonId: stri
         <>
           <dl className="classroom-room-facts">
             <div><dt>{text.lesson}</dt><dd>{joined.lesson.code}</dd></div>
+            {roomLabel && <div><dt>{locale === "en" ? "Room" : "教室"}</dt><dd data-room-label={roomLabel}>{roomLabel === "Lobby" ? (locale === "en" ? "Lobby" : "主會議室") : roomLabel}</dd></div>}
             <div><dt>{text.time}</dt><dd>{when(joined.lesson.startsAt)}–{until(joined.lesson.endsAt)}</dd></div>
             <div><dt>{text.you}</dt><dd>{joined.role === "tutor" ? text.tutor : text.student} {joined.participantCode}</dd></div>
           </dl>

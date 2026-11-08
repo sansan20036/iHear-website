@@ -158,6 +158,18 @@ function privateFile(env: Record<string, string | undefined>, name: string, site
   return resolved;
 }
 
+// The Drive folder iHear chose for recordings (P3-Multi, 2026-11-09), from configuration only: the
+// id is never written into the code or the repository (which is public). Null when not set (the
+// test folder is used). Caution, not yet tried against Google: with the drive.file grant the app
+// may only write into a folder it created itself or one opened to it, so a folder iHear made needs
+// that access arranged (and approved) before a real run; the stand-in does not enforce this.
+export function driveParentFolderId(env: Record<string, string | undefined>) {
+  const value = (env.CLASSROOM_DRIVE_PARENT_FOLDER_ID || "").trim();
+  if (!value) return null;
+  if (!/^[A-Za-z0-9_-]{10,100}$/.test(value)) throw new ClassroomDriveUnavailableError("CLASSROOM_DRIVE_PARENT_FOLDER_ID is not a Drive folder id");
+  return value;
+}
+
 // Google's address, or the local stand-in's (tools/recording-pathway/drive-test/mock-drive-server.mjs)
 // for tests; no other address is accepted, so a token is never sent anywhere else.
 function googleAddress(value: string | undefined, google: string) {
@@ -187,10 +199,12 @@ export function googleClassroomDrive(env: Record<string, string | undefined>, { 
     endpoint: googleAddress(env.CLASSROOM_GOOGLE_TOKEN_ENDPOINT, GOOGLE.token),
   });
   const drive = createGoogleDrive({ accessToken, fetchImpl, apiBase: googleAddress(env.CLASSROOM_GOOGLE_API_BASE, "https://www.googleapis.com") });
-  // The test folder's id, found or made once (and again after a failure).
+  // The folder recordings go under: the parent folder named by configuration (P3-Multi, 第五部分 8),
+  // or else the test folder, found or made once (and again after a failure).
+  const parentId = driveParentFolderId(env);
   let root: Promise<string> | null = null;
   const rootId = () => {
-    root ??= drive.ensureFolder("root", rootName).catch((error: unknown) => { root = null; throw error; });
+    root ??= (parentId ? Promise.resolve(parentId) : drive.ensureFolder("root", rootName)).catch((error: unknown) => { root = null; throw error; });
     return root;
   };
   return {

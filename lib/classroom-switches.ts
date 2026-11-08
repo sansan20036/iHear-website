@@ -12,3 +12,9 @@ export const sessionReportsEnabled = () => process.env.CLASSROOM_SESSION_REPORTS
 // kept. It stays off until the retention decisions are made and a real recording has shown that
 // the vendor's sizes are byte counts.
 export const vendorDeletionEnabled = () => process.env.CLASSROOM_VENDOR_DELETION === "on";
+
+// P3-Multi (2026-11-09): whether a block's teaching rooms may be recorded at all. Off: every block
+// is Classroom Only (the Lobby never records in any case). On only in local synthetic tests until
+// the real Zoom checks pass and iHear approves recording in blocks; even then each block starts
+// Classroom Only and an owner switches it, which re-checks everything first (18.6).
+export const multiRecordingEnabled = () => process.env.CLASSROOM_MULTI_RECORDING === "on";

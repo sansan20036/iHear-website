@@ -86,6 +86,19 @@ describe("Google Drive for the local recording test", () => {
     expect(filesIn().filter(file => file.name === GOOGLE_TEST_ROOT_NAME)).toHaveLength(1);
   });
 
+  test("P3-Multi: with a parent folder named by configuration (never in the code), recordings go under that folder; a malformed id is refused", async () => {
+    // A folder standing in for the one iHear chose (synthetic; the real id stays in configuration).
+    const helper = googleClassroomDrive(env);
+    const parent = await helper.ensureFolder(helper.rootFolderId, "iHear chosen folder (synthetic)");
+    const drive = googleClassroomDrive({ ...env, CLASSROOM_DRIVE_PARENT_FOLDER_ID: parent });
+    expect((await fileWith(await storedRecording("SYN-G-P"), drive)).map(result => result.status)).toEqual(["STORED"]);
+    const video = filesIn().find(file => file.appProperties.providerFileId === "SYN-G-P");
+    const lessonFolder = filesIn().find(file => file.id === video.parentId);
+    const month = filesIn().find(file => file.id === lessonFolder.parentId);
+    expect(month).toMatchObject({ name: "[iHear] 11.2026.Zoom Recordings", parentId: parent });
+    expect(() => googleClassroomDrive({ ...env, CLASSROOM_DRIVE_PARENT_FOLDER_ID: "not an id!" })).toThrow(/not a Drive folder id/);
+  });
+
   test("only a grant of exactly drive.file is used: a broader one pauses filing (DRIVE_AUTH), it does not fail it", async () => {
     // A token file that says it holds more than drive.file.
     const wide = path.join(dir, "token-wide.json");

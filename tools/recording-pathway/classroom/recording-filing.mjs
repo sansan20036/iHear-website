@@ -18,6 +18,7 @@
 // The store, Drive and the download may be synchronous (test fakes) or asynchronous (PostgreSQL,
 // Google Drive and Zoom in the website); every call is awaited.
 import Core from '../apps-script/Core.js';
+import { blockFolderPath } from './block-naming.mjs';
 
 export const JOB_LEASE_MS = 2 * 60 * 1000;      // renewed after every chunk
 export const MAX_JOB_ATTEMPTS = 5;
@@ -258,11 +259,20 @@ function finish(store, record, job, leaseVersion, status, driveFileId, now, plac
   });
 }
 
+// The planned name itself, or a later part of the same base (taken by another file in the folder).
+export function namedAsPlanned(name, plannedName, extension) {
+  if (name === plannedName) return true;
+  const base = plannedName.replace(/(_P\d{2,})?\.[a-z0-9]+$/, '');
+  return name.endsWith(`.${extension}`) && /^_P\d{2,}$/.test(name.slice(base.length, name.length - String(extension).length - 1)) && name.startsWith(base);
+}
+
 // The planned name, unless a file that is not ours already uses it: then the next free part.
 async function freeName(drive, folderId, plannedName, extension) {
   const taken = new Set(await drive.listNames(folderId));
   if (!taken.has(plannedName)) return plannedName;
-  const base = plannedName.replace(/_P\d{2,}\.[a-z0-9]+$/, '');
+  // A block room's name has no part number until a second recording (P3-Multi): its base is the
+  // name without the extension.
+  const base = plannedName.replace(/(_P\d{2,})?\.[a-z0-9]+$/, '');
   return Core.fileName(base, Core.nextPart([plannedName], name => taken.has(name), base, extension), extension);
 }
 
@@ -371,7 +381,9 @@ export async function fileRecording({ store, drive, download, job, leaseVersion,
   // Without its lesson a recording cannot be named into a lesson folder: it waits in _待確認 too.
   const quarantine = record.hold === 'CONSENT_WITHDRAWN' || withdrawnAt != null || !lesson;
   const outcome = quarantine ? 'QUARANTINED' : 'STORED';
-  const folderPath = quarantine ? [QUARANTINE_FOLDER] : [Core.monthlyFolderName(lesson.date), lessonFolderName(lesson)];
+  // A block's room (P3-Multi, 18.3): the New York date of its scheduled start names the month's
+  // folder and the room's own folder.
+  const folderPath = quarantine ? [QUARANTINE_FOLDER] : lesson.blockId ? blockFolderPath(lesson) : [Core.monthlyFolderName(lesson.date), lessonFolderName(lesson)];
 
   // Already uploaded, for example by a worker that was stopped after its upload but before
   // writing to the database: adopt that copy, upload nothing.
@@ -391,6 +403,17 @@ export async function fileRecording({ store, drive, download, job, leaseVersion,
     }
   }
   const keep = copies[0];
+  // 18.5, for a block's rooms (P3-Multi): the copy that counts must be where this recording
+  // belongs and carry its name (or a later part of it); a copy found anywhere else is never
+  // reported as filed. The job fails (retried, then shown as failed) for someone to look at;
+  // nothing is deleted. One-to-one lessons keep their verified rule (A1 D8: an earlier attempt's
+  // copy is adopted by its recording id, size and checksum).
+  if (lesson?.blockId) {
+    let expectedFolder = rootFolderId;
+    for (const name of folderPath) expectedFolder = await drive.ensureFolder(expectedFolder, name);
+    if (keep.parentId && keep.parentId !== expectedFolder) throw new FilingError(FAILURE.INVALID, `the Drive copy is not in ${folderPath.join(' / ')}`);
+    if (record.plannedName && keep.name && !namedAsPlanned(keep.name, record.plannedName, record.extension)) throw new FilingError(FAILURE.INVALID, 'the Drive copy does not carry the planned name');
+  }
   // Which Drive it is (google, or the local stand-in for synthetic tests), so a stand-in copy is
   // never shown as stored in Google Drive.
   const placed = { name: keep.name ?? null, folder: folderPath.join(' / '), size: keep.size, md5: keep.md5 ?? null, driveFileId: keep.id, destination: drive.kind ?? null };

@@ -31,6 +31,9 @@ export const TIMING = Object.freeze({
   // Recording stops this long after the lesson's scheduled end (a grace for the last words), and
   // never starts after it.
   lessonEndStopMs: 5 * 60_000,
+  // P3-Multi (18.1): a block's Lobby and rooms still live this long after the scheduled end (when
+  // the join window has closed) are ended by the server's own schedule, whoever is signed in.
+  blockCleanupMs: 15 * 60_000,
   overrunAfterMs: 15 * 60_000,
   fileOverdueWarnMs: 30 * 60_000,
   fileOverdueErrorMs: 6 * 60 * 60_000,
@@ -89,11 +92,29 @@ function preferred(a, b) {
   return bySource ? bySource < 0 : JSON.stringify(a) < JSON.stringify(b);
 }
 
+// The room's host for the rules (P3-Multi, 2026-11-09): a room may have several tutors (a lead
+// and co-tutors, each a host). Present beats absent, Zoom's word beats an inference; with nobody
+// present, one who left beats one who never came. With one tutor, that tutor, as before.
+export function hostOf(attendance) {
+  const tutors = attendance.filter(entry => entry.role === 'tutor');
+  return tutors.find(entry => entry.status === 'PRESENT' && entry.basis === 'confirmed')
+    ?? tutors.find(entry => entry.status === 'PRESENT')
+    ?? tutors.find(entry => entry.status !== 'NOT_JOINED' && entry.status !== 'LEFT')
+    ?? tutors.find(entry => entry.status !== 'NOT_JOINED')
+    ?? tutors[0];
+}
+
 function analyze(lesson, events, now) {
   const start = toMs(lesson.startsAt);
   const end = toMs(lesson.endsAt);
-  const people = new Map(lesson.participants.filter(entry => entry.role !== 'observer').map(entry => [entry.id, { ...entry, facts: [] }]));
+  // The room's roster as it is now. P3-Multi (2026-11-09): an observer (a manager's visit, a tutor
+  // waiting in the Lobby) and a seat given up (moved to another room, visit over) are people who
+  // may be there, not strangers, but are not counted for attendance.
+  const people = new Map(lesson.participants.filter(entry => entry.role !== 'observer' && entry.active !== false).map(entry => [entry.id, { ...entry, facts: [] }]));
+  const others = new Set(lesson.participants.filter(entry => entry.role === 'observer' || entry.active === false).map(entry => entry.id));
   const tutor = [...people.values()].find(entry => entry.role === 'tutor');
+  // A report from the tutor's page belongs to the tutor who sent it (a room may have several).
+  const reporter = event => (event.participantId && people.get(String(event.participantId))?.role === 'tutor' ? people.get(String(event.participantId)) : tutor);
   const f = {
     sessions: new Map(), lastConfirmedAt: null, recording: [], startRequests: [], startResponses: [], stopRequests: [],
     endRequests: [], eligibility: null, consentChangedAt: null, withdrawal: null, emergency: null, unknown: [], joinBlocked: 0, alerts: [], completed: new Map(),
@@ -118,6 +139,7 @@ function analyze(lesson, events, now) {
   const resolve = (participantId, at) => {
     if (!participantId) return { person: null, former: false };
     if (people.has(participantId)) return { person: people.get(participantId), former: false };
+    if (others.has(participantId)) return { person: null, former: false, known: true };
     let id = participantId, change = rotated.get(id), changedAt = change?.at;
     if (!change) return { person: null, former: false };
     if (at > changedAt) return { person: null, former: true };
@@ -137,7 +159,7 @@ function analyze(lesson, events, now) {
     const at = event.occurredAt;
     if (CONFIRMING_SOURCES.has(event.source)) f.lastConfirmedAt = latest(f.lastConfirmedAt, at);
     if (event.source === 'server' && event.key) f.performed.add(event.key);
-    const { person, former } = resolve(event.participantId, at);
+    const { person, former, known } = resolve(event.participantId, at);
     const sid = typeof event.providerSessionId === 'string' && event.providerSessionId ? event.providerSessionId : null;
     const trusted = sid && (TRUSTED_SESSION_SOURCES.has(event.source) || event.type === 'server.session_verified') ? knownSession(sid) : null;
     if (trusted) {
@@ -159,28 +181,32 @@ function analyze(lesson, events, now) {
       case 'session.user_joined':
       case 'host.user_added':
         if (person) person.facts.push({ kind: 'present', at, source: event.source, join: true });
-        else f.unknown.push({ at, userKey: event.participantId || 'unknown', sessionId: sid, former });
+        else if (!known) f.unknown.push({ at, userKey: event.participantId || 'unknown', sessionId: sid, former });
         if (trusted) {
-          trusted.present.set(person ? person.id : String(event.participantId || 'unknown'), { in: true, at, legit: Boolean(person) });
-          if (!person) trusted.suspects.push({ at, userKey: event.participantId || 'unknown', former });
+          trusted.present.set(person ? person.id : String(event.participantId || 'unknown'), { in: true, at, legit: Boolean(person || known) });
+          if (!person && !known) trusted.suspects.push({ at, userKey: event.participantId || 'unknown', former });
         }
         break;
       case 'session.user_left':
       case 'host.user_removed':
         if (person) person.facts.push({ kind: 'left', at, source: event.source, reason: event.leaveReason ?? null });
-        if (trusted) trusted.present.set(person ? person.id : String(event.participantId || 'unknown'), { in: false, at, legit: Boolean(person) });
+        if (trusted) trusted.present.set(person ? person.id : String(event.participantId || 'unknown'), { in: false, at, legit: Boolean(person || known) });
         break;
       case 'server.room_generation':
         f.generations.push({ generation: Number(event.generation) || 0, at });
         break;
-      case 'host.heartbeat':
-        if (tutor) tutor.facts.push({ kind: 'present', at, source: event.source, heartbeat: true });
+      case 'host.heartbeat': {
+        const host = reporter(event);
+        if (host) host.facts.push({ kind: 'present', at, source: event.source, heartbeat: true });
         break;
-      case 'host.connection':
-        if (tutor && event.state === 'Reconnecting') tutor.facts.push({ kind: 'reconnecting', at, source: event.source });
-        else if (tutor && event.state === 'Connected') tutor.facts.push({ kind: 'present', at, source: event.source, heartbeat: true });
-        else if (tutor) tutor.facts.push({ kind: 'left', at, source: event.source, reason: event.state === 'Fail' ? 'DISCONNECTED' : 'LEFT' });
+      }
+      case 'host.connection': {
+        const host = reporter(event);
+        if (host && event.state === 'Reconnecting') host.facts.push({ kind: 'reconnecting', at, source: event.source });
+        else if (host && event.state === 'Connected') host.facts.push({ kind: 'present', at, source: event.source, heartbeat: true });
+        else if (host) host.facts.push({ kind: 'left', at, source: event.source, reason: event.state === 'Fail' ? 'DISCONNECTED' : 'LEFT' });
         break;
+      }
       case 'host.participant_failover':
         if (person) person.facts.push({ kind: 'reconnecting', at, source: event.source });
         break;
@@ -687,7 +713,7 @@ function roomStartTransitions(f) {
 function anomaliesOf({ f, phase, attendance, recording, filing, start, end, now }) {
   const list = [];
   const add = (code, severity, since, extra = {}) => list.push({ code, severity, since, ...extra });
-  const tutor = attendance.find(entry => entry.role === 'tutor');
+  const tutor = hostOf(attendance);
   if (phase.value !== 'ENDED' && now >= start + TIMING.absentAfterMs) {
     if (tutor?.status === 'NOT_JOINED') add('TUTOR_ABSENT', 'error', start + TIMING.absentAfterMs);
     const absent = attendance.filter(entry => entry.role === 'student' && entry.status === 'NOT_JOINED').length;
@@ -867,7 +893,7 @@ export function planActions(lesson, events, now) {
       want(`decide:${id}:${f.consentChangedAt}`, 'DECIDE_RECORDING');
     }
   }
-  const tutor = state.attendance.find(entry => entry.role === 'tutor');
+  const tutor = hostOf(state.attendance);
   const live = state.phase.value === 'LIVE';
   const recording = state.recording;
   // Start only when the whole roster consented, nobody withdrew, nobody pressed the emergency
@@ -987,8 +1013,13 @@ export function planActions(lesson, events, now) {
     if (now >= endStopAt + TIMING.stopRetryMs) want(`stop:${id}:lesson_end:2`, 'STOP_RECORDING', { reason: 'lesson_end', attempt: 2, channels: ['rest'], targets: capturingIds });
     if (now >= endStopAt + TIMING.endSessionMs) want(`end:${id}:lesson_end`, 'END_SESSION', { reason: 'lesson_end', targets: capturingIds });
   }
-  // The tutor has gone: stop recording after 5 minutes and end the session after 15.
-  if (tutor?.status === 'LEFT' && tutor.basis === 'confirmed' && live) {
+  if (lesson.blockId && now >= toMs(lesson.endsAt) + TIMING.blockCleanupMs && liveNow.length) {
+    want(`end:${id}:block_over`, 'END_SESSION', { reason: 'block_over', targets: liveNow.map(entry => entry.id) });
+  }
+  // The tutor has gone: stop recording after 5 minutes and end the session after 15. Not in a
+  // block's Lobby (P3-Multi): its manager leaving to visit a room is normal, and the Lobby is
+  // never recorded.
+  if (lesson.roomKind !== 'lobby' && tutor?.status === 'LEFT' && tutor.basis === 'confirmed' && live) {
     if (captureMayBeOn(f) && now - tutor.since >= TIMING.tutorAbsentStopMs) {
       want(`stop:${id}:tutor_absent:${tutor.since}`, 'STOP_RECORDING', { reason: 'tutor_absent', attempt: 1, channels: ['rest'], targets: capturingIds });
     }
@@ -1073,8 +1104,8 @@ function planRoomStart({ lesson, f, state, want, now, endStopAt, cancelled }) {
   const room = currentRoom(f);
   if (!room) return;
   const inside = participantId => room.present.get(participantId)?.in === true;
-  const tutorIn = lesson.participants.some(entry => entry.role === 'tutor' && inside(entry.id));
-  const studentIn = lesson.participants.some(entry => entry.role === 'student' && inside(entry.id));
+  const tutorIn = lesson.participants.some(entry => entry.role === 'tutor' && entry.active !== false && inside(entry.id));
+  const studentIn = lesson.participants.some(entry => entry.role === 'student' && entry.active !== false && inside(entry.id));
   const stranger = [...room.present.values()].some(presence => presence.in && !presence.legit);
   const olderRecording = liveSessions(f).some(entry => entry !== room && captureOnIn(f, entry));
   if (!tutorIn || !studentIn || stranger || olderRecording || captureOnIn(f, room)) return;
@@ -1153,7 +1184,7 @@ export function dueReconciliations(lessons, eventsByLesson, now, { lastReconcile
 }
 
 function reconcileReason(lesson, state, f, now, last) {
-  const tutor = state.attendance.find(entry => entry.role === 'tutor');
+  const tutor = hostOf(state.attendance);
   // A protective or end-of-lesson stop Zoom has not confirmed yet is checked first.
   const protectiveStop = f.withdrawal || f.emergency || f.cancellation || f.stopRequests.some(request => request.reason === 'lesson_end');
   if (protectiveStop && f.stopRequests.length && captureMayBeOn(f)) return { reason: 'stop_unconfirmed', priority: 0, waitingSince: f.stopRequests[0].at };

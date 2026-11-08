@@ -39,10 +39,12 @@ export function getJoinEligibility({ lesson, participantId, identity, now }) {
   try {
     if (!lesson) return deny('LESSON_NOT_FOUND');
     if (lesson.cancelled) return deny('LESSON_CANCELLED');
-    const participant = lesson.participants.find(entry => entry.id === participantId);
+    // P3-Multi: a seat given up (moved, visit over) is no longer this room's roster.
+    const participant = lesson.participants.find(entry => entry.id === participantId && entry.active !== false);
     if (!participant) return deny('NOT_ON_ROSTER');
     if (!identityMatches(identity, participant)) return deny('IDENTITY_UNVERIFIED');
-    if (participant.role === 'observer') return deny('OBSERVER_NOT_ENABLED');
+    // Observers only in a block's Lobby and rooms (P3-Multi), never in a one-to-one lesson.
+    if (participant.role === 'observer' && lesson.observersEnabled !== true) return deny('OBSERVER_NOT_ENABLED');
     const opens = toMs(lesson.startsAt) - JOIN_WINDOW_BEFORE_MS;
     const closes = toMs(lesson.endsAt) + JOIN_WINDOW_AFTER_MS;
     if (!(now >= opens && now <= closes)) return deny('OUTSIDE_JOIN_WINDOW');
@@ -56,7 +58,7 @@ export function getJoinEligibility({ lesson, participantId, identity, now }) {
 // join link or an account) is still Justine's decision, so either verified method is accepted.
 function identityMatches(identity, participant) {
   if (!identity || identity.verified !== true || identity.participantId !== participant.id) return false;
-  if (participant.role === 'tutor') return identity.method === 'staff_login';
+  if (participant.role === 'tutor' || participant.role === 'observer') return identity.method === 'staff_login';
   return identity.method === 'join_link' || identity.method === 'account';
 }
 
@@ -67,21 +69,36 @@ function deny(reason) {
 export function getRecordingEligibility({ lesson, consents, notices, policy, now }) {
   try {
     if (!lesson || lesson.cancelled) return refuse(['LESSON_NOT_FOUND']);
-    const students = lesson.participants.filter(entry => entry.role === 'student');
-    const tutor = lesson.participants.find(entry => entry.role === 'tutor');
+    // P3-Multi: a block's Lobby is never recorded, nor a room while its block is Classroom Only.
+    if (lesson.recordingDisabled === true) return refuse(['RECORDING_DISABLED']);
+    // The room's roster as it is now: seats given up do not count (P3-Multi).
+    const roster = lesson.participants.filter(entry => entry.active !== false);
+    const students = roster.filter(entry => entry.role === 'student');
+    const tutor = roster.find(entry => entry.role === 'tutor');
     if (!tutor || !students.length) return refuse(['ROSTER_INCOMPLETE']);
     const problems = students
       .map(student => consentProblem(consents.find(record => record.participantId === student.id), policy, now))
       .filter(Boolean);
-    const notice = notices.find(record => record.participantId === tutor.id);
-    if (!notice || notice.version !== policy.staffNoticeVersion || !(toMs(notice.acknowledgedAt) <= now)) {
-      problems.push('STAFF_NOTICE_MISSING');
+    // Every staff member in the room acknowledges the notice: each tutor (lead and co-tutors) and
+    // each observer (P3-Multi). A one-to-one lesson has its one tutor, as before.
+    for (const staff of roster.filter(entry => entry.role === 'tutor' || entry.role === 'observer')) {
+      const notice = notices.find(record => record.participantId === staff.id);
+      if (staffNoticeProblem(notice, policy, now)) { problems.push('STAFF_NOTICE_MISSING'); break; }
     }
     if (problems.length) return refuse(problems);
     return { eligible: true, reason: 'ALL_CONSENTED', consentVersion: policy.consentVersion };
   } catch {
     return refuse(['CHECK_FAILED']);
   }
+}
+
+// One person's consent or one staff member's notice, as the whole-room rule reads it (P3-Multi
+// uses these before letting someone into a room that may record).
+export function personConsentProblem(record, policy, now) {
+  return consentProblem(record, policy, now);
+}
+export function staffNoticeProblem(notice, policy, now) {
+  return !notice || notice.version !== policy.staffNoticeVersion || !(toMs(notice.acknowledgedAt) <= now) ? 'STAFF_NOTICE_MISSING' : null;
 }
 
 function consentProblem(record, policy, now) {

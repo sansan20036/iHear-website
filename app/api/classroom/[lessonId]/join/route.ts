@@ -7,7 +7,8 @@ import { normalizeEmail } from "../../../../../lib/admins";
 import { classroomProvider } from "../../../../../lib/classroom-provider";
 import { joinClassroom } from "../../../../../lib/classroom-service";
 import { classroomStore } from "../../../../../lib/classroom-store";
-import { clientIp, enforceRateLimit, RATE_LIMIT_POLICIES, withRateLimitHeaders } from "../../../../../lib/rate-limit";
+import { lessonDoorLimit } from "../../../../../lib/classroom-rate-limit";
+import { RATE_LIMIT_POLICIES, withRateLimitHeaders } from "../../../../../lib/rate-limit";
 import { NO_STORE_HEADERS } from "../../../../../lib/response-headers";
 
 export const dynamic = "force-dynamic";
@@ -20,9 +21,16 @@ type Context = { params: Promise<{ lessonId: string }> };
 export async function POST(request: Request, context: Context) {
   if (!isSameOrigin(request)) return NextResponse.json({ error: "Cross-origin request blocked" }, { status: 403, headers: NO_STORE_HEADERS });
   const { lessonId } = await context.params;
-  const decision = await enforceRateLimit(request, { ...RATE_LIMIT_POLICIES.auth, scope: "classroom-join", identifier: `${clientIp(request)}:${lessonId}` });
+  const body = await request.json().catch(() => ({}));
+  const key = typeof body?.key === "string" ? body.key.slice(0, 200) : null;
+  const session = await auth();
+  const sessionEmail = normalizeEmail(session?.user?.email) || null;
+  // A one-to-one lesson: ten a minute per address (the auth allowance, as before). A block's Lobby
+  // or room (P3-Multi): ten a minute per person and 200 for everyone behind one address, so a class
+  // entering together is never refused.
+  const decision = await lessonDoorLimit(request, { scope: "classroom-join", lessonId, person: key ?? sessionEmail, single: RATE_LIMIT_POLICIES.auth.limit, perPerson: RATE_LIMIT_POLICIES.auth.limit, perPlace: 200 });
   if (decision.limited) return decision.response;
-  const respond = (body: unknown, status: number) => withRateLimitHeaders(NextResponse.json(body, { status, headers: NO_STORE_HEADERS }), decision);
+  const respond = (result: unknown, status: number) => withRateLimitHeaders(NextResponse.json(result, { status, headers: NO_STORE_HEADERS }), decision);
   let provider;
   try {
     provider = classroomProvider();
@@ -30,16 +38,7 @@ export async function POST(request: Request, context: Context) {
     return respond({ error: "The classroom is not available yet", code: "PROVIDER_UNAVAILABLE" }, 503);
   }
   try {
-    const body = await request.json().catch(() => ({}));
-    const session = await auth();
-    const result = await joinClassroom({
-      store: classroomStore(),
-      provider,
-      lessonId,
-      key: typeof body?.key === "string" ? body.key.slice(0, 200) : null,
-      sessionEmail: normalizeEmail(session?.user?.email) || null,
-      now: Date.now(),
-    });
+    const result = await joinClassroom({ store: classroomStore(), provider, lessonId, key, sessionEmail, now: Date.now() });
     return respond(result.body, result.status);
   } catch {
     return respond({ error: "The classroom is temporarily unavailable" }, 503);

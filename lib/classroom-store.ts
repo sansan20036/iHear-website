@@ -15,13 +15,21 @@ import { claimFor, finishFor, operationEvent, operationKey } from "../tools/reco
 // PostgreSQL provides them with constraints and row locks; the file store, used locally and in
 // tests, provides them by running every operation one at a time.
 
-export type ClassroomRole = "tutor" | "student";
+// observer (P3-Multi, 2026-11-09): staff in a block's room who is not its host (a manager or an
+// observer on a visit, a lead or co-tutor in the Lobby). One-to-one lessons never have one.
+export type ClassroomRole = "tutor" | "student" | "observer";
 export type ClassroomParticipant = {
   id: string;
   code: string;
   role: ClassroomRole;
   staffEmail?: string | null;
   joinKeyHash?: string | null;
+  // P3-Multi: the block member this room seat belongs to; who it is lives on the member (no
+  // e-mail or key here). active: false once the member left this room (moved, visit over, link
+  // revoked); the row stays so the room's facts about that id are never someone unknown.
+  memberId?: string | null;
+  active?: boolean;
+  seat?: "lobby" | "assigned" | "visit" | null;
 };
 export type ClassroomLesson = {
   id: string;
@@ -33,7 +41,56 @@ export type ClassroomLesson = {
   createdBy: string;
   createdAt: string;
   participants: ClassroomParticipant[];
+  // P3-Multi: a block's Lobby or one of its teaching rooms (each its own Zoom session); absent for
+  // one-to-one lessons.
+  blockId?: string | null;
+  roomKind?: "lobby" | "room" | null;
+  roomLabel?: string | null;
 };
+
+// P3-Multi (2026-11-09): a block (班次) is one Lobby and several teaching rooms. Its members are
+// the people in it: one manager, lead and co-tutors, observers and students. Staff sign in with
+// their e-mail; a student enters with a personal link (only its hash is kept). The English name
+// is for Drive's file names only.
+export type BlockRole = "manager" | "lead_tutor" | "co_tutor" | "observer" | "student";
+export type ClassroomBlockMember = {
+  id: string;
+  code: string;
+  role: BlockRole;
+  englishName: string;
+  staffEmail: string | null;
+  joinKeyHash: string | null;
+};
+export type ClassroomBlock = {
+  id: string;
+  code: string;
+  date: string;
+  startsAt: string;
+  endsAt: string;
+  cancelled: boolean;
+  createdBy: string;
+  createdAt: string;
+  lobbyId: string;
+  roomIds: string[];
+  members: ClassroomBlockMember[];
+  // Goes up by one with every change; a manager's change names the version it was made on.
+  version: number;
+};
+// A seat change in one step: a member takes an assigned or a visiting seat in a room (giving up
+// the one of that kind it had in another room), or gives it up (roomId null). The room holds at
+// most `capacity` active seats of both kinds together, whatever arrives at once.
+export type SeatChange = {
+  blockId: string;
+  memberId: string;
+  roomId: string | null;
+  seat: "assigned" | "visit";
+  participant?: { id: string; code: string; role: ClassroomRole };
+  capacity: number;
+  events: ClassroomEvent[];
+};
+export type SeatResult =
+  | { ok: true; changed: boolean; participantId: string | null; releasedFrom: string | null }
+  | { ok: false; reason: "ROOM_FULL" | "NOT_A_ROOM" | "NO_SUCH_MEMBER" | "BLOCK_NOT_FOUND" };
 export type ClassroomConsent = {
   personCode: string;
   status: "granted" | "withdrawn";
@@ -110,6 +167,10 @@ export type ClassroomTransaction = {
   eligibility(id: string, generation?: number, before?: number): Promise<ClassroomEvent | null>;
   withdrawalAt(id: string): Promise<number | null>;
   unknownJoinAt(id: string): Promise<number | null>;
+  // P3-Multi: a room's block (its code and members) and the room's facts, for naming its
+  // recordings and keeping each one's participant snapshot (18.4).
+  block(id: string): Promise<ClassroomBlock | null>;
+  eventsOf(lessonId: string): Promise<ClassroomEvent[]>;
 };
 
 export type OperationState = "IN_FLIGHT" | "UNCERTAIN" | "UNKNOWN" | "NOT_EXECUTED" | "DONE";
@@ -165,7 +226,32 @@ export type ClassroomStore = {
   syncAnomalies(lessonId: string, active: ActiveAnomaly[], now: number): Promise<void>;
   listAnomalies(lessonIds: string[]): Promise<ClassroomAnomaly[]>;
   acknowledgeAnomaly(input: { lessonId: string; code: string; actor: string; note: string; now: number }): Promise<ClassroomAnomaly | null>;
+  // P3-Multi (2026-11-09). A block with its Lobby and rooms (lessons) and their seats, all in one
+  // step or none (a code already taken: ClassroomLessonConflictError).
+  createBlock(block: ClassroomBlock, lessons: ClassroomLesson[]): Promise<void>;
+  block(id: string): Promise<ClassroomBlock | null>;
+  listBlocks(window: { from: number; to: number }): Promise<ClassroomBlock[]>;
+  // The blocks where this (lower-case) e-mail is a staff member, overlapping the window.
+  listBlocksForStaff(email: string, window: { from: number; to: number }): Promise<ClassroomBlock[]>;
+  // Every change to a block, one at a time per block (PostgreSQL: the block's row locked) and in
+  // one step or not at all: with expectedVersion, only if the block is still at that version (two
+  // managers acting at once: the later one is refused as stale, 18.1/18.2); then at most one seat
+  // change (a room never holds more than its capacity), a link replaced (with every room row of
+  // that student rotated, D-4 style), the block and its lessons cancelled, and the facts. The
+  // block's version goes up by one.
+  changeBlock(change: BlockChange): Promise<BlockChangeResult>;
 };
+export type BlockChange = {
+  blockId: string;
+  expectedVersion?: number | null;
+  seat?: Omit<SeatChange, "blockId" | "events">;
+  rotate?: { memberId: string; keyHash: string; rotations: MemberRotation[] };
+  cancel?: boolean;
+  events: ClassroomEvent[];
+};
+export type BlockChangeResult =
+  | { ok: true; version: number; seat?: SeatResult & { ok: true } }
+  | { ok: false; reason: "BLOCK_NOT_FOUND" | "STALE_VERSION" | "CHANGED_CONCURRENTLY" | "ROOM_FULL" | "NOT_A_ROOM" | "NO_SUCH_MEMBER"; version?: number };
 
 export class ClassroomLessonConflictError extends Error {}
 
@@ -195,6 +281,77 @@ function newJob(job: JobInput): ClassroomJob {
   };
 }
 
+// P3-Multi (2026-11-09): what one seat change does, worked out from the block and its rooms as they
+// are now, the same for both stores: the seat of this kind the member gives up (in another room),
+// the one it takes (a new row, or its earlier row in that room made active again), and the answer.
+// A room holds at most `capacity` active assigned and visiting seats together.
+type SeatPlan = {
+  result: SeatResult;
+  release?: { lessonId: string; participantId: string };
+  take?: { lessonId: string; participant: ClassroomParticipant; existing: boolean };
+};
+export function planSeat(block: ClassroomBlock | null, rooms: ClassroomLesson[], change: SeatChange): SeatPlan {
+  if (!block) return { result: { ok: false, reason: "BLOCK_NOT_FOUND" } };
+  const member = block.members.find((entry) => entry.id === change.memberId);
+  if (!member) return { result: { ok: false, reason: "NO_SUCH_MEMBER" } };
+  const held = rooms.flatMap((room) => room.participants
+    .filter((entry) => entry.memberId === member.id && entry.active !== false && entry.seat === change.seat)
+    .map((entry) => ({ lessonId: room.id, participantId: entry.id })))[0] ?? null;
+  if (change.roomId == null) {
+    return { result: { ok: true, changed: Boolean(held), participantId: null, releasedFrom: held?.lessonId ?? null }, ...(held ? { release: held } : {}) };
+  }
+  const target = rooms.find((room) => room.id === change.roomId && room.roomKind === "room" && room.blockId === block.id);
+  if (!target) return { result: { ok: false, reason: "NOT_A_ROOM" } };
+  if (held?.lessonId === target.id) return { result: { ok: true, changed: false, participantId: held.participantId, releasedFrom: null } };
+  const occupied = target.participants.filter((entry) => entry.active !== false && (entry.seat === "assigned" || entry.seat === "visit")).length;
+  if (occupied >= change.capacity) return { result: { ok: false, reason: "ROOM_FULL" } };
+  const existing = target.participants.find((entry) => entry.memberId === member.id);
+  const role = change.participant?.role ?? existing?.role ?? "student";
+  const participant: ClassroomParticipant = existing
+    ? { ...existing, role, seat: change.seat, active: true }
+    : { id: change.participant?.id ?? "", code: change.participant?.code ?? member.code, role, staffEmail: null, joinKeyHash: null, memberId: member.id, seat: change.seat, active: true };
+  if (!participant.id) return { result: { ok: false, reason: "NO_SUCH_MEMBER" } };
+  return {
+    result: { ok: true, changed: true, participantId: participant.id, releasedFrom: held?.lessonId ?? null },
+    ...(held ? { release: held } : {}),
+    take: { lessonId: target.id, participant, existing: Boolean(existing) },
+  };
+}
+
+// A student's link replaced: each of the member's room rows gets a new participant id (as D-4
+// does in a one-to-one lesson, so after the change the old id is someone who should not be
+// there), and its assigned or visiting seats are given up; the Lobby row stays active.
+export type MemberRotation = { lessonId: string; fromId: string; toId: string };
+
+// One block change worked out against the block as it is now, the same for both stores: refused
+// as a whole (stale version, a full room, a row another change already moved), or what to write.
+type BlockPlan =
+  | { ok: false; result: BlockChangeResult & { ok: false } }
+  | { ok: true; seat?: SeatPlan & { result: SeatResult & { ok: true } }; rotations?: (MemberRotation & { deactivate: boolean })[] };
+export function planBlockChange(block: ClassroomBlock | null, rooms: ClassroomLesson[], change: BlockChange): BlockPlan {
+  const fail = (reason: (BlockChangeResult & { ok: false })["reason"]) => ({ ok: false as const, result: { ok: false as const, reason, ...(block ? { version: block.version } : {}) } });
+  if (!block) return fail("BLOCK_NOT_FOUND");
+  if (change.expectedVersion != null && change.expectedVersion !== block.version) return fail("STALE_VERSION");
+  let seat: (SeatPlan & { result: SeatResult & { ok: true } }) | undefined;
+  if (change.seat) {
+    const planned = planSeat(block, rooms, { ...change.seat, blockId: block.id, events: [] });
+    if (!planned.result.ok) return fail(planned.result.reason);
+    seat = planned as SeatPlan & { result: SeatResult & { ok: true } };
+  }
+  let rotations: (MemberRotation & { deactivate: boolean })[] | undefined;
+  if (change.rotate) {
+    const member = block.members.find((entry) => entry.id === change.rotate!.memberId && entry.role === "student");
+    if (!member) return fail("NO_SUCH_MEMBER");
+    const rows = rooms.flatMap((room) => room.participants.filter((entry) => entry.memberId === member.id).map((entry) => `${room.id}:${entry.id}`));
+    const named = change.rotate.rotations.map((entry) => `${entry.lessonId}:${entry.fromId}`);
+    // Every row of the student, exactly as it is now: else another change came first.
+    if (rows.length !== named.length || named.some((entry) => !rows.includes(entry))) return fail("CHANGED_CONCURRENTLY");
+    if (change.rotate.rotations.some((entry) => rooms.some((room) => room.participants.some((row) => row.id === entry.toId)))) return fail("CHANGED_CONCURRENTLY");
+    rotations = change.rotate.rotations.map((entry) => ({ ...entry, deactivate: rooms.find((room) => room.id === entry.lessonId)?.roomKind === "room" }));
+  }
+  return { ok: true, ...(seat ? { seat } : {}), ...(rotations ? { rotations } : {}) };
+}
+
 // File store -----------------------------------------------------------------------------
 
 type FileState = {
@@ -206,9 +363,10 @@ type FileState = {
   jobs: Record<string, ClassroomJob>;
   files: Record<string, RecordingFile>;
   anomalies: ClassroomAnomaly[];
+  blocks: ClassroomBlock[];
 };
 
-const emptyState = (): FileState => ({ lessons: [], consents: [], notices: [], tokens: [], events: {}, jobs: {}, files: {}, anomalies: [] });
+const emptyState = (): FileState => ({ lessons: [], consents: [], notices: [], tokens: [], events: {}, jobs: {}, files: {}, anomalies: [], blocks: [] });
 
 function readers(state: FileState) {
   const lesson = (id: string) => clone(state.lessons.find((item) => item.id === id) ?? null);
@@ -225,6 +383,7 @@ function readers(state: FileState) {
         && (generation === undefined || (Number(event.generation) || 0) === generation)
         && (before === undefined || event.occurredAt <= before))
       .sort((a, b) => a.occurredAt - b.occurredAt).pop() ?? null),
+    block: (id: string) => clone(state.blocks.find((item) => item.id === id) ?? null),
     withdrawalAt: (id: string) => earliest(id, (event) => PROTECTIVE_STOPS.includes(String(event.type))),
     // Someone who was never on the roster: an id a revoke or reissue took away still counts as
     // the student for joins up to that change (D-4), as the lesson's own state reads it.
@@ -277,6 +436,8 @@ function fileTransaction(state: FileState): ClassroomTransaction {
     eligibility: async (id, generation, before) => read.eligibility(id, generation, before),
     withdrawalAt: async (id) => read.withdrawalAt(id),
     unknownJoinAt: async (id) => read.unknownJoinAt(id),
+    block: async (id) => read.block(id),
+    eventsOf: async (lessonId) => clone(Object.values(state.events).filter((event) => event.lessonId === lessonId)),
   };
 }
 
@@ -476,6 +637,57 @@ export function createFileClassroomStore(filePath: string): ClassroomStore {
       Object.assign(existing, { acknowledgedBy: actor, acknowledgedAt: now, note });
       return clone(existing);
     }),
+    createBlock: (block, lessons) => run((state) => {
+      const codes = new Set(lessons.map((lesson) => lesson.code));
+      if (state.blocks.some((item) => item.id === block.id || item.code === block.code)
+        || state.lessons.some((item) => codes.has(item.code) || lessons.some((lesson) => lesson.id === item.id))) {
+        throw new ClassroomLessonConflictError("A block or lesson with this code already exists");
+      }
+      state.blocks.push(clone(block));
+      for (const lesson of lessons) state.lessons.push(clone(lesson));
+    }),
+    block: (id) => run((state) => readers(state).block(id), false),
+    listBlocks: ({ from, to }) => run((state) => clone(state.blocks
+      .filter((block) => Date.parse(block.startsAt) < to && Date.parse(block.endsAt) > from)
+      .sort((a, b) => Date.parse(a.startsAt) - Date.parse(b.startsAt) || a.code.localeCompare(b.code))), false),
+    listBlocksForStaff: (email, { from, to }) => run((state) => clone(email ? state.blocks
+      .filter((block) => Date.parse(block.startsAt) < to && Date.parse(block.endsAt) > from)
+      .filter((block) => block.members.some((member) => member.role !== "student" && member.staffEmail === email))
+      .sort((a, b) => Date.parse(a.startsAt) - Date.parse(b.startsAt) || a.code.localeCompare(b.code)) : []), false),
+    changeBlock: (change) => run((state): BlockChangeResult => {
+      const block = state.blocks.find((item) => item.id === change.blockId) ?? null;
+      const rooms = block ? state.lessons.filter((lesson) => lesson.blockId === block.id) : [];
+      const plan = planBlockChange(block ? clone(block) : null, clone(rooms), change);
+      if (!plan.ok) return plan.result;
+      const row = (lessonId: string, participantId: string) => rooms.find((room) => room.id === lessonId)?.participants.find((entry) => entry.id === participantId);
+      if (plan.seat?.release) {
+        const released = row(plan.seat.release.lessonId, plan.seat.release.participantId);
+        if (released) released.active = false;
+      }
+      if (plan.seat?.take) {
+        const room = rooms.find((item) => item.id === plan.seat!.take!.lessonId)!;
+        const existing = room.participants.find((entry) => entry.id === plan.seat!.take!.participant.id);
+        if (existing) Object.assign(existing, clone(plan.seat.take.participant));
+        else room.participants.push(clone(plan.seat.take.participant));
+      }
+      for (const rotation of plan.rotations ?? []) {
+        const rotated = row(rotation.lessonId, rotation.fromId);
+        if (!rotated) continue;
+        rotated.id = rotation.toId;
+        if (rotation.deactivate) rotated.active = false;
+      }
+      if (change.rotate) {
+        const member = block!.members.find((entry) => entry.id === change.rotate!.memberId)!;
+        member.joinKeyHash = change.rotate.keyHash;
+      }
+      if (change.cancel) {
+        block!.cancelled = true;
+        for (const room of rooms) room.cancelled = true;
+      }
+      for (const event of change.events) state.events[event.key] ??= clone(event);
+      block!.version += 1;
+      return { ok: true, version: block!.version, ...(plan.seat ? { seat: plan.seat.result } : {}) };
+    }),
   };
 }
 
@@ -574,14 +786,64 @@ async function lessonsWith(sql: Sql, rows: Record<string, unknown>[]) {
     cancelled: Boolean(row.cancelled),
     createdBy: String(row.created_by),
     createdAt: new Date(row.created_at as string | Date).toISOString(),
+    // P3-Multi's columns exist only where the draft 029 is applied; a one-to-one lesson there has
+    // them empty. Without 029 the lesson reads exactly as before.
+    ...("block_id" in row ? { blockId: row.block_id == null ? null : String(row.block_id), roomKind: (row.room_kind ?? null) as ClassroomLesson["roomKind"], roomLabel: row.room_label == null ? null : String(row.room_label) } : {}),
     participants: participants.filter((entry) => entry.lesson_id === row.id).map((entry) => ({
       id: String(entry.participant_id),
       code: String(entry.code),
       role: entry.role as ClassroomRole,
       staffEmail: entry.staff_email == null ? null : String(entry.staff_email),
       joinKeyHash: entry.join_key_hash == null ? null : String(entry.join_key_hash).trim(),
+      ...("member_id" in entry ? { memberId: entry.member_id == null ? null : String(entry.member_id), active: Boolean(entry.active), seat: (entry.seat ?? null) as ClassroomParticipant["seat"] } : {}),
     })),
   }));
+}
+
+// P3-Multi: a block with its members and the ids of its Lobby and rooms (draft 029).
+async function blocksWith(sql: Sql, rows: Record<string, unknown>[]): Promise<ClassroomBlock[]> {
+  if (!rows.length) return [];
+  const ids = rows.map((row) => String(row.id));
+  const members = await sql`SELECT * FROM public.classroom_block_members WHERE block_id IN ${sql(ids)} ORDER BY code`;
+  const lessons = await sql`SELECT id, block_id, room_kind, room_label FROM public.classroom_lessons WHERE block_id IN ${sql(ids)} ORDER BY room_label`;
+  return rows.map((row) => ({
+    id: String(row.id),
+    code: String(row.code),
+    date: new Date(row.lesson_date as string | Date).toISOString().slice(0, 10),
+    startsAt: new Date(row.starts_at as string | Date).toISOString(),
+    endsAt: new Date(row.ends_at as string | Date).toISOString(),
+    cancelled: Boolean(row.cancelled),
+    createdBy: String(row.created_by),
+    createdAt: new Date(row.created_at as string | Date).toISOString(),
+    lobbyId: String(lessons.find((lesson) => lesson.block_id === row.id && lesson.room_kind === "lobby")?.id ?? ""),
+    roomIds: lessons.filter((lesson) => lesson.block_id === row.id && lesson.room_kind === "room").map((lesson) => String(lesson.id)),
+    members: members.filter((member) => member.block_id === row.id).map((member) => ({
+      id: String(member.member_id),
+      code: String(member.code),
+      role: member.role as BlockRole,
+      englishName: String(member.english_name),
+      staffEmail: member.staff_email == null ? null : String(member.staff_email),
+      joinKeyHash: member.join_key_hash == null ? null : String(member.join_key_hash).trim(),
+    })),
+    version: Number(row.version),
+  }));
+}
+
+// A database without the draft 029 has no block tables (PostgreSQL's undefined_table, 42P01).
+async function withoutBlocks<T>(read: () => Promise<T>, none: T): Promise<T> {
+  try {
+    return await read();
+  } catch (error) {
+    if ((error as { code?: string }).code === "42P01") return none;
+    throw error;
+  }
+}
+
+async function readBlock(sql: Sql, id: string, lock = false) {
+  const rows = lock
+    ? await sql`SELECT * FROM public.classroom_blocks WHERE id = ${id} FOR UPDATE`
+    : await sql`SELECT * FROM public.classroom_blocks WHERE id = ${id}`;
+  return (await blocksWith(sql, rows))[0] ?? null;
 }
 
 async function readLesson(sql: Sql, id: string, lock = false) {
@@ -698,6 +960,10 @@ function postgresTransaction(sql: postgres.TransactionSql): ClassroomTransaction
     },
     withdrawalAt: (id) => earliestEvent(sql, id, PROTECTIVE_STOPS),
     unknownJoinAt: (id) => unknownJoinAt(sql, id),
+    block: (id) => readBlock(sql, id),
+    async eventsOf(lessonId) {
+      return (await sql`SELECT data FROM public.classroom_events WHERE lesson_id = ${lessonId} ORDER BY occurred_at, key`).map(fromEventRow);
+    },
   };
 }
 
@@ -1023,6 +1289,100 @@ export function createPostgresClassroomStore(sql: postgres.Sql): ClassroomStore 
         RETURNING *
       `;
       return row ? fromAnomalyRow(row) : null;
+    },
+    // P3-Multi (draft 029): the block, its members, its Lobby and rooms and their rows, at once.
+    async createBlock(block, lessons) {
+      try {
+        await sql.begin(async (tx) => {
+          await tx`
+            INSERT INTO public.classroom_blocks (id, code, lesson_date, starts_at, ends_at, cancelled, version, created_by, created_at)
+            VALUES (${block.id}, ${block.code}, ${block.date}, ${new Date(block.startsAt)}, ${new Date(block.endsAt)}, ${block.cancelled}, ${block.version}, ${block.createdBy}, ${new Date(block.createdAt)})
+          `;
+          for (const member of block.members) {
+            await tx`
+              INSERT INTO public.classroom_block_members (block_id, member_id, code, role, english_name, staff_email, join_key_hash)
+              VALUES (${block.id}, ${member.id}, ${member.code}, ${member.role}, ${member.englishName}, ${member.staffEmail}, ${member.joinKeyHash})
+            `;
+          }
+          for (const lesson of lessons) {
+            await tx`
+              INSERT INTO public.classroom_lessons (id, code, lesson_date, starts_at, ends_at, cancelled, created_by, created_at, block_id, room_kind, room_label)
+              VALUES (${lesson.id}, ${lesson.code}, ${lesson.date}, ${new Date(lesson.startsAt)}, ${new Date(lesson.endsAt)}, ${lesson.cancelled}, ${lesson.createdBy}, ${new Date(lesson.createdAt)}, ${block.id}, ${lesson.roomKind ?? null}, ${lesson.roomLabel ?? null})
+            `;
+            for (const participant of lesson.participants) {
+              await tx`
+                INSERT INTO public.classroom_participants (lesson_id, participant_id, code, role, member_id, active, seat)
+                VALUES (${lesson.id}, ${participant.id}, ${participant.code}, ${participant.role}, ${participant.memberId ?? null}, ${participant.active !== false}, ${participant.seat ?? null})
+              `;
+            }
+          }
+        });
+      } catch (error) {
+        if ((error as { code?: string }).code === "23505") throw new ClassroomLessonConflictError("A block or lesson with this code already exists");
+        throw error;
+      }
+    },
+    // Where the draft 029 is not applied (every real database today), there are no blocks: the
+    // reads answer "none" rather than fail, so nothing that lists lessons breaks.
+    block: (id) => withoutBlocks(() => readBlock(sql, id), null),
+    async listBlocks({ from, to }) {
+      return withoutBlocks(async () => blocksWith(sql, await sql`
+        SELECT * FROM public.classroom_blocks WHERE starts_at < ${new Date(to)} AND ends_at > ${new Date(from)} ORDER BY starts_at, code
+      `), []);
+    },
+    async listBlocksForStaff(email, { from, to }) {
+      if (!email) return [];
+      return withoutBlocks(async () => blocksWith(sql, await sql`
+        SELECT b.* FROM public.classroom_blocks b
+        WHERE b.starts_at < ${new Date(to)} AND b.ends_at > ${new Date(from)}
+          AND EXISTS (SELECT 1 FROM public.classroom_block_members m WHERE m.block_id = b.id AND m.role <> 'student' AND m.staff_email = ${email})
+        ORDER BY b.starts_at, b.code
+      `), []);
+    },
+    // Every change to a block under its row lock (FOR UPDATE), so changes to one block run one at
+    // a time whatever the number of instances: the version check, the room's capacity and the
+    // rotations all see the block as it is, and the change commits whole or not at all.
+    async changeBlock(change) {
+      return sql.begin(async (tx) => {
+        const block = await readBlock(tx, change.blockId, true);
+        const rooms = block ? await lessonsWith(tx, await tx`SELECT * FROM public.classroom_lessons WHERE block_id = ${block.id} ORDER BY id`) : [];
+        const plan = planBlockChange(block, rooms, change);
+        if (!plan.ok) return plan.result;
+        if (plan.seat?.release) {
+          await tx`UPDATE public.classroom_participants SET active = FALSE WHERE lesson_id = ${plan.seat.release.lessonId} AND participant_id = ${plan.seat.release.participantId}`;
+        }
+        if (plan.seat?.take) {
+          const { lessonId, participant, existing } = plan.seat.take;
+          if (existing) {
+            await tx`
+              UPDATE public.classroom_participants SET active = TRUE, seat = ${participant.seat ?? null}, role = ${participant.role}
+              WHERE lesson_id = ${lessonId} AND participant_id = ${participant.id}
+            `;
+          } else {
+            await tx`
+              INSERT INTO public.classroom_participants (lesson_id, participant_id, code, role, member_id, active, seat)
+              VALUES (${lessonId}, ${participant.id}, ${participant.code}, ${participant.role}, ${participant.memberId ?? null}, TRUE, ${participant.seat ?? null})
+            `;
+          }
+        }
+        for (const rotation of plan.rotations ?? []) {
+          await tx`
+            UPDATE public.classroom_participants
+            SET participant_id = ${rotation.toId}, active = CASE WHEN ${rotation.deactivate} THEN FALSE ELSE active END
+            WHERE lesson_id = ${rotation.lessonId} AND participant_id = ${rotation.fromId}
+          `;
+        }
+        if (change.rotate) {
+          await tx`UPDATE public.classroom_block_members SET join_key_hash = ${change.rotate.keyHash} WHERE block_id = ${change.blockId} AND member_id = ${change.rotate.memberId}`;
+        }
+        if (change.cancel) {
+          await tx`UPDATE public.classroom_blocks SET cancelled = TRUE WHERE id = ${change.blockId}`;
+          await tx`UPDATE public.classroom_lessons SET cancelled = TRUE, updated_at = NOW() WHERE block_id = ${change.blockId}`;
+        }
+        for (const event of change.events) await postgresTransaction(tx).insertEvent(event);
+        const [row] = await tx`UPDATE public.classroom_blocks SET version = version + 1, updated_at = NOW() WHERE id = ${change.blockId} RETURNING version`;
+        return { ok: true, version: Number(row.version), ...(plan.seat ? { seat: plan.seat.result } : {}) };
+      }) as Promise<BlockChangeResult>;
     },
   };
 }
