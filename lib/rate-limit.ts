@@ -10,10 +10,13 @@ type RateLimitRow = {
   reset_at: Date | string;
 };
 
-type RateLimitOptions = {
+export type RateLimitPolicy = {
   scope: string;
   limit: number;
   windowSeconds: number;
+};
+
+type RateLimitOptions = RateLimitPolicy & {
   identifier?: string;
 };
 
@@ -227,6 +230,10 @@ export async function enforceRateLimit(request: Request, options: RateLimitOptio
 export const RATE_LIMIT_POLICIES = {
   auth: { scope: "auth", limit: 10, windowSeconds: 60 },
   adminMutation: { scope: "admin-mutation", limit: 30, windowSeconds: 60 },
+  // The open classroom overview's own periodic work: a tick every 15 seconds and one after each
+  // change, per open tab. It has its own allowance, so a busy overview never uses up what a
+  // cancel, a revoke or any other admin change needs, and those never hold up the overview (R-8).
+  classroomTick: { scope: "classroom-tick", limit: 60, windowSeconds: 60 },
   mediaUpload: { scope: "media-upload", limit: 10, windowSeconds: 600 },
   galleryUpload: { scope: "gallery-upload", limit: 30, windowSeconds: 600 },
   translation: { scope: "translation", limit: 15, windowSeconds: 60 },
