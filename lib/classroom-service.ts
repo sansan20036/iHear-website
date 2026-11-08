@@ -285,12 +285,18 @@ export async function joinClassroom({ store, provider, lessonId, key, sessionEma
 // roster's consent, no withdrawal since, no emergency stop and no cancellation. The tutor's page
 // stops recording when it is not allowed, and says "not decided yet" rather than "not recorded"
 // before the decision.
+// After the room moved (a link revoked or reissued), the current room also needs its own check
+// to have passed (2026-11-08); until then the lesson may not be recorded there.
 const NO_MORE_RECORDING = new Set(["server.consent_withdrawn", "server.emergency_stop", "server.lesson_cancelled"]);
 export function recordingDecision(events: ClassroomEvent[]) {
-  const decision = events.filter((event) => event.type === "server.recording_eligibility").sort((a, b) => a.occurredAt - b.occurredAt).pop();
+  const decisions = events.filter((event) => event.type === "server.recording_eligibility").sort((a, b) => a.occurredAt - b.occurredAt);
+  const own = decisions.filter((event) => !(Number(event.generation) > 0)).pop();
+  const generation = roomGeneration(events);
+  const movedAt = events.filter((event) => event.type === "server.room_generation" && Number(event.generation) === generation).reduce((low, event) => Math.min(low, event.occurredAt), Infinity);
+  const room = generation > 0 ? decisions.filter((event) => Number(event.generation) === generation && event.occurredAt >= movedAt).pop() : own;
   return {
-    decided: Boolean(decision),
-    allowed: decision?.eligible === true && !events.some((event) => NO_MORE_RECORDING.has(String(event.type))),
+    decided: Boolean(own),
+    allowed: own?.eligible === true && room?.eligible === true && !events.some((event) => NO_MORE_RECORDING.has(String(event.type))),
   };
 }
 
@@ -354,6 +360,50 @@ export async function emergencyStopRecording({ store, provider, drive, lessonId,
       alreadyStopped: already,
       stopRequested: events.some((event) => event.type === "server.stop_requested" && event.reason === "emergency_stop"),
       recording: { status: state.recording.status, basis: state.recording.basis, label: RECORDING_LABELS[state.recording.status] ?? state.recording.status },
+    },
+  };
+}
+
+// An owner's word that the lesson may be recorded again in its current room, after the room
+// moved during a recording (2026-11-08, case B). It is not a start: it is stored, and the tick
+// then checks again from now (the lesson, the roster as it is now, and every consent: not
+// withdrawn, not expired, the current version) and starts only if that passes and everything else
+// the start needs holds (both people in the new room, nobody who should not be there, no older
+// room still recording). It is refused, storing nothing, when recording can never come back for
+// this lesson (a withdrawal, an emergency stop, a cancellation, the lesson over or not eligible),
+// when the room never moved or nothing was recorded before the move (the check then runs by
+// itself), while an older room may still be recording, or when the room already may record.
+export async function authorizeRecordingResume({ store, provider, drive, lessonId, now }: {
+  store: ClassroomStore; provider: ClassroomProvider; drive: ClassroomDrive; lessonId: string; now: number;
+}) {
+  const lesson = await store.lesson(lessonId);
+  if (!lesson) return { status: 404, body: { error: "Lesson not found", code: "LESSON_NOT_FOUND" } };
+  const before = deriveLesson(forRules(lesson), await store.eventsFor([lessonId]), now);
+  const room = before.roomRecording;
+  if (!room) return { status: 409, body: { error: "The classroom has not moved to a new room", code: "ROOM_NOT_MOVED" } };
+  if (room.status === "BLOCKED") return { status: 409, body: { error: "This lesson cannot be recorded again", code: room.reason } };
+  if (room.rule !== "AUTHORIZATION_REQUIRED") return { status: 409, body: { error: "Nothing was recorded before the move; the server checks again by itself", code: "NO_AUTHORIZATION_NEEDED" } };
+  if (room.oldRoomStillRecording) return { status: 409, body: { error: "An earlier room may still be recording; wait until it is confirmed stopped", code: "OLD_ROOM_STILL_RECORDING" } };
+  if (!room.canAuthorize) return { status: 409, body: { error: "Recording cannot be authorized for this room now", code: room.status } };
+  await serverEvent(store, [{ source: "server", type: "server.recording_resume_authorized", lessonId, generation: room.generation, occurredAt: now, receivedAt: now, key: `server.recording_resume_authorized:${lessonId}:g${room.generation}:${now}` }]);
+  // One tick runs the check, the next sends the start if everything holds (each under its fixed
+  // key, so nothing is done twice).
+  try {
+    await runClassroomTick({ store, provider, drive, now, lessonIds: [lessonId], workerId: `resume-${lessonId}` });
+    await runClassroomTick({ store, provider, drive, now, lessonIds: [lessonId], workerId: `resume-${lessonId}` });
+  } catch {
+    // The authorization is stored; the next scheduled tick carries on.
+  }
+  const after = deriveLesson(forRules(lesson), await store.eventsFor([lessonId]), now);
+  return {
+    status: 200,
+    body: {
+      ok: true,
+      authorized: true,
+      generation: room.generation,
+      // What the check found, if it ran yet; a start is only ever requested, never confirmed here.
+      roomRecording: after.roomRecording ? { status: after.roomRecording.status, reason: after.roomRecording.reason } : null,
+      recording: { status: after.recording.status, basis: after.recording.basis, label: RECORDING_LABELS[after.recording.status] ?? after.recording.status },
     },
   };
 }
@@ -426,7 +476,7 @@ export async function recordHostReport({ store, provider, drive, lessonId, sessi
   };
 }
 
-type Action = { key: string; type: string; lessonId: string; attempt?: number; reason?: string; channels?: string[]; userKey?: string; code?: string; targets?: string[] };
+type Action = { key: string; type: string; lessonId: string; attempt?: number; reason?: string; channels?: string[]; userKey?: string; code?: string; targets?: string[]; generation?: number };
 
 async function serverEvent(store: ClassroomStore, events: ClassroomEvent[]) {
   await store.transaction(async (tx) => {
@@ -469,14 +519,18 @@ async function perform({ store, provider, lesson, action, now }: { store: Classr
         return student ? [{ participantId: student.id, status: record.status, version: record.version, grantedAt: record.grantedAt, withdrawnAt: record.withdrawnAt, expiresAt: record.expiresAt }] : [];
       });
       const notices = tutor ? (await store.listStaffNotices([tutor.code])).map((record) => ({ participantId: tutor.id, version: record.version, acknowledgedAt: record.acknowledgedAt })) : [];
+      // The roster as it is now (after a revoke or reissue the student has a new id; consent goes
+      // by the person's code, so it still counts) and each consent as it is now.
       const decision = getRecordingEligibility({ lesson: forRules(lesson), consents, notices, policy: consentPolicy(), now });
-      await serverEvent(store, [{ ...base, type: "server.recording_eligibility", eligible: decision.eligible, reason: decision.reason, count: "count" in decision ? decision.count : 0, key: action.key }]);
+      // A check for a newer room says which room it was for (2026-11-08).
+      const room = Number(action.generation) > 0 ? { generation: Number(action.generation) } : {};
+      await serverEvent(store, [{ ...base, type: "server.recording_eligibility", eligible: decision.eligible, reason: decision.reason, count: "count" in decision ? decision.count : 0, key: action.key, ...room }]);
       return;
     }
     case "START_RECORDING": {
       // The request and the provider's answer are stored together; 202 only means "accepted".
       const { targets, results, ...result } = await toSessions(action.targets, (sessionId) => provider.startRecording(lesson, sessionId));
-      const named = targets ? { targets, results } : {};
+      const named = { ...(targets ? { targets, results } : {}), ...(Number(action.generation) > 0 ? { generation: Number(action.generation) } : {}) };
       await serverEvent(store, [
         { ...base, type: "server.start_requested", attempt: action.attempt, key: action.key, ...named },
         { ...base, type: "server.start_response", attempt: action.attempt, ok: result.ok, httpStatus: result.httpStatus, key: `${action.key}:response`, ...named },

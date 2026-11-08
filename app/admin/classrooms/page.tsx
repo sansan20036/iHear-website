@@ -33,6 +33,10 @@ const copy = {
     emergencyStop: "Emergency stop recording", stopping: "Stopping…",
     emergencyConfirm: "Stop recording this lesson now? It will not be recorded again in this lesson, and anything already recorded is kept out of the normal folders until an owner reviews it.",
     emergencyPressed: "Emergency stop pressed",
+    resumeRecording: "Authorize recording in the new room", resuming: "Checking…",
+    resumeConfirm: "Authorize recording in the new room? The server first checks the lesson, the roster and every consent again; it starts only if all of that passes, both people are in the new room and the old room's recording is confirmed stopped. A withdrawal, an emergency stop or a cancellation can never be undone this way.",
+    resumeNotice: "Authorized. Recording starts only after the server's new check passes (see the card).",
+    fileRoom: "room",
   },
   zhHant: {
     title: "教室總覽", intro: "今天各堂一對一課程的即時狀態。錄影與歸檔要有視訊服務或 P1 的確認才算完成。",
@@ -57,12 +61,16 @@ const copy = {
     emergencyStop: "緊急停止錄影", stopping: "停止中…",
     emergencyConfirm: "確定要立即停止這堂課的錄影嗎？停止後這堂課不會再錄影；已經錄到的內容會先隔離，不放進一般資料夾，等擁有者確認。",
     emergencyPressed: "已按下緊急停止",
+    resumeRecording: "授權在新教室錄影", resuming: "確認中…",
+    resumeConfirm: "確定授權在新教室錄影？伺服器會先重新確認課程、名單和每一份同意；全部通過、兩人都在新教室、而且舊教室的錄影已確認停止，才會開始錄影。撤回同意、緊急停止或取消課程之後，無法用這個方式恢復錄影。",
+    resumeNotice: "已授權。伺服器重新確認通過後才會開始錄影（請看課程卡片）。",
+    fileRoom: "教室第",
   },
 };
 
 type Person = { code: string; status: string; basis: string; label: string };
 // One recording file and where it was filed: P1's name and folder, size, Drive's checksum.
-type FilingItem = { extension: string | null; status: string; destination: string | null; label: string; reasonLabel: string | null; name: string | null; folder: string | null; size: number | null; md5: string | null; link?: string | null };
+type FilingItem = { generation?: number | null; extension: string | null; status: string; destination: string | null; label: string; reasonLabel: string | null; name: string | null; folder: string | null; size: number | null; md5: string | null; link?: string | null };
 const megabytes = (bytes: number | null) => (bytes == null ? "" : `${(bytes / 1024 / 1024).toFixed(1)} MB`);
 type Card = {
   lessonCode: string; scheduledStart: string | null; actualStart: string | null;
@@ -72,6 +80,8 @@ type Card = {
   filing: { status: string; label: string; reasonLabel?: string | null; items?: FilingItem[] };
   // stopState: CONFIRMED (the video service said so), WAITING, or NO_RECORDING_KNOWN; the label says which.
   emergency?: { pressedAt: string | null; stopState: string | null; stopLabel: string | null; available: boolean };
+  // After the room moved: may the new room record, and may an owner authorize it now.
+  roomRecording?: { generation: number; status: string; label: string; reason: string | null; canAuthorize: boolean; oldRoomStillRecording: boolean } | null;
   anomalies: { code: string; severity: string; label: string }[];
   dataState: { value: string; label: string; lastConfirmedAt: string | null; ageSeconds: number | null };
 };
@@ -96,6 +106,7 @@ export default function ClassroomsPage() {
   const [refreshedAt, setRefreshedAt] = useState<string | null>(null);
   const [checking, setChecking] = useState("");
   const [stopping, setStopping] = useState("");
+  const [resuming, setResuming] = useState("");
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [lesson, setLesson] = useState(emptyLesson);
   const [busy, setBusy] = useState(false);
@@ -158,6 +169,21 @@ export default function ClassroomsPage() {
         await refresh();
       } finally {
         setStopping("");
+      }
+    });
+  };
+  // After a move during a recording: one press, one confirmation; the server checks again and
+  // starts only if that passes.
+  const resumeRecording = (code: string) => {
+    if (!window.confirm(text.resumeConfirm)) return;
+    return mutate(async () => {
+      setResuming(code);
+      try {
+        await adminFetch(`/api/admin/classrooms/${encodeURIComponent(lessonIdOf(code))}/resume-recording`, { method: "POST", body: "{}" });
+        setNotice(text.resumeNotice);
+        await refresh();
+      } finally {
+        setResuming("");
       }
     });
   };
@@ -238,6 +264,7 @@ export default function ClassroomsPage() {
                           <li key={`${item.name ?? item.extension}-${index}`}>
                             <span className={`classroom-file-status ${item.status}`}>{item.label}{item.reasonLabel ? `（${item.reasonLabel}）` : ""}</span>
                             {item.name && <span className="classroom-file-name">{item.folder ? `${item.folder} / ` : ""}{item.name}</span>}
+                            {item.generation != null && item.generation > 0 && <span className="classroom-basis">{locale === "en" ? `${text.fileRoom} ${item.generation + 1}` : `${text.fileRoom} ${item.generation + 1} 間`}</span>}
                             {item.size != null && <span className="classroom-basis">{megabytes(item.size)}</span>}
                             {item.md5 && <span className="classroom-basis" title={item.md5}>md5 {item.md5.slice(0, 8)}…</span>}
                             {item.link && <a href={item.link} target="_blank" rel="noreferrer noopener">{text.openFile}</a>}
@@ -252,10 +279,14 @@ export default function ClassroomsPage() {
                 {card.emergency?.pressedAt && (
                   <p className={`classroom-emergency${card.emergency.stopState === "CONFIRMED" ? " is-confirmed" : ""}`} role="status">{text.emergencyPressed}（{taipei(card.emergency.pressedAt)}）：{card.emergency.stopLabel}</p>
                 )}
+                {card.roomRecording && <p className="classroom-room-recording" role="status">{card.roomRecording.label}</p>}
                 <div className="admin-card-actions">
                   <button type="button" className="admin-button secondary" disabled={busy || !lessonIdOf(card.lessonCode)} onClick={() => checkNow(card.lessonCode)}>{checking === card.lessonCode ? text.checking : text.check}</button>
                   {card.emergency?.available && (
                     <button type="button" className="admin-button danger" disabled={busy || !lessonIdOf(card.lessonCode)} onClick={() => emergencyStop(card.lessonCode)}>{stopping === card.lessonCode ? text.stopping : text.emergencyStop}</button>
+                  )}
+                  {card.roomRecording?.canAuthorize && (
+                    <button type="button" className="admin-button secondary" disabled={busy || !lessonIdOf(card.lessonCode)} onClick={() => resumeRecording(card.lessonCode)}>{resuming === card.lessonCode ? text.resuming : text.resumeRecording}</button>
                   )}
                 </div>
               </article>

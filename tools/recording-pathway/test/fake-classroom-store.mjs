@@ -19,8 +19,9 @@ export function createClassroomStore({ lessons = [] } = {}) {
     lesson: id => lessonById.get(id) ?? null,
     fileRecord: id => (current.files.has(id) ? { ...current.files.get(id) } : null),
     fileRecordsForLesson: id => [...current.files.values()].filter(record => record.lessonId === id).map(record => ({ ...record })),
-    eligibility: id => [...current.events.values()]
-      .filter(event => event.lessonId === id && event.type === 'server.recording_eligibility')
+    eligibility: (id, generation) => [...current.events.values()]
+      .filter(event => event.lessonId === id && event.type === 'server.recording_eligibility'
+        && (generation === undefined || (Number(event.generation) || 0) === generation))
       .sort((a, b) => a.occurredAt - b.occurredAt).pop() ?? null,
     withdrawalAt: id => earliestAt(current, event => event.lessonId === id && ['server.consent_withdrawn', 'server.emergency_stop'].includes(event.type)),
     // An id a revoke or reissue took away still counts as the student for joins up to that change.

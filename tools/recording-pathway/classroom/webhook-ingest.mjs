@@ -15,6 +15,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 // A static import, so bundlers include P1's rules; Core.js stays a plain Apps Script file.
 import Core from '../apps-script/Core.js';
+import { generationOfRoom } from './eligibility.mjs';
 import { filingEvent, runsPast } from './recording-filing.mjs';
 import { isFiledKind, LESSON_ID, neutralKind, validateRecordingFact } from './recording-adapter.mjs';
 
@@ -338,9 +339,19 @@ export async function storeEvent(tx, event) {
   return inserted;
 }
 
+// The decision a recording is held to (2026-11-08): in the lesson's first room, the lesson's own;
+// in a newer room (a link was revoked or reissued), the lesson's own and that room's check both;
+// when Zoom did not say which room, the latest decision, whichever room it was for.
+async function eligibleFor(tx, lessonId, generation) {
+  if (generation == null) return (await tx.eligibility(lessonId))?.eligible === true;
+  const own = (await tx.eligibility(lessonId, 0))?.eligible === true;
+  if (generation === 0) return own;
+  return own && (await tx.eligibility(lessonId, generation))?.eligible === true;
+}
+
 async function recordFiles(tx, event) {
   const lesson = event.lessonId ? await tx.lesson(event.lessonId) : null;
-  const eligible = lesson ? (await tx.eligibility(lesson.id))?.eligible === true : false;
+  const eligible = lesson ? await eligibleFor(tx, lesson.id, generationOfRoom(lesson.id, event.sessionName)) : false;
   const withdrawnAt = lesson ? await tx.withdrawalAt(lesson.id) : null;
   const unknownAt = lesson ? await tx.unknownJoinAt(lesson.id) : null;
   // Parts are numbered in recording order within one notice. A notice that arrives after a later

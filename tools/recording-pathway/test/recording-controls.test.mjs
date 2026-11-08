@@ -182,6 +182,8 @@ test('each kept recording is listed with P1\'s name, folder, size and Drive chec
   const card = lessonCard(deriveLesson(lesson, events, END + 12 * MIN), END + 12 * MIN);
   assert.equal(card.filing.status, 'STORED');
   assert.deepEqual(card.filing.items, [{
+    // Which room the file was recorded in: none known here (the lesson never moved rooms).
+    generation: null,
     extension: 'mp4', recordingStart: new Date(T + MIN).toISOString(), recordingEnd: new Date(END).toISOString(),
     status: 'STORED', destination: 'google', label: '已存入 Google Drive', reason: null, reasonLabel: null, at: new Date(END + 11 * MIN).toISOString(),
     name: '2026-11-03_TEST-S01_TEST-T01_P01.mp4', folder: '[iHear] 11.2026.Zoom Recordings / 2026-11-03_TEST-L001', size: 4096,

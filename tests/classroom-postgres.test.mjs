@@ -449,7 +449,7 @@ describe('P1+P3 on PostgreSQL: participant rotation, room generations and a canc
     expect(tokens.map(row => row.participant_id)).not.toContain(original);
   });
 
-  test('an old id\'s joins before its rotation are the student\'s, not someone unknown; after it they are unknown', async () => {
+  test('an old id\'s joins before its rotation are the student\'s, not someone unknown; after it they are unknown; decisions are read per room generation', async () => {
     const lesson = contractLesson('L-pg-unknown', 'TEST-PUK');
     await store.createLesson(lesson);
     const from = lesson.participants.find(entry => entry.role === 'student').id;
@@ -459,6 +459,12 @@ describe('P1+P3 on PostgreSQL: participant rotation, room generations and a canc
     expect(await store.transaction(tx => tx.unknownJoinAt(lesson.id))).toBeNull();
     await store.transaction(tx => storeEvent(tx, joined(from, NOW + MIN, 2)));
     expect(await store.transaction(tx => tx.unknownJoinAt(lesson.id))).toBe(NOW + MIN);
+    const decision = (eligible, at, extra = {}) => ({ source: 'server', type: 'server.recording_eligibility', lessonId: lesson.id, eligible, reason: eligible ? 'ALL_CONSENTED' : 'CONSENT_EXPIRED', occurredAt: at, receivedAt: at, key: `decide:${lesson.id}:${at}`, ...extra });
+    await store.transaction(async tx => { await storeEvent(tx, decision(true, NOW - 20 * MIN)); await storeEvent(tx, decision(false, NOW + 2 * MIN, { generation: 1 })); });
+    expect((await store.transaction(tx => tx.eligibility(lesson.id)))?.eligible).toBe(false);
+    expect((await store.transaction(tx => tx.eligibility(lesson.id, 0)))?.eligible).toBe(true);
+    expect((await store.transaction(tx => tx.eligibility(lesson.id, 1)))?.eligible).toBe(false);
+    expect(await store.transaction(tx => tx.eligibility(lesson.id, 2))).toBeNull();
   });
 
   test('a reissue: generation 1, a new participant id, the old key refused, the new key entering under the new id in the new room', async () => {

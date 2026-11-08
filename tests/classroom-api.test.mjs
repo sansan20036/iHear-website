@@ -1134,6 +1134,8 @@ describe("recording controls, synthetic end to end", () => {
     const card = cardOf(await overview(), "TEST-L41");
     expect(card).toMatchObject({ group: "ENDED", recording: { status: "COMPLETED" }, filing: { status: "STORED" } });
     expect(card.filing.items).toEqual([{
+      // Which room the file was recorded in: none known here (the lesson never moved rooms).
+      generation: null,
       extension: "mp4", recordingStart: "2026-11-29T07:56:30.000Z", recordingEnd: "2026-11-29T09:05:35.000Z",
       // Synthetic: the local stand-in, never shown as Google Drive.
       status: "STORED", destination: "local", label: "已存入本機模擬 Drive（合成測試，不是 Google Drive）", reason: null, reasonLabel: null, at: "2026-11-29T09:20:00.000Z",

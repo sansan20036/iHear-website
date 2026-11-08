@@ -46,6 +46,14 @@ export const LABELS = Object.freeze({
   storedIn: { google: '已存入 Google Drive', local: '已存入本機模擬 Drive（合成測試，不是 Google Drive）' },
   // Why a lesson is not recorded, where it is not the consent rule.
   recordingBlocked: { EMERGENCY_STOP: '已緊急停止，這堂課不再錄影', CONSENT_WITHDRAWN: '不錄影（已撤回同意）', LESSON_CANCELLED: '課程已取消，這堂課不再錄影' },
+  // Recording in the current room after the room moved (a link revoked or reissued).
+  roomRecording: {
+    RECHECK_PENDING: '已換到新教室：伺服器正在重新確認課程、名單和同意',
+    RECHECK_REFUSED: '已換到新教室：重新確認未通過，新教室不錄影',
+    WAITING_FOR_AUTHORIZATION: '已換到新教室：新教室不會自動錄影，需要擁有者授權並重新確認同意',
+    ALLOWED: '已換到新教室：重新確認通過，可以在新教室錄影',
+    BLOCKED: '已換到新教室：這堂課不再錄影',
+  },
   filing: { NONE: '', PENDING: '歸檔中', STORED: '已歸檔', HELD: '已隔離或暫緩，待管理員處理', BLOCKED: '歸檔暫停，待管理員處理', FAILED: '歸檔失敗' },
   // One recording file's outcome.
   filingItem: {
@@ -79,6 +87,8 @@ export const LABELS = Object.freeze({
     // Requested is not ended: only Zoom's own notice or answer confirms an end (G-2).
     SESSION_END_UNCONFIRMED: '已要求結束教室，視訊服務尚未確認結束（伺服器會再試）',
     OLD_ROOM_SUSPECT: '舊教室中有不在名單上或使用舊連結的人（伺服器正在停止錄影並結束舊教室）',
+    // Requested is not stopped: an old room's recording counts as stopped only on Zoom's word.
+    OLD_ROOM_STOP_UNCONFIRMED: '舊教室的錄影尚未確認停止（伺服器會再要求停止並結束舊教室；這不是安全停止）',
     LESSON_END_STOP_UNCONFIRMED: '下課後仍無法確認錄影已停止',
     FILE_OVERDUE: '錄影檔逾時未到',
     FILING_FAILED: '歸檔失敗',
@@ -136,6 +146,8 @@ function filingItemCard(item) {
   if (item.status === 'STORED') text = LABELS.storedIn[item.destination] ?? '已存入雲端硬碟';
   else if (item.status === 'QUARANTINED' && item.destination === 'local') text += `（${where}）`;
   return {
+    // Which room (generation) the file was recorded in: 0 the lesson's first room.
+    generation: item.generation ?? null,
     extension: item.extension,
     recordingStart: iso(item.recordingStart),
     recordingEnd: iso(item.recordingEnd),
@@ -184,6 +196,18 @@ export function lessonCard(state, now) {
       items: (state.filing.items ?? []).map(filingItemCard),
     },
     emergency: emergencyCard(state),
+    // After the room moved: whether the new room may record, and whether an owner can authorize
+    // it now (codes and labels only).
+    roomRecording: state.roomRecording
+      ? {
+        generation: state.roomRecording.generation,
+        status: state.roomRecording.status,
+        label: LABELS.roomRecording[state.roomRecording.status] ?? state.roomRecording.status,
+        reason: state.roomRecording.reason ?? null,
+        canAuthorize: state.roomRecording.canAuthorize === true,
+        oldRoomStillRecording: state.roomRecording.oldRoomStillRecording === true,
+      }
+      : null,
     // A cancelled lesson's stop, with the same three states as the emergency stop: confirmed only
     // on the video service's word.
     cancellation: state.cancellation

@@ -4,9 +4,10 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-// Revoking rotates the student's participant id, as reissuing does (2026-11-08), end to end
-// through the site's own routes: the owner's revoke and reissue, the classroom's join, Zoom's
-// signed webhooks. Synthetic data only (TEST- codes, example.test addresses, test-only secrets). The
+// Revoking rotates the student's participant id, and recording after the room moved (2026-11-08),
+// end to end through the site's own routes: the owner's revoke, reissue, cancel, emergency stop
+// and authorization to record in the new room; the classroom's join; Zoom's signed webhooks; the
+// tick. Synthetic data only (TEST- codes, example.test addresses, test-only secrets). The
 // synthetic provider stands in for Zoom and records each request with the session it named.
 // Passing says our own logic is right, not how the real Zoom behaves.
 //
@@ -37,8 +38,12 @@ vi.stubEnv("CLASSROOM_SYNTHETIC_SECRET", "room-move-token-test-only");
 vi.stubEnv("VERCEL_ENV", "");
 const lessonsRoute = await import("../app/api/admin/classrooms/route");
 const lessonRoute = await import("../app/api/admin/classrooms/[lessonId]/route");
+const resumeRoute = await import("../app/api/admin/classrooms/[lessonId]/resume-recording/route");
+const stopRoute = await import("../app/api/admin/classrooms/[lessonId]/stop-recording/route");
+const tickRoute = await import("../app/api/admin/classrooms/tick/route");
 const consents = await import("../app/api/admin/classrooms/consents/route");
 const joinRoute = await import("../app/api/classroom/[lessonId]/join/route");
+const statusRoute = await import("../app/api/classroom/[lessonId]/status/route");
 const webhook = await import("../app/api/recordings/zoom/webhook/route");
 const { classroomStore } = await import("../lib/classroom-store");
 // @ts-ignore - shared classroom logic, plain JavaScript.
@@ -89,7 +94,11 @@ const change = async (lesson, action, origin = ORIGIN) => {
   const request = new Request(`${ORIGIN}/api/admin/classrooms/${lesson.id}`, { method: "PATCH", headers: { origin, "content-type": "application/json" }, body: JSON.stringify({ action }) });
   return read(await lessonRoute.PATCH(request, params(lesson.id)));
 };
+const resume = async (lesson, { email = OWNER, origin = ORIGIN } = {}) => { signedIn(email); return read(await resumeRoute.POST(post(`/api/admin/classrooms/${lesson.id}/resume-recording`, {}, origin), params(lesson.id))); };
 const join = async (lesson, { key, email } = {}) => { signedIn(email); return read(await joinRoute.POST(post(`/api/classroom/${lesson.id}/join`, key ? { key } : {}), params(lesson.id))); };
+const tick = async () => { signedIn(OWNER); expect((await tickRoute.POST(post("/api/admin/classrooms/tick"))).status).toBe(200); };
+// What the classroom pages are told about recording (the tutor's page stops recording when not allowed).
+const recordingAllowed = async (lesson, key) => { signedIn(null); return (await read(await statusRoute.POST(post(`/api/classroom/${lesson.id}/status`, { key }), params(lesson.id)))).body.recordingAllowed; };
 async function zoom(type, lesson, sessionId, object = {}) {
   const rawBody = JSON.stringify({ event: type, event_ts: Date.now(), payload: { account_id: "synthetic", object: { id: sessionId, session_id: sessionId, session_key: lesson.id, ...object } } });
   const timestamp = Math.floor(Date.now() / 1000);
@@ -101,6 +110,10 @@ async function zoom(type, lesson, sessionId, object = {}) {
 const started = (lesson, sessionId, generation = 0) => zoom("session.started", lesson, sessionId, { session_name: roomNameOf(lesson.id, generation), start_time: new Date().toISOString() });
 let uuids = 0;
 const joined = (lesson, sessionId, userKey) => zoom("session.user_joined", lesson, sessionId, { user: { user_key: userKey, participant_uuid: `u-${uuids += 1}`, join_time: new Date().toISOString() } });
+const recordingIs = (lesson, sessionId, status, generation = 0) => zoom(status === "Recording" ? "session.recording_started" : "session.recording_stopped", lesson, sessionId, { session_name: roomNameOf(lesson.id, generation), recording_file: { recording_start: new Date().toISOString() } });
+// What the server asked the stand-in for this lesson: [type, the session it named].
+const calls = async lesson => JSON.parse(await readFile(path.join(directory, "synthetic-zoom.json"), "utf8").catch(() => '{"calls":[]}'))
+  .calls.filter(call => call.lessonId === lesson.id).map(call => [call.type, call.detail ?? null]);
 const eventsOf = lesson => classroomStore().eventsFor([lesson.id]);
 const stateOf = async lesson => {
   const stored = await classroomStore().lesson(lesson.id);
@@ -108,6 +121,37 @@ const stateOf = async lesson => {
 };
 const studentIdOf = async lesson => (await classroomStore().lesson(lesson.id)).participants.find(entry => entry.role === "student").id;
 
+// Both in the first room, recording started by the server and confirmed by Zoom.
+async function recordedLesson(sessionId) {
+  at("2026-12-03T07:50:00Z");
+  const lesson = await lessonWithConsent();
+  at("2026-12-03T07:56:00Z");
+  const student = await join(lesson, { key: lesson.key });
+  const tutor = await join(lesson, { email: TUTOR });
+  lesson.studentId = claimsOf(student.body.session.token).user_key;
+  lesson.tutorId = claimsOf(tutor.body.session.token).user_key;
+  await started(lesson, sessionId);
+  await joined(lesson, sessionId, lesson.tutorId);
+  await joined(lesson, sessionId, lesson.studentId);
+  advance(10 * SEC); await tick();
+  advance(10 * SEC); await tick();
+  expect(await calls(lesson)).toEqual([["recording.start", sessionId]]);
+  advance(10 * SEC);
+  await recordingIs(lesson, sessionId, "Recording");
+  return lesson;
+}
+// After a reissue: both people in the new room's session.
+async function intoNewRoom(lesson, sessionId, generation, key) {
+  const student = await join(lesson, { key });
+  const tutor = await join(lesson, { email: TUTOR });
+  expect([student.status, tutor.status]).toEqual([200, 200]);
+  expect(claimsOf(tutor.body.session.token).tpc).toBe(roomNameOf(lesson.id, generation));
+  const newId = claimsOf(student.body.session.token).user_key;
+  await started(lesson, sessionId, generation);
+  await joined(lesson, sessionId, lesson.tutorId ?? claimsOf(tutor.body.session.token).user_key);
+  await joined(lesson, sessionId, newId);
+  return newId;
+}
 
 describe("phase 2: revoking rotates the student's participant id, as reissuing does", () => {
   test("a revoke gives the student a new id and the room a new generation in one step; the old link, on every device, gets no token for any room again, and every token ever given under the old id leads to the first room only", async () => {
@@ -242,5 +286,155 @@ describe("phase 2: revoking rotates the student's participant id, as reissuing d
     ]);
     const written = [await readFile(path.join(directory, "classroom.json"), "utf8"), JSON.stringify(appendAdminActivity.mock.calls)].join("\n");
     for (const secret of [lesson.key, reissuedKey, link]) expect(written).not.toContain(secret);
+  });
+});
+
+describe("phase 3: recording after the room moved", () => {
+  test("A: moved before anything was recorded (a reissue before class): the tick checks again for the new room and starts there only", async () => {
+    at("2026-12-03T07:50:00Z");
+    const lesson = await lessonWithConsent();
+    const key = keyOf((await change(lesson, "reissue_link")).body.studentLink);
+    at("2026-12-03T07:56:00Z");
+    await intoNewRoom(lesson, "ZS-A1", 1, key);
+    advance(10 * SEC); await tick();
+    const checks = (await eventsOf(lesson)).filter(event => event.type === "server.recording_eligibility");
+    expect(checks.map(event => [event.generation ?? 0, event.eligible])).toEqual([[0, true], [1, true]]);
+    advance(10 * SEC); await tick();
+    expect(await calls(lesson)).toEqual([["recording.start", "ZS-A1"]]);
+  });
+
+  test("A: a consent that has expired by the time of the new room's check stops it from starting; the overview says the new room is not recorded", async () => {
+    at("2026-12-03T07:50:00Z");
+    const lesson = await lessonWithConsent();
+    advance(MIN); await tick(); // the lesson's own decision: eligible
+    const key = keyOf((await change(lesson, "reissue_link")).body.studentLink);
+    const consent = (await classroomStore().listConsents([`${lesson.code}-S`]))[0];
+    await classroomStore().setConsent({ ...consent, expiresAt: Date.now() + MIN });
+    at("2026-12-03T07:56:00Z");
+    await intoNewRoom(lesson, "ZS-A2", 1, key);
+    advance(10 * SEC); await tick();
+    advance(10 * SEC); await tick();
+    expect(await calls(lesson)).toEqual([]);
+    const state = await stateOf(lesson);
+    expect([state.roomRecording.status, state.roomRecording.reason]).toEqual(["RECHECK_REFUSED", "CONSENT_EXPIRED"]);
+  });
+
+  test("B: recording, then a reissue: the old room is stopped and ended; nothing starts in the new room; the owner's authorization is refused while the old room may still record, then accepted; the check passes and the start goes to the new room only", async () => {
+    const lesson = await recordedLesson("ZS-B1");
+    advance(5 * MIN);
+    const key = keyOf((await change(lesson, "reissue_link")).body.studentLink);
+    advance(10 * SEC);
+    await intoNewRoom(lesson, "ZS-B2", 1, key);
+    advance(10 * SEC); await tick();
+    expect(await calls(lesson)).toEqual([["recording.start", "ZS-B1"], ["recording.stop", "ZS-B1"], ["session.end", "ZS-B1"]]);
+    advance(30 * SEC); await tick();
+    expect((await calls(lesson)).filter(([type]) => type === "recording.start")).toEqual([["recording.start", "ZS-B1"]]);
+    expect(await resume(lesson)).toMatchObject({ status: 409, body: { code: "OLD_ROOM_STILL_RECORDING" } });
+    // The pages are told the lesson may not be recorded in the new room until it is authorized and checked.
+    expect(await recordingAllowed(lesson, key)).toBe(false);
+    await recordingIs(lesson, "ZS-B1", "Stopped");
+    advance(SEC);
+    const authorized = await resume(lesson);
+    expect(await recordingAllowed(lesson, key)).toBe(true);
+    expect(authorized).toMatchObject({ status: 200, body: { authorized: true, generation: 1, roomRecording: { status: "ALLOWED" } } });
+    expect((await calls(lesson)).filter(([type]) => type === "recording.start")).toEqual([["recording.start", "ZS-B1"], ["recording.start", "ZS-B2"]]);
+    expect(appendAdminActivity.mock.calls.map(([entry]) => entry.action)).toContain("classroom.recording_resume_authorized");
+    // Confirmed by Zoom: recording in the new room, and nothing flagged as unapproved.
+    await recordingIs(lesson, "ZS-B2", "Recording", 1);
+    const state = await stateOf(lesson);
+    expect(state.recording.status).toBe("RECORDING");
+    expect(state.anomalies.map(entry => entry.code)).not.toContain("UNAPPROVED_RECORDING_START");
+  });
+
+  test("B with a refused check: the owner authorizes after the student's consent expired; the new room's check refuses and nothing starts there, the pages are told so, and the first room's recording, arriving later, is still filed by its own room's decision", async () => {
+    const lesson = await recordedLesson("ZS-R1");
+    advance(5 * MIN);
+    const key = keyOf((await change(lesson, "reissue_link")).body.studentLink);
+    advance(10 * SEC);
+    await intoNewRoom(lesson, "ZS-R2", 1, key);
+    advance(10 * SEC); await tick();
+    await recordingIs(lesson, "ZS-R1", "Stopped");
+    const consent = (await classroomStore().listConsents([`${lesson.code}-S`]))[0];
+    await classroomStore().setConsent({ ...consent, expiresAt: Date.now() });
+    advance(SEC);
+    expect(await resume(lesson)).toMatchObject({ status: 200, body: { roomRecording: { status: "RECHECK_REFUSED", reason: "CONSENT_EXPIRED" } } });
+    expect((await calls(lesson)).filter(([type]) => type === "recording.start")).toEqual([["recording.start", "ZS-R1"]]);
+    expect(await recordingAllowed(lesson, key)).toBe(false);
+    const file = { id: "f-r1", file_type: "MP4", recording_type: "shared_screen_with_speaker_view", file_size: 2048, status: "completed", recording_start: "2026-12-03T07:57:00Z", recording_end: new Date().toISOString(), download_url: "https://example.invalid/never-kept" };
+    await zoom("session.recording_completed", lesson, "ZS-R1", { session_name: roomNameOf(lesson.id, 0), recording_files: [file] });
+    expect((await classroomStore().fileRecord("f-r1")).hold).toBeNull();
+  });
+
+  for (const [name, protect, code] of [
+    ["a withdrawal of consent", async lesson => { signedIn(OWNER); expect((await consents.POST(post("/api/admin/classrooms/consents", { personCode: `${lesson.code}-S`, role: "student", status: "withdrawn" }))).status).toBe(200); }, "CONSENT_WITHDRAWN"],
+    ["an emergency stop", async lesson => { signedIn(OWNER); expect((await stopRoute.POST(post(`/api/admin/classrooms/${lesson.id}/stop-recording`), params(lesson.id))).status).toBe(200); }, "EMERGENCY_STOP"],
+    ["a cancellation", async lesson => { expect((await change(lesson, "cancel")).status).toBe(200); }, "LESSON_CANCELLED"],
+  ]) {
+    test(`B refused for good after ${name}: a later revoke moves the room, the old room is cleaned up, the owner's authorization is refused (409 ${code}), and nothing starts again, even with an authorization and a passing check forged into the store`, async () => {
+      const lesson = await recordedLesson(`ZS-${code}`);
+      advance(MIN);
+      await protect(lesson);
+      advance(10 * SEC); await tick();
+      await recordingIs(lesson, `ZS-${code}`, "Stopped");
+      advance(MIN);
+      expect((await change(lesson, "revoke_link")).status).toBe(200);
+      advance(10 * SEC);
+      const tutor = await join(lesson, { email: TUTOR });
+      if (code === "LESSON_CANCELLED") expect(tutor.status).toBe(403);
+      await started(lesson, `ZS-${code}-2`, 1);
+      await joined(lesson, `ZS-${code}-2`, lesson.tutorId);
+      await joined(lesson, `ZS-${code}-2`, await studentIdOf(lesson));
+      expect(await resume(lesson)).toMatchObject({ status: 409, body: { code } });
+      // Forged straight into the store: an authorization and a passing check for the new room.
+      const now = Date.now();
+      await classroomStore().transaction(async tx => {
+        await tx.insertEvent({ source: "server", type: "server.recording_resume_authorized", lessonId: lesson.id, generation: 1, occurredAt: now, receivedAt: now, key: `forged-resume:${lesson.id}` });
+        await tx.insertEvent({ source: "server", type: "server.recording_eligibility", lessonId: lesson.id, generation: 1, eligible: true, reason: "ALL_CONSENTED", occurredAt: now + 1, receivedAt: now + 1, key: `forged-check:${lesson.id}` });
+      });
+      for (let n = 0; n < 3; n += 1) { advance(30 * SEC); await tick(); }
+      expect((await calls(lesson)).filter(([type]) => type === "recording.start")).toEqual([["recording.start", `ZS-${code}`]]);
+      expect((await stateOf(lesson)).roomRecording).toMatchObject({ status: "BLOCKED", reason: code, canAuthorize: false });
+    });
+  }
+
+  test("the authorization keeps the admin checks (signed out, an editor, another site's page: 403) and is refused where it does not apply: a room that never moved, or nothing recorded before the move", async () => {
+    at("2026-12-03T07:50:00Z");
+    const lesson = await lessonWithConsent();
+    expect((await resume(lesson, { email: null })).status).toBe(403);
+    expect((await resume(lesson, { email: EDITOR })).status).toBe(403);
+    expect(await resume(lesson, { origin: "https://elsewhere.example" })).toMatchObject({ status: 403, body: { error: "Cross-origin request blocked" } });
+    expect(await resume(lesson)).toMatchObject({ status: 409, body: { code: "ROOM_NOT_MOVED" } });
+    expect((await change(lesson, "reissue_link")).status).toBe(200);
+    expect(await resume(lesson)).toMatchObject({ status: 409, body: { code: "NO_AUTHORIZATION_NEEDED" } });
+    expect((await eventsOf(lesson)).filter(event => event.type === "server.recording_resume_authorized")).toEqual([]);
+  });
+
+  test("two moves while recording: only the newest room can be authorized and record; the files of both rooms are listed with the room they were recorded in", async () => {
+    const lesson = await recordedLesson("ZS-T1");
+    advance(5 * MIN);
+    const key1 = keyOf((await change(lesson, "reissue_link")).body.studentLink);
+    advance(10 * SEC);
+    await intoNewRoom(lesson, "ZS-T2", 1, key1);
+    advance(10 * SEC); await tick();
+    await recordingIs(lesson, "ZS-T1", "Stopped");
+    advance(MIN);
+    const key2 = keyOf((await change(lesson, "reissue_link")).body.studentLink);
+    advance(10 * SEC);
+    await intoNewRoom(lesson, "ZS-T3", 2, key2);
+    advance(10 * SEC); await tick();
+    expect(await resume(lesson)).toMatchObject({ status: 200, body: { generation: 2 } });
+    const startsAfter = (await calls(lesson)).filter(([type]) => type === "recording.start");
+    expect(startsAfter).toEqual([["recording.start", "ZS-T1"], ["recording.start", "ZS-T3"]]);
+    await recordingIs(lesson, "ZS-T3", "Recording", 2);
+    advance(10 * MIN);
+    await recordingIs(lesson, "ZS-T3", "Stopped", 2);
+    const file = (id, start) => ({ id, file_type: "MP4", recording_type: "shared_screen_with_speaker_view", file_size: 2048, status: "completed", recording_start: start, recording_end: new Date().toISOString(), download_url: "https://example.invalid/never-kept" });
+    await zoom("session.recording_completed", lesson, "ZS-T1", { session_name: roomNameOf(lesson.id, 0), recording_files: [file("f-t1", "2026-12-03T07:57:00Z")] });
+    await zoom("session.recording_completed", lesson, "ZS-T3", { session_name: roomNameOf(lesson.id, 2), recording_files: [file("f-t3", "2026-12-03T08:07:00Z")] });
+    const state = await stateOf(lesson);
+    expect(state.filing.items.map(item => [item.sessionId, item.generation])).toEqual([["ZS-T1", 0], ["ZS-T3", 2]]);
+    // Neither is held for want of consent: each is judged by its own room's decision.
+    const records = await Promise.all(["f-t1", "f-t3"].map(id => classroomStore().fileRecord(id)));
+    expect(records.map(record => [record.providerSessionId, record.hold])).toEqual([["ZS-T1", null], ["ZS-T3", null]]);
   });
 });

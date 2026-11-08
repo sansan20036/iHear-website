@@ -145,6 +145,49 @@ try {
     await admin.screenshot({ path: path.join(directory, 'controls-3-filed.png'), fullPage: true });
   });
 
+  // 2026-11-08: a link reissued while recording moves the lesson to a new room. Nothing records
+  // there on its own; the owner's button appears only once the old room is confirmed stopped,
+  // and pressing it has the server check again before it starts, in the new room only.
+  const moved = await lessonFrom('TEST-UC4', -5, 4);
+  const newRoom = `SYN-SESSION-${moved.id}-G1`;
+  const inRoom = async (type, sessionId, object = {}) => zoom(type, { ...moved, sessionId }, object);
+  const sentTo = async () => JSON.parse(await readFile(path.join(directory, 'synthetic-zoom.json'), 'utf8').catch(() => '{"calls":[]}')).calls
+    .filter(call => call.lessonId === moved.id).map(call => [call.type, call.detail ?? null]);
+  await check('after a reissue during a recording, the new room records only once the old room is confirmed stopped and an owner authorizes it; the server checks again first and starts in the new room only', async () => {
+    await bothIn(moved);
+    for (let i = 0; i < 2; i++) expect(await post('/api/admin/classrooms/tick')).toBe(200);
+    await expect.poll(() => calls(moved.id)).toEqual(['recording.start']);
+    await zoom('session.recording_started', moved, { recording_file: { recording_start: new Date().toISOString() } });
+    const reissued = await admin.evaluate(async address => (await fetch(address, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'reissue_link' }) })).status, `/api/admin/classrooms/${moved.id}`);
+    expect(reissued).toBe(200);
+    const newStudent = (await saved()).lessons.find(entry => entry.id === moved.id).participants.find(entry => entry.role === 'student').id;
+    expect(newStudent).not.toBe(moved.studentId);
+    await inRoom('session.started', newRoom, { session_name: `ihear-${moved.id.toLowerCase()}-g1`, start_time: new Date().toISOString() });
+    await inRoom('session.user_joined', newRoom, zoomUser(moved.tutorId, `U-T2-${moved.code}`));
+    await inRoom('session.user_joined', newRoom, zoomUser(newStudent, `U-S2-${moved.code}`));
+    expect(await post('/api/admin/classrooms/tick')).toBe(200);
+    await refresh();
+    // The old room's recording is asked to stop, not confirmed: no button yet, and no start anywhere.
+    await expect(card(moved.code)).toContainText('新教室不會自動錄影，需要擁有者授權並重新確認同意');
+    await expect(card(moved.code).getByRole('button', { name: '授權在新教室錄影' })).toHaveCount(0);
+    expect((await sentTo()).filter(([type]) => type === 'recording.start')).toEqual([['recording.start', moved.sessionId]]);
+    await zoom('session.recording_stopped', moved, { recording_file: { recording_end: new Date().toISOString() } });
+    await refresh();
+    const button = card(moved.code).getByRole('button', { name: '授權在新教室錄影' });
+    await expect(button).toBeVisible();
+    await admin.screenshot({ path: path.join(directory, 'controls-4-room-moved.png'), fullPage: true });
+    let asked = null;
+    admin.once('dialog', dialog => { asked = dialog.message(); dialog.accept(); });
+    const [response] = await Promise.all([admin.waitForResponse(item => item.url().endsWith('/resume-recording')), button.click()]);
+    expect(response.status()).toBe(200);
+    expect(asked).toContain('伺服器會先重新確認課程、名單和每一份同意');
+    expect((await sentTo()).filter(([type]) => type === 'recording.start')).toEqual([['recording.start', moved.sessionId], ['recording.start', newRoom]]);
+    await refresh();
+    await expect(card(moved.code)).toContainText('重新確認通過，可以在新教室錄影');
+    await expect(card(moved.code).getByRole('button', { name: '授權在新教室錄影' })).toHaveCount(0);
+    await admin.screenshot({ path: path.join(directory, 'controls-5-authorized.png'), fullPage: true });
+  });
+
   await check('nothing left this computer, and the page reported no errors', async () => {
     expect(report.externalRequests).toEqual([]);
     expect(report.pageProblems).toEqual([]);
