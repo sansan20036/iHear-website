@@ -322,14 +322,18 @@ function analyze(lesson, events, now) {
 // reissued), that decision alone no longer starts anything there:
 //   A  nothing was recorded before the move: the server checks again, for the current room,
 //      the lesson, the roster as it is now and each consent (not withdrawn, not expired, the
-//      current version). Only if that check passes too does the usual start follow.
+//      current version, the tutor's notice). Only if that check passes does the usual start
+//      follow, in this room.
 //   B  something was recorded before the move: nothing starts in the new room on its own. An
 //      owner has to authorize recording in this room; then the same check runs, from the time
 //      of that authorization, and only then may it start (and only once every older room's
-//      recording is confirmed stopped).
-// The check can only narrow the lesson's decision, never widen it: a lesson that was not
-// eligible stays unrecorded, and a withdrawal, an emergency stop or a cancellation is never
-// undone by a move.
+//      recording is confirmed stopped). The authorization never stands in for anyone's consent.
+// The room's check goes by the consents as they are at that moment (2026-11-08, second rule set):
+// consent that is valid now counts, whether it was there when the lesson started or was given
+// after the move, and the check runs again after every later consent or notice change. Consent
+// never reaches back: a recording is covered only by a check made before it started (filing
+// holds anything else). A withdrawal, an emergency stop, a cancellation or the lesson's end is
+// never undone by a move.
 function decideRoomRecording(f) {
   const latestOf = list => list.reduce((best, entry) => (!best || entry.at >= best.at ? entry : best), null);
   const g = f.currentGeneration;
@@ -337,14 +341,23 @@ function decideRoomRecording(f) {
   f.recordedBefore = g > 0 && (f.recording.some(fact => fact.status === 'Recording' && fact.at < f.rotatedAt)
     || f.startResponses.some(response => response.ok && response.at < f.rotatedAt));
   f.resumeAt = g > 0 ? latestOf(f.resumes.filter(entry => entry.generation === g && entry.at >= f.rotatedAt))?.at ?? null : null;
-  // From when the current room's check must be: after the move and after the lesson's decision,
-  // and in case B after the owner's authorization. Null: no check is due (yet).
-  f.recheckFrom = g > 0 && f.baseDecision?.eligible === true
-    ? (f.recordedBefore ? (f.resumeAt == null ? null : Math.max(f.rotatedAt, f.baseDecision.at, f.resumeAt)) : Math.max(f.rotatedAt, f.baseDecision.at))
-    : null;
+  // From when the current room's check counts: from the move (A) or the owner's authorization
+  // (B), and from each consent or notice change after that. Null: no check is due (yet).
+  const opens = g > 0 ? (f.recordedBefore ? (f.resumeAt == null ? null : Math.max(f.rotatedAt, f.resumeAt)) : f.rotatedAt) : null;
+  f.recheckFrom = opens == null ? null : Math.max(opens, f.consentChangedAt != null && f.consentChangedAt >= opens ? f.consentChangedAt : opens);
   f.roomDecision = f.recheckFrom == null ? null : latestOf(f.decisions.filter(entry => entry.generation === g && entry.at >= f.recheckFrom));
-  // What every other rule goes by: the lesson's decision, narrowed by the current room's check.
-  f.eligibility = f.baseDecision?.eligible === true && f.roomDecision ? f.roomDecision : f.baseDecision;
+  // What the overview and the other rules go by: the current room's latest check after a move,
+  // the lesson's own decision before any.
+  const roomLatest = g > 0 ? latestOf(f.decisions.filter(entry => entry.generation === g && entry.at >= f.rotatedAt)) : null;
+  f.eligibility = roomLatest ?? f.baseDecision;
+}
+
+// The decision that covered a moment in a generation of the room: the lesson's own for the first
+// room; for a newer one, the latest check for it made by then (a check never reaches back).
+function decisionFor(f, generation, at) {
+  if (!generation) return f.baseDecision;
+  return f.decisions.filter(entry => entry.generation === generation && entry.at <= at + TIMING.clockSkewMs)
+    .reduce((best, entry) => (!best || entry.at >= best.at ? entry : best), null);
 }
 
 // The generation the room had at a moment (0 before any move).
@@ -368,7 +381,7 @@ function roomRecordingOf(f, { phase, now, endStopAt }) {
   const oldCapturing = liveSessions(f).some(entry => entry !== room && captureOnIn(f, entry));
   const base = { generation: g, rule: f.recordedBefore ? 'AUTHORIZATION_REQUIRED' : 'RECHECK', authorizedAt: f.resumeAt, recheck: f.roomDecision ? { eligible: f.roomDecision.eligible, reason: f.roomDecision.reason, at: f.roomDecision.at } : null, oldRoomStillRecording: oldCapturing };
   const blocked = f.emergency ? 'EMERGENCY_STOP' : (f.cancellation || f.cancelledFlag) ? 'LESSON_CANCELLED' : f.withdrawal ? 'CONSENT_WITHDRAWN'
-    : f.baseDecision && f.baseDecision.eligible !== true ? 'NOT_ELIGIBLE' : now >= endStopAt || phase.value === 'ENDED' ? 'LESSON_OVER' : null;
+    : now >= endStopAt || phase.value === 'ENDED' ? 'LESSON_OVER' : null;
   if (blocked) return { ...base, status: 'BLOCKED', reason: blocked, canAuthorize: false };
   if (f.recordedBefore && f.resumeAt == null) return { ...base, status: 'WAITING_FOR_AUTHORIZATION', reason: null, canAuthorize: !oldCapturing && phase.value === 'LIVE' };
   if (!f.roomDecision) return { ...base, status: 'RECHECK_PENDING', reason: null, canAuthorize: false };
@@ -523,6 +536,17 @@ function recordingOf(f, phase, now) {
   // Completed only when nothing may still be recording (another room's file may come first).
   if (f.completed.size && !roomStartPending && !captureMayBeOn(f)) return { status: 'COMPLETED', basis: 'confirmed', since: f.completedAt, source: 'zoom' };
   if (last && !roomStartPending) {
+    // The last word is about one session; another may still be recording (an older room whose
+    // stop Zoom has not confirmed). Then the lesson is not shown as stopped (2026-11-08).
+    if (last.status !== 'Recording') {
+      const stillOn = [...f.known.values()].filter(entry => captureOnIn(f, entry));
+      if (stillOn.length) {
+        const seen = stillOn.flatMap(entry => sessionFacts(f, entry).filter(fact => fact.status === 'Recording'));
+        const since = seen.length ? Math.max(...seen.map(fact => fact.at)) : last.at;
+        const stopAsked = f.stopAttempts.some(attempt => attempt.targets?.length !== 0 && stillOn.some(entry => reached(attempt, entry.id)) && attempt.at >= since - TIMING.clockSkewMs);
+        return { status: 'RECORDING', basis: seen.length ? 'confirmed' : 'requested', since, source: seen.length ? seen[seen.length - 1].source : 'server', lateConfirmation: false, pending: stopAsked ? 'STOP_REQUESTED' : null };
+      }
+    }
     // The session is over (confirmed, or everyone has left) but Zoom never said the recording
     // stopped: it almost certainly did, and that is still a guess.
     const endedAt = f.lastSessionEnd != null && f.lastSessionEnd >= last.at ? f.lastSessionEnd
@@ -652,10 +676,13 @@ function anomaliesOf({ f, phase, attendance, recording, filing, start, end, now 
     add('RECORDING_STOPPED_UNEXPECTEDLY', 'error', last.at);
   }
   // Recording we never started: Zoom's account-level automatic recording, or the host starting
-  // it without our approval, or any start once the lesson may not be recorded.
+  // it without our approval, or any start once the lesson may not be recorded. Each start is
+  // judged by the decision that covered its own room at that moment, so a later room's refused
+  // check never makes an earlier, approved recording look unapproved.
+  const roomOf = entry => (entry.sessionId ? f.known.get(entry.sessionId)?.generation : null) ?? generationAt(f, entry.at);
   const unapproved = startTransitions(f).find(entry =>
     !f.startRequests.some(request => request.at <= entry.at + TIMING.clockSkewMs)
-    || f.eligibility?.eligible !== true
+    || decisionFor(f, roomOf(entry), entry.at)?.eligible !== true
     || (f.withdrawal && entry.at > f.withdrawal.at + TIMING.clockSkewMs)
     || (f.emergency && entry.at > f.emergency.at + TIMING.clockSkewMs)
     || (f.cancellation && entry.at > f.cancellation.at + TIMING.clockSkewMs));
@@ -663,7 +690,6 @@ function anomaliesOf({ f, phase, attendance, recording, filing, start, end, now 
   // the server sent for the generation the room had then; the earlier generation's start does
   // not cover it (2026-11-08). Seen per session, so another room's recording does not hide it.
   // A start in a room the lesson had already left (an older generation) is never approved.
-  const roomOf = entry => (entry.sessionId ? f.known.get(entry.sessionId)?.generation : null) ?? generationAt(f, entry.at);
   const inRoom = roomStartTransitions(f).find(entry => {
     const g = roomOf(entry);
     if (g < generationAt(f, entry.at)) return true;
@@ -983,7 +1009,8 @@ export function planActions(lesson, events, now) {
 // Recording in the current room after a move (see decideRoomRecording): first the check for this
 // room, then the start, which goes to this room's session only. Every condition is checked here
 // again whatever the overview or an authorization said:
-//   the lesson's decision and this room's check both passed (in case B, after the owner's word);
+//   this room's check passed, with consent as it was at that check (in case B, made after the
+//   owner's word; the word itself is no consent);
 //   no withdrawal, no emergency stop, not cancelled, not past its end, the lesson live;
 //   the tutor and a student confirmed in this very session, and nobody there who should not be;
 //   no older room that may still be recording; nothing recording here already.
@@ -991,7 +1018,8 @@ export function planActions(lesson, events, now) {
 function planRoomStart({ lesson, f, state, want, now, endStopAt, cancelled }) {
   const id = lesson.id;
   const g = f.currentGeneration;
-  const blocked = f.baseDecision?.eligible !== true || f.withdrawal || f.emergency || cancelled || now >= endStopAt || state.phase.value === 'ENDED';
+  // The room's own check decides (consent as it is now); the lesson's first decision does not.
+  const blocked = f.withdrawal || f.emergency || cancelled || now >= endStopAt || state.phase.value === 'ENDED';
   if (blocked) return;
   if (f.recheckFrom != null && !f.roomDecision) want(`decide:${id}:g${g}:${f.recheckFrom}`, 'DECIDE_RECORDING', { generation: g });
   if (f.roomDecision?.eligible !== true || state.phase.value !== 'LIVE') return;

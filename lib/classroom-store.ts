@@ -103,8 +103,9 @@ export type ClassroomTransaction = {
   fileRecord(id: string): Promise<RecordingFile | null>;
   fileRecordsForLesson(id: string): Promise<RecordingFile[]>;
   // The latest recording decision; with a generation, the latest made for that generation of the
-  // room (0 is the lesson's own decision, made before it started).
-  eligibility(id: string, generation?: number): Promise<ClassroomEvent | null>;
+  // room (0 is the lesson's own decision, made before it started); with `before`, the latest made
+  // at or before that moment (consent never reaches back to a recording that started earlier).
+  eligibility(id: string, generation?: number, before?: number): Promise<ClassroomEvent | null>;
   withdrawalAt(id: string): Promise<number | null>;
   unknownJoinAt(id: string): Promise<number | null>;
 };
@@ -202,9 +203,10 @@ function readers(state: FileState) {
     lesson,
     fileRecord: (id: string) => clone(state.files[id] ?? null),
     fileRecordsForLesson: (id: string) => clone(Object.values(state.files).filter((file) => file.lessonId === id)),
-    eligibility: (id: string, generation?: number) => clone(Object.values(state.events)
+    eligibility: (id: string, generation?: number, before?: number) => clone(Object.values(state.events)
       .filter((event) => event.lessonId === id && event.type === "server.recording_eligibility"
-        && (generation === undefined || (Number(event.generation) || 0) === generation))
+        && (generation === undefined || (Number(event.generation) || 0) === generation)
+        && (before === undefined || event.occurredAt <= before))
       .sort((a, b) => a.occurredAt - b.occurredAt).pop() ?? null),
     withdrawalAt: (id: string) => earliest(id, (event) => PROTECTIVE_STOPS.includes(String(event.type))),
     // Someone who was never on the roster: an id a revoke or reissue took away still counts as
@@ -255,7 +257,7 @@ function fileTransaction(state: FileState): ClassroomTransaction {
     lesson: async (id) => read.lesson(id),
     fileRecord: async (id) => read.fileRecord(id),
     fileRecordsForLesson: async (id) => read.fileRecordsForLesson(id),
-    eligibility: async (id, generation) => read.eligibility(id, generation),
+    eligibility: async (id, generation, before) => read.eligibility(id, generation, before),
     withdrawalAt: async (id) => read.withdrawalAt(id),
     unknownJoinAt: async (id) => read.unknownJoinAt(id),
   };
@@ -651,17 +653,14 @@ function postgresTransaction(sql: postgres.TransactionSql): ClassroomTransaction
     async fileRecordsForLesson(id) {
       return (await sql`SELECT * FROM public.classroom_recording_files WHERE lesson_id = ${id} ORDER BY created_at, provider_file_id`).map(fromFileRow);
     },
-    async eligibility(id, generation) {
-      const [row] = generation === undefined
-        ? await sql`
-          SELECT data FROM public.classroom_events WHERE lesson_id = ${id} AND type = 'server.recording_eligibility' ORDER BY occurred_at DESC LIMIT 1
-        `
-        : await sql`
-          SELECT data FROM public.classroom_events
-          WHERE lesson_id = ${id} AND type = 'server.recording_eligibility'
-            AND COALESCE(NULLIF(data->>'generation', '')::integer, 0) = ${generation}
-          ORDER BY occurred_at DESC LIMIT 1
-        `;
+    async eligibility(id, generation, before) {
+      const [row] = await sql`
+        SELECT data FROM public.classroom_events
+        WHERE lesson_id = ${id} AND type = 'server.recording_eligibility'
+          AND (${generation ?? null}::integer IS NULL OR COALESCE(NULLIF(data->>'generation', '')::integer, 0) = ${generation ?? null}::integer)
+          AND (${before == null ? null : new Date(before)}::timestamptz IS NULL OR occurred_at <= ${before == null ? null : new Date(before)}::timestamptz)
+        ORDER BY occurred_at DESC LIMIT 1
+      `;
       return row ? fromEventRow(row) : null;
     },
     withdrawalAt: (id) => earliestEvent(sql, id, PROTECTIVE_STOPS),

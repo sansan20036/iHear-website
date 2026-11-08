@@ -49,7 +49,7 @@ export const LABELS = Object.freeze({
   // Recording in the current room after the room moved (a link revoked or reissued).
   roomRecording: {
     RECHECK_PENDING: '已換到新教室：伺服器正在重新確認課程、名單和同意',
-    RECHECK_REFUSED: '已換到新教室：重新確認未通過，新教室不錄影',
+    RECHECK_REFUSED: '已換到新教室：重新確認未通過，新教室不錄影（取得有效同意後，伺服器會自動再確認）',
     WAITING_FOR_AUTHORIZATION: '已換到新教室：新教室不會自動錄影，需要擁有者授權並重新確認同意',
     ALLOWED: '已換到新教室：重新確認通過，可以在新教室錄影',
     BLOCKED: '已換到新教室：這堂課不再錄影',

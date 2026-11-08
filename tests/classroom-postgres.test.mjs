@@ -465,6 +465,12 @@ describe('P1+P3 on PostgreSQL: participant rotation, room generations and a canc
     expect((await store.transaction(tx => tx.eligibility(lesson.id, 0)))?.eligible).toBe(true);
     expect((await store.transaction(tx => tx.eligibility(lesson.id, 1)))?.eligible).toBe(false);
     expect(await store.transaction(tx => tx.eligibility(lesson.id, 2))).toBeNull();
+    // A decision made by a moment (consent never reaches back): with `before`, only those made by then.
+    await store.transaction(tx => storeEvent(tx, decision(true, NOW + 10 * MIN, { generation: 1, key: `decide:${lesson.id}:g1:later` })));
+    expect((await store.transaction(tx => tx.eligibility(lesson.id, 1)))?.eligible).toBe(true);
+    expect((await store.transaction(tx => tx.eligibility(lesson.id, 1, NOW + 5 * MIN)))?.eligible).toBe(false);
+    expect(await store.transaction(tx => tx.eligibility(lesson.id, 1, NOW))).toBeNull();
+    expect((await store.transaction(tx => tx.eligibility(lesson.id, undefined, NOW)))?.eligible).toBe(true);
   });
 
   test('a reissue: generation 1, a new participant id, the old key refused, the new key entering under the new id in the new room', async () => {

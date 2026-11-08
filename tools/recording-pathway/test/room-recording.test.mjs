@@ -2,7 +2,8 @@
 // opens a new generation of the lesson's room. Our rules only, on the lesson state alone; nothing
 // here says how real Zoom behaves.
 //
-//   A  moved before anything was recorded: the new room's own check, then the usual start there
+//   A  moved before anything was recorded: the new room's own check (consent as it is then, so
+//      consent given after the move counts too), then the usual start there
 //   B  moved while recording: the old room stopped and cleaned up; nothing starts in the new room
 //      until an owner authorizes it and the check (from that moment) passes
 //   never: a withdrawal, an emergency stop or a cancellation is undone by a move
@@ -83,11 +84,17 @@ test('A: the new room\'s check refuses (a consent expired, was withdrawn or is o
   assert.deepEqual(starts(planActions(lesson, events, MOVE + 2 * MIN)), []);
 });
 
-test('A: the check only narrows: a lesson that was not eligible is not checked again and never starts after a move', () => {
+test('A: a lesson that was not eligible when it started is checked again after the move, with consent as it is now: it records in the new room only if that check passes (consent valid now counts)', () => {
   const events = [decision(false, T - 15 * MIN, { key: `decide:${lesson.id}`, reason: 'CONSENT_MISSING' }), room(OLD, T - 3 * MIN, 0), joined(OLD, TUTOR, T - 3 * MIN), ...movedIn()];
-  const actions = planActions(lesson, events, MOVE + 2 * MIN);
-  assert.deepEqual([of(actions, 'DECIDE_RECORDING').length, starts(actions).length], [0, 0]);
-  assert.deepEqual([deriveLesson(lesson, events, MOVE + 2 * MIN).roomRecording.status, deriveLesson(lesson, events, MOVE + 2 * MIN).roomRecording.reason], ['BLOCKED', 'NOT_ELIGIBLE']);
+  const now = MOVE + 2 * MIN;
+  const check = of(planActions(lesson, events, now), 'DECIDE_RECORDING');
+  assert.deepEqual(check.map(action => action.generation), [1]);
+  assert.deepEqual(starts(planActions(lesson, events, now)), []);
+  const refused = [...events, decision(false, now, { generation: 1, reason: 'CONSENT_MISSING', key: check[0].key })];
+  assert.deepEqual(starts(planActions(lesson, refused, now + SEC)), []);
+  assert.deepEqual([deriveLesson(lesson, refused, now + SEC).roomRecording.status, deriveLesson(lesson, refused, now + SEC).roomRecording.reason], ['RECHECK_REFUSED', 'CONSENT_MISSING']);
+  const passed = [...events, ...done(check[0], now)];
+  assert.deepEqual(starts(planActions(lesson, passed, now + SEC)), [['start:g1:1', [NEW]]]);
 });
 
 test('B: moved while recording: the old room\'s recording is stopped, and nothing starts or is checked for the new room on its own, though both people are there and the lesson is eligible', () => {

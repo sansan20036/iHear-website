@@ -285,18 +285,19 @@ export async function joinClassroom({ store, provider, lessonId, key, sessionEma
 // roster's consent, no withdrawal since, no emergency stop and no cancellation. The tutor's page
 // stops recording when it is not allowed, and says "not decided yet" rather than "not recorded"
 // before the decision.
-// After the room moved (a link revoked or reissued), the current room also needs its own check
-// to have passed (2026-11-08); until then the lesson may not be recorded there.
+// After the room moved (a link revoked or reissued), the current room's own check decides
+// (2026-11-08): consent as it was at that check, whether given before or after the move; until
+// that check has passed the lesson may not be recorded there.
 const NO_MORE_RECORDING = new Set(["server.consent_withdrawn", "server.emergency_stop", "server.lesson_cancelled"]);
 export function recordingDecision(events: ClassroomEvent[]) {
   const decisions = events.filter((event) => event.type === "server.recording_eligibility").sort((a, b) => a.occurredAt - b.occurredAt);
   const own = decisions.filter((event) => !(Number(event.generation) > 0)).pop();
   const generation = roomGeneration(events);
   const movedAt = events.filter((event) => event.type === "server.room_generation" && Number(event.generation) === generation).reduce((low, event) => Math.min(low, event.occurredAt), Infinity);
-  const room = generation > 0 ? decisions.filter((event) => Number(event.generation) === generation && event.occurredAt >= movedAt).pop() : own;
+  const decision = generation > 0 ? decisions.filter((event) => Number(event.generation) === generation && event.occurredAt >= movedAt).pop() : own;
   return {
-    decided: Boolean(own),
-    allowed: own?.eligible === true && room?.eligible === true && !events.some((event) => NO_MORE_RECORDING.has(String(event.type))),
+    decided: Boolean(decision),
+    allowed: decision?.eligible === true && !events.some((event) => NO_MORE_RECORDING.has(String(event.type))),
   };
 }
 
@@ -366,13 +367,15 @@ export async function emergencyStopRecording({ store, provider, drive, lessonId,
 
 // An owner's word that the lesson may be recorded again in its current room, after the room
 // moved during a recording (2026-11-08, case B). It is not a start: it is stored, and the tick
-// then checks again from now (the lesson, the roster as it is now, and every consent: not
-// withdrawn, not expired, the current version) and starts only if that passes and everything else
-// the start needs holds (both people in the new room, nobody who should not be there, no older
-// room still recording). It is refused, storing nothing, when recording can never come back for
-// this lesson (a withdrawal, an emergency stop, a cancellation, the lesson over or not eligible),
-// when the room never moved or nothing was recorded before the move (the check then runs by
-// itself), while an older room may still be recording, or when the room already may record.
+// then checks again from now (the lesson, the roster as it is now, every student's consent: not
+// withdrawn, not expired, the current version, and the tutor's notice) and starts only if that
+// passes and everything else the start needs holds (both people in the new room, nobody who
+// should not be there, no older room still recording). The word never stands in for anyone's
+// consent: a check that fails is run again by itself after each later consent change. It is
+// refused, storing nothing, when recording can never come back for this lesson (a withdrawal, an
+// emergency stop, a cancellation, the lesson over), when the room never moved or nothing was
+// recorded before the move (the check then runs by itself), while an older room may still be
+// recording, or when the room already may record.
 export async function authorizeRecordingResume({ store, provider, drive, lessonId, now }: {
   store: ClassroomStore; provider: ClassroomProvider; drive: ClassroomDrive; lessonId: string; now: number;
 }) {

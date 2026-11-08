@@ -127,9 +127,12 @@ try {
     await zoom('session.user_left', ended, zoomUser(ended.studentId, `U-S-${ended.code}`, { leave_time: new Date().toISOString(), leave_reason: 'left the session' }));
     await zoom('session.user_left', ended, zoomUser(ended.tutorId, `U-T-${ended.code}`, { leave_time: new Date().toISOString(), leave_reason: 'left the session' }));
     await zoom('session.ended', ended, { end_time: new Date().toISOString() });
+    // The recording runs after the server's decision for this lesson (made by the tick above), as
+    // a real one does: consent never covers a recording that began before it (2026-11-08), and
+    // this lesson's consent is only entered by this test.
     const video = {
       id: `SYN-FILE-${ended.id}`, recording_type: 'shared_screen_with_speaker_view', file_extension: 'MP4', file_type: 'MP4', file_size: 3 * 1024 * 1024, status: 'completed',
-      recording_start: ended.startsAt, recording_end: new Date(Date.parse(ended.endsAt) - 60_000).toISOString(),
+      recording_start: new Date().toISOString(), recording_end: new Date(Date.now() + 60_000).toISOString(),
     };
     await zoom('session.recording_completed', ended, { recording_files: [video] });
     const [year, month] = ended.date.split('-');

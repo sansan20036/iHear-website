@@ -27,7 +27,7 @@ export const STORE_BUDGET_MS = 2000;           // leaves room inside Zoom's 3-se
 // combined lesson video ('composite': Zoom's combined view, LCIC's mixed recording). Each
 // vendor's own type names are mapped there. To check against real recordings of each.
 const ZOOM = 'zoom-video-sdk';
-const HELD_AT_ZOOM = ['AFTER_WITHDRAWAL', 'UNKNOWN_PARTICIPANT', 'NO_CONSENT', 'UNKNOWN_SESSION'];
+const HELD_AT_ZOOM = ['AFTER_WITHDRAWAL', 'UNKNOWN_PARTICIPANT', 'NO_CONSENT', 'BEFORE_CONSENT', 'UNKNOWN_SESSION'];
 
 const RECORDING_EVENTS = {
   'session.recording_started': 'Recording',
@@ -339,19 +339,23 @@ export async function storeEvent(tx, event) {
   return inserted;
 }
 
-// The decision a recording is held to (2026-11-08): in the lesson's first room, the lesson's own;
-// in a newer room (a link was revoked or reissued), the lesson's own and that room's check both;
-// when Zoom did not say which room, the latest decision, whichever room it was for.
-async function eligibleFor(tx, lessonId, generation) {
-  if (generation == null) return (await tx.eligibility(lessonId))?.eligible === true;
-  const own = (await tx.eligibility(lessonId, 0))?.eligible === true;
-  if (generation === 0) return own;
-  return own && (await tx.eligibility(lessonId, generation))?.eligible === true;
+// A recording is covered by the decision for its own room (the lesson's own for the first room,
+// that room's check for a newer one, the latest of any room when Zoom did not name the room)
+// made by the time the recording started (2026-11-08). Consent never reaches back: a decision made
+// only after the recording began does not cover it (BEFORE_CONSENT, held at Zoom like any recording
+// without consent). The tolerance allows only for the two clocks (Zoom's and ours) disagreeing.
+export const CONSENT_CLOCK_TOLERANCE_MS = 10_000;
+async function consentFor(tx, lessonId, generation, recordingStart) {
+  const room = generation ?? undefined;
+  const before = Number.isFinite(recordingStart) ? recordingStart + CONSENT_CLOCK_TOLERANCE_MS : undefined;
+  if ((await tx.eligibility(lessonId, room, before))?.eligible === true) return null;
+  if (before !== undefined && (await tx.eligibility(lessonId, room))?.eligible === true) return 'BEFORE_CONSENT';
+  return 'NO_CONSENT';
 }
 
 async function recordFiles(tx, event) {
   const lesson = event.lessonId ? await tx.lesson(event.lessonId) : null;
-  const eligible = lesson ? await eligibleFor(tx, lesson.id, generationOfRoom(lesson.id, event.sessionName)) : false;
+  const generation = lesson ? generationOfRoom(lesson.id, event.sessionName) : null;
   const withdrawnAt = lesson ? await tx.withdrawalAt(lesson.id) : null;
   const unknownAt = lesson ? await tx.unknownJoinAt(lesson.id) : null;
   // Parts are numbered in recording order within one notice. A notice that arrives after a later
@@ -372,9 +376,10 @@ async function recordFiles(tx, event) {
       uploadSessionUri: null,
       driveFileId: null,
     };
+    const consent = lesson && isKeptRecording(file) ? await consentFor(tx, lesson.id, generation, file.recordingStart) : null;
     if (!isKeptRecording(file)) record.status = 'SKIPPED';
     else if (!lesson) record.hold = 'UNKNOWN_SESSION';
-    else if (!eligible) record.hold = 'NO_CONSENT';
+    else if (consent) record.hold = consent;
     else if (withdrawnAt != null) record.hold = runsPast(file, withdrawnAt) ? 'AFTER_WITHDRAWAL' : 'CONSENT_WITHDRAWN';
     else if (runsPast(file, unknownAt)) record.hold = 'UNKNOWN_PARTICIPANT';
     if (record.status === 'SKIPPED') {
