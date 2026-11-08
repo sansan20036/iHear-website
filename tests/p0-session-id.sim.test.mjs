@@ -21,7 +21,7 @@ const { classroomStore } = await import("../lib/classroom-store");
 const { classroomDrive } = await import("../lib/classroom-drive");
 const { knownSessions } = await import("../lib/classroom-provider");
 const { zoomVideoSdkProvider } = await import("../lib/classroom-vendors/zoom-video-sdk");
-const { createClassroomLesson, recordHostReport, runClassroomTick, stopRecordingForCancelledLesson } = await import("../lib/classroom-service");
+const { createClassroomLesson, recordHostReport, runClassroomTick, setSyntheticConsent, stopRecordingForCancelledLesson } = await import("../lib/classroom-service");
 // @ts-ignore - shared classroom logic, plain JavaScript.
 const { ingestWebhook, signZoomRequest, storeEvent } = await import("../tools/recording-pathway/classroom/webhook-ingest.mjs");
 // @ts-ignore
@@ -98,6 +98,11 @@ async function setup() {
   const start = Date.parse(lesson.startsAt);
   const zoom = fakeZoom();
   const provider = zoomVideoSdkProvider(CONFIG, { transport: zoom.transport, sessionsOf: async target => knownSessions(await store.eventsFor([target.id])) });
+  // Synthetic consent and the tutor's notice, stored for real: every start checks them again just
+  // before Zoom is asked (G2, 2026-11-09), so a decision alone no longer starts anything.
+  const consentAt = Date.parse("2026-12-01T07:00:00Z");
+  await setSyntheticConsent({ store, personCode: `TEST-P0S${lessons}`, role: "student", status: "granted", actor: "p0-owner@example.test", now: consentAt });
+  await setSyntheticConsent({ store, personCode: `TEST-P0T${lessons}`, role: "tutor", status: "granted", actor: "p0-owner@example.test", now: consentAt });
   await store.transaction(tx => storeEvent(tx, { source: "server", type: "server.recording_eligibility", lessonId: lesson.id, eligible: true, reason: "ALL_CONSENTED", count: 0, occurredAt: start - 15 * MIN, receivedAt: start - 15 * MIN, key: `decide:${lesson.id}` }));
   const [tutor, student] = lesson.participants;
   const ctx = { lesson, start, zoom, provider, tutor, student };
@@ -246,23 +251,32 @@ describe("P0: cancelling, stopping and ending under failure", () => {
     expect(ctx.zoom.sent("PATCH", "/events", call => call.body.method === "recording.stop").map(call => call.path)).toEqual(["/videosdk/sessions/ZS-6/events"]);
   });
 
-  test("the server stopped after Zoom took the stop but before storing it: the next tick sends it again (at least once) and keeps one record", async () => {
+  test("the server stopped after Zoom took the stop but before storing it: while its claim holds no other tick sends it; once the lease has run out the next tick asks Zoom's state first, then sends it again (a stop is protective) and keeps one record (G1)", async () => {
     const ctx = await setup();
     await recordingInSession(ctx, "ZS-7");
+    // The crash comes where the stop's result is stored (its operation finished with its facts).
     let crash = true;
     const crashing = {
       ...store,
-      transaction: fn => store.transaction(tx => fn({ ...tx, insertEvent: async event => {
-        if (crash && event.type === "server.stop_requested") { crash = false; throw new Error("the function was stopped"); }
-        return tx.insertEvent(event);
-      } })),
+      finishOperation: async input => {
+        if (crash && input.events?.some(event => event.type === "server.stop_requested")) { crash = false; throw new Error("the function was stopped"); }
+        return store.finishOperation(input);
+      },
     };
     const at = ctx.start + 20 * MIN;
     await store.setLessonCancelled(ctx.lesson.id);
     const answer = await stopRecordingForCancelledLesson({ store: crashing, provider: ctx.provider, drive, lessonId: ctx.lesson.id, now: at });
     expect(answer.body.ticked).toBe(false);
+    const stops = () => ctx.zoom.sent("PATCH", "/events", call => call.body.method === "recording.stop");
+    expect(stops()).toHaveLength(1);
+    // Ten seconds on: the first stop's claim still holds, so it is not sent again.
     await ctx.tick(at + 10 * SEC);
-    expect(ctx.zoom.sent("PATCH", "/events", call => call.body.method === "recording.stop")).toHaveLength(2);
+    expect(stops()).toHaveLength(1);
+    // Past the lease: Zoom's state is asked first (the session's details), then the stop is sent again.
+    const asked = ctx.zoom.sent("GET", "", call => call.path.includes("ZS-7")).length;
+    await ctx.tick(at + 91 * SEC);
+    expect(ctx.zoom.sent("GET", "", call => call.path.includes("ZS-7")).length).toBeGreaterThan(asked);
+    expect(stops().length).toBeGreaterThanOrEqual(2);
     expect((await ctx.events("server.stop_requested")).filter(event => event.attempt === 1)).toHaveLength(1);
   });
 

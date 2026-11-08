@@ -351,7 +351,7 @@ test('without consent the lesson runs normally and recording is never requested'
   assert.deepEqual(planActions(lesson, events, T + 5 * MIN), []);
 });
 
-test('consent entered before anyone is in the room is decided again; once the lesson is live the decision stands', () => {
+test('consent entered before anyone is in the room is decided again; consent completed during class is decided again too (G2, 2026-11-09, pending iHear\'s policy confirmation)', () => {
   const changed = at => fact('server.consent_changed', at, { key: `server.consent_changed:${lesson.id}:TEST-S01:${at}` }, 'server');
   // Decided "no" 15 minutes before; consent arrives 10 minutes before with nobody in the room.
   const early = [eligibility(false), changed(T - 10 * MIN)];
@@ -359,9 +359,10 @@ test('consent entered before anyone is in the room is decided again; once the le
   const redecided = [...early, fact('server.recording_eligibility', T - 9 * MIN, { eligible: true, reason: 'ALL_CONSENTED', key: `decide:${lesson.id}:${T - 10 * MIN}` }, 'server')];
   assert.deepEqual(planActions(lesson, redecided, T - 8 * MIN), []);
   assert.equal(deriveLesson(lesson, redecided, T - 8 * MIN).recording.status, 'NOT_REQUESTED');
-  // Consent completed after the tutor came in: the lesson stays unrecorded.
+  // Consent completed after the tutor came in: decided again, the same way (until then it stays
+  // unrecorded); the start that may follow checks once more and covers only what comes after it.
   const live = [eligibility(false), started(), joinedFact(TUTOR, T - 3 * MIN, 'u-t'), changed(T - 2 * MIN)];
-  assert.deepEqual(planActions(lesson, live, T - MIN), []);
+  assert.deepEqual(planActions(lesson, live, T - MIN).map(action => [action.type, action.key]), [['DECIDE_RECORDING', `decide:${lesson.id}:${T - 2 * MIN}`]]);
   assert.equal(deriveLesson(lesson, live, T - MIN).recording.status, 'BLOCKED');
 });
 

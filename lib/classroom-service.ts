@@ -5,12 +5,14 @@ import { getJoinEligibility, getRecordingEligibility, JOIN_WINDOW_AFTER_MS, JOIN
 // @ts-ignore - shared classroom logic, plain JavaScript tested with node --test.
 import { fileRecording, ingestApiSnapshot, ingestHostReport, processJobs, storeEvent } from "../tools/recording-pathway/classroom/webhook-ingest.mjs";
 // @ts-ignore - shared classroom logic, plain JavaScript tested with node --test.
-import { cancellationKey, deriveLesson, dueReconciliations, planActions } from "../tools/recording-pathway/classroom/lesson-state.mjs";
+import { cancellationKey, deriveLesson, dueReconciliations, planActions, TIMING } from "../tools/recording-pathway/classroom/lesson-state.mjs";
 // @ts-ignore - shared classroom logic, plain JavaScript tested with node --test.
 import { buildDashboard, LABELS } from "../tools/recording-pathway/classroom/live-dashboard.mjs";
+// @ts-ignore - shared classroom logic, plain JavaScript.
+import { answerLost, mayHaveReachedZoom, OPERATED } from "../tools/recording-pathway/classroom/operations.mjs";
 import type { ClassroomDrive } from "./classroom-drive";
 import type { ClassroomProvider } from "./classroom-provider";
-import type { ClassroomEvent, ClassroomLesson, ClassroomStore, RecordingFile } from "./classroom-store";
+import type { ClassroomEvent, ClassroomLesson, ClassroomStore, OperationState, RecordingFile } from "./classroom-store";
 import { sessionReportsEnabled, vendorDeletionEnabled } from "./classroom-switches";
 
 const RECORDING_LABELS: Record<string, string> = LABELS.recording;
@@ -479,7 +481,7 @@ export async function recordHostReport({ store, provider, drive, lessonId, sessi
   };
 }
 
-type Action = { key: string; type: string; lessonId: string; attempt?: number; reason?: string; channels?: string[]; userKey?: string; code?: string; targets?: string[]; generation?: number };
+type Action = { key: string; type: string; lessonId: string; attempt?: number; reason?: string; channels?: string[]; userKey?: string; code?: string; targets?: string[]; generation?: number; operation?: string };
 
 async function serverEvent(store: ClassroomStore, events: ClassroomEvent[]) {
   await store.transaction(async (tx) => {
@@ -511,45 +513,186 @@ async function toSessions(targets: string[] | undefined, call: (sessionId?: stri
   return { ok: results.every((result) => result.ok), httpStatus: results[0].httpStatus, targets, results };
 }
 
-async function perform({ store, provider, lesson, action, now }: { store: ClassroomStore; provider: ClassroomProvider; lesson: ClassroomLesson; action: Action; now: number }) {
+// Every student's consent and the tutor's notice as they are now, for the roster as it is now
+// (after a revoke or reissue the student has a new id; consent goes by the person's code).
+async function consentNow(store: ClassroomStore, lesson: ClassroomLesson, now: number) {
+  const students = lesson.participants.filter((entry) => entry.role === "student");
+  const tutor = lesson.participants.find((entry) => entry.role === "tutor");
+  const consents = (await store.listConsents(students.map((entry) => entry.code))).flatMap((record) => {
+    const student = students.find((entry) => entry.code === record.personCode);
+    return student ? [{ participantId: student.id, status: record.status, version: record.version, grantedAt: record.grantedAt, withdrawnAt: record.withdrawnAt, expiresAt: record.expiresAt }] : [];
+  });
+  const notices = tutor ? (await store.listStaffNotices([tutor.code])).map((record) => ({ participantId: tutor.id, version: record.version, acknowledgedAt: record.acknowledgedAt })) : [];
+  return getRecordingEligibility({ lesson: forRules(lesson), consents, notices, policy: consentPolicy(), now });
+}
+
+// G2 (2026-11-09): every start checks again just before Zoom is asked, in a lesson that never moved
+// as in a moved room: the lesson (not cancelled, not over), the room (still the lesson's current
+// generation, its session still live), the owner's word where a move during a recording needs it,
+// and every consent and the tutor's notice as they are now. A withdrawal, an emergency stop or a
+// cancellation refuses for good. The check is stored as a decision for the room (its time is just
+// before the recording starts), so filing judges the recording by exactly this check: consent
+// covers what is recorded from then on, never anything before.
+async function checkBeforeStart({ store, lesson: planned, action, now, version }: { store: ClassroomStore; lesson: ClassroomLesson; action: Action; now: number; version: number }) {
+  const refuse = (reason: string) => ({ ok: false as const, reason });
+  // The lesson and its facts as they are now, not as the tick read them when it planned.
+  const lesson = await store.lesson(planned.id);
+  if (!lesson) return refuse("LESSON_NOT_FOUND");
+  const events = await store.eventsFor([lesson.id]);
+  const state = deriveLesson(forRules(lesson), events, now);
+  const generation = roomGeneration(events);
+  if (lesson.cancelled || state.cancellation) return refuse("LESSON_CANCELLED");
+  if (state.withdrawal) return refuse("CONSENT_WITHDRAWN");
+  if (state.emergency) return refuse("EMERGENCY_STOP");
+  if (now >= Date.parse(lesson.endsAt) + TIMING.lessonEndStopMs) return refuse("LESSON_OVER");
+  if ((Number(action.generation) || 0) !== generation) return refuse("ROOM_CHANGED");
+  const target = action.targets?.[0];
+  if (target && state.sessions.some((entry: { id: string; live: boolean }) => entry.id === target && !entry.live)) return refuse("SESSION_ENDED");
+  if (generation > 0 && state.roomRecording?.rule === "AUTHORIZATION_REQUIRED" && state.roomRecording.authorizedAt == null) return refuse("AUTHORIZATION_MISSING");
+  const decision = await consentNow(store, lesson, now);
+  await serverEvent(store, [{
+    source: "server", type: "server.recording_eligibility", lessonId: lesson.id, occurredAt: now, receivedAt: now,
+    eligible: decision.eligible, reason: decision.reason, count: "count" in decision ? decision.count : 0, beforeStart: true,
+    key: `${action.key}:check:${version}`, ...(generation > 0 ? { generation } : {}),
+  }]);
+  return decision.eligible ? { ok: true as const } : refuse(String(decision.reason));
+}
+
+// The facts a recording action leaves, as before G1: the request and Zoom's answer.
+function actionFacts(action: Action, lesson: ClassroomLesson, now: number, sent: { ok: boolean; httpStatus: number; targets?: string[]; results?: unknown[] }, extra: Record<string, unknown> = {}): ClassroomEvent[] {
   const base = { source: "server", lessonId: lesson.id, occurredAt: now, receivedAt: now };
+  const named = sent.targets ? { targets: sent.targets, results: sent.results } : {};
+  if (action.type === "START_RECORDING") {
+    const room = Number(action.generation) > 0 ? { generation: Number(action.generation) } : {};
+    return [
+      { ...base, type: "server.start_requested", attempt: action.attempt, key: action.key, ...named, ...room, ...extra },
+      { ...base, type: "server.start_response", attempt: action.attempt, ok: sent.ok, httpStatus: sent.httpStatus, key: `${action.key}:response`, ...named, ...room, ...extra },
+    ];
+  }
+  if (action.type === "STOP_RECORDING") {
+    return [{ ...base, type: "server.stop_requested", reason: action.reason, attempt: action.attempt, channels: action.channels, ok: sent.ok, key: action.key, ...named, ...extra }];
+  }
+  return [{ ...base, type: "server.session_end_requested", reason: action.reason, ok: sent.ok, key: action.key, ...named, ...extra }];
+}
+
+const RECORDING_FACT_TYPES = new Set(["session.recording_started", "session.recording_resumed", "session.recording_paused", "session.recording_stopped", "host.recording_status"]);
+const ZOOM_SOURCES = new Set(["zoom_webhook", "zoom_api", "host_sdk"]);
+
+// G1: what Zoom says happened with an action whose earlier attempt may have reached it, before
+// anything is sent again: first Zoom's own notices stored since the operation began, then the
+// vendor's answer about each session now. DONE: it happened (or, for a stop or an end, what it
+// was for is already so); NOT_DONE: it did not; UNKNOWN: Zoom's state cannot be told. What the
+// vendor answered is stored as its own fact.
+async function observeOperation({ store, provider, lesson, action, since, now, version }: { store: ClassroomStore; provider: ClassroomProvider; lesson: ClassroomLesson; action: Action; since: number; now: number; version: number }) {
+  const targets = action.targets ?? [];
+  if (!targets.length) return { verdict: "UNKNOWN" as const, facts: [] as ClassroomEvent[] };
+  const events = await store.eventsFor([lesson.id]);
+  const after = since - TIMING.clockSkewMs;
+  const facts: ClassroomEvent[] = [];
+  const verdicts: ("DONE" | "NOT_DONE" | "UNKNOWN")[] = [];
+  for (const sessionId of targets) {
+    const about = events.filter((event) => event.providerSessionId === sessionId && ZOOM_SOURCES.has(String(event.source)) && event.occurredAt >= after);
+    const ended = events.some((event) => event.providerSessionId === sessionId && (event.type === "session.ended"
+      || (event.type === "server.session_verified" && event.ended === true) || (event.type === "api.snapshot" && event.live === false)));
+    const lastStatus = about.filter((event) => RECORDING_FACT_TYPES.has(String(event.type))).map((event) => event.status).pop();
+    if (action.type === "START_RECORDING" && lastStatus === "Recording") { verdicts.push("DONE"); continue; }
+    if (action.type === "STOP_RECORDING" && (lastStatus === "Stopped" || ended)) { verdicts.push("DONE"); continue; }
+    if (action.type === "END_SESSION" && ended) { verdicts.push("DONE"); continue; }
+    let seen: { live: boolean | null; recording: boolean | null } = { live: null, recording: null };
+    try {
+      if (provider.observe) seen = await provider.observe(lesson, sessionId);
+    } catch {
+      seen = { live: null, recording: null };
+    }
+    const fact = (type: string, fields: Record<string, unknown>) => facts.push({ source: "zoom_api", type, lessonId: lesson.id, providerSessionId: sessionId, occurredAt: now, receivedAt: now, key: `observed:${action.key}:${version}:${sessionId}:${type}`, ...fields });
+    if (seen.live === false) fact("server.session_verified", { source: "server", ended: true });
+    if (action.type === "START_RECORDING") {
+      if (seen.recording === true) { fact("session.recording_started", { status: "Recording" }); verdicts.push("DONE"); } else if (seen.recording === false || seen.live === false) verdicts.push("NOT_DONE");
+      else verdicts.push("UNKNOWN");
+    } else if (action.type === "STOP_RECORDING") {
+      if (seen.recording === false || seen.live === false) { if (seen.live !== false) fact("session.recording_stopped", { status: "Stopped" }); verdicts.push("DONE"); } else if (seen.recording === true) verdicts.push("NOT_DONE");
+      else verdicts.push("UNKNOWN");
+    } else if (seen.live === false) verdicts.push("DONE");
+    else if (seen.live === true) verdicts.push("NOT_DONE");
+    else verdicts.push("UNKNOWN");
+  }
+  const verdict = verdicts.every((entry) => entry === "DONE") ? "DONE" : verdicts.includes("UNKNOWN") ? "UNKNOWN" : "NOT_DONE";
+  return { verdict, facts };
+}
+
+// G1 (2026-11-09): a start, a stop or an end is carried out under a claim on its operation (the
+// action's stable key, stored as op:<key> before Zoom is asked), so of several ticks, instances or
+// retries at once exactly one asks Zoom. An executor that finds the last owner may have reached Zoom
+// (it crashed, its lease ran out, or Zoom's answer was lost) asks Zoom's state first:
+//   start: sent again only when Zoom's state shows it did not happen; when that cannot be told, the
+//          operation stays UNKNOWN, is flagged, and is asked about again later, never resent blindly
+//   stop, end: protective and harmless to repeat, so sent again unless Zoom's state shows they are
+//          already so; still never shown as stopped or ended without Zoom's word
+// A start whose answer was lost leaves no "asked" fact, so the overview shows it as requested with
+// an unknown outcome, and recording counts as possibly on (every protective stop reaches it).
+async function performOperated({ store, provider, lesson, action, now, owner }: { store: ClassroomStore; provider: ClassroomProvider; lesson: ClassroomLesson; action: Action; now: number; owner: string }) {
+  const resolving = action.type === "RESOLVE_OPERATION";
+  const operation = resolving ? String(action.operation) : action.key;
+  const params = resolving ? null : { attempt: action.attempt, reason: action.reason, channels: action.channels, targets: action.targets, generation: action.generation };
+  const claim = await store.claimOperation({ operation, lessonId: lesson.id, action: action.type, params, owner, now });
+  if (!claim.acquired) return;
+  const act = { ...(claim.params as Partial<Action>), key: operation, type: claim.action, lessonId: lesson.id } as Action;
+  const finish = (state: OperationState, outcome: Record<string, unknown>, events: ClassroomEvent[] = []) =>
+    store.finishOperation({ operation, version: claim.version, state, outcome, now, events });
+  if (resolving || mayHaveReachedZoom(claim.previous)) {
+    const seen = await observeOperation({ store, provider, lesson, action: act, since: claim.since, now, version: claim.version });
+    if (seen.verdict === "DONE") {
+      await finish("DONE", { confirmedBy: "zoom" }, [...seen.facts, ...actionFacts(act, lesson, now, { ok: true, httpStatus: 0, targets: act.targets ?? undefined, results: [] }, { confirmedBy: "zoom" })]);
+      return;
+    }
+    if (resolving) {
+      await finish(seen.verdict === "NOT_DONE" ? "NOT_EXECUTED" : "UNKNOWN", { observed: seen.verdict }, seen.facts);
+      return;
+    }
+    if (seen.verdict === "UNKNOWN" && act.type === "START_RECORDING") {
+      await finish("UNKNOWN", { observed: seen.verdict }, seen.facts);
+      return;
+    }
+    if (seen.facts.length) await serverEvent(store, seen.facts);
+  }
+  if (act.type === "START_RECORDING") {
+    const check = await checkBeforeStart({ store, lesson, action: act, now, version: claim.version });
+    if (!check.ok) {
+      await finish("NOT_EXECUTED", { refused: check.reason });
+      return;
+    }
+  }
+  const call = act.type === "START_RECORDING" ? (sessionId?: string) => provider.startRecording(lesson, sessionId)
+    : act.type === "STOP_RECORDING" ? (sessionId?: string) => provider.stopRecording(lesson, sessionId)
+      : (sessionId?: string) => provider.endSession(lesson, sessionId);
+  const sent = await toSessions(act.targets, call);
+  const statuses = sent.results?.length ? sent.results.map((entry) => entry.httpStatus) : [sent.httpStatus];
+  const lost = statuses.some(answerLost);
+  if (lost && act.type === "START_RECORDING") {
+    // Zoom may have started it: nothing is stored as asked or answered, the operation is UNCERTAIN,
+    // and the next tick asks Zoom's state before anything else.
+    await finish("UNCERTAIN", { httpStatuses: statuses });
+    return;
+  }
+  const facts = actionFacts(act, lesson, now, sent, lost ? { answerLost: true } : {});
+  const finished = await finish(lost ? "UNCERTAIN" : "DONE", { httpStatuses: statuses }, facts);
+  // Fenced out (this run's lease ran out and another executor took over): Zoom's answer is still a
+  // fact, kept once by its key; the operation's state is the other executor's.
+  if (!finished && !lost) await serverEvent(store, facts);
+}
+
+async function perform({ store, provider, lesson, action, now, owner }: { store: ClassroomStore; provider: ClassroomProvider; lesson: ClassroomLesson; action: Action; now: number; owner: string }) {
+  const base = { source: "server", lessonId: lesson.id, occurredAt: now, receivedAt: now };
+  if (OPERATED.has(action.type) || action.type === "RESOLVE_OPERATION") {
+    await performOperated({ store, provider, lesson, action, now, owner });
+    return;
+  }
   switch (action.type) {
     case "DECIDE_RECORDING": {
-      const students = lesson.participants.filter((entry) => entry.role === "student");
-      const tutor = lesson.participants.find((entry) => entry.role === "tutor");
-      const consents = (await store.listConsents(students.map((entry) => entry.code))).flatMap((record) => {
-        const student = students.find((entry) => entry.code === record.personCode);
-        return student ? [{ participantId: student.id, status: record.status, version: record.version, grantedAt: record.grantedAt, withdrawnAt: record.withdrawnAt, expiresAt: record.expiresAt }] : [];
-      });
-      const notices = tutor ? (await store.listStaffNotices([tutor.code])).map((record) => ({ participantId: tutor.id, version: record.version, acknowledgedAt: record.acknowledgedAt })) : [];
-      // The roster as it is now (after a revoke or reissue the student has a new id; consent goes
-      // by the person's code, so it still counts) and each consent as it is now.
-      const decision = getRecordingEligibility({ lesson: forRules(lesson), consents, notices, policy: consentPolicy(), now });
+      const decision = await consentNow(store, lesson, now);
       // A check for a newer room says which room it was for (2026-11-08).
       const room = Number(action.generation) > 0 ? { generation: Number(action.generation) } : {};
       await serverEvent(store, [{ ...base, type: "server.recording_eligibility", eligible: decision.eligible, reason: decision.reason, count: "count" in decision ? decision.count : 0, key: action.key, ...room }]);
-      return;
-    }
-    case "START_RECORDING": {
-      // The request and the provider's answer are stored together; 202 only means "accepted".
-      const { targets, results, ...result } = await toSessions(action.targets, (sessionId) => provider.startRecording(lesson, sessionId));
-      const named = { ...(targets ? { targets, results } : {}), ...(Number(action.generation) > 0 ? { generation: Number(action.generation) } : {}) };
-      await serverEvent(store, [
-        { ...base, type: "server.start_requested", attempt: action.attempt, key: action.key, ...named },
-        { ...base, type: "server.start_response", attempt: action.attempt, ok: result.ok, httpStatus: result.httpStatus, key: `${action.key}:response`, ...named },
-      ]);
-      return;
-    }
-    case "STOP_RECORDING": {
-      // Accepted (202) is a request, never a stop: only Zoom's own word confirms it.
-      const { targets, results, ok } = await toSessions(action.targets, (sessionId) => provider.stopRecording(lesson, sessionId));
-      await serverEvent(store, [{ ...base, type: "server.stop_requested", reason: action.reason, attempt: action.attempt, channels: action.channels, ok, key: action.key, ...(targets ? { targets, results } : {}) }]);
-      return;
-    }
-    case "END_SESSION": {
-      // Accepted (204) is a request, never an end: only Zoom's notice or answer confirms it (G-2).
-      const { targets, results, ok } = await toSessions(action.targets, (sessionId) => provider.endSession(lesson, sessionId));
-      await serverEvent(store, [{ ...base, type: "server.session_end_requested", reason: action.reason, ok, key: action.key, ...(targets ? { targets, results } : {}) }]);
       return;
     }
     case "REMOVE_USER": {
@@ -660,7 +803,7 @@ export async function runClassroomTick({ store, provider, drive, now, lessonIds,
   }
   for (const lesson of lessons) {
     for (const action of planActions(forRules(lesson), byLesson.get(lesson.id) ?? [], now) as Action[]) {
-      await perform({ store, provider, lesson, action, now });
+      await perform({ store, provider, lesson, action, now, owner: workerId });
       summary.actions += 1;
     }
   }

@@ -3,6 +3,8 @@ import path from "node:path";
 
 import postgres from "postgres";
 
+import { claimFor, finishFor, operationEvent, operationKey } from "../tools/recording-pathway/classroom/operations.mjs";
+
 // Storage for the P3 classroom: lessons and their participants (codes only), recording consent
 // (synthetic until the policy is approved), the event log the live overview is derived from,
 // leased jobs, recording files and persisted anomaly records.
@@ -110,6 +112,15 @@ export type ClassroomTransaction = {
   unknownJoinAt(id: string): Promise<number | null>;
 };
 
+export type OperationState = "IN_FLIGHT" | "UNCERTAIN" | "UNKNOWN" | "NOT_EXECUTED" | "DONE";
+export type OperationClaimInput = {
+  operation: string; lessonId: string; action?: string; params?: Record<string, unknown> | null;
+  owner: string; now: number; leaseMs?: number; unknownRetryMs?: number;
+};
+export type OperationClaim =
+  | { acquired: false; state: OperationState | null }
+  | { acquired: true; version: number; previous: OperationState | null; since: number; action: string; params: Record<string, unknown> };
+
 export type ClassroomStore = {
   kind: "postgres" | "file";
   transaction<T>(fn: (tx: ClassroomTransaction) => Promise<T>): Promise<T>;
@@ -139,6 +150,12 @@ export type ClassroomStore = {
   // (another change came first) or any of the facts is already stored (another change took that
   // generation).
   rotateStudent(lessonId: string, fromId: string, toId: string, keyHash: string, events: ClassroomEvent[]): Promise<boolean>;
+  // G1: a recording action (start, stop, end) is carried out by one executor at a time. Its state
+  // (op:<action key>) is claimed and finished each in one atomic step; see operations.mjs.
+  claimOperation(input: OperationClaimInput): Promise<OperationClaim>;
+  // Only while the caller still holds the claim (its version, still IN_FLIGHT); the events (the
+  // action's facts) are stored in the same step. False: fenced out, nothing changed.
+  finishOperation(input: { operation: string; version: number; state: OperationState; outcome?: Record<string, unknown>; now: number; events?: ClassroomEvent[] }): Promise<boolean>;
   listConsents(codes: string[]): Promise<ClassroomConsent[]>;
   setConsent(consent: ClassroomConsent): Promise<void>;
   listStaffNotices(codes: string[]): Promise<ClassroomStaffNotice[]>;
@@ -400,6 +417,22 @@ export function createFileClassroomStore(filePath: string): ClassroomStore {
       student.id = toId;
       student.joinKeyHash = keyHash;
       for (const event of events) state.events[event.key] = clone(event);
+      return true;
+    }),
+    // One write each (the file store's writes run one at a time): the claim and the result.
+    claimOperation: (input) => run((state): OperationClaim => {
+      const key = operationKey(input.operation);
+      const result = claimFor(state.events[key] ?? null, input);
+      if (!result.acquired) return { acquired: false, state: result.state };
+      state.events[key] = clone(operationEvent(result.next));
+      return { acquired: true, version: result.next.version, previous: result.previous, since: result.next.since, action: result.next.action, params: result.next.params };
+    }),
+    finishOperation: (input) => run((state) => {
+      const key = operationKey(input.operation);
+      const next = finishFor(state.events[key] ?? null, input);
+      if (!next) return false;
+      state.events[key] = clone(operationEvent(next));
+      for (const event of input.events ?? []) if (!state.events[event.key]) state.events[event.key] = clone(event);
       return true;
     }),
     listConsents: (codes) => run((state) => clone(state.consents.filter((item) => codes.includes(item.personCode))), false),
@@ -859,6 +892,46 @@ export function createPostgresClassroomStore(sql: postgres.Sql): ClassroomStore 
         if (error === taken) return false;
         throw error;
       }
+    },
+    // G1. The claim: the operation's row locked (FOR UPDATE), or, the first time, inserted, where of
+    // two first claims at once the primary key lets exactly one through; then the rule applied and
+    // the new state written, in one transaction.
+    async claimOperation(input) {
+      const key = operationKey(input.operation);
+      return sql.begin(async (tx) => {
+        const [row] = await tx`SELECT data FROM public.classroom_events WHERE key = ${key} FOR UPDATE`;
+        const result = claimFor(row ? fromEventRow(row) : null, input);
+        if (!result.acquired) return { acquired: false, state: result.state };
+        const event = operationEvent(result.next) as ClassroomEvent;
+        if (row) {
+          const values = eventValues(event);
+          await tx`
+            UPDATE public.classroom_events SET occurred_at = ${values.occurred_at}, received_at = ${values.received_at}, data = ${tx.json(event as postgres.JSONValue)}
+            WHERE key = ${key}
+          `;
+        } else if (!(await postgresTransaction(tx).insertEvent(event))) {
+          return { acquired: false, state: "IN_FLIGHT" };
+        }
+        return { acquired: true, version: result.next.version, previous: result.previous, since: result.next.since, action: result.next.action, params: result.next.params };
+      }) as Promise<OperationClaim>;
+    },
+    // The result: only under the caller's claim (row locked, same version, still IN_FLIGHT); the
+    // action's facts are stored in the same transaction.
+    async finishOperation(input) {
+      const key = operationKey(input.operation);
+      return sql.begin(async (tx) => {
+        const [row] = await tx`SELECT data FROM public.classroom_events WHERE key = ${key} FOR UPDATE`;
+        const next = finishFor(row ? fromEventRow(row) : null, input);
+        if (!next) return false;
+        const event = operationEvent(next) as ClassroomEvent;
+        const values = eventValues(event);
+        await tx`
+          UPDATE public.classroom_events SET occurred_at = ${values.occurred_at}, received_at = ${values.received_at}, data = ${tx.json(event as postgres.JSONValue)}
+          WHERE key = ${key}
+        `;
+        for (const fact of input.events ?? []) await postgresTransaction(tx).insertEvent(fact);
+        return true;
+      }) as Promise<boolean>;
     },
     async listConsents(codes) {
       if (!codes.length) return [];

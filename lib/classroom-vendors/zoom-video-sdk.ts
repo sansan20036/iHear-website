@@ -147,6 +147,15 @@ export function zoomVideoSdkProvider(config: ZoomVideoSdkConfig, options: Option
       if (keyMatches === false || nameMatches === false || (keyMatches === null && nameMatches === null)) return { verified: false, reason: "MISMATCH" };
       return { verified: true, ended: found.type === "past", ...(nameMatches ? { name: String(name).toLowerCase() } : {}) };
     },
+    // What Zoom says about one session now (G1, 2026-11-09), asked before a recording request whose
+    // answer was lost is sent again: live, or over (then it is not recording either). Whether a live
+    // session is recording is not something its details are known to say (unverified, V-14), so
+    // that stays null and the server waits for Zoom's own recording notice instead.
+    async observe(_lesson, sessionId) {
+      const found = await details(sessionId, ["live", "past"]);
+      if (!found.found) return { live: null, recording: null };
+      return found.type === "past" ? { live: false, recording: false } : { live: true, recording: null };
+    },
     // The current session's details and people (as past once it has ended), its recordings, and
     // the recordings of any earlier session whose files are not known yet. Recordings are asked
     // for even when Zoom no longer describes the session.

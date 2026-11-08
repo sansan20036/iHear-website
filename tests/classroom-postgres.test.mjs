@@ -376,6 +376,64 @@ describe('student links and my lessons on PostgreSQL', () => {
   });
 });
 
+// G1 (2026-11-09) on PostgreSQL: a recording action's operation is claimed by exactly one
+// executor (a row lock, or for the first claim the primary key), its lease is taken over only
+// once it ran out, a run whose lease was taken over is fenced out, and the result is stored with
+// the action's facts in one transaction. Several server instances share this database, so this
+// is the guarantee that counts in production.
+describe('G1 on PostgreSQL: one executor per recording action', () => {
+  const T0 = Date.parse('2026-11-25T08:00:00Z');
+  const claim = (operation, owner, now, extra = {}) => store.claimOperation({ operation, lessonId: 'L-pg-ops', action: 'START_RECORDING', params: { attempt: 1, targets: ['ZS-PG-OPS'] }, owner, now, ...extra });
+  const opRow = async operation => (await store.eventsFor(['L-pg-ops'])).find(event => event.key === `op:${operation}`);
+
+  test('ten first claims at once: exactly one acquires the operation, the others see it IN_FLIGHT; the row holds one claim', async () => {
+    const results = await Promise.all(Array.from({ length: 10 }, (_, n) => claim('start:L-pg-ops:1', `worker-${n}`, T0)));
+    expect(results.filter(result => result.acquired)).toHaveLength(1);
+    expect(results.filter(result => !result.acquired).every(result => result.state === 'IN_FLIGHT')).toBe(true);
+    expect(await opRow('start:L-pg-ops:1')).toMatchObject({ state: 'IN_FLIGHT', version: 1, attempts: 1 });
+  });
+
+  test('ten takeovers at once of a claim whose lease ran out: exactly one acquires it (the row lock), with the next version', async () => {
+    const first = await claim('start:L-pg-ops:takeover', 'crashed', T0);
+    expect(first.acquired).toBe(true);
+    const results = await Promise.all(Array.from({ length: 10 }, (_, n) => claim('start:L-pg-ops:takeover', `worker-${n}`, T0 + 91_000)));
+    expect(results.filter(result => result.acquired)).toHaveLength(1);
+    expect(results.find(result => result.acquired)).toMatchObject({ version: 2, previous: 'IN_FLIGHT' });
+    expect(await opRow('start:L-pg-ops:takeover')).toMatchObject({ state: 'IN_FLIGHT', version: 2, attempts: 2 });
+  });
+
+  test('a live lease is never taken; once it ran out it is taken over (next version, previous IN_FLIGHT), and the first owner\'s finish is fenced out and stores nothing', async () => {
+    const first = await claim('start:L-pg-ops:2', 'first', T0);
+    expect(first.acquired).toBe(true);
+    expect((await claim('start:L-pg-ops:2', 'second', T0 + 30_000)).acquired).toBe(false);
+    const second = await claim('start:L-pg-ops:2', 'second', T0 + 91_000);
+    expect(second).toMatchObject({ acquired: true, version: 2, previous: 'IN_FLIGHT' });
+    const fact = { source: 'server', type: 'server.start_requested', lessonId: 'L-pg-ops', occurredAt: T0, receivedAt: T0, key: 'start:L-pg-ops:2', attempt: 1 };
+    expect(await store.finishOperation({ operation: 'start:L-pg-ops:2', version: first.version, state: 'DONE', now: T0 + 92_000, events: [fact] })).toBe(false);
+    expect((await store.eventsFor(['L-pg-ops'])).some(event => event.key === 'start:L-pg-ops:2')).toBe(false);
+    expect(await store.finishOperation({ operation: 'start:L-pg-ops:2', version: second.version, state: 'DONE', now: T0 + 93_000, events: [fact] })).toBe(true);
+    expect((await store.eventsFor(['L-pg-ops'])).filter(event => event.key === 'start:L-pg-ops:2')).toHaveLength(1);
+    expect(await opRow('start:L-pg-ops:2')).toMatchObject({ state: 'DONE', owner: null, leaseUntil: null });
+  });
+
+  test('DONE is never claimed again; UNCERTAIN and NOT_EXECUTED are claimed at once; UNKNOWN only after the retry wait; each claim counts its attempt', async () => {
+    const done = await claim('start:L-pg-ops:3', 'a', T0);
+    await store.finishOperation({ operation: 'start:L-pg-ops:3', version: done.version, state: 'DONE', now: T0 });
+    expect(await claim('start:L-pg-ops:3', 'b', T0 + 10 * MIN)).toMatchObject({ acquired: false, state: 'DONE' });
+    for (const state of ['UNCERTAIN', 'NOT_EXECUTED']) {
+      const operation = `start:L-pg-ops:${state}`;
+      const held = await claim(operation, 'a', T0);
+      await store.finishOperation({ operation, version: held.version, state, now: T0 });
+      expect(await claim(operation, 'b', T0 + 1)).toMatchObject({ acquired: true, version: 2, previous: state });
+    }
+    const unknown = await claim('start:L-pg-ops:4', 'a', T0);
+    await store.finishOperation({ operation: 'start:L-pg-ops:4', version: unknown.version, state: 'UNKNOWN', now: T0 });
+    expect(await claim('start:L-pg-ops:4', 'b', T0 + 59_000)).toMatchObject({ acquired: false, state: 'UNKNOWN' });
+    expect(await claim('start:L-pg-ops:4', 'b', T0 + 60_000)).toMatchObject({ acquired: true, version: 2, previous: 'UNKNOWN' });
+    expect(await opRow('start:L-pg-ops:4')).toMatchObject({ attempts: 2, since: T0 });
+  });
+});
+
 // P1+P3 integration (2026-11-08) on PostgreSQL: a reissue's new participant id is written with
 // its record in one transaction (D-4), the room's generations (D-1), and a cancelled lesson's
 // live session ended by the server (D-2). Synthetic data only; a stand-in provider records calls.

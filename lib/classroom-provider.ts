@@ -39,6 +39,9 @@ export type KnownSession = { id: string; ended: boolean; recordingsKnown: boolea
 // asked now.
 export type SessionCheck = { verified: true; ended: boolean; name?: string } | { verified: false; reason: "NOT_FOUND" | "MISMATCH" } | null;
 export type SessionToken = { token: string; issuedAt: number; expiresAt: number };
+// What the vendor says about one session right now (G1, 2026-11-09): whether it is still live and
+// whether it is recording; null for anything it would not or could not say.
+export type ProviderObservation = { live: boolean | null; recording: boolean | null };
 // What the browser needs to enter: a token for an SDK (Zoom, synthetic), or the address of the
 // vendor's classroom page (LCIC). The token's hash is what iHear stores, never the token.
 export type PreparedJoin =
@@ -57,6 +60,9 @@ export type ClassroomProvider = {
   // lesson's latest known session, as before.
   startRecording(lesson: ClassroomLesson, sessionId?: string): Promise<ProviderCall>;
   stopRecording(lesson: ClassroomLesson, sessionId?: string): Promise<ProviderCall>;
+  // Asked before a recording action is sent again after its answer was lost (G1): what the vendor
+  // says about the session now. Never sends anything that changes the session.
+  observe?(lesson: ClassroomLesson, sessionId: string): Promise<ProviderObservation>;
   endSession(lesson: ClassroomLesson, sessionId?: string): Promise<ProviderCall>;
   removeUser(lesson: ClassroomLesson, userKey: string): Promise<ProviderCall>;
   snapshot(lesson: ClassroomLesson): Promise<ProviderSnapshot | null>;
@@ -147,6 +153,14 @@ function syntheticProvider(): ClassroomProvider {
     stopRecording: (lesson, sessionId) => accepted("recording.stop", lesson.id, sessionId),
     endSession: (lesson, sessionId) => accepted("session.end", lesson.id, sessionId),
     removeUser: (lesson, userKey) => accepted("user.remove", lesson.id, userKey),
+    // What the stand-in did for a session, from its own record of the requests it took: ended
+    // after an end, recording after a start until a stop.
+    async observe(lesson, sessionId) {
+      const calls = (await readSynthetic()).calls.filter((call) => call.lessonId === lesson.id && call.detail === sessionId);
+      const ended = calls.some((call) => call.type === "session.end");
+      const last = calls.filter((call) => call.type === "recording.start" || call.type === "recording.stop").pop();
+      return { live: !ended, recording: !ended && last?.type === "recording.start" };
+    },
     async snapshot(lesson) {
       return (await readSynthetic()).snapshots[lesson.id] ?? null;
     },

@@ -297,8 +297,10 @@ describe("phase 3: recording after the room moved", () => {
     at("2026-12-03T07:56:00Z");
     await intoNewRoom(lesson, "ZS-A1", 1, key);
     advance(10 * SEC); await tick();
+    // The lesson's own decision, the new room's check, and the check the start made just before
+    // Zoom was asked (G2, 2026-11-09; the webhooks above already ran ticks).
     const checks = (await eventsOf(lesson)).filter(event => event.type === "server.recording_eligibility");
-    expect(checks.map(event => [event.generation ?? 0, event.eligible])).toEqual([[0, true], [1, true]]);
+    expect(checks.map(event => [event.generation ?? 0, event.eligible, event.beforeStart === true])).toEqual([[0, true, false], [1, true, false], [1, true, true]]);
     advance(10 * SEC); await tick();
     expect(await calls(lesson)).toEqual([["recording.start", "ZS-A1"]]);
   });

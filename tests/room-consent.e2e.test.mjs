@@ -171,8 +171,10 @@ describe("consent after a move", () => {
     expect(await sentTo(lesson)).toEqual([["recording.start", "ZS-A1"]]);
     // The pages go by the new room's own check, not the lesson's first decision.
     expect(await recordingAllowed(lesson, key)).toBe(true);
-    const checks = (await eventsOf(lesson)).filter(event => event.type === "server.recording_eligibility").map(event => [event.generation ?? 0, event.eligible]);
-    expect(checks).toEqual([[0, false], [1, false], [1, true]]);
+    // The lesson's own (refused), the room's (refused), the room's after the consent (passed), and
+    // the check every start makes just before Zoom is asked (G2), which covers the recording.
+    const checks = (await eventsOf(lesson)).filter(event => event.type === "server.recording_eligibility").map(event => [event.generation ?? 0, event.eligible, event.beforeStart === true]);
+    expect(checks).toEqual([[0, false, false], [1, false, false], [1, true, false], [1, true, true]]);
   });
 
   test("consent never reaches back: in a moved room, a recording that started before the consent (not ours) is stopped and held at Zoom as BEFORE_CONSENT; the one the server started after the check is filed", async () => {
@@ -268,7 +270,7 @@ describe("consent after a move", () => {
 });
 
 describe("changes at the same time", () => {
-  test("consent given while ticks run at once (A): one check stored per key and one start stored for the new room; how many start requests reached the provider is recorded (at least once, never in another room)", async () => {
+  test("consent given while ticks run at once, then three ticks at once, twice (A): one check stored per key, one start stored, and exactly one start reaches the fake Zoom, in the new room (G1)", async () => {
     at("2026-12-03T07:50:00Z");
     const lesson = await newLesson({ student: false });
     advance(MIN); await tick();
@@ -286,10 +288,36 @@ describe("changes at the same time", () => {
     const checkKeys = events.filter(event => event.type === "server.recording_eligibility" && Number(event.generation) === 1).map(event => event.key);
     expect(new Set(checkKeys).size).toBe(checkKeys.length);
     expect(events.filter(event => event.type === "server.start_requested").map(event => event.key)).toEqual([`start:${lesson.id}:g1:1`]);
-    const calls = await sentTo(lesson);
-    expect(calls.every(([type, detail]) => type === "recording.start" && detail === "ZS-C1")).toBe(true);
-    expect(calls.length).toBeGreaterThanOrEqual(1);
-    console.info(`concurrent ticks: ${calls.length} start request(s) reached the provider for one stored start`);
+    // Before G1 three ticks at once sent it three times (measured 2026-11-09); now one executor does.
+    expect(await sentTo(lesson)).toEqual([["recording.start", "ZS-C1"]]);
+  });
+
+  test("G2 in a lesson that never moved: no consent when it starts; a recording no start of ours covers is stopped; consent completed during class is checked again and the start follows; filing holds what was recorded before the consent (BEFORE_CONSENT) and files what was recorded after", async () => {
+    at("2026-12-03T07:50:00Z");
+    const lesson = await newLesson({ student: false });
+    at("2026-12-03T07:56:00Z");
+    await bothInto(lesson, "ZS-G2", 0, lesson.key);
+    advance(10 * SEC); await tick();
+    expect(await sentTo(lesson)).toEqual([]);
+    const rogueStart = new Date().toISOString();
+    await recordingIs(lesson, "ZS-G2", "Recording", 0);
+    advance(5 * SEC); await tick();
+    expect(await sentTo(lesson)).toEqual([["recording.stop", "ZS-G2"]]);
+    advance(5 * SEC);
+    const rogueEnd = new Date().toISOString();
+    await recordingIs(lesson, "ZS-G2", "Stopped", 0);
+    advance(MIN);
+    await consent(lesson, "student", "granted");
+    for (let n = 0; n < 2; n += 1) { advance(10 * SEC); await tick(); }
+    expect(await startsTo(lesson, "ZS-G2")).toBe(1);
+    advance(5 * SEC);
+    const legitStart = new Date().toISOString();
+    await recordingIs(lesson, "ZS-G2", "Recording", 0);
+    advance(10 * MIN);
+    await recordingIs(lesson, "ZS-G2", "Stopped", 0);
+    await zoom("session.recording_completed", lesson, "ZS-G2", { session_name: roomNameOf(lesson.id, 0), recording_files: [file("f-g2-rogue", rogueStart, rogueEnd), file("f-g2-legit", legitStart, new Date().toISOString())] });
+    const records = await Promise.all(["f-g2-rogue", "f-g2-legit"].map(id => classroomStore().fileRecord(id)));
+    expect(records.map(record => [record.providerFileId, record.hold])).toEqual([["f-g2-rogue", "BEFORE_CONSENT"], ["f-g2-legit", null]]);
   });
 
   test("two owner authorizations at once (B): both answered, one start stored for the new room, never a start in the old room", async () => {

@@ -9,6 +9,7 @@
 // "Recording", "stopped", "completed" and "filed" only ever come from a confirmation.
 // The thresholds are defaults to agree with Justine, not measured Zoom behaviour.
 import { generationOfRoom } from './eligibility.mjs';
+import { OPERATION, OPERATION_EVENT } from './operations.mjs';
 import { isKeptRecording } from './webhook-ingest.mjs';
 
 export const TIMING = Object.freeze({
@@ -107,6 +108,8 @@ function analyze(lesson, events, now) {
     // Every recording decision with the room generation it was made for (0: the lesson's own),
     // and the owners' authorizations to record again in a newer room (2026-11-08, room moves).
     decisions: [], resumes: [],
+    // Recording actions carried out under a claim (G1, 2026-11-09), by action key.
+    operations: new Map(),
   };
   const lessonEvents = ordered(events.filter(entry => entry.lessonId === lesson.id), now);
   // A reissued link gives the student a new participant id (D-4). Facts about the old id from
@@ -210,6 +213,9 @@ function analyze(lesson, events, now) {
       case 'server.recording_eligibility':
         f.decisions.push({ eligible: event.eligible === true, reason: event.reason, count: event.count ?? 0, at, generation: Number(event.generation) || 0 });
         break;
+      case OPERATION_EVENT:
+        f.operations.set(String(event.operation), event);
+        break;
       case 'server.recording_resume_authorized':
         f.resumes.push({ generation: Number(event.generation) || 0, at });
         break;
@@ -271,6 +277,10 @@ function analyze(lesson, events, now) {
   f.currentGeneration = newest?.generation ?? 0;
   f.rotatedAt = newest?.at ?? null;
   for (const entry of f.known.values()) entry.generation = generationOfRoom(lesson.id, entry.name);
+  // A start whose answer was lost, or whose executor stopped, and that Zoom has not been seen to do
+  // or refuse yet (G1): recording may be on in its session.
+  f.unresolvedStarts = [...f.operations.values()].filter(op => op.action === 'START_RECORDING'
+    && ['IN_FLIGHT', 'UNCERTAIN', 'UNKNOWN'].includes(op.state) && !f.performed.has(String(op.operation)));
   decideRoomRecording(f);
   const sessions = [...f.sessions.values()];
   f.lastSessionEnd = sessions.reduce((value, entry) => (entry.endedAt == null ? value : latest(value, entry.endedAt)), null);
@@ -474,6 +484,12 @@ function sessionFacts(f, entry) {
 
 function captureOnIn(f, entry) {
   const endedAfter = at => entry.endedAt != null && entry.endedAt >= at;
+  // A start to this session whose outcome is not known (G1): Zoom may be recording there.
+  const pending = (f.unresolvedStarts ?? []).find(op => (op.params?.targets ?? []).includes(entry.id));
+  if (pending && !endedAfter(pending.since)) {
+    const after = sessionFacts(f, entry).filter(fact => fact.at >= pending.since).pop();
+    if (!after || after.status === 'Recording') return true;
+  }
   const facts = sessionFacts(f, entry);
   const last = facts[facts.length - 1];
   if (last) return last.status === 'Recording' && !endedAfter(last.at);
@@ -503,7 +519,8 @@ function captureMayBeOn(f) {
 function sessionCapture(f, entry) {
   const facts = sessionFacts(f, entry);
   const accepted = f.startResponses.some(response => response.ok && (!response.targets || !response.targets.length || response.targets.includes(entry.id)));
-  if (!facts.length && !accepted) return 'NONE';
+  // A start whose outcome is not known (G1) makes it possibly recording, never NONE.
+  if (!facts.length && !accepted && !captureOnIn(f, entry)) return 'NONE';
   if (captureOnIn(f, entry)) {
     const since = facts.length ? facts[facts.length - 1].at : 0;
     const asked = f.stopAttempts.some(attempt => attempt.targets?.length !== 0 && reached(attempt, entry.id) && attempt.at >= since - TIMING.clockSkewMs);
@@ -532,9 +549,15 @@ function recordingOf(f, phase, now) {
   // After a move, a start in the current room has requests of its own (its generation); while
   // the newest of them is later than the last recording fact, they say where recording stands.
   const roomRequests = f.currentGeneration ? f.startRequests.filter(request => request.generation === f.currentGeneration) : [];
-  const roomStartPending = roomRequests.length > 0 && (!last || Math.max(...roomRequests.map(request => request.at)) > last.at);
+  // A start for the current room whose outcome is not known (G1) and is newer than the last fact.
+  const unresolved = (f.unresolvedStarts ?? []).filter(op => (Number(op.params?.generation) || 0) === f.currentGeneration && (!last || op.since > last.at));
+  const roomStartPending = unresolved.length > 0 || (roomRequests.length > 0 && (!last || Math.max(...roomRequests.map(request => request.at)) > last.at));
   // Completed only when nothing may still be recording (another room's file may come first).
   if (f.completed.size && !roomStartPending && !captureMayBeOn(f)) return { status: 'COMPLETED', basis: 'confirmed', since: f.completedAt, source: 'zoom' };
+  // Requested, with its outcome unknown: never "not requested", "blocked" or "stopped" meanwhile.
+  if (unresolved.length) {
+    return { status: 'START_REQUESTED', basis: 'requested', since: Math.min(...unresolved.map(op => op.since)), outcome: unresolved.some(op => op.state === 'UNKNOWN') ? 'UNKNOWN' : 'UNCERTAIN' };
+  }
   if (last && !roomStartPending) {
     // The last word is about one session; another may still be recording (an older room whose
     // stop Zoom has not confirmed). Then the lesson is not shown as stopped (2026-11-08).
@@ -707,6 +730,10 @@ function anomaliesOf({ f, phase, attendance, recording, filing, start, end, now 
     const first = Math.min(...stuck.map(room => f.stopAttempts.filter(attempt => reached(attempt, room.entry.id)).reduce((low, attempt) => Math.min(low, attempt.at), Infinity)));
     add('OLD_ROOM_STOP_UNCONFIRMED', 'error', first + TIMING.stopRetryMs, { count: stuck.length });
   }
+  // A start whose answer was lost and whose outcome Zoom's state could not tell (G1): it is never
+  // sent again blindly; it stays an error until Zoom's notice or answer settles it.
+  const unknownStarts = (f.unresolvedStarts ?? []).filter(op => op.state === 'UNKNOWN');
+  if (unknownStarts.length) add('RECORDING_ACTION_UNKNOWN', 'error', Math.min(...unknownStarts.map(op => op.updatedAt)), { count: unknownStarts.length });
   // A stop that ended the session and still was not confirmed a minute later.
   const unconfirmedAfterEnd = reason => {
     const endRequest = f.endRequests.find(request => reason == null || request.reason === reason);
@@ -821,15 +848,22 @@ export function planActions(lesson, events, now) {
   const { state, facts: f } = analyze(lesson, events, now);
   const id = lesson.id;
   const actions = [];
+  const wanted = new Set();
+  // Each key once per plan (two rules may want the same action), never again once performed.
   const want = (key, type, extra = {}) => {
-    if (!f.performed.has(key)) actions.push({ key, type, lessonId: id, ...extra });
+    if (f.performed.has(key) || wanted.has(key)) return;
+    wanted.add(key);
+    actions.push({ key, type, lessonId: id, ...extra });
   };
-  // Recording is decided before it could start. Consent or the tutor's notice entered while
-  // nobody is in the room yet still counts, so a change then is decided again; once the lesson
-  // is live the decision stands, and consent completed during class never starts a recording.
+  // Recording is decided before it could start, and decided again after every consent or notice
+  // change, before the lesson and during it alike (G2, 2026-11-09: one rule for a lesson that never
+  // moved and for a moved room; consent completed during class allows recording from then on,
+  // pending iHear's confirmation of this as its policy). A moved room's checks are its own
+  // (planRoomStart). Every start checks once more just before Zoom is asked, and that check is the
+  // decision that covers the recording: consent never reaches back to anything recorded before it.
   if (state.phase.value !== 'ENDED' && now >= toMs(lesson.startsAt) - TIMING.waitingFromMs) {
     if (!f.baseDecision) want(`decide:${id}`, 'DECIDE_RECORDING');
-    else if (state.phase.value === 'WAITING' && f.consentChangedAt != null && f.consentChangedAt >= f.baseDecision.at) {
+    else if (!f.currentGeneration && f.consentChangedAt != null && f.consentChangedAt >= f.baseDecision.at) {
       want(`decide:${id}:${f.consentChangedAt}`, 'DECIDE_RECORDING');
     }
   }
@@ -854,7 +888,12 @@ export function planActions(lesson, events, now) {
     // A start goes to the session the lesson is in now: the newest one Zoom has not said is over.
     const newest = liveSessions(f).at(-1);
     const startIn = { targets: newest ? [newest.id] : [] };
-    if (recording.status === 'NOT_REQUESTED') want(`start:${id}:1`, 'START_RECORDING', { attempt: 1, ...startIn });
+    // The first start: nothing asked yet; or (G2, 2026-11-09, one rule with a moved room) the server
+    // never started anything here and nothing records now, as after a recording no start of ours
+    // covered was stopped before the consent was complete. A recording the server started and that
+    // stopped is never started again in the same room.
+    const neverStarted = !f.startRequests.length && !f.unresolvedStarts.length && !liveSessions(f).some(entry => captureOnIn(f, entry));
+    if (recording.status === 'NOT_REQUESTED' || (neverStarted && !captureMayBeOn(f))) want(`start:${id}:1`, 'START_RECORDING', { attempt: 1, ...startIn });
     else if (recording.status === 'START_REQUESTED' && response && !response.ok && attempt < TIMING.maxStartAttempts
       && now >= response.at + TIMING.startRetryDelaysMs[attempt - 1]) want(`start:${id}:${attempt + 1}`, 'START_RECORDING', { attempt: attempt + 1, ...startIn });
     else if (recording.status === 'FAILED' && recording.reason === 'START_UNCONFIRMED' && f.startResponses.filter(entry => entry.ok).length === 1) {
@@ -1002,6 +1041,14 @@ export function planActions(lesson, events, now) {
     want(`${base.key}:retry${tries + 1}${own}`, 'END_SESSION', { reason: base.reason, targets: [item.sessionId] });
   }
   for (const entry of f.unknown) want(`remove:${id}:${entry.userKey}:${entry.at}`, 'REMOVE_USER', { userKey: entry.userKey });
+  // G1: a start whose outcome is not known is settled by asking Zoom's state, never by sending it
+  // again: as soon as its answer was lost or its executor's lease ran out, and again a while after
+  // Zoom's state could not be told. Its key carries the claim's version, so each look is new.
+  for (const op of f.unresolvedStarts) {
+    const due = op.state === 'UNCERTAIN' || (op.state === 'IN_FLIGHT' && !(op.leaseUntil > now))
+      || (op.state === 'UNKNOWN' && now >= op.updatedAt + OPERATION.unknownRetryMs);
+    if (due) want(`resolve:${op.operation}:${op.version}`, 'RESOLVE_OPERATION', { operation: op.operation });
+  }
   for (const anomaly of state.anomalies) if (anomaly.severity === 'error') want(`notify:${id}:${anomaly.code}`, 'NOTIFY_ADMIN', { code: anomaly.code });
   return actions;
 }

@@ -567,7 +567,7 @@ describe("a recorded lesson, synthetic end to end", () => {
     expect((await syntheticCalls(lesson.lessonId)).filter(type => type === "recording.start")).toHaveLength(1);
   });
 
-  test("consent entered before anyone is in the room counts; consent completed once the tutor is in does not", async () => {
+  test("consent entered before anyone is in the room counts; consent completed once the tutor is in counts from then on (G2, 2026-11-09, pending iHear's policy confirmation)", async () => {
     at("2026-11-20T13:40:00Z");
     const early = { ...(await createLesson({ code: "TEST-L4", time: "22:00", tutorCode: "TEST-T4", studentCode: "TEST-S4" })), sessionId: "SYN-SESSION-4" };
     const late = { ...(await createLesson({ code: "TEST-L5", time: "22:00", tutorCode: "TEST-T5", studentCode: "TEST-S5" })), sessionId: "SYN-SESSION-5" };
@@ -590,7 +590,9 @@ describe("a recorded lesson, synthetic end to end", () => {
     await tick();
     expect(await syntheticCalls(early.lessonId)).toEqual(["recording.start"]);
 
-    // TEST-L5: the tutor is already in when the consent is completed; the lesson stays unrecorded.
+    // TEST-L5: the tutor is already in when the consent is completed: the lesson is decided again
+    // and may be recorded from then on (one rule for every lesson, moved or not); the start checks
+    // once more just before Zoom is asked, and that check is what covers the recording.
     at("2026-11-20T13:51:00Z");
     expect((await join(late.lessonId, { email: TUTOR })).status).toBe(200);
     expect((await hostReport(late.lessonId, { type: "heartbeat" })).body).toMatchObject({ recordingDecided: true, recordingAllowed: false });
@@ -603,9 +605,13 @@ describe("a recorded lesson, synthetic end to end", () => {
       at(`2026-11-20T${time}Z`);
       await tick();
     }
-    expect(await syntheticCalls(late.lessonId)).toEqual([]);
+    expect(await syntheticCalls(late.lessonId)).toEqual(["recording.start"]);
+    const checks = (await classroomStore().eventsFor([late.lessonId])).filter(event => event.type === "server.recording_eligibility");
+    const startCheck = checks.find(event => event.beforeStart === true);
+    expect(startCheck).toMatchObject({ eligible: true });
+    expect(startCheck.occurredAt).toBeGreaterThanOrEqual(Date.parse("2026-11-20T13:52:00Z"));
     view = await overview();
-    expect(cardOf(view, "TEST-L5")).toMatchObject({ group: "LIVE", recording: { status: "BLOCKED" } });
+    expect(cardOf(view, "TEST-L5")).toMatchObject({ group: "LIVE", recording: { status: "START_REQUESTED" } });
   });
 
   test("check now asks the provider and is recorded in the activity log", async () => {
