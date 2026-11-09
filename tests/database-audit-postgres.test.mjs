@@ -50,7 +50,7 @@ beforeAll(async () => {
   if (!ready) throw new Error('Disposable PostgreSQL did not become ready');
   workspace = await mkdtemp(path.join(os.tmpdir(), 'ihear-database-audit-'));
   await mkdir(path.join(workspace, 'db', 'migrations'), { recursive: true });
-  for (const file of (await readdir('db/migrations')).filter(name => /^\d+_[a-z0-9_]+\.sql$/i.test(name))) {
+  for (const file of (await readdir('db/migrations')).filter(name => /^\d+_[a-z0-9_]+\.sql$/i.test(name) && name.split('_', 1)[0] <= '028')) {
     await copyFile(path.join('db', 'migrations', file), path.join(workspace, 'db', 'migrations', file));
   }
   const migrated = spawnSync(process.execPath, [path.resolve('scripts/migrate-database.mjs')], {

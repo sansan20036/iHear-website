@@ -10,7 +10,7 @@ import { createClassroomLesson, joinClassroom } from '../lib/classroom-service';
 import { createPostgresClassroomStore } from '../lib/classroom-store';
 import { buildSessionTokenClaims, signSessionToken } from '../tools/recording-pathway/classroom/eligibility.mjs';
 
-// P3-Multi (2026-11-09): the draft 029 (db/multiroom) on top of migration 028, on a localhost-only
+// P3-Multi (2026-11-09): 029 (db/migrations) applied on top of migration 028, on a localhost-only
 // disposable PostgreSQL created and removed by this test. It never loads .env, uses an inherited
 // database URL or connects to a hosted database; 029 is applied here only, never by the project's
 // migration runner. Synthetic data only.
@@ -42,7 +42,7 @@ beforeAll(async () => {
   await root.unsafe('CREATE DATABASE classroom_multi');
   workspace = await mkdtemp(path.join(os.tmpdir(), 'ihear-multi-migrations-'));
   await mkdir(path.join(workspace, 'db', 'migrations'), { recursive: true });
-  for (const file of (await readdir('db/migrations')).filter(name => /^\d+_[a-z0-9_]+\.sql$/i.test(name))) {
+  for (const file of (await readdir('db/migrations')).filter(name => /^\d+_[a-z0-9_]+\.sql$/i.test(name) && name.split('_', 1)[0] <= '028')) {
     await copyFile(path.join('db', 'migrations', file), path.join(workspace, 'db', 'migrations', file));
   }
   const result = spawnSync(process.execPath, [path.resolve('scripts/migrate-database.mjs')], {
@@ -52,7 +52,7 @@ beforeAll(async () => {
   if (result.status !== 0) throw new Error(`Migration runner failed: ${result.stderr}`);
   expect(JSON.parse(result.stdout.trim().split('\n').pop()).applied.at(-1)).toBe('028_classroom_mvp.sql');
   sql = connect('classroom_multi');
-  await sql.unsafe(await readFile(path.join('db', 'multiroom', '029_classroom_multiroom.sql'), 'utf8'));
+  await sql.unsafe(await readFile(path.join('db', 'migrations', '029_classroom_multiroom.sql'), 'utf8'));
   store = createPostgresClassroomStore(sql);
 }, 180000);
 

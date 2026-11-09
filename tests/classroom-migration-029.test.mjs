@@ -28,7 +28,7 @@ const clients = [];
 const workspaces = [];
 const url = database => `postgres://postgres:${password}@127.0.0.1:${port}/${database}`;
 const connect = database => { const client = postgres(url(database), { ssl: false, max: 4, prepare: false, connect_timeout: 2, onnotice: () => {} }); clients.push(client); return client; };
-const MIGRATION_029 = path.join('db', 'multiroom', '029_classroom_multiroom.sql');
+const MIGRATION_029 = path.join('db', 'migrations', '029_classroom_multiroom.sql');
 const DOWN_029 = path.join('db', 'multiroom', '029_classroom_multiroom.down.sql');
 let root, migrations, up029, down029, up030, down030;
 
@@ -46,7 +46,7 @@ beforeAll(async () => {
   migrations = (await readdir('db/migrations')).filter(name => /^\d+_[a-z0-9_]+\.sql$/i.test(name)).sort();
   up029 = await readFile(MIGRATION_029, 'utf8');
   down029 = await readFile(DOWN_029, 'utf8');
-  up030 = await readFile(path.join('db', 'multiroom', '030_classroom_programs.sql'), 'utf8');
+  up030 = await readFile(path.join('db', 'migrations', '030_classroom_programs.sql'), 'utf8');
   down030 = await readFile(path.join('db', 'multiroom', '030_classroom_programs.down.sql'), 'utf8');
 }, 180000);
 

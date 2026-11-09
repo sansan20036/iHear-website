@@ -40,7 +40,7 @@ beforeAll(async () => {
   await root.unsafe('CREATE DATABASE classroom_load');
   workspace = await mkdtemp(path.join(os.tmpdir(), 'ihear-load-migrations-'));
   await mkdir(path.join(workspace, 'db', 'migrations'), { recursive: true });
-  for (const file of (await readdir('db/migrations')).filter(name => /^\d+_[a-z0-9_]+\.sql$/i.test(name))) await copyFile(path.join('db', 'migrations', file), path.join(workspace, 'db', 'migrations', file));
+  for (const file of (await readdir('db/migrations')).filter(name => /^\d+_[a-z0-9_]+\.sql$/i.test(name) && name.split('_', 1)[0] <= '028')) await copyFile(path.join('db', 'migrations', file), path.join(workspace, 'db', 'migrations', file));
   const migrated = spawnSync(process.execPath, [path.resolve('scripts/migrate-database.mjs')], {
     cwd: workspace, encoding: 'utf8', windowsHide: true, timeout: 120000,
     env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, TEMP: os.tmpdir(), TMP: os.tmpdir(), POSTGRES_URL: url('classroom_load'), DATABASE_URL: '', POSTGRES_SSL: 'disable' },
@@ -48,7 +48,7 @@ beforeAll(async () => {
   if (migrated.status !== 0) throw new Error(`Migration runner failed: ${migrated.stderr}`);
   const setup = postgres(url('classroom_load'), { ssl: false, max: 2, prepare: false, onnotice: () => {} });
   clients.push(setup);
-  await setup.unsafe(await readFile(path.join('db', 'multiroom', '029_classroom_multiroom.sql'), 'utf8'));
+  await setup.unsafe(await readFile(path.join('db', 'migrations', '029_classroom_multiroom.sql'), 'utf8'));
 }, 180000);
 
 afterAll(async () => {

@@ -72,13 +72,13 @@ beforeAll(async () => {
   for (let attempt = 0; attempt < 60; attempt++) { try { await root`SELECT 1`; break; } catch { await new Promise(resolve => { setTimeout(resolve, 300); }); } }
   workspace = await mkdtemp(path.join(os.tmpdir(), 'ihear-v12-'));
   await mkdir(path.join(workspace, 'db', 'migrations'), { recursive: true });
-  for (const file of (await readdir('db/migrations')).filter(name => /^\d+_[a-z0-9_]+\.sql$/i.test(name))) await copyFile(path.join('db', 'migrations', file), path.join(workspace, 'db', 'migrations', file));
+  for (const file of (await readdir('db/migrations')).filter(name => /^\d+_[a-z0-9_]+\.sql$/i.test(name) && name.split('_', 1)[0] <= '028')) await copyFile(path.join('db', 'migrations', file), path.join(workspace, 'db', 'migrations', file));
   for (const name of ['v12', 'v11_only']) await root.unsafe(`CREATE DATABASE ${name}`);
   await migrate('v12');
   await migrate('v11_only');
   sql = connect('v12');
   sql028 = connect('v11_only');
-  for (const file of ['029_classroom_multiroom.sql', '030_classroom_programs.sql']) await sql.unsafe(await readFile(path.join('db', 'multiroom', file), 'utf8'));
+  for (const file of ['029_classroom_multiroom.sql', '030_classroom_programs.sql']) await sql.unsafe(await readFile(path.join('db', 'migrations', file), 'utf8'));
   store = createPostgresClassroomStore(sql);
   await createClassroomLesson({ store, actor: 'owner@example.test', now: NOW - 60 * MIN, input: { code: 'TEST-V12-L1', date: '2026-11-20', time: '16:00', minutes: 60, tutorCode: 'TEST-V12-LT', tutorEmail: 'lt@example.test', studentCode: 'TEST-V12-LS' } });
   const program = await createClassroomProgram({ store, actor: 'owner@example.test', now: NOW, input: { code: 'TEST-V12-P', name: 'Synthetic Program' } });
