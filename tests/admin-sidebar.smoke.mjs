@@ -13,6 +13,8 @@ const port = 3217;
 const origin = `http://localhost:${port}`;
 const secret = 'isolated-admin-sidebar-smoke-test-key-never-use-in-production';
 const owner = 'sidebar-test@example.com';
+// The owner's menu in Traditional Chinese (app/admin/admin-shell.tsx), in order.
+const OWNER_MENU = ['總覽', '網站內容', 'Academy 課程頁', '首頁行事曆', '團隊名冊', '成果資料', '媒體展示', '資源管理', '回收區', '線上教室', '管理員'];
 await mkdir('output/playwright', { recursive: true });
 const directory = await mkdtemp(path.resolve('output/playwright/admin-sidebar-'));
 const child = spawn(process.execPath, ['node_modules/next/dist/bin/next', dev ? 'dev' : 'start', '--hostname', 'localhost', '--port', String(port)], {
@@ -39,7 +41,10 @@ try {
     await context.addCookies([{ name: 'authjs.session-token', value: token, url: origin, httpOnly: true, sameSite: 'Lax' }]);
     const page = await context.newPage();
     await page.goto(origin + pathname);
-    await expect(page.locator('.admin-sidebar nav button')).toHaveCount(10, { timeout: 60_000 });
+    // Every entry an owner should see, each once, with Administrators last (the checks below scroll
+    // to it). Not a fixed total: a new owner entry (such as the classroom overview) does not break this.
+    for (const label of OWNER_MENU) await expect(page.locator('.admin-sidebar nav button', { hasText: label }), label).toHaveCount(1, { timeout: 60_000 });
+    await expect(page.locator('.admin-sidebar nav button').last()).toContainText('管理員');
     return { context, page };
   };
   // Fully inside the window, top to bottom.
