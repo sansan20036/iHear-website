@@ -292,6 +292,35 @@ describe("classroom access", () => {
     }
   });
 
+  test("the closed adult pilot (2026-11-10): in production, consent for TEST- codes only, only with CLASSROOM_PILOT_CONSENT=1 and both versions set to the pilot's; recorded as real, under that version", async () => {
+    vi.stubEnv("CLASSROOM_PROVIDER", "zoom-video-sdk");
+    vi.stubEnv("VERCEL_ENV", "production");
+    const pilotEnv = { CLASSROOM_PILOT_CONSENT: "1", CLASSROOM_CONSENT_VERSION: "ihear-adult-pilot-consent-v1", CLASSROOM_STAFF_NOTICE_VERSION: "ihear-adult-pilot-consent-v1" };
+    try {
+      for (const name of Object.keys(pilotEnv)) {
+        // Any one of the three missing or different: refused.
+        for (const [other, value] of Object.entries(pilotEnv)) vi.stubEnv(other, other === name ? (value === "1" ? "yes" : "ihear-other-consent-v2") : value);
+        expect(await setConsent("TEST-P1", "student")).toMatchObject({ status: 403, body: { code: "POLICY_PENDING" } });
+      }
+      for (const [name, value] of Object.entries(pilotEnv)) vi.stubEnv(name, value);
+      // The vendor trial's switch alone still does nothing in production.
+      vi.stubEnv("CLASSROOM_PILOT_CONSENT", "");
+      vi.stubEnv("CLASSROOM_TRIAL_CONSENT", "1");
+      expect(await setConsent("TEST-P1", "student")).toMatchObject({ status: 403, body: { code: "POLICY_PENDING" } });
+      vi.stubEnv("CLASSROOM_PILOT_CONSENT", "1");
+      expect(await setConsent("S-0009", "student")).toMatchObject({ status: 403, body: { code: "POLICY_PENDING" } });
+      expect(await setConsent("TEST-P1", "student")).toMatchObject({ status: 200, body: { ok: true, synthetic: false, version: "ihear-adult-pilot-consent-v1" } });
+      expect(await setConsent("TEST-PT1", "tutor")).toMatchObject({ status: 200, body: { ok: true, synthetic: false } });
+      expect((await classroomStore().listConsents(["TEST-P1"]))[0]).toMatchObject({ personCode: "TEST-P1", status: "granted", version: "ihear-adult-pilot-consent-v1", synthetic: false });
+      expect(await setConsent("TEST-P1", "student", "withdrawn")).toMatchObject({ status: 200 });
+      expect((await classroomStore().listConsents(["TEST-P1"]))[0]).toMatchObject({ status: "withdrawn", version: "ihear-adult-pilot-consent-v1" });
+    } finally {
+      vi.stubEnv("CLASSROOM_PROVIDER", "synthetic");
+      vi.stubEnv("VERCEL_ENV", "");
+      for (const name of [...Object.keys(pilotEnv), "CLASSROOM_TRIAL_CONSENT"]) vi.stubEnv(name, "");
+    }
+  });
+
   test("both people can read the recording state with the same entry check; reading stores nothing and shows codes only", async () => {
     at("2026-11-20T05:00:00Z");
     const lesson = await createLesson({ code: "TEST-L11", time: "16:00", tutorCode: "TEST-T11", studentCode: "TEST-S11" });

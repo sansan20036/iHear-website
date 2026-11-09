@@ -1068,8 +1068,9 @@ async function markConsentChanged(store: ClassroomStore, personCode: string, rol
 // Synthetic consent for local work only, while the consent policy is still Justine's to decide.
 // A withdrawal during a lesson that day is written to that lesson, which starts the protective
 // stop.
-export async function setSyntheticConsent({ store, personCode, role, status, actor, now }: {
-  store: ClassroomStore; personCode: string; role: "student" | "tutor"; status: "granted" | "withdrawn"; actor: string; now: number;
+// `synthetic: false` only for the closed adult pilot's real testers (consents route, 2026-11-10).
+export async function setSyntheticConsent({ store, personCode, role, status, actor, now, synthetic = true }: {
+  store: ClassroomStore; personCode: string; role: "student" | "tutor"; status: "granted" | "withdrawn"; actor: string; now: number; synthetic?: boolean;
 }) {
   const policy = consentPolicy();
   if (role === "tutor") {
@@ -1084,7 +1085,7 @@ export async function setSyntheticConsent({ store, personCode, role, status, act
     grantedAt: now,
     withdrawnAt: status === "withdrawn" ? now : null,
     expiresAt: null,
-    synthetic: true,
+    synthetic,
     recordedBy: actor,
   });
   if (status !== "withdrawn") {

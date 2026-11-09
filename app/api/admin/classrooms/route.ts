@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { authorizeAdminRequest } from "../../../../lib/admin-auth";
 import { appendAdminActivity } from "../../../../lib/admin-store";
+import { testConsentMode } from "../../../../lib/classroom-consent-gate";
 import { classroomProvider } from "../../../../lib/classroom-provider";
 import { ClassroomInputError, classroomOverview, createClassroomLesson } from "../../../../lib/classroom-service";
 import { ClassroomLessonConflictError, classroomStore } from "../../../../lib/classroom-store";
@@ -25,8 +26,9 @@ export async function GET(request: Request) {
   if ("response" in access) return access.response;
   try {
     const overview = await classroomOverview({ store: classroomStore(), now: Date.now() });
-    // A vendor trial may record test consent for TEST- codes (consents route); never in production.
-    const trialConsent = process.env.CLASSROOM_TRIAL_CONSENT === "1" && process.env.VERCEL_ENV !== "production";
+    // Test consent for TEST- codes (consents route): a local vendor trial, or in production the
+    // closed adult pilot only (lib/classroom-consent-gate.ts).
+    const trialConsent = testConsentMode() !== null;
     return NextResponse.json({ mode: providerMode(), trialConsent, ...overview }, { headers: NO_STORE_HEADERS });
   } catch {
     return NextResponse.json({ error: "The classroom overview is temporarily unavailable" }, { status: 503, headers: NO_STORE_HEADERS });
