@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { validateAcademyContentBackup } from "./academy-content-backup.mjs";
+import { classroomBackupVersion, classroomLevels, classroomLevelsOf, classroomTableNamesFor, classroomTablesFor, validateClassroomBackup } from "./classroom-backup-tables.mjs";
 
 import nextEnv from "@next/env";
 import postgres from "postgres";
@@ -96,7 +97,14 @@ async function currentCounts(client) {
   const localizedTranslationStates = translationTable.available ? await client`SELECT COUNT(*)::INTEGER AS count FROM localized_translation_states` : [{ count: 0 }];
   const [resourceTable] = await client`SELECT to_regclass('public.resource_links') IS NOT NULL AS available`;
   const resources = resourceTable.available ? await client`SELECT COUNT(*)::INTEGER AS count FROM resource_links` : [{ count: 0 }];
+  // The classroom tables of the levels this database has (the names are the module's constants).
+  const levelsHere = await classroomLevelsOf(client);
+  const classroom = {};
+  if (levelsHere.length) {
+    for (const name of classroomTableNamesFor(levelsHere)) classroom[name] = Number((await client.unsafe(`SELECT COUNT(*)::INTEGER AS count FROM public.${name}`))[0].count);
+  }
   return {
+    ...classroom,
     resource_links: Number(resources[0].count),
     impact_milestones: Number(impact[0].count),
     impact_milestone_settings: Number(settings[0].count),
@@ -153,7 +161,7 @@ try {
   }
   if (
     backup.payload?.format !== "ihear-postgres-backup" ||
-    ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10].includes(backup.payload?.version)
+    ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].includes(backup.payload?.version)
   ) {
     throw new Error("Unsupported backup format.");
   }
@@ -221,6 +229,18 @@ try {
   assertUnique(adminAccounts, (row) => row.email, "admin_accounts");
   assertUnique(adminActivityLog, (row) => row.id, "admin_activity_log");
   assertUnique(localizedTranslationStates, (row) => `${row.resource_type}\u0000${row.resource_scope}\u0000${row.resource_id}\u0000${row.field_key}\u0000${row.locale}`, "localized_translation_states");
+  const hasClassroom = backup.payload.version >= 11;
+  // Version 12: the backup's classroom levels, matching its version, all present in this database
+  // (a backup with blocks is never replayed into a database without them).
+  const levels = hasClassroom ? classroomLevels(backup.payload.classroomSchema) : [];
+  if (hasClassroom && classroomBackupVersion(levels) !== backup.payload.version) throw new Error("Backup version does not match its classroom levels.");
+  if (hasClassroom) validateClassroomBackup(tables, levels);
+  if (hasClassroom) {
+    const levelsHere = await classroomLevelsOf(sql);
+    const missing = levels.filter((level) => !levelsHere.includes(level));
+    if (missing.length) throw new Error(`This database does not have the classroom structure the backup needs (${missing.join(", ")}).`);
+  }
+  const classroomNames = hasClassroom ? classroomTableNamesFor(levels) : [];
 
   const countsBefore = await currentCounts(sql);
   const revisionsBefore = await currentRevisions(sql);
@@ -641,8 +661,34 @@ try {
         }
       }
 
+      // Version 11/12: write the classroom tables of the backup's levels back, each after the ones it
+      // refers to (programs, courses, blocks, members, lessons, …),
+      // then compare every row as stored with the backup. Table and column names are the module's
+      // constants; the values are parameters.
+      if (hasClassroom) {
+        const keyOf = (table, row) => table.key.map((column) => String(row[column]).trim()).join("\u0000");
+        for (const table of classroomTablesFor(levels)) {
+          const updates = table.columns.filter((column) => !table.key.includes(column));
+          const placeholders = table.columns.map((column, index) => `$${index + 1}${table.json?.includes(column) ? "::jsonb" : ""}`);
+          const upsert = `INSERT INTO public.${table.name} (${table.columns.join(", ")}) VALUES (${placeholders.join(", ")})
+            ON CONFLICT (${table.key.join(", ")}) DO ${updates.length ? `UPDATE SET ${updates.map((column) => `${column} = EXCLUDED.${column}`).join(", ")}` : "NOTHING"}`;
+          // A JSONB value goes in as it is: the driver serialises it once (a string here would be stored
+          // as a JSON string, which the comparison below would catch).
+          for (const row of tables[table.name]) await transaction.unsafe(upsert, table.columns.map((column) => row[column]));
+          const stored = new Map((await transaction.unsafe(`SELECT * FROM public.${table.name}`)).map((row) => [keyOf(table, row), row]));
+          for (const row of tables[table.name]) {
+            const value = stored.get(keyOf(table, row));
+            if (!value) throw new Error(`Classroom restore mismatch: ${table.name} (a row is missing)`);
+            // Names the column only, never its value.
+            const differs = table.columns.find((column) => JSON.stringify(value[column]) !== JSON.stringify(row[column]));
+            if (differs) throw new Error(`Classroom restore mismatch: ${table.name}.${differs}`);
+          }
+        }
+      }
+
       const restoredCounts = await currentCounts(transaction);
       for (const [tableName, expectedRows] of Object.entries({
+        ...(hasClassroom ? Object.fromEntries(classroomNames.map((name) => [name, tables[name].length])) : {}),
         impact_milestones: impactMilestones.length,
         impact_milestone_settings: impactMilestoneSettings.length,
         content_overrides: contentOverrides.length,
@@ -714,6 +760,7 @@ try {
     databaseUnchanged: true,
     triggerRevisionCheck,
     rowCounts: {
+      ...(hasClassroom ? Object.fromEntries(classroomNames.map((name) => [name, tables[name].length])) : {}),
       impact_milestones: impactMilestones.length,
       impact_milestone_settings: impactMilestoneSettings.length,
       content_overrides: contentOverrides.length,

@@ -1,0 +1,401 @@
+"use client";
+
+import { useCallback, useEffect, useState } from "react";
+import { useAdmin } from "../admin-context";
+import { adminFetch, displayError } from "../admin-api";
+import "./classrooms.css";
+
+// The live classroom overview for owners. It polls every 15 seconds while the tab is visible:
+// first the server's periodic work (the same tick the tutor's heartbeat runs), then the
+// overview. Cards come from the server already reduced to codes and labels.
+
+const copy = {
+  en: {
+    title: "Classrooms", intro: "Live state of today's one-to-one lessons. Recording and filing only count as done when the video service or P1 confirmed them.",
+    synthetic: "Synthetic mode: test data only, not connected to a video service or Google Drive.", ownerOnly: "Owner access is required.",
+    refreshed: "Updated", tickFailed: "The server's periodic work did not run on the last refresh; the overview may lag.",
+    groups: { ANOMALY: "Problems", LIVE: "In progress", WAITING: "Waiting to start", ENDED: "Ended" } as Record<string, string>,
+    empty: "No lessons today.", tutor: "Tutor", student: "Student", recording: "Recording", filing: "Filing", data: "Data", scheduled: "Scheduled", started: "Started",
+    check: "Check now", checking: "Checking…",
+    anomalies: "Problem records", anomaliesIntro: "Every problem the overview found stays here, with who handled it and how. Write codes and actions, never names.",
+    noAnomalies: "No problems recorded.", open: "Open", resolved: "Cleared", handled: "Handled", unhandled: "Needs handling", earlier: "Handled before it came back", note: "What was done", save: "Record handling", firstSeen: "First seen", lastSeen: "Last seen",
+    lessons: "Lessons", add: "Add a one-to-one lesson", code: "Lesson code", date: "Date", time: "Start (Taipei)", minutes: "Minutes", tutorCode: "Tutor code", tutorEmail: "Tutor sign-in email", studentCode: "Student code",
+    adding: "Adding…", linkOnce: "Student's personal link (shown only now; send it to the family):", copyLink: "Copy link", copied: "Copied",
+    revokeLink: "Revoke student link", reissueLink: "Reissue student link", cancelLesson: "Cancel lesson", cancelledMark: "Cancelled",
+    confirmRevoke: "Revoke the student's link? It can no longer be used to enter, and no new link is made. Someone already in the room is not disconnected at once: the classroom page normally leaves within about 15 seconds, but this cannot be guaranteed.",
+    confirmReissue: "Make a new student link? The current link can no longer be used to enter. Someone already in the room with it is not disconnected at once: the classroom page normally leaves within about 15 seconds, but this cannot be guaranteed.",
+    confirmCancel: "Cancel this lesson? Neither the student's link nor the tutor can enter it any more. People already in the room are not disconnected at once: the classroom pages normally leave within about 30 seconds, but this cannot be guaranteed.",
+    revokedNotice: "Student link revoked. The old link no longer enters; anyone still in the room is not disconnected at once.", cancelledNotice: "Lesson cancelled. Anyone still in the room is not disconnected at once.",
+    consent: "Synthetic consent (local testing only)", consentIntro: "The consent policy is still to be approved; these records are synthetic.",
+    trialConsentIntro: "Vendor trial: test consent can be set only for TEST- codes (adult testers). Real students cannot be recorded.", personCode: "Person code", role: "Role", status: "Status",
+    granted: "Consented", withdrawn: "Withdrawn", staffNotice: "Tutor notice acknowledged", setConsent: "Save",
+    files: "Files", openFile: "Open in Google Drive",
+    emergencyStop: "Emergency stop recording", stopping: "Stopping…",
+    emergencyConfirm: "Stop recording this lesson now? It will not be recorded again in this lesson, and anything already recorded is kept out of the normal folders until an owner reviews it.",
+    emergencyPressed: "Emergency stop pressed",
+    resumeRecording: "Authorize recording in the new room", resuming: "Checking…",
+    resumeConfirm: "Authorize recording in the new room? The server first checks the lesson, the roster and every consent again; it starts only if all of that passes, both people are in the new room and the old room's recording is confirmed stopped. A withdrawal, an emergency stop or a cancellation can never be undone this way.",
+    resumeNotice: "Authorized. Recording starts only after the server's new check passes (see the card).",
+    fileRoom: "room",
+  },
+  zhHant: {
+    title: "教室總覽", intro: "今天各堂一對一課程的即時狀態。錄影與歸檔要有視訊服務或 P1 的確認才算完成。",
+    synthetic: "合成模式：只有測試資料，沒有連到視訊服務或 Google Drive。", ownerOnly: "需要擁有者權限。",
+    refreshed: "更新時間", tickFailed: "上一次更新時，伺服器排程沒有執行，總覽可能落後。",
+    groups: { ANOMALY: "異常", LIVE: "進行中", WAITING: "等待開始", ENDED: "已結束" } as Record<string, string>,
+    empty: "今天沒有課程。", tutor: "小老師", student: "學生", recording: "錄影", filing: "歸檔", data: "資料", scheduled: "表定", started: "實際",
+    check: "重新核對", checking: "核對中…",
+    anomalies: "異常紀錄", anomaliesIntro: "總覽發現的每個問題都會留在這裡，並記下誰處理、怎麼處理。請寫代碼與處置，不要寫姓名。",
+    noAnomalies: "目前沒有異常紀錄。", open: "未解除", resolved: "已解除", handled: "已處置", unhandled: "待處置", earlier: "先前處置（之後又再發生）", note: "處置說明", save: "記錄處置", firstSeen: "首次發現", lastSeen: "最後出現",
+    lessons: "課程", add: "新增一對一課程", code: "課程代碼", date: "日期", time: "開始時間（台北）", minutes: "分鐘", tutorCode: "小老師代碼", tutorEmail: "小老師登入 Email", studentCode: "學生代碼",
+    adding: "新增中…", linkOnce: "學生專屬連結（只顯示這一次，請交給家長）：", copyLink: "複製連結", copied: "已複製",
+    revokeLink: "撤銷學生連結", reissueLink: "重發學生連結", cancelLesson: "取消課程", cancelledMark: "已取消",
+    confirmRevoke: "確定撤銷學生連結？目前的連結會立即無法再用來進入，也不會產生新連結。已在教室裡的人不會立即斷線：教室頁面通常會在約 15 秒內自行離開，但無法保證。",
+    confirmReissue: "確定重發學生連結？目前的連結會立即無法再用來進入。已用舊連結在教室裡的人不會立即斷線：教室頁面通常會在約 15 秒內自行離開，但無法保證。",
+    confirmCancel: "確定取消這堂課？學生連結和小老師都將無法再進入。已在教室裡的人不會立即斷線：教室頁面通常會在約 30 秒內自行離開，但無法保證。",
+    revokedNotice: "學生連結已撤銷，舊連結已無法進入；仍在教室裡的人不會立即斷線。", cancelledNotice: "課程已取消；仍在教室裡的人不會立即斷線。",
+    consent: "合成同意資料（僅限本機測試）", consentIntro: "錄影同意政策尚待確認；這裡的紀錄都是合成資料。",
+    trialConsentIntro: "廠商試用：只能替 TEST- 代碼（成人測試者）設定測試同意，真實學生無法錄影。", personCode: "人員代碼", role: "角色", status: "狀態",
+    granted: "已同意", withdrawn: "已撤回", staffNotice: "小老師已確認告知", setConsent: "儲存",
+    files: "錄影檔", openFile: "在 Google 雲端硬碟開啟",
+    emergencyStop: "緊急停止錄影", stopping: "停止中…",
+    emergencyConfirm: "確定要立即停止這堂課的錄影嗎？停止後這堂課不會再錄影；已經錄到的內容會先隔離，不放進一般資料夾，等擁有者確認。",
+    emergencyPressed: "已按下緊急停止",
+    resumeRecording: "授權在新教室錄影", resuming: "確認中…",
+    resumeConfirm: "確定授權在新教室錄影？伺服器會先重新確認課程、名單和每一份同意；全部通過、兩人都在新教室、而且舊教室的錄影已確認停止，才會開始錄影。撤回同意、緊急停止或取消課程之後，無法用這個方式恢復錄影。",
+    resumeNotice: "已授權。伺服器重新確認通過後才會開始錄影（請看課程卡片）。",
+    fileRoom: "教室第",
+  },
+};
+
+type Person = { code: string; status: string; basis: string; label: string };
+// One recording file and where it was filed: P1's name and folder, size, Drive's checksum.
+type FilingItem = { generation?: number | null; extension: string | null; status: string; destination: string | null; label: string; reasonLabel: string | null; name: string | null; folder: string | null; size: number | null; md5: string | null; link?: string | null };
+const megabytes = (bytes: number | null) => (bytes == null ? "" : `${(bytes / 1024 / 1024).toFixed(1)} MB`);
+type Card = {
+  lessonCode: string; scheduledStart: string | null; actualStart: string | null;
+  phase: { value: string; basis: string; label: string };
+  tutor: Person | null; students: Person[];
+  recording: { status: string; basis: string; basisLabel: string; source: string | null; label: string };
+  filing: { status: string; label: string; reasonLabel?: string | null; items?: FilingItem[] };
+  // stopState: CONFIRMED (the video service said so), WAITING, or NO_RECORDING_KNOWN; the label says which.
+  emergency?: { pressedAt: string | null; stopState: string | null; stopLabel: string | null; available: boolean };
+  // After the room moved: may the new room record, and may an owner authorize it now.
+  roomRecording?: { generation: number; status: string; label: string; reason: string | null; canAuthorize: boolean; oldRoomStillRecording: boolean } | null;
+  anomalies: { code: string; severity: string; label: string }[];
+  dataState: { value: string; label: string; lastConfirmedAt: string | null; ageSeconds: number | null };
+};
+type Anomaly = { lessonId: string; lessonCode: string | null; code: string; label: string; severity: string; firstSeenAt: string | null; openedAt: string | null; lastSeenAt: string | null; resolvedAt: string | null; handled: boolean; acknowledgedBy: string | null; acknowledgedAt: string | null; note: string | null };
+type Lesson = { lessonId: string; code: string; startsAt: string; endsAt: string; cancelled: boolean; tutorCode: string | null; studentCodes: string[] };
+type AccessAction = "cancel" | "revoke_link" | "reissue_link";
+type Overview = { mode: string | null; trialConsent?: boolean; dashboard: { generatedAt: string; groups: Record<string, Card[]>; counts: Record<string, number> }; anomalies: Anomaly[]; lessons: Lesson[] };
+
+const GROUPS = ["ANOMALY", "LIVE", "WAITING", "ENDED"];
+const taipei = (iso: string | null) => (iso ? new Date(new Date(iso).getTime() + 8 * 3600_000).toISOString().slice(5, 16).replace("T", " ") : "—");
+// Where a confirmation came from. The source names inside the events still say zoom (the
+// synthetic provider plays Zoom-shaped events); the page names no vendor while none is chosen.
+const SOURCE = { zoom_webhook: "視訊服務", host_sdk: "小老師端", zoom_api: "視訊服務查詢", zoom: "視訊服務" } as Record<string, string>;
+const emptyLesson = { code: "", date: "", time: "", minutes: "60", tutorCode: "", tutorEmail: "", studentCode: "" };
+
+export default function ClassroomsPage() {
+  const { locale, principal, setSubmitting } = useAdmin();
+  const text = locale === "en" ? copy.en : copy.zhHant;
+  const [overview, setOverview] = useState<Overview | null>(null);
+  const [error, setError] = useState("");
+  const [tickFailed, setTickFailed] = useState(false);
+  const [refreshedAt, setRefreshedAt] = useState<string | null>(null);
+  const [checking, setChecking] = useState("");
+  const [stopping, setStopping] = useState("");
+  const [resuming, setResuming] = useState("");
+  const [notes, setNotes] = useState<Record<string, string>>({});
+  const [lesson, setLesson] = useState(emptyLesson);
+  const [busy, setBusy] = useState(false);
+  const [studentLink, setStudentLink] = useState("");
+  const [copied, setCopied] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [consent, setConsent] = useState({ personCode: "", role: "student", status: "granted" });
+
+  const refresh = useCallback(async () => {
+    try {
+      await adminFetch("/api/admin/classrooms/tick", { method: "POST", body: "{}" }).then(() => setTickFailed(false), () => setTickFailed(true));
+      setOverview(await adminFetch<Overview>("/api/admin/classrooms"));
+      setRefreshedAt(new Date().toISOString());
+      setError("");
+    } catch (failure) {
+      setError(displayError(failure, locale));
+    }
+  }, [locale]);
+
+  useEffect(() => {
+    if (principal.role !== "owner") return;
+    refresh();
+    const timer = setInterval(() => { if (document.visibilityState === "visible") refresh(); }, 15_000);
+    return () => clearInterval(timer);
+  }, [principal.role, refresh]);
+
+  if (principal.role !== "owner") return <section className="admin-page"><p className="admin-alert">{text.ownerOnly}</p></section>;
+
+  const lessonIdOf = (code: string) => overview?.lessons.find((item) => item.code === code)?.lessonId ?? "";
+  async function mutate(run: () => Promise<void>) {
+    if (busy) return;
+    setBusy(true);
+    setSubmitting(true);
+    setError("");
+    try {
+      await run();
+    } catch (failure) {
+      setError(displayError(failure, locale));
+    } finally {
+      setBusy(false);
+      setSubmitting(false);
+    }
+  }
+  const checkNow = (code: string) => mutate(async () => {
+    setChecking(code);
+    try {
+      await adminFetch(`/api/admin/classrooms/${encodeURIComponent(lessonIdOf(code))}/reconcile`, { method: "POST", body: "{}" });
+      await refresh();
+    } finally {
+      setChecking("");
+    }
+  });
+  // One press, one confirmation: the server stops recording at once and keeps it stopped.
+  const emergencyStop = (code: string) => {
+    if (!window.confirm(text.emergencyConfirm)) return;
+    return mutate(async () => {
+      setStopping(code);
+      try {
+        await adminFetch(`/api/admin/classrooms/${encodeURIComponent(lessonIdOf(code))}/stop-recording`, { method: "POST", body: "{}" });
+        await refresh();
+      } finally {
+        setStopping("");
+      }
+    });
+  };
+  // After a move during a recording: one press, one confirmation; the server checks again and
+  // starts only if that passes.
+  const resumeRecording = (code: string) => {
+    if (!window.confirm(text.resumeConfirm)) return;
+    return mutate(async () => {
+      setResuming(code);
+      try {
+        await adminFetch(`/api/admin/classrooms/${encodeURIComponent(lessonIdOf(code))}/resume-recording`, { method: "POST", body: "{}" });
+        setNotice(text.resumeNotice);
+        await refresh();
+      } finally {
+        setResuming("");
+      }
+    });
+  };
+  const handle = (item: Anomaly) => mutate(async () => {
+    const id = `${item.lessonId}:${item.code}`;
+    await adminFetch("/api/admin/classrooms/anomalies", { method: "POST", body: JSON.stringify({ lessonId: item.lessonId, code: item.code, note: notes[id] ?? "" }) });
+    setNotes((current) => ({ ...current, [id]: "" }));
+    await refresh();
+  });
+  const addLesson = () => mutate(async () => {
+    const data = await adminFetch<{ studentLink: string }>("/api/admin/classrooms", { method: "POST", body: JSON.stringify({ ...lesson, minutes: Number(lesson.minutes) }) });
+    setStudentLink(`${window.location.origin}${data.studentLink}`);
+    setCopied(false);
+    setNotice("");
+    setLesson(emptyLesson);
+    await refresh();
+  });
+  // Revoke or reissue the student's link, or cancel the lesson; each asks first. A reissued link
+  // is shown once, in the same box as a new lesson's.
+  const changeAccess = (item: Lesson, action: AccessAction) => {
+    const question = { cancel: text.confirmCancel, revoke_link: text.confirmRevoke, reissue_link: text.confirmReissue }[action];
+    if (!window.confirm(`${item.code}：${question}`)) return;
+    return mutate(async () => {
+      const data = await adminFetch<{ studentLink?: string }>(`/api/admin/classrooms/${encodeURIComponent(item.lessonId)}`, {
+        method: "PATCH", body: JSON.stringify({ action, studentCode: item.studentCodes[0] }),
+      });
+      setStudentLink(data.studentLink ? `${window.location.origin}${data.studentLink}` : "");
+      setCopied(false);
+      setNotice(action === "cancel" ? `${item.code}：${text.cancelledNotice}` : action === "revoke_link" ? `${item.code}：${text.revokedNotice}` : "");
+      await refresh();
+    });
+  };
+  const saveConsent = () => mutate(async () => {
+    await adminFetch("/api/admin/classrooms/consents", { method: "POST", body: JSON.stringify(consent) });
+    setConsent((current) => ({ ...current, personCode: "" }));
+    await refresh();
+  });
+
+  const counts = overview?.dashboard.counts ?? {};
+  // Open and not yet handled first, then open, then cleared; most recent first within each.
+  const rank = (item: Anomaly) => (item.resolvedAt ? 2 : item.handled ? 1 : 0);
+  const anomalies = [...(overview?.anomalies ?? [])].sort((a, b) => rank(a) - rank(b) || String(b.lastSeenAt).localeCompare(String(a.lastSeenAt)));
+  return (
+    <section className="admin-page classroom-overview">
+      <header className="admin-page-head">
+        <div><h1>{text.title}</h1><p>{text.intro}</p></div>
+        <p className="admin-muted">{text.refreshed}: {refreshedAt ? taipei(refreshedAt) : "—"}</p>
+      </header>
+      {overview?.mode === "synthetic" && <p className="classroom-synthetic" role="note">{text.synthetic}</p>}
+      {tickFailed && <p className="admin-alert" role="status">{text.tickFailed}</p>}
+      {error && <p className="admin-alert" role="alert">{error}</p>}
+
+      <div className="classroom-counts">
+        {GROUPS.map((group) => <div key={group} className={`classroom-count classroom-${group.toLowerCase()}`}><span>{text.groups[group]}</span><strong>{counts[group] ?? 0}</strong></div>)}
+      </div>
+
+      {overview && !GROUPS.some((group) => overview.dashboard.groups[group]?.length) && <p className="admin-muted">{text.empty}</p>}
+      {GROUPS.filter((group) => overview?.dashboard.groups[group]?.length).map((group) => (
+        <section key={group} className="classroom-group" aria-label={text.groups[group]}>
+          <h2>{text.groups[group]}（{overview!.dashboard.groups[group].length}）</h2>
+          <div className="classroom-cards">
+            {overview!.dashboard.groups[group].map((card) => (
+              <article key={card.lessonCode} className={`classroom-card${group === "ANOMALY" ? " is-problem" : ""}`}>
+                <div className="classroom-card-head">
+                  <strong>{card.lessonCode}</strong>
+                  <span className={`classroom-data ${card.dataState.value}`}>{card.dataState.label}</span>
+                </div>
+                <dl>
+                  <div><dt>{text.scheduled}</dt><dd>{taipei(card.scheduledStart)}　{text.started} {taipei(card.actualStart)}　{card.phase.label}</dd></div>
+                  {card.tutor && <div><dt>{text.tutor}</dt><dd>{card.tutor.code}　{card.tutor.label}</dd></div>}
+                  {card.students.map((student) => <div key={student.code}><dt>{text.student}</dt><dd>{student.code}　{student.label}</dd></div>)}
+                  <div><dt>{text.recording}</dt><dd>{card.recording.label}{card.recording.basis === "confirmed" && card.recording.source ? <span className="classroom-basis">（{SOURCE[card.recording.source] ?? card.recording.source}確認）</span> : null}</dd></div>
+                  {card.filing.label && <div><dt>{text.filing}</dt><dd>{card.filing.label}{card.filing.reasonLabel ? `（${card.filing.reasonLabel}）` : null}</dd></div>}
+                  {card.filing.items && card.filing.items.length > 0 && (
+                    <div><dt>{text.files}</dt><dd>
+                      <ul className="classroom-files">
+                        {card.filing.items.map((item, index) => (
+                          <li key={`${item.name ?? item.extension}-${index}`}>
+                            <span className={`classroom-file-status ${item.status}`}>{item.label}{item.reasonLabel ? `（${item.reasonLabel}）` : ""}</span>
+                            {item.name && <span className="classroom-file-name">{item.folder ? `${item.folder} / ` : ""}{item.name}</span>}
+                            {item.generation != null && item.generation > 0 && <span className="classroom-basis">{locale === "en" ? `${text.fileRoom} ${item.generation + 1}` : `${text.fileRoom} ${item.generation + 1} 間`}</span>}
+                            {item.size != null && <span className="classroom-basis">{megabytes(item.size)}</span>}
+                            {item.md5 && <span className="classroom-basis" title={item.md5}>md5 {item.md5.slice(0, 8)}…</span>}
+                            {item.link && <a href={item.link} target="_blank" rel="noreferrer noopener">{text.openFile}</a>}
+                          </li>
+                        ))}
+                      </ul>
+                    </dd></div>
+                  )}
+                  <div><dt>{text.data}</dt><dd>{card.dataState.lastConfirmedAt ? taipei(card.dataState.lastConfirmedAt) : "—"}</dd></div>
+                </dl>
+                {card.anomalies.length > 0 && <ul className="classroom-alerts">{card.anomalies.map((item) => <li key={item.code} className={item.severity}>{item.label}</li>)}</ul>}
+                {card.emergency?.pressedAt && (
+                  <p className={`classroom-emergency${card.emergency.stopState === "CONFIRMED" ? " is-confirmed" : ""}`} role="status">{text.emergencyPressed}（{taipei(card.emergency.pressedAt)}）：{card.emergency.stopLabel}</p>
+                )}
+                {card.roomRecording && <p className="classroom-room-recording" role="status">{card.roomRecording.label}</p>}
+                <div className="admin-card-actions">
+                  <button type="button" className="admin-button secondary" disabled={busy || !lessonIdOf(card.lessonCode)} onClick={() => checkNow(card.lessonCode)}>{checking === card.lessonCode ? text.checking : text.check}</button>
+                  {card.emergency?.available && (
+                    <button type="button" className="admin-button danger" disabled={busy || !lessonIdOf(card.lessonCode)} onClick={() => emergencyStop(card.lessonCode)}>{stopping === card.lessonCode ? text.stopping : text.emergencyStop}</button>
+                  )}
+                  {card.roomRecording?.canAuthorize && (
+                    <button type="button" className="admin-button secondary" disabled={busy || !lessonIdOf(card.lessonCode)} onClick={() => resumeRecording(card.lessonCode)}>{resuming === card.lessonCode ? text.resuming : text.resumeRecording}</button>
+                  )}
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      ))}
+
+      <div className="admin-panel classroom-panel">
+        <h2>{text.anomalies}</h2>
+        <p className="admin-muted">{text.anomaliesIntro}</p>
+        {anomalies.length ? (
+          <div className="admin-table-wrap">
+            <table className="admin-table">
+              <tbody>
+                {anomalies.map((item) => {
+                  const id = `${item.lessonId}:${item.code}`;
+                  return (
+                    <tr key={id}>
+                      <td><strong>{item.lessonCode}</strong><div className="admin-muted">{item.label}</div></td>
+                      <td>
+                        <span className={`admin-status ${item.resolvedAt ? "published" : "archived"}`}>{item.resolvedAt ? text.resolved : text.open}</span>{" "}
+                        <span className={`classroom-severity ${item.severity}`}>{item.severity}</span>
+                        {!item.resolvedAt && !item.handled && <div className="classroom-unhandled">{text.unhandled}</div>}
+                      </td>
+                      <td className="admin-muted">{text.firstSeen} {taipei(item.firstSeenAt)}<br />{text.lastSeen} {taipei(item.resolvedAt ?? item.lastSeenAt)}</td>
+                      <td>
+                        {item.acknowledgedBy && <p className={`classroom-handled${item.handled ? "" : " is-earlier"}`}>{item.handled ? text.handled : text.earlier}：{item.note}（{item.acknowledgedBy}，{taipei(item.acknowledgedAt)}）</p>}
+                        <div className="admin-toolbar">
+                          <input className="admin-search" value={notes[id] ?? ""} maxLength={500} placeholder={text.note} onChange={(event) => setNotes((current) => ({ ...current, [id]: event.target.value }))} />
+                          <button type="button" className="admin-button secondary" disabled={busy || !(notes[id] ?? "").trim()} onClick={() => handle(item)}>{text.save}</button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : <p className="admin-muted">{text.noAnomalies}</p>}
+      </div>
+
+      <div className="admin-panel classroom-panel">
+        <h2>{text.add}</h2>
+        <div className="classroom-form">
+          {(["code", "date", "time", "minutes", "tutorCode", "tutorEmail", "studentCode"] as const).map((field) => (
+            <label key={field} className="admin-field">
+              <span>{text[field]}</span>
+              <input
+                className="admin-search"
+                type={field === "date" ? "date" : field === "time" ? "time" : field === "minutes" ? "number" : field === "tutorEmail" ? "email" : "text"}
+                value={lesson[field]}
+                onChange={(event) => setLesson((current) => ({ ...current, [field]: event.target.value }))}
+              />
+            </label>
+          ))}
+        </div>
+        <button type="button" className="admin-button primary" disabled={busy} onClick={addLesson}>{busy ? text.adding : text.add}</button>
+        {studentLink && (
+          <div className="classroom-link" role="status">
+            <p>{text.linkOnce}</p>
+            <code>{studentLink}</code>
+            <button type="button" className="admin-button secondary" onClick={() => navigator.clipboard?.writeText(studentLink).then(() => setCopied(true), () => setCopied(false))}>{copied ? text.copied : text.copyLink}</button>
+          </div>
+        )}
+        {notice && <p className="classroom-notice" role="status">{notice}</p>}
+        {overview?.lessons.length ? (
+          <div className="admin-table-wrap">
+            <table className="admin-table classroom-lessons">
+              <tbody>
+                {overview.lessons.map((item) => (
+                  <tr key={item.lessonId} className={item.cancelled ? "is-cancelled" : undefined}>
+                    <td><strong>{item.code}</strong>{item.cancelled && <span className="classroom-cancelled">{text.cancelledMark}</span>}</td>
+                    <td>{taipei(item.startsAt)}–{taipei(item.endsAt).slice(-5)}</td>
+                    <td>{text.tutor} {item.tutorCode}</td>
+                    <td>{text.student} {item.studentCodes.join("、")}</td>
+                    <td className="classroom-lesson-actions">
+                      <button type="button" className="admin-button secondary" disabled={busy || item.cancelled} onClick={() => changeAccess(item, "revoke_link")}>{text.revokeLink}</button>
+                      <button type="button" className="admin-button secondary" disabled={busy || item.cancelled} onClick={() => changeAccess(item, "reissue_link")}>{text.reissueLink}</button>
+                      <button type="button" className="admin-button secondary" disabled={busy || item.cancelled} onClick={() => changeAccess(item, "cancel")}>{text.cancelLesson}</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+      </div>
+
+      {(overview?.mode === "synthetic" || overview?.trialConsent) && (
+        <div className="admin-panel classroom-panel">
+          <h2>{text.consent}</h2>
+          <p className="admin-muted">{overview?.mode === "synthetic" ? text.consentIntro : text.trialConsentIntro}</p>
+          <div className="admin-toolbar">
+            <input className="admin-search" value={consent.personCode} placeholder={text.personCode} onChange={(event) => setConsent((current) => ({ ...current, personCode: event.target.value }))} />
+            <select className="admin-select" value={consent.role} aria-label={text.role} onChange={(event) => setConsent((current) => ({ ...current, role: event.target.value }))}>
+              <option value="student">{text.student}</option>
+              <option value="tutor">{text.tutor}</option>
+            </select>
+            {consent.role === "student" ? (
+              <select className="admin-select" value={consent.status} aria-label={text.status} onChange={(event) => setConsent((current) => ({ ...current, status: event.target.value }))}>
+                <option value="granted">{text.granted}</option>
+                <option value="withdrawn">{text.withdrawn}</option>
+              </select>
+            ) : <span className="admin-muted">{text.staffNotice}</span>}
+            <button type="button" className="admin-button secondary" disabled={busy || !consent.personCode.trim()} onClick={saveConsent}>{text.setConsent}</button>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}

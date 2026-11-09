@@ -7,7 +7,7 @@ const read = async (path) => (await readFile(new URL(`../${path}`, import.meta.u
 describe("production operations configuration", () => {
   it("permits same-origin Academy embedding only on the exact editor route", async () => {
     const { headers: rules } = JSON.parse(await read("vercel.json"));
-    expect(rules.map(rule => rule.source)).toEqual(["/(.*)", "/admin/media", "/admin/academy"]);
+    expect(rules.map(rule => rule.source)).toEqual(["/(.*)", "/admin/media", "/admin/academy", "/classroom/:lessonId", "/classroom/b/:blockId"]);
     const headerMap = rule => Object.fromEntries(rule.headers.map(header => [header.key.toLowerCase(), header.value]));
     const defaults = headerMap(rules[0]);
     expect(defaults["x-frame-options"]).toBe("DENY");
@@ -22,6 +22,46 @@ describe("production operations configuration", () => {
     for (const route of ["/", "/academy/courses", "/academy/courses/zh", "/admin", "/admin/academy/other", "/admin/accounts", "/api/auth/signin"]) {
       expect(rules.slice(1).some(rule => rule.source === route)).toBe(false);
     }
+  });
+
+  // Vercel applies a later matching rule's header over an earlier one (seen live on /admin/media,
+  // 2026-10-30), so only the classroom page gets camera, microphone and screen sharing, for itself
+  // and Tencent's classroom frame; every other page keeps them off, and nothing may frame it.
+  it("allows camera, microphone and the two classroom vendors only on the classroom page", async () => {
+    const { headers: rules } = JSON.parse(await read("vercel.json"));
+    const headerMap = rule => Object.fromEntries(rule.headers.map(header => [header.key.toLowerCase(), header.value]));
+    const defaults = headerMap(rules[0]);
+    expect(defaults["permissions-policy"]).toBe("camera=(), microphone=(), geolocation=(), payment=()");
+    const others = rules.slice(0, -2).map(headerMap);
+    expect(others.every(rule => !/camera=\(self|tencentclass|zoom\.us/.test(`${rule["permissions-policy"] ?? ""} ${rule["content-security-policy"] ?? ""}`))).toBe(true);
+    const classroom = rules.at(-2);
+    expect(classroom.source).toBe("/classroom/:lessonId");
+    // P3-Multi (2026-11-09): a block's page (/classroom/b/<id>, two segments, which the one-segment
+    // rule above does not match) shows the same classroom, so it gets exactly the same two headers;
+    // its manage console (/classroom/b/<id>/manage) has no camera and keeps the defaults.
+    const block = rules.at(-1);
+    expect(block.source).toBe("/classroom/b/:blockId");
+    expect(block.headers).toEqual(classroom.headers);
+    const room = headerMap(classroom);
+    expect(Object.keys(room).sort()).toEqual(["content-security-policy", "permissions-policy"]);
+    const tencent = '"https://www.tencentclass.com"';
+    for (const feature of ["camera", "microphone", "display-capture", "fullscreen", "clipboard-read", "clipboard-write"]) {
+      expect(room["permissions-policy"]).toContain(`${feature}=(self ${tencent})`);
+    }
+    expect(room["permissions-policy"]).toContain("geolocation=(), payment=()");
+    const csp = Object.fromEntries(room["content-security-policy"].split("; ").map(part => [part.split(" ")[0], part]));
+    expect(csp["frame-ancestors"]).toBe("frame-ancestors 'none'");
+    expect(csp["frame-src"]).toBe("frame-src 'self' https://www.tencentclass.com");
+    // Zoom's whiteboard loads its script and stylesheet from the account's regional Zoom host (seen in
+    // the real trial: https://<region>.zoom.us/web_client_whiteboard/...), so Zoom's own domains are allowed.
+    expect(csp["script-src"]).toBe("script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob: https://source.zoom.us https://*.zoom.us");
+    expect(csp["worker-src"]).toBe("worker-src 'self' blob: https://source.zoom.us https://*.zoom.us");
+    expect(csp["style-src"]).toBe("style-src 'self' 'unsafe-inline' https://*.zoom.us");
+    expect(csp["font-src"]).toBe("font-src 'self' data: https://*.zoom.us");
+    // Joining first calls https://zoom.us/wc/lsdk, which *.zoom.us does not cover (seen with the real package);
+    // the whiteboard then fetches blob: addresses the page made itself (seen in the real trial).
+    expect(csp["connect-src"]).toBe("connect-src 'self' blob: https://zoom.us https://*.zoom.us wss://*.zoom.us");
+    expect(csp["media-src"]).toBe("media-src 'self' blob: mediastream:");
   });
 
   it("does not bypass current-data page routes with legacy static HTML rewrites", async () => {
@@ -138,7 +178,7 @@ describe("production operations configuration", () => {
 
     expect(backup).toContain("site_media_assets: siteMediaAssets");
     expect(backup).toContain("site_media_variants: siteMediaVariants");
-    expect(verifier).toContain("[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]");
+    expect(verifier).toContain("[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]");
     expect(backup).toContain("resource_links: resourceLinks");
     expect(verifier).toContain('required.push("resource_links")');
     expect(restoreVerifier).toContain("INSERT INTO resource_links");
@@ -264,5 +304,146 @@ describe("production operations configuration", () => {
     expect(configure).not.toContain("credential.private_key");
     expect(example).toContain("GOOGLE_CLOUD_LOCAL_ADC=");
     expect(example).not.toContain("GOOGLE_CLOUD_PRIVATE_KEY=");
+  });
+
+  // P3 classroom CI (2026-11-09): every classroom PostgreSQL and browser suite runs in CI, each
+  // script CI names exists, and CI reads no secret and asks only to read the repository.
+  it("runs every classroom PostgreSQL and browser suite in CI, with no secrets", async () => {
+    const ci = await read(".github/workflows/ci.yml");
+    const { scripts } = JSON.parse(await read("package.json"));
+    for (const match of ci.matchAll(/npm run ([a-z0-9:-]+)/g)) expect(scripts, match[1]).toHaveProperty(match[1]);
+    const classroomSuites = Object.keys(scripts).filter(name => /^test:classroom:(.*postgres|migration|backup-v12|multi-load|browser|controls|rate-limit|multi-browser)$/.test(name));
+    expect(classroomSuites.length).toBeGreaterThanOrEqual(10);
+    for (const name of classroomSuites) expect(ci, name).toContain(`npm run ${name}`);
+    expect(ci).toContain("node tests/classroom-auth.smoke.mjs");
+    expect(ci).not.toMatch(/secrets\./);
+    expect(ci).toMatch(/permissions:\r?\n  contents: read/);
+    expect(ci).toMatch(/classroom-postgres:\r?\n    runs-on: ubuntu-latest/);
+    expect(ci).toMatch(/classroom-browser:\r?\n    runs-on: ubuntu-latest/);
+  });
+
+  // D1 (2026-11-07): migration 028's nine classroom tables in every backup, restore and audit path,
+  // checked only once 028 is recorded; the daily backup's classroom part stays off until iHear
+  // confirms encryption, access and retention (H8). Run for real in tests/classroom-postgres.test.mjs.
+  it("keeps the classroom tables recoverable once 028 is applied, with the daily part off until H8", async () => {
+    const tables = await read("scripts/classroom-backup-tables.mjs");
+    const backup = await read("scripts/backup-database.mjs");
+    const verifier = await read("scripts/verify-backup-file.mjs");
+    const restore = await read("scripts/verify-backup.mjs");
+    const audit = await read("scripts/audit-database.mjs");
+    const drill = await read(".github/workflows/monthly-restore-drill.yml");
+    const daily = await read(".github/workflows/daily-application-backup.yml");
+    const migration = await read("db/migrations/028_classroom_mvp.sql");
+    const names = ["classroom_lessons", "classroom_participants", "classroom_consents", "classroom_staff_notices", "classroom_join_tokens",
+      "classroom_events", "classroom_jobs", "classroom_recording_files", "classroom_anomalies"];
+    for (const name of names) {
+      expect(migration).toContain(`CREATE TABLE IF NOT EXISTS public.${name} (`);
+      expect(migration).toContain(`ALTER TABLE public.${name} ENABLE ROW LEVEL SECURITY;`);
+      expect(tables).toContain(`name: "${name}"`);
+      expect(drill).toContain(`to_regclass('public.${name}')`);
+    }
+    for (const script of [backup, verifier, restore, audit]) expect(script).toContain('from "./classroom-backup-tables.mjs"');
+    expect(backup).toContain('process.env.BACKUP_INCLUDE_CLASSROOM === "1"');
+    expect(daily).not.toContain("BACKUP_INCLUDE_CLASSROOM");
+    expect(verifier).toContain("validateClassroomBackup(tables, levels)");
+    expect(verifier).toContain('backup.payload.version >= 11 ? "028"');
+    expect(restore).toContain("validateClassroomBackup(tables, levels)");
+    // Version 12 (P3-Multi): the blocks (029) and programs (030) by level, checked before writing,
+    // never replayed into a database without that structure; the audit and drill know them too.
+    expect(tables).toContain('export const CLASSROOM_LEVELS = ["028", "029", "030"];');
+    expect(backup).toContain("validateClassroomBackup(classroomTables, classroomLevels);");
+    expect(backup).toContain("classroomSchema: classroomLevels");
+    for (const script of [verifier, restore]) expect(script).toContain("[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].includes(backup.payload?.version)");
+    expect(restore).toContain("This database does not have the classroom structure the backup needs");
+    expect(audit).toContain("block_student_links_not_hashed");
+    expect(drill).toContain("to_jsonb(person)->>'member_id' IS NULL");
+    expect(audit).toContain('migration.version === CLASSROOM_MIGRATION');
+    expect(drill).toContain("WHERE version = '028'");
+    expect(drill).toContain("Row level security is off on a restored classroom table");
+    expect(drill).toContain("restored_classroom_row_counts");
+  });
+
+  // H8 is not confirmed by iHear (2026-11-07). Option 乙 (leave the classroom rows out of the full
+  // dumps) has its switch, data/backup-policy.json, read by the weekly backup and the monthly drill
+  // (and the manual encrypted backup, from main). It is off: until iHear approves option 2 the
+  // dumps hold every row as before. Turning it on is a reviewed commit of that file.
+  it("keeps the H8 option 2 switch off, and the weekly and monthly dumps follow it and nothing else", async () => {
+    expect(JSON.parse(await read("data/backup-policy.json"))).toEqual({ excludeClassroomData: false });
+    expect((await read(".gitignore")).split("\n")).toContain("!data/backup-policy.json");
+    for (const file of [".github/workflows/weekly-postgres-backup.yml", ".github/workflows/monthly-restore-drill.yml"]) {
+      const text = await read(file);
+      const dumps = text.split("\n").filter(line => line.includes("pg_dump"));
+      expect(dumps, file).toHaveLength(1);
+      expect(dumps[0], file).toContain('--schema=public --exclude-table-data=public.api_rate_limits ${CLASSROOM_EXCLUSION:+"$CLASSROOM_EXCLUSION"} --file=');
+      expect(dumps[0].replace('${CLASSROOM_EXCLUSION:+"$CLASSROOM_EXCLUSION"}', ""), file).not.toMatch(/classroom/i);
+      expect(text, file).toContain('option="$(node scripts/backup-policy.mjs --pg-dump-option)"');
+      expect(text, file).toContain("CLASSROOM_EXCLUSION: ${{ steps.policy.outputs.classroom_exclusion }}");
+      expect(text, file).toContain("-e CLASSROOM_EXCLUSION \\");
+      expect(text, file).toMatch(/does not protect classroom data/);
+      // The policy is read after the checkout and before the dump.
+      expect(text.indexOf("actions/checkout@")).toBeLessThan(text.indexOf("scripts/backup-policy.mjs"));
+      expect(text.indexOf("scripts/backup-policy.mjs")).toBeLessThan(text.indexOf("pg_dump"));
+    }
+    expect(await read(".github/workflows/daily-application-backup.yml")).not.toContain("BACKUP_INCLUDE_CLASSROOM");
+  });
+});
+
+describe("the classroom backup policy (H8 option 2)", () => {
+  it("accepts only an exact true or false, and names the one pg_dump option it adds", async () => {
+    const { parseBackupPolicy, pgDumpOptionFor, CLASSROOM_EXCLUSION_OPTION } = await import("../scripts/backup-policy.mjs");
+    expect(CLASSROOM_EXCLUSION_OPTION).toBe("--exclude-table-data=public.classroom_*");
+    expect(pgDumpOptionFor(parseBackupPolicy('{ "excludeClassroomData": false }'))).toBe("");
+    expect(pgDumpOptionFor(parseBackupPolicy('{ "excludeClassroomData": true }'))).toBe(CLASSROOM_EXCLUSION_OPTION);
+    for (const bad of ["", "{", "[]", "null", '{ "excludeClassroomData": "true" }', '{ "excludeClassroomData": 1 }', '{ "excludeClassroomData": true, "other": 1 }', '{ "exclude": true }']) {
+      expect(() => parseBackupPolicy(bad), bad).toThrow(/backup-policy\.json/);
+    }
+  });
+
+  it("from the command line: nothing while off, the option once on, and a stop on a damaged file", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const path = await import("node:path");
+    const dir = await mkdtemp(path.join(tmpdir(), "ihear-policy-"));
+    try {
+      const run = async text => {
+        const file = path.join(dir, "policy.json");
+        await writeFile(file, text);
+        return spawnSync(process.execPath, ["scripts/backup-policy.mjs", "--pg-dump-option", "--file", file], { encoding: "utf8" });
+      };
+      expect(spawnSync(process.execPath, ["scripts/backup-policy.mjs", "--pg-dump-option"], { encoding: "utf8" })).toMatchObject({ status: 0, stdout: "" });
+      expect(await run('{ "excludeClassroomData": true }')).toMatchObject({ status: 0, stdout: "--exclude-table-data=public.classroom_*" });
+      const damaged = await run('{ "excludeClassroomData": "yes" }');
+      expect(damaged.status).toBe(1);
+      expect(damaged.stdout).toBe("");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("the workflows' own pg_dump line passes the option as one quoted word only when it is set", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const path = await import("node:path");
+    const dir = await mkdtemp(path.join(tmpdir(), "ihear-dumpline-"));
+    try {
+      // A file whose name the unquoted pattern would match must not change anything.
+      await writeFile(path.join(dir, "--exclude-table-data=public.classroom_x"), "");
+      for (const file of [".github/workflows/weekly-postgres-backup.yml", ".github/workflows/monthly-restore-drill.yml"]) {
+        const line = (await read(file)).split("\n").find(item => item.includes("sh -eu -c 'pg_dump "));
+        const command = /sh -eu -c '(.+)'\s*$/.exec(line)[1];
+        // pg_dump replaced by a function that prints each argument it gets on its own line.
+        const argsOf = env => spawnSync("bash", ["-euc", `pg_dump() { printf '%s\\n' "$@"; }; ${command}`], { cwd: dir, encoding: "utf8", env: { ...process.env, BACKUP_DATABASE_URL: "postgres://user@host/db", ...env } }).stdout.trim().split("\n");
+        const off = argsOf({ CLASSROOM_EXCLUSION: "" });
+        const on = argsOf({ CLASSROOM_EXCLUSION: "--exclude-table-data=public.classroom_*" });
+        expect(off.filter(arg => /classroom/.test(arg)), file).toEqual([]);
+        expect(on.filter(arg => /classroom/.test(arg)), file).toEqual(["--exclude-table-data=public.classroom_*"]);
+        expect(on.length, file).toBe(off.length + 1);
+        expect(off).toContain("--exclude-table-data=public.api_rate_limits");
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

@@ -1,30 +1,53 @@
 (function () {
   "use strict";
 
+  // The online classroom's entries in this menu ("My online classroom", and the classroom
+  // overview for owners) and the neutral sign-in wording appear only when the classroom opens to
+  // everyone: the last step of the S3 acceptance, released with the home page link (2026-11-07).
+  // The build sets this line from data/classroom-entry.json, the same switch as the home page's
+  // entries (scripts/classroom-entry.mjs); keep it exactly as it is.
+  const CLASSROOM_ENTRY_RELEASED = false;
+  // Before then, staff may preview the entries in one tab with ?classroom-preview=1, but only once
+  // the server confirms they are staff (/api/classroom/entry): the address only asks.
+  const PREVIEW_PARAMETER = "classroom-preview";
+  const PREVIEW_STORAGE = "ihear-classroom-preview";
+
   const labelsByLocale = {
     en: {
-      signIn: "Sign in", signInFull: "Sign in as an administrator with Google", signOut: "Sign out",
-      signedIn: "Administrator signed in", loading: "Checking access…", unavailable: "Could not check sign-in status.",
+      signIn: "Sign in", signInFull: "Sign in as an administrator with Google", signInNeutral: "Sign in with Google", signOut: "Sign out",
+      signedIn: "Administrator signed in", signedInGeneric: "Signed in", loading: "Checking access…", unavailable: "Could not check sign-in status.",
       retry: "Retry", account: "Administrator account", dashboard: "Admin dashboard", dashboardHint: "Manage website content, Team, and Impact", failedOut: "Sign out failed. You are still signed in.",
       failedIn: "Sign in could not start. Please try again.",
+      classroom: "My online classroom", classroomHint: "See your lessons and enter the classroom",
+      classroomAdmin: "Manage the online classroom", classroomAdminHint: "Lessons, live status and student links",
+      classroomPreview: "Online Classroom (staff preview)",
     },
     zhHant: {
-      signIn: "登入", signInFull: "使用 Google 登入管理員帳號", signOut: "登出",
-      signedIn: "管理員已登入", loading: "正在確認權限…", unavailable: "暫時無法確認登入狀態。",
+      signIn: "登入", signInFull: "使用 Google 登入管理員帳號", signInNeutral: "使用 Google 登入", signOut: "登出",
+      signedIn: "管理員已登入", signedInGeneric: "已登入", loading: "正在確認權限…", unavailable: "暫時無法確認登入狀態。",
       retry: "重試", account: "管理員帳號", dashboard: "管理後台", dashboardHint: "管理網站內容、團隊與成果資料", failedOut: "登出失敗，您目前仍保持登入。",
       failedIn: "無法開始登入，請再試一次。",
+      classroom: "我的線上教室", classroomHint: "查看你的課程並進入教室",
+      classroomAdmin: "線上教室管理", classroomAdminHint: "課程、即時狀態與學生連結",
+      classroomPreview: "線上教室（工作人員預覽）",
     },
     zhHans: {
-      signIn: "登录", signInFull: "使用 Google 登录管理员账号", signOut: "登出",
-      signedIn: "管理员已登录", loading: "正在确认权限…", unavailable: "暂时无法确认登录状态。",
+      signIn: "登录", signInFull: "使用 Google 登录管理员账号", signInNeutral: "使用 Google 登录", signOut: "登出",
+      signedIn: "管理员已登录", signedInGeneric: "已登录", loading: "正在确认权限…", unavailable: "暂时无法确认登录状态。",
       retry: "重试", account: "管理员账号", dashboard: "管理后台", dashboardHint: "管理网站内容、团队与成果数据", failedOut: "登出失败，您目前仍保持登录。",
       failedIn: "无法开始登录，请重试。",
+      classroom: "我的线上教室", classroomHint: "查看你的课程并进入教室",
+      classroomAdmin: "线上教室管理", classroomAdminHint: "课程、实时状态与学生链接",
+      classroomPreview: "线上教室（工作人员预览）",
     },
   };
 
   let currentSession = null;
   let loadFailed = false;
   let busy = false;
+  // Whether the server confirmed a preview, and for which signed-in account it asked.
+  let previewAllowed = false;
+  let previewCheckedFor = null;
 
   function locale() {
     const language = (document.documentElement.lang || "en").toLowerCase();
@@ -111,20 +134,96 @@
 
   function loggedOutHtml() {
     const copy = labels();
-    return `<button class="auth-google" type="button" data-auth-signin aria-label="${escapeHtml(copy.signInFull)}"><span class="auth-gmark" aria-hidden="true">G</span><span>${escapeHtml(copy.signIn)}</span></button>`;
+    const label = CLASSROOM_ENTRY_RELEASED ? copy.signInNeutral : copy.signInFull;
+    return `<button class="auth-google" type="button" data-auth-signin aria-label="${escapeHtml(label)}"><span class="auth-gmark" aria-hidden="true">G</span><span>${escapeHtml(copy.signIn)}</span></button>`;
+  }
+
+  // What this person may be shown, from the session the server computed: Auth.js's session
+  // callback checks the owner list and the admin accounts each time the session is read. Only a
+  // literal true counts, so a missing or odd value is a signed-in person without administration.
+  // Nothing on the page decides this, and the server still checks every administrator request.
+  function accessOf(session) {
+    const user = session?.user || {};
+    const admin = user.isAdmin === true;
+    return { admin, owner: admin && user.adminRole === "owner" };
+  }
+
+  // The classroom entries show once the classroom is open, or in a preview the server confirmed.
+  function classroomEntriesOpen() {
+    return CLASSROOM_ENTRY_RELEASED || previewAllowed;
+  }
+
+  // Whether this tab asked for a preview: ?classroom-preview=1 starts it, =0 ends it.
+  function previewWanted() {
+    try {
+      const value = new URLSearchParams(window.location.search).get(PREVIEW_PARAMETER);
+      if (value === "1") sessionStorage.setItem(PREVIEW_STORAGE, "1");
+      if (value === "0") sessionStorage.removeItem(PREVIEW_STORAGE);
+      return sessionStorage.getItem(PREVIEW_STORAGE) === "1";
+    } catch {
+      return false;
+    }
+  }
+
+  // Asked once per page and signed-in account, only while the classroom is not open, only when
+  // this tab wants a preview, and never for anyone signed out. Only a plain yes counts.
+  async function checkPreview() {
+    const account = currentSession?.user ? String(currentSession.user.email || "") : null;
+    if (CLASSROOM_ENTRY_RELEASED || account === null || !previewWanted()) {
+      previewAllowed = false;
+      previewCheckedFor = null;
+      return;
+    }
+    if (previewCheckedFor === account) return;
+    previewCheckedFor = account;
+    previewAllowed = false;
+    try {
+      const response = await fetch("/api/classroom/entry", { credentials: "same-origin", cache: "no-store" });
+      const answer = response.ok ? await response.json() : null;
+      previewAllowed = answer?.released === false && answer?.preview === true;
+    } catch {
+      previewAllowed = false;
+    }
+  }
+
+  // The preview's own link to /classroom: fixed in a corner, so nothing on the page moves, and
+  // not on the classroom pages themselves.
+  function renderPreviewLink() {
+    const existing = document.querySelector("[data-classroom-preview]");
+    if (!previewAllowed || CLASSROOM_ENTRY_RELEASED || window.location.pathname.startsWith("/classroom")) {
+      existing?.remove();
+      return;
+    }
+    const link = existing || document.createElement("a");
+    link.className = "classroom-preview-link";
+    link.href = "/classroom";
+    link.setAttribute("data-classroom-preview", "");
+    link.textContent = labels().classroomPreview;
+    if (!existing) document.body.appendChild(link);
+  }
+
+  function menuLink(mode, className, href, title, hint) {
+    return `<a class="${className}" href="${href}"${mode === "desktop" ? ' role="menuitem"' : ""}><span>${escapeHtml(title)}</span><small>${escapeHtml(hint)}</small></a>`;
   }
 
   function loggedInHtml(session, mode) {
     const copy = labels();
     const user = session.user || {};
-    const name = escapeHtml(user.name || user.email || copy.signedIn);
+    const access = accessOf(session);
+    const name = escapeHtml(user.name || user.email || (access.admin ? copy.signedIn : copy.signedInGeneric));
     const email = escapeHtml(user.email || "");
     const avatar = avatarHtml(user);
-    const dashboard = `<a class="auth-admin-link" href="/admin"${mode === "desktop" ? ' role="menuitem"' : ""}><span>${escapeHtml(copy.dashboard)}</span><small>${escapeHtml(copy.dashboardHint)}</small></a>`;
+    // Administrators: the dashboard. Once the classroom is open, owners also get its overview (an
+    // administration link like the dashboard) and everyone else signed in gets "My online classroom".
+    const links = [
+      access.admin ? menuLink(mode, "auth-admin-link", "/admin", copy.dashboard, copy.dashboardHint) : "",
+      classroomEntriesOpen() && access.owner ? menuLink(mode, "auth-admin-link auth-classroom-link", "/admin/classrooms", copy.classroomAdmin, copy.classroomAdminHint) : "",
+      classroomEntriesOpen() && !access.owner ? menuLink(mode, "auth-classroom-link", "/classroom", copy.classroom, copy.classroomHint) : "",
+    ].join("");
     if (mode === "mobile") {
-      return `<div class="auth-mobile-panel"><div class="auth-mobile-identity" title="${email}">${avatar}<span class="auth-name">${name}</span></div>${dashboard}<button class="auth-signout" type="button" data-auth-signout>${escapeHtml(copy.signOut)}</button></div>`;
+      return `<div class="auth-mobile-panel"><div class="auth-mobile-identity" title="${email}">${avatar}<span class="auth-name">${name}</span></div>${links}<button class="auth-signout" type="button" data-auth-signout>${escapeHtml(copy.signOut)}</button></div>`;
     }
-    return `<div class="auth-menu"><button class="auth-profile" type="button" title="${email}" aria-haspopup="menu" aria-expanded="false" aria-controls="authPopover">${avatar}<span class="auth-name">${name}</span></button><div class="auth-popover" id="authPopover" role="menu" hidden><strong>${name}</strong><span class="auth-email">${email}</span>${dashboard}<div class="auth-menu-separator" aria-hidden="true"></div><button class="auth-signout" role="menuitem" type="button" data-auth-signout>${escapeHtml(copy.signOut)}</button></div></div>`;
+    return `<div class="auth-menu"><button class="auth-profile" type="button" title="${email}" aria-haspopup="menu" aria-expanded="false" aria-controls="authPopover">${avatar}<span class="auth-name">${name}</span></button><div class="auth-popover" id="authPopover" role="menu" hidden><strong>${name}</strong><span class="auth-email">${email}</span>${links}<div class="auth-menu-separator" aria-hidden="true"></div><button class="auth-signout" role="menuitem" type="button" data-auth-signout>${escapeHtml(copy.signOut)}</button></div></div>`;
   }
 
   function bindPopover() {
@@ -161,6 +260,7 @@
     document.querySelectorAll("[data-auth-signin]").forEach((button) => button.addEventListener("click", signIn));
     document.querySelectorAll("[data-auth-retry]").forEach((button) => button.addEventListener("click", refresh));
     bindPopover();
+    renderPreviewLink();
     window.dispatchEvent(new CustomEvent("ihear:auth", { detail: { session: currentSession, error: loadFailed } }));
   }
 
@@ -177,6 +277,7 @@
     render({ loading: true });
     try {
       currentSession = await fetchSession();
+      await checkPreview();
     } catch {
       loadFailed = true;
     } finally {
@@ -201,6 +302,8 @@
       });
       const data = await responseJson(response);
       currentSession = null;
+      previewAllowed = false;
+      previewCheckedFor = null;
       render();
       const redirectUrl = data?.url || window.location.href;
       if (redirectUrl === window.location.href) window.location.reload();

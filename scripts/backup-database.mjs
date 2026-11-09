@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { validateAcademyContentBackup } from "./academy-content-backup.mjs";
+import { classroomBackupVersion, classroomLevelsOf, classroomTablesFor, validateClassroomBackup } from "./classroom-backup-tables.mjs";
 
 import nextEnv from "@next/env";
 import postgres from "postgres";
@@ -90,6 +91,44 @@ try {
     media_gallery_assets: await sql`SELECT * FROM public.media_gallery_assets ORDER BY slot`,
     media_gallery_operations: await sql`SELECT * FROM public.media_gallery_operations ORDER BY id`,
   } : {};
+  // Migration 028's classroom tables join the daily backup only when switched on: iHear still has
+  // to confirm encryption, access and the 35-day retention for lesson data (H8, 2026-11-07). Until
+  // then the daily backup stays as it was (version 10); the weekly full dump already includes them.
+  const includeClassroom = process.env.BACKUP_INCLUDE_CLASSROOM === "1";
+  // Version 12: the classroom levels this database has (028; 029 blocks; 030 programs). Each table
+  // is read whole and checked before anything is written: a column or table the tools do not know
+  // stops the backup instead of being left out.
+  const classroomLevels = await classroomLevelsOf(sql);
+  const classroomTable = { available: classroomLevels.length > 0 };
+  const classroomTables = {};
+  if (includeClassroom && classroomTable.available) {
+    // The table names and key columns are the module's constants, never values from elsewhere.
+    for (const table of classroomTablesFor(classroomLevels)) {
+      classroomTables[table.name] = await sql.unsafe(`SELECT * FROM public.${table.name} ORDER BY ${table.key.join(", ")}`);
+    }
+    validateClassroomBackup(classroomTables, classroomLevels);
+  }
+  const hasClassroom = Object.keys(classroomTables).length > 0;
+  const schemaTables = [
+    "api_rate_limits",
+    "admin_accounts",
+    "admin_activity_log",
+    "impact_milestones",
+    "impact_milestone_settings",
+    "content_overrides",
+    "localized_content_overrides",
+    "localized_translation_states",
+    "team_people",
+    "team_profiles",
+    "site_media_assets",
+    "site_media_variants",
+    "site_settings",
+    "site_layout_configs",
+    "resource_links",
+    "schema_migrations",
+    "site_content_revisions",
+    ...(hasClassroom ? Object.keys(classroomTables) : []),
+  ];
   const constraints = await sql`
     SELECT
       relation.relname AS table_name,
@@ -99,25 +138,7 @@ try {
     JOIN pg_class AS relation ON relation.oid = con.conrelid
     JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
     WHERE namespace.nspname = 'public'
-      AND relation.relname IN (
-        'api_rate_limits',
-        'admin_accounts',
-        'admin_activity_log',
-        'impact_milestones',
-        'impact_milestone_settings',
-        'content_overrides',
-        'localized_content_overrides',
-        'localized_translation_states',
-        'team_people',
-        'team_profiles',
-        'site_media_assets',
-        'site_media_variants',
-        'site_settings',
-        'site_layout_configs',
-        'resource_links',
-        'schema_migrations',
-        'site_content_revisions'
-      )
+      AND relation.relname IN ${sql(schemaTables)}
     ORDER BY relation.relname, con.conname
   `;
   const indexes = await sql`
@@ -130,25 +151,7 @@ try {
     JOIN pg_class AS index_relation ON index_relation.oid = idx.indexrelid
     JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
     WHERE namespace.nspname = 'public'
-      AND relation.relname IN (
-        'api_rate_limits',
-        'admin_accounts',
-        'admin_activity_log',
-        'impact_milestones',
-        'impact_milestone_settings',
-        'content_overrides',
-        'localized_content_overrides',
-        'localized_translation_states',
-        'team_people',
-        'team_profiles',
-        'site_media_assets',
-        'site_media_variants',
-        'site_settings',
-        'site_layout_configs',
-        'resource_links',
-        'schema_migrations',
-        'site_content_revisions'
-      )
+      AND relation.relname IN ${sql(schemaTables)}
     ORDER BY relation.relname, index_relation.relname
   `;
 
@@ -156,9 +159,11 @@ try {
   const resourceLinks = resourceTable.available ? await sql`SELECT * FROM public.resource_links ORDER BY id` : [];
   const payload = {
     format: "ihear-postgres-backup",
-    version: resourceTable.available ? 10 : galleryTable.available ? 9 : hasTranslationStates ? 8 : hasAdminTables ? 7 : hasSiteLayouts ? 6 : hasSiteSettings ? 5 : hasSiteMediaTables ? 4 : hasLocalizedContent ? 3 : 2,
+    version: hasClassroom ? classroomBackupVersion(classroomLevels) : resourceTable.available ? 10 : galleryTable.available ? 9 : hasTranslationStates ? 8 : hasAdminTables ? 7 : hasSiteLayouts ? 6 : hasSiteSettings ? 5 : hasSiteMediaTables ? 4 : hasLocalizedContent ? 3 : 2,
     createdAt: new Date().toISOString(),
+    ...(hasClassroom ? { classroomSchema: classroomLevels } : {}),
     tables: {
+      ...classroomTables,
       ...galleryTables,
       ...(resourceTable.available ? { resource_links: resourceLinks } : {}),
       impact_milestones: impactMilestones,
@@ -201,7 +206,10 @@ try {
     created: true,
     path: path.relative(process.cwd(), backupPath),
     checksum: backup.checksum,
+    classroom: includeClassroom ? (classroomTable.available ? "included" : "not-applied") : "off",
+    ...(hasClassroom ? { classroomSchema: classroomLevels } : {}),
     rowCounts: {
+      ...Object.fromEntries(Object.entries(classroomTables).map(([name, rows]) => [name, rows.length])),
       ...Object.fromEntries(Object.entries(galleryTables).map(([name, rows]) => [name, rows.length])),
       ...(resourceTable.available ? { resource_links: resourceLinks.length } : {}),
       impact_milestones: impactMilestones.length,

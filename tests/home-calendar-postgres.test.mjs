@@ -78,7 +78,8 @@ describe('migration 027 in a disposable PostgreSQL', { timeout: 60_000 }, () => 
       VALUES (${randomUUID()}, 'owner@example.test', 'owner', 'academy.content.updated', 'academy', 'academy_content_v2', ARRAY['pricing.rates'])`;
     const before = await otherState();
 
-    const run = migrate('production_like', await migrationFolder('999'));
+    // Through 027 only: later migrations (028, the classroom) are tested in their own suite.
+    const run = migrate('production_like', await migrationFolder('027'));
     expect(run.applied).toEqual(['027_home_calendar.sql']);
     const [recorded] = await sql`SELECT name, checksum FROM schema_migrations WHERE version = '027'`;
     expect(recorded).toEqual({ name: '027_home_calendar.sql', checksum: migrationChecksum(await readFile('db/migrations/027_home_calendar.sql', 'utf8')) });
@@ -98,7 +99,7 @@ describe('migration 027 in a disposable PostgreSQL', { timeout: 60_000 }, () => 
     await sql.unsafe(await readFile('db/migrations/027_home_calendar.sql', 'utf8'));
     expect(await calendarRow()).toEqual(saved);
     expect((await otherState()).revisions).toEqual(revisions);
-    expect(migrate('production_like', await migrationFolder('999')).applied).toEqual([]);
+    expect(migrate('production_like', await migrationFolder('027')).applied).toEqual([]);
   });
 
   test('limits: the calendar holds 400,000 characters, other keys still 500; "calendar" is an activity type', async () => {

@@ -76,8 +76,18 @@ export default [
     },
   },
   {
+    // Google Apps Script: classic scripts sharing one global scope with Google services.
+    files: ["tools/recording-pathway/apps-script/**/*.js"],
+    languageOptions: {
+      ecmaVersion: "latest",
+      sourceType: "script",
+      globals: Object.fromEntries(["module", "console", "SpreadsheetApp", "DriveApp", "Drive", "FormApp", "ScriptApp", "LockService", "PropertiesService", "Session", "Utilities", "MailApp"].map(name => [name, "readonly"])),
+    },
+    rules: commonRules,
+  },
+  {
     files: ["**/*.js", "**/*.mjs"],
-    ignores: ["assets/**/*.js", "academy-site/**/*.js"],
+    ignores: ["assets/**/*.js", "academy-site/**/*.js", "tools/recording-pathway/apps-script/**/*.js"],
     languageOptions: {
       ecmaVersion: "latest",
       sourceType: "module",

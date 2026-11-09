@@ -1,0 +1,137 @@
+# P3 MVP 驗收清單（含 P1 交接與管理員總覽）
+
+## 合成驗收和實測驗收分開記
+
+每一項分三欄記錄，兩種結果不合併計算：
+- **合成驗收（本輪）**
+- **實測驗收（待授權）**
+- **目前狀態**：只有「未驗證」「合成通過」「實測通過」三種。
+
+**合成測試只能證明我方的邏輯正確：**
+- 入場把關；
+- 錄影資格；
+- 先寫入再回應；
+- 去重；
+- 狀態推導；
+- 核對；
+- 停止保護程序；
+- 權限；
+- 去除個資。
+
+**合成測試不能證明以下任何一項：**
+- Zoom 的實際行為和延遲；
+- 實際能同時錄幾場；
+- 裝置相容性；
+- 費用。
+
+**2 堂、5 堂、10 堂的模擬通過，不代表實際的並行錄影容量已經驗證。**
+
+## 1. 驗收項目
+
+| # | 項目 | 合成驗收（本輪） | 實測驗收（待授權） | 目前狀態 |
+|---|---|---|---|---|
+| A | 每堂一間獨立教室，2、5、10 堂可同時進行，彼此互不影響 | 2、5、10 堂並行模擬中，每堂課的最後狀態都和單獨執行時完全相同 | RT-8：先測 2 間同時錄影，5 和 10 間另外核准 | 合成通過；實測**未驗證** |
+| B | 進行中、等待開始、已結束、異常四個分組都正確 | 模擬的各個時間點；異常優先 | 實測時對照 | 合成通過 |
+| C | 卡片欄位齊全，只顯示代碼 | 課程代碼、表定與實際開始時間、到課狀態、錄影、歸檔、資料狀態 | 網站實作後檢查實際頁面 | 合成通過 |
+| D | 分清已送出錄影啟動請求、錄影中、錄影失敗、錄影已完成，202 不等於錄影中 | 202 只到「已請求」；2 分鐘未確認判為「推測失敗」；API 連續 3 次錯誤判為失敗；確認晚到會改回錄影中；600 張卡片中沒有任何推測被當成確認 | RT-1、RT-6 | 合成通過 |
+| E | 入場資格和錄影資格分開 | 未同意錄影的學生照常入場，整堂不錄；身分不明等五種情況拿不到憑證 | RT-2 | 合成通過 |
+| F | 先寫入資料庫才回 200，重送不會重複歸檔 | 資料庫失敗回 503 且不寫半套；逾時回 503；語意去重；兩個 worker 並行；上傳成功後當機；續傳；收到 3 次通知加上核對結果只歸檔 1 次；資料庫中斷 90 秒的模擬 | RT-7 | 合成通過 |
+| G | webhook 延遲或遺失時重新核對 | 遺失 `session.ended` 由核對補回；檔案 30 分鐘提醒、6 小時錯誤；REST 呼叫在預算內 | 實測時記錄實際延遲 | 合成通過 |
+| H | 停止保護程序（撤回同意、身分不明、未經核准的錄影） | 兩道停止指令、30 秒重送、60 秒結束 session、新 session 不錄；結束後仍未確認就列為錯誤 | RT-2b、RT-1 | 合成通過 |
+| I | 只有授權管理員能看，不外洩個資、下載網址或憑證 | 未登入回 401、editor 回 403、owner 回 200；回應 `no-store`；故意植入的姓名、電話、IP、網址、token 都沒有出現 | 網站實作後，用非 owner 帳號測試 | 合成通過 |
+| J | 巡堂只做權限和資料模型設計 | 功能關閉時一律拒絕；沒有巡堂按鈕和影像牆 | 不屬於 MVP | 合成通過（只有設計） |
+| K | P1 的歸檔結果反映到總覽 | `STORED` 顯示「已歸檔」；`HOLD`／`QUARANTINED` 顯示「已隔離或暫緩」；試 5 次失敗顯示「歸檔失敗」 | RT-5、RT-6，存到測試用的 Drive 資料夾 | 合成通過 |
+| L | 失敗處理的每條規則都有對應測試 | 見 [`recording-failure-rules.md`](recording-failure-rules.md) 和第 3 節 | RT-1 到 RT-7 | 合成通過 |
+| M | 2、5、10 堂的限制與費用已評估，未確認的事項已列出 | 見 [`live-classroom-dashboard.md`](live-classroom-dashboard.md) 第 8 節 | RT-9 | **未驗證**（等授權） |
+
+### 1.1 網站實作的合成驗收（2026-10-25，第 1 週本機）
+
+網站上的教室入口、教室總覽和 API 已經實作，用合成 provider 和本機資料夾代替 Zoom 和 Google Drive。以下只填「合成」結果；實測欄全部仍是**未驗證**。
+
+| 項目 | 測試 | 合成結果 |
+|---|---|---|
+| 學生用專屬連結、小老師用登入進教室；連結錯誤、沒有連結、別人的帳號、不在入場時間內，都會被擋下，也不發憑證；被擋的紀錄會進總覽 | `tests/classroom-api.test.mjs`、`tests/classroom.smoke.mjs` | 通過 |
+| 未同意錄影的學生照常進教室，整堂不錄 | `tests/classroom-api.test.mjs` | 通過 |
+| 有人進教室之前補齊同意，會重新判斷；小老師進來後才補齊，這堂不錄 | `tests/classroom-api.test.mjs`、`test/live-dashboard.test.mjs` | 通過 |
+| 錄影只在 Zoom 確認 session 開始、兩人都在之後才請求；只有 Zoom 確認後才顯示「錄影中」 | `tests/classroom-api.test.mjs`、`tests/classroom.smoke.mjs` | 通過 |
+| 錄影檔用 P1 的命名歸檔一次，重送不重複；webhook 回應後會接著嘗試歸檔（`after()` 盡力而為，可能被函式時限截斷；還沒有每分鐘排程之前，要靠開著的總覽或下一次觸發補做，2026-10-29 更正） | `tests/classroom-api.test.mjs`、`tests/classroom-postgres.test.mjs` | 通過 |
+| 課中撤回：立即停止、30 秒再停一次、60 秒結束 session，新的 session 不錄；未確認時列為錯誤，處置後記下是誰、怎麼處理 | `tests/classroom-api.test.mjs`、`tests/classroom.smoke.mjs` | 通過 |
+| 異常紀錄：問題再次發生或升級時，重新標示待處置；PostgreSQL 和本機檔案儲存的行為一致 | `tests/classroom-store.test.mjs`、`tests/classroom-postgres.test.mjs` | 通過 |
+| 只有 owner 能看總覽和操作；未登入和 editor 都被拒；回應 `no-store` | `tests/classroom-api.test.mjs`、`tests/classroom.smoke.mjs` | 通過 |
+| 總覽和資料庫裡沒有 email、專屬連結、憑證，也沒有故意植入的姓名、電話、IP | 同上，加上 `tests/classroom-postgres.test.mjs` | 通過 |
+| 手機尺寸的頁面不需要左右捲動 | `tests/classroom.smoke.mjs` | 通過（瀏覽器模擬手機尺寸，不是實機） |
+| Migration 028（原 027）套用、資料表都開啟 RLS、限制條件有效 | `tests/classroom-postgres.test.mjs` | 通過（本機一次性資料庫） |
+
+### 1.2 一對一教室 UI Prototype 的合成驗收（2026-10-29，本機）
+
+這一輪只做和視訊廠商無關的部分。視訊廠商還沒選定，所以只有合成的媒體接入介面：**沒有真實影像、聲音或錄影**，畫面只顯示狀態。實測欄全部仍是**未驗證**。
+
+| 項目 | 測試 | 合成結果 |
+|---|---|---|
+| 和廠商無關的媒體接入介面（`lib/classroom-media.ts`）：只有合成版；Tencent RTC、Agora、Zoom Video SDK 三個名字都會回「尚未接入」；合成版宣告自己沒有真實媒體 | `tests/classroom-media.test.mjs` | 通過 |
+| 連線狀態（連線中、已連線、重新連線中、已中斷、連線失敗）、攝影機和麥克風開關、裝置被封鎖或找不到時維持被封鎖 | `tests/classroom-media.test.mjs`、`tests/classroom.smoke.mjs` | 通過 |
+| 小老師端把連線變化立刻回報；網路中斷時總覽顯示「重新連線中」，恢復後消失；合成版不會編造「對方進入」的回報 | `tests/classroom-media.test.mjs`、`tests/classroom.smoke.mjs` | 通過 |
+| 學生端也看得到錄影狀態（未錄影、正在啟動、錄影中），和小老師端用同一份伺服器狀態；停止要等確認後才顯示「未錄影」 | `tests/classroom-api.test.mjs`、`tests/classroom.smoke.mjs` | 通過 |
+| 讀取錄影狀態用和入場相同的身分、名單、時間檢查；不寫入任何事件、不發憑證、不呼叫 provider，只回代碼和狀態 | `tests/classroom-api.test.mjs` | 通過 |
+| 教室頁從頭到尾沒有向瀏覽器要求攝影機或麥克風 | `tests/classroom.smoke.mjs` | 通過 |
+| 本機 Demo：四間不同狀態的教室（錄影中、不錄影、等待開始、課中撤回）加上總覽、小老師、學生三個視窗 | `tests/classroom.demo.mjs` | 可展示（不是驗收） |
+
+**這些合成結果只證明我方的頁面和邏輯正確，不證明任何視訊廠商的連線、畫質、錄影或裝置相容性。**
+
+## 2. 必要實測（取得授權後進行，只用測試身分，不用任何學生資料）
+
+### 2.1 裝置
+
+每種裝置都要測：
+- 入場把關；
+- 進教室；
+- 影音；
+- 雲端錄影是否真的錄到；
+- 切換網路後重新連線；
+- 切到背景或鎖定螢幕（行動裝置）；
+- 無法分享螢幕時的處理（行動裝置）。
+
+| 類型 | 瀏覽器 | 目前狀態 |
+|---|---|---|
+| 電腦 | Windows：Chrome、Edge；macOS：Chrome、Safari | 未驗證 |
+| 平板 | iPad Safari（iPadOS 16.4 以上）、Android 平板 Chrome（112 以上） | 未驗證 |
+| 手機 | iPhone Safari、Android Chrome | 未驗證 |
+
+### 2.2 情境
+
+| # | 情境 | 通過條件 | 目前狀態 |
+|---|---|---|---|
+| RT-1 | Automatic recording 已關閉 | 截圖存證；沒送 start 就沒有錄影；主持人自行開始錄影時會被偵測到 | 未驗證 |
+| RT-2 | 入場與錄影資格 | 身分不明的人拿不到憑證，教室裡出現不明 `user_key` 時會被移出；未同意錄影的學生能正常上課，而且整堂沒有錄影檔 | 未驗證 |
+| RT-2b | 上課中撤回同意 | 錄影確認停止；停止沒有確認時伺服器結束 session，師生重新進入後不再錄影；錄影檔已隔離 | 未驗證 |
+| RT-3 | 小老師直接關機（不按離開） | 錄影正確結束、收到錄影完成、歸檔完成、總覽每個階段都正確（包括「可能離線（推測）」）；同時記錄主持人離開後錄影是否持續、主持人身分是否轉移 | 未驗證 |
+| RT-4 | 小老師突然斷線，分別在 2 分鐘內和 2 分鐘後回來 | 同上；重連時重新做入場檢查 | 未驗證 |
+| RT-5 | 全員離開，或全員斷線 | session 結束；收到錄影完成；歸檔完成；總覽顯示從「推測」到「已確認」的轉變 | 未驗證 |
+| RT-6 | 停止錄影後等待雲端處理 | 量測 30 分鐘和 60 分鐘課程從停止到收到 `recording_completed` 的時間、檔案大小，以及處理期間 `GET /recordings` 的回應；用來校正 `FILE_OVERDUE` 的門檻 | 未驗證 |
+| RT-7 | webhook 端點暫時回 503 | Zoom 依 5、20、60 分鐘重送；不重複歸檔 | 未驗證 |
+| RT-8 | 並行錄影 | 2 間同時錄影都完整；5 和 10 間另外核准。**完成前一律「未驗證」** | 未驗證 |
+| RT-9 | 帳號啟用條件、實際費用、並行錄影上限 | 依 [`zoom-account-check.md`](zoom-account-check.md) 的 S1 到 S4，每一步另外核准；任何購買都先附上金額 | 未驗證 |
+
+## 3. 本輪合成驗收結果
+
+**指令**（在 worktree 根目錄執行）：
+
+```
+node --test "tools/recording-pathway/test/*.test.mjs"
+node tools/recording-pathway/dryrun/recording-webhook.mjs
+node tools/recording-pathway/dryrun/live-dashboard.mjs
+npx eslint tools/recording-pathway eslint.config.mjs
+```
+
+| 項目 | 結果 |
+|---|---|
+| P1 原有測試：`pathway`、`acceptance` | 54／54 |
+| `eligibility.test.mjs` | 7／7 |
+| `webhook-ingest.test.mjs` | 16／16 |
+| `live-dashboard.test.mjs` | 21／21 |
+| 合計 | 98／98 |
+| `dryrun/recording-webhook.mjs` | 6／6 |
+| `dryrun/live-dashboard.mjs` | 45 項檢查全部通過：2、5、10 堂並行；單獨執行與並行時結果相同；每份錄影只有一份；沒有任何植入資料外洩；REST 呼叫在預算內；資料庫中斷 90 秒 |
+| ESLint | 無錯誤 |
+
+測試用的資料庫、Drive 和 Zoom 都是記憶體中的替身（`test/fake-classroom-store.mjs`、`test/fake-zoom.mjs`），只用 `TEST-` 代碼和假的密鑰，沒有任何網路連線。

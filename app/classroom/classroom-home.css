@@ -1,0 +1,18 @@
+/* /classroom: the entry page (2026-11-06). The room's own styles (classroom.css) supply the rest. */
+.classroom-paths { display:grid; gap:18px; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); }
+.classroom-paths h2, .classroom-mine h2 { margin:0 0 6px; font-size:18px; }
+.classroom-paths p { margin:0 0 12px; }
+.classroom-mine ul { list-style:none; margin:0 0 12px; padding:0; display:grid; gap:10px; }
+.classroom-mine li { display:flex; flex-wrap:wrap; align-items:center; gap:6px 14px; padding:10px 0; border-bottom:1px solid #e3e8ef; }
+.classroom-mine li.is-ended, .classroom-mine li.is-cancelled { color:#5d6877; }
+.classroom-mine-state { font-weight:700; }
+.classroom-mine li .classroom-room-primary { margin-left:auto; }
+/* D2 (2026-11-07): the staff preview note, and the student's pasted personal link. */
+.classroom-preview-banner { margin:0; padding:10px 14px; border-radius:10px; border:1px dashed var(--room-line); background:var(--bg-surface, #fff); font-weight:700; }
+.classroom-student-path h2 { margin:0 0 6px; font-size:18px; }
+.classroom-student-path p { margin:0 0 12px; }
+.classroom-paste { display:grid; gap:8px; }
+.classroom-paste label { font-weight:700; }
+.classroom-paste-row { display:flex; flex-wrap:wrap; gap:8px; }
+.classroom-paste-row input { flex:1 1 220px; min-width:0; min-height:48px; padding:10px 12px; border:1px solid var(--room-line); border-radius:12px; font:inherit; }
+.classroom-paste .classroom-room-muted { margin:0; }

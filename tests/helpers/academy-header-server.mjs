@@ -9,8 +9,12 @@ import next from 'next';
 const port = Number(process.env.ACADEMY_TEST_PORT);
 if (!Number.isInteger(port) || port < 1024) throw new Error('ACADEMY_TEST_PORT is required');
 const config = JSON.parse(await readFile('vercel.json', 'utf8'));
+// Exact paths, "/(.*)" and a last one-segment parameter such as "/classroom/:lessonId".
+const matchers = new Map();
 for (const rule of config.headers) {
-  if (rule.source !== '/(.*)' && !/^\/[a-z/]+$/.test(rule.source)) throw new Error('Unsupported header pattern: ' + rule.source);
+  if (rule.source !== '/(.*)' && !/^\/[a-z/]+(?::[A-Za-z]+)?$/.test(rule.source)) throw new Error('Unsupported header pattern: ' + rule.source);
+  const pattern = new RegExp(`^${rule.source.replace(/:[A-Za-z]+$/, '[^/]+')}$`);
+  matchers.set(rule, rule.source === '/(.*)' ? () => true : pathname => pattern.test(pathname));
 }
 
 const app = next({ dev: false, dir: process.cwd(), hostname: 'localhost', port });
@@ -20,7 +24,7 @@ const server = createServer((incoming, outgoing) => {
   const pathname = new URL(incoming.url, `http://localhost:${port}`).pathname;
   // As on Vercel, a later matching rule replaces an earlier rule's header.
   for (const rule of config.headers) {
-    if (rule.source !== '/(.*)' && rule.source !== pathname) continue;
+    if (!matchers.get(rule)(pathname)) continue;
     for (const header of rule.headers) outgoing.setHeader(header.key, header.value);
   }
   void handle(incoming, outgoing).catch(error => {

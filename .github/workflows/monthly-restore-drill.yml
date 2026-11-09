@@ -42,16 +42,31 @@ jobs:
           test -n "$BACKUP_DATABASE_URL" || { echo "BACKUP_DATABASE_URL is not configured"; exit 1; }
           test -n "$BACKUP_ENCRYPTION_PASSWORD" || { echo "BACKUP_ENCRYPTION_PASSWORD is not configured"; exit 1; }
 
+      # data/backup-policy.json (H8): with excludeClassroomData true (option 2), the nine classroom
+      # tables are restored with their structure, constraints, indexes and row level security but
+      # no rows, so this drill's copy does not protect classroom data. False until iHear approves
+      # option 2; an invalid policy file stops the drill.
+      - name: Read the classroom backup policy
+        id: policy
+        shell: bash
+        run: |
+          option="$(node scripts/backup-policy.mjs --pg-dump-option)"
+          echo "classroom_exclusion=$option" >> "$GITHUB_OUTPUT"
+          if [ -n "$option" ]; then echo "Classroom rows are left out of this drill's dump (H8 option 2)."; else echo "Classroom rows are included in this drill's dump."; fi
+
       - name: Create read-only Production dump
         shell: bash
+        env:
+          CLASSROOM_EXCLUSION: ${{ steps.policy.outputs.classroom_exclusion }}
         run: |
           rm -rf restore-output
           mkdir -p restore-output
           docker run --rm \
             -e BACKUP_DATABASE_URL \
+            -e CLASSROOM_EXCLUSION \
             -v "$PWD/restore-output:/restore" \
             postgres:17-alpine \
-            sh -eu -c 'pg_dump "$BACKUP_DATABASE_URL" --format=custom --no-owner --no-privileges --schema=public --exclude-table-data=public.api_rate_limits --file=/restore/production-public.dump'
+            sh -eu -c 'pg_dump "$BACKUP_DATABASE_URL" --format=custom --no-owner --no-privileges --schema=public --exclude-table-data=public.api_rate_limits ${CLASSROOM_EXCLUSION:+"$CLASSROOM_EXCLUSION"} --file=/restore/production-public.dump'
 
       - name: Exercise encrypted backup round trip
         shell: bash
@@ -123,6 +138,46 @@ jobs:
             IF NOT EXISTS (SELECT 1 FROM public.site_settings WHERE key = 'site_theme' AND value IN ('warm', 'ocean', 'sage', 'lavender', 'slate')) THEN
               RAISE EXCEPTION 'Site theme setting is missing or invalid';
             END IF;
+            -- Migration 028's classroom tables, checked only once 028 is recorded (D1, 2026-11-07).
+            IF EXISTS (SELECT 1 FROM public.schema_migrations WHERE version = '028') THEN
+              IF to_regclass('public.classroom_lessons') IS NULL
+                OR to_regclass('public.classroom_participants') IS NULL
+                OR to_regclass('public.classroom_consents') IS NULL
+                OR to_regclass('public.classroom_staff_notices') IS NULL
+                OR to_regclass('public.classroom_join_tokens') IS NULL
+                OR to_regclass('public.classroom_events') IS NULL
+                OR to_regclass('public.classroom_jobs') IS NULL
+                OR to_regclass('public.classroom_recording_files') IS NULL
+                OR to_regclass('public.classroom_anomalies') IS NULL THEN
+                RAISE EXCEPTION 'Migration 028 is recorded but classroom tables are missing';
+              END IF;
+              IF EXISTS (
+                SELECT 1 FROM pg_class AS relation JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+                WHERE namespace.nspname = 'public' AND relation.relname LIKE 'classroom\_%' AND relation.relkind = 'r' AND NOT relation.relrowsecurity
+              ) THEN
+                RAISE EXCEPTION 'Row level security is off on a restored classroom table';
+              END IF;
+              IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename LIKE 'classroom\_%') THEN
+                RAISE EXCEPTION 'A restored classroom table has a policy';
+              END IF;
+              -- One-to-one rows only: a block's seat (draft 029, member_id set) carries no key; the
+              -- block's member does, checked below when the blocks exist.
+              IF EXISTS (
+                SELECT 1 FROM public.classroom_participants AS person
+                WHERE to_jsonb(person)->>'member_id' IS NULL
+                  AND ((person.role = 'student' AND (person.join_key_hash IS NULL OR person.join_key_hash !~ '^[0-9a-f]{64}$')) OR (person.role = 'tutor' AND person.join_key_hash IS NOT NULL))
+              ) THEN
+                RAISE EXCEPTION 'A restored student link is not a key hash, or a tutor has one';
+              END IF;
+              IF to_regclass('public.classroom_block_members') IS NOT NULL THEN
+                IF EXISTS (
+                  SELECT 1 FROM public.classroom_block_members
+                  WHERE (role = 'student' AND (join_key_hash IS NULL OR join_key_hash !~ '^[0-9a-f]{64}$')) OR (role <> 'student' AND join_key_hash IS NOT NULL)
+                ) THEN
+                  RAISE EXCEPTION 'A restored block member link is not a key hash, or staff has one';
+                END IF;
+              END IF;
+            END IF;
           END
           $verify$;
           SELECT json_build_object(
@@ -138,6 +193,11 @@ jobs:
             'admin_accounts', (SELECT COUNT(*) FROM public.admin_accounts),
             'admin_activity_log', (SELECT COUNT(*) FROM public.admin_activity_log)
           ) AS restored_row_counts;
+          SELECT COALESCE(json_object_agg(name, (xpath('/row/c/text()', query_to_xml(format('SELECT count(*) AS c FROM public.%I', name), false, true, '')))[1]::text::integer), '{}'::json) AS restored_classroom_row_counts
+          FROM unnest(ARRAY['classroom_lessons', 'classroom_participants', 'classroom_consents', 'classroom_staff_notices', 'classroom_join_tokens',
+            'classroom_events', 'classroom_jobs', 'classroom_recording_files', 'classroom_anomalies',
+            'classroom_blocks', 'classroom_block_members', 'classroom_programs', 'classroom_courses']) AS name
+          WHERE to_regclass('public.' || name) IS NOT NULL;
           SQL
 
       - name: Store drill evidence

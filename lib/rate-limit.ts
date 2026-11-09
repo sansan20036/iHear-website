@@ -10,10 +10,13 @@ type RateLimitRow = {
   reset_at: Date | string;
 };
 
-type RateLimitOptions = {
+export type RateLimitPolicy = {
   scope: string;
   limit: number;
   windowSeconds: number;
+};
+
+type RateLimitOptions = RateLimitPolicy & {
   identifier?: string;
 };
 
@@ -224,9 +227,79 @@ export async function enforceRateLimit(request: Request, options: RateLimitOptio
   }
 }
 
+// Several allowances counted in one statement (P3-Multi B4): a classroom poll checks a shared
+// allowance for everyone behind one address and one for the person, and between the site's
+// functions and the database every statement costs network round trips. Every bucket is counted,
+// and the request is refused when any one is used up (never weaker than checking them one after
+// another). The rows are taken in key order, so two requests that share a bucket never wait on
+// each other in a circle. All buckets share one window length.
+export async function enforceRateLimits(request: Request, buckets: RateLimitOptions[]): Promise<RateLimitDecision> {
+  try {
+    if (!buckets.length || buckets.some((bucket) => bucket.windowSeconds !== buckets[0].windowSeconds)) {
+      throw new Error("Rate-limit buckets need one window length");
+    }
+    for (const bucket of buckets) validateOptions(bucket);
+    const keyed = buckets.map((bucket) => ({
+      bucket,
+      key: hashRateLimitIdentifier(bucket.scope, bucket.identifier?.trim() || clientIp(request)),
+    }));
+    const sql = sqlClient();
+    let results: RateLimitResult[];
+    if (!sql) {
+      results = keyed.map(({ bucket, key }) => consumeLocal(key, bucket));
+    } else {
+      const windowSeconds = buckets[0].windowSeconds;
+      const keys = [...new Set(keyed.map((entry) => entry.key))].sort();
+      const rows = await sql<(RateLimitRow & { bucket_key: string })[]>`
+        INSERT INTO public.api_rate_limits (
+          bucket_key, window_started_at, request_count, updated_at
+        )
+        SELECT input.key, NOW(), 1, NOW()
+        FROM unnest(${sql.array(keys)}::text[]) AS input(key)
+        ORDER BY input.key
+        ON CONFLICT (bucket_key) DO UPDATE SET
+          window_started_at = CASE
+            WHEN public.api_rate_limits.window_started_at
+              <= NOW() - (${windowSeconds} * INTERVAL '1 second')
+            THEN NOW()
+            ELSE public.api_rate_limits.window_started_at
+          END,
+          request_count = CASE
+            WHEN public.api_rate_limits.window_started_at
+              <= NOW() - (${windowSeconds} * INTERVAL '1 second')
+            THEN 1
+            ELSE public.api_rate_limits.request_count + 1
+          END,
+          updated_at = NOW()
+        RETURNING
+          bucket_key,
+          request_count,
+          window_started_at + (${windowSeconds} * INTERVAL '1 second') AS reset_at
+      `;
+      const byKey = new Map(rows.map((row) => [String(row.bucket_key).trim(), row]));
+      results = keyed.map(({ bucket, key }) => {
+        const row = byKey.get(key);
+        if (!row) throw new Error("Rate-limit bucket was not counted");
+        return resultFromCount(Number(row.request_count), new Date(row.reset_at), bucket.limit);
+      });
+    }
+    const refused = results.filter((result) => !result.allowed).sort((a, b) => b.retryAfter - a.retryAfter)[0];
+    if (refused) return { limited: true as const, response: rateLimitExceededResponse(refused) };
+    const tightest = [...results].sort((a, b) => a.remaining - b.remaining)[0];
+    return { limited: false as const, result: tightest };
+  } catch (error) {
+    console.error("API rate limiting failed", error);
+    return { limited: true as const, response: unavailableResponse() };
+  }
+}
+
 export const RATE_LIMIT_POLICIES = {
   auth: { scope: "auth", limit: 10, windowSeconds: 60 },
   adminMutation: { scope: "admin-mutation", limit: 30, windowSeconds: 60 },
+  // The open classroom overview's own periodic work: a tick every 15 seconds and one after each
+  // change, per open tab. It has its own allowance, so a busy overview never uses up what a
+  // cancel, a revoke or any other admin change needs, and those never hold up the overview (R-8).
+  classroomTick: { scope: "classroom-tick", limit: 60, windowSeconds: 60 },
   mediaUpload: { scope: "media-upload", limit: 10, windowSeconds: 600 },
   galleryUpload: { scope: "gallery-upload", limit: 30, windowSeconds: 600 },
   translation: { scope: "translation", limit: 15, windowSeconds: 60 },
