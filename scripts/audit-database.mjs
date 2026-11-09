@@ -5,7 +5,7 @@ import nextEnv from "@next/env";
 import postgres from "postgres";
 import { migrationChecksum } from "./migration-checksum.mjs";
 import { validateAcademyContentBackup } from "./academy-content-backup.mjs";
-import { CLASSROOM_CONSTRAINTS, CLASSROOM_INDEXES, CLASSROOM_MIGRATION, CLASSROOM_TABLE_NAMES } from "./classroom-backup-tables.mjs";
+import { CLASSROOM_CONSTRAINTS, CLASSROOM_INDEXES, CLASSROOM_MIGRATION, CLASSROOM_TABLE_NAMES, classroomLevelsOf, classroomTableNamesFor } from "./classroom-backup-tables.mjs";
 
 const { loadEnvConfig } = nextEnv;
 loadEnvConfig(process.cwd());
@@ -593,11 +593,16 @@ try {
   const classroomIssues = [];
   let classroom = { applied: false };
   if (classroomApplied) {
+    // P3-Multi: with the blocks (029) and programs (030) present, their tables are checked too, and
+    // the one-to-one rules below apply to one-to-one rows only (a block's seats carry no key).
+    const levelsHere = await classroomLevelsOf(sql);
+    const blocks = levelsHere.includes("029");
+    const AUDITED = levelsHere.length ? classroomTableNamesFor(levelsHere) : CLASSROOM_TABLE_NAMES;
     const present = await sql`
       SELECT relation.relname AS name, relation.relrowsecurity AS rls
       FROM pg_class AS relation
       JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
-      WHERE namespace.nspname = 'public' AND relation.relkind = 'r' AND relation.relname IN ${sql(CLASSROOM_TABLE_NAMES)}
+      WHERE namespace.nspname = 'public' AND relation.relkind = 'r' AND relation.relname IN ${sql(AUDITED)}
     `;
     const presentNames = present.map((row) => row.name);
     const classroomConstraintNames = (await sql`
@@ -605,13 +610,13 @@ try {
       FROM pg_constraint AS con
       JOIN pg_class AS relation ON relation.oid = con.conrelid
       JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
-      WHERE namespace.nspname = 'public' AND relation.relname IN ${sql(CLASSROOM_TABLE_NAMES)}
+      WHERE namespace.nspname = 'public' AND relation.relname IN ${sql(AUDITED)}
     `).map((row) => row.name);
     const classroomIndexNames = (await sql`
-      SELECT indexname AS name FROM pg_indexes WHERE schemaname = 'public' AND tablename IN ${sql(CLASSROOM_TABLE_NAMES)}
+      SELECT indexname AS name FROM pg_indexes WHERE schemaname = 'public' AND tablename IN ${sql(AUDITED)}
     `).map((row) => row.name);
     const classroomPolicies = (await sql`
-      SELECT tablename, policyname FROM pg_policies WHERE schemaname = 'public' AND tablename IN ${sql(CLASSROOM_TABLE_NAMES)}
+      SELECT tablename, policyname FROM pg_policies WHERE schemaname = 'public' AND tablename IN ${sql(AUDITED)}
     `).map((row) => `${row.tablename}: ${row.policyname}`);
     const [activityCheck] = await sql`
       SELECT pg_get_constraintdef(con.oid, true) AS definition
@@ -619,10 +624,24 @@ try {
       JOIN pg_class AS relation ON relation.oid = con.conrelid
       WHERE relation.relname = 'admin_activity_log' AND con.conname = 'admin_activity_log_entity_type_check'
     `;
-    const missingClassroomTables = CLASSROOM_TABLE_NAMES.filter((name) => !presentNames.includes(name));
+    const missingClassroomTables = AUDITED.filter((name) => !presentNames.includes(name));
     // Data the classroom relies on: a 64-character hash for each student link and none for a
     // tutor (no personal key is ever stored), and every lesson with its tutor and student.
-    const invalidClassroom = missingClassroomTables.length ? {} : (await sql`
+    const invalidClassroom = missingClassroomTables.length ? {} : blocks ? (await sql`
+      SELECT
+        (SELECT COUNT(*)::INTEGER FROM public.classroom_participants WHERE member_id IS NULL AND role = 'student' AND (join_key_hash IS NULL OR join_key_hash !~ '^[0-9a-f]{64}$')) AS student_links_not_hashed,
+        (SELECT COUNT(*)::INTEGER FROM public.classroom_participants WHERE member_id IS NULL AND role = 'tutor' AND join_key_hash IS NOT NULL) AS tutors_with_a_key,
+        (SELECT COUNT(*)::INTEGER FROM public.classroom_participants WHERE member_id IS NOT NULL AND (join_key_hash IS NOT NULL OR staff_email IS NOT NULL)) AS block_seats_with_identity,
+        (SELECT COUNT(*)::INTEGER FROM public.classroom_block_members WHERE role = 'student' AND (join_key_hash IS NULL OR join_key_hash !~ '^[0-9a-f]{64}$')) AS block_student_links_not_hashed,
+        (SELECT COUNT(*)::INTEGER FROM public.classroom_block_members WHERE role <> 'student' AND join_key_hash IS NOT NULL) AS block_staff_with_a_key,
+        (SELECT COUNT(*)::INTEGER FROM public.classroom_join_tokens WHERE token_hash !~ '^[0-9a-f]{64}$') AS join_tokens_not_hashed,
+        (SELECT COUNT(*)::INTEGER FROM public.classroom_blocks AS block
+          WHERE (SELECT COUNT(*) FROM public.classroom_lessons AS lesson WHERE lesson.block_id = block.id AND lesson.room_kind = 'lobby') <> 1) AS blocks_without_one_lobby,
+        (SELECT COUNT(*)::INTEGER FROM public.classroom_lessons AS lesson
+          WHERE lesson.block_id IS NULL AND NOT EXISTS (SELECT 1 FROM public.classroom_participants AS person WHERE person.lesson_id = lesson.id AND person.role = 'tutor')) AS lessons_without_a_tutor,
+        (SELECT COUNT(*)::INTEGER FROM public.classroom_lessons AS lesson
+          WHERE lesson.block_id IS NULL AND NOT EXISTS (SELECT 1 FROM public.classroom_participants AS person WHERE person.lesson_id = lesson.id AND person.role = 'student')) AS lessons_without_a_student
+    `)[0] : (await sql`
       SELECT
         (SELECT COUNT(*)::INTEGER FROM public.classroom_participants WHERE role = 'student' AND (join_key_hash IS NULL OR join_key_hash !~ '^[0-9a-f]{64}$')) AS student_links_not_hashed,
         (SELECT COUNT(*)::INTEGER FROM public.classroom_participants WHERE role = 'tutor' AND join_key_hash IS NOT NULL) AS tutors_with_a_key,
@@ -634,6 +653,7 @@ try {
     `)[0];
     classroom = {
       applied: true,
+      levels: levelsHere,
       missingTables: missingClassroomTables,
       missingConstraints: CLASSROOM_CONSTRAINTS.filter((name) => !classroomConstraintNames.includes(name)),
       missingIndexes: CLASSROOM_INDEXES.filter((name) => !classroomIndexNames.includes(name)),

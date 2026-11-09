@@ -99,6 +99,7 @@ export default function ClassroomBlocksPage() {
     <section className="admin-panel">
       <h1>多人班次</h1>
       <p role="note">合成模式測試用。每個班次有一個主會議室（永不錄影）和多間教學房間，每間最多 10 人。預設 Classroom Only（不錄影）。</p>
+      <p><a href="/admin/classrooms/schedule">課程與課表匯入</a></p>
       <form onSubmit={submit} aria-label="建立班次">
         {field("code", "班次代碼")}
         {field("date", "日期", "date")}

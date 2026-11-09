@@ -30,7 +30,7 @@ const url = database => `postgres://postgres:${password}@127.0.0.1:${port}/${dat
 const connect = database => { const client = postgres(url(database), { ssl: false, max: 4, prepare: false, connect_timeout: 2, onnotice: () => {} }); clients.push(client); return client; };
 const MIGRATION_029 = path.join('db', 'multiroom', '029_classroom_multiroom.sql');
 const DOWN_029 = path.join('db', 'multiroom', '029_classroom_multiroom.down.sql');
-let root, migrations, up029, down029;
+let root, migrations, up029, down029, up030, down030;
 
 beforeAll(async () => {
   docker(['run', '--detach', '--pull=never', '--name', container, '--label', 'ihear-test=classroom-migration', '-p', '127.0.0.1::5432', '-e', `POSTGRES_PASSWORD=${password}`, 'postgres:17-alpine']);
@@ -46,6 +46,8 @@ beforeAll(async () => {
   migrations = (await readdir('db/migrations')).filter(name => /^\d+_[a-z0-9_]+\.sql$/i.test(name)).sort();
   up029 = await readFile(MIGRATION_029, 'utf8');
   down029 = await readFile(DOWN_029, 'utf8');
+  up030 = await readFile(path.join('db', 'multiroom', '030_classroom_programs.sql'), 'utf8');
+  down030 = await readFile(path.join('db', 'multiroom', '030_classroom_programs.down.sql'), 'utf8');
 }, 180000);
 
 afterAll(async () => {
@@ -63,12 +65,13 @@ async function database(name) {
 
 // The project's runner on a temporary copy of db/migrations: every file up to `upTo`, and 029 (as
 // given) when asked. Resolves with its exit code and its one-line report.
-async function migrate(name, { upTo = '028', with029 = null } = {}) {
+async function migrate(name, { upTo = '028', with029 = null, with030 = null } = {}) {
   const workspace = await mkdtemp(path.join(os.tmpdir(), 'ihear-mig029-'));
   workspaces.push(workspace);
   await mkdir(path.join(workspace, 'db', 'migrations'), { recursive: true });
   for (const file of migrations.filter(file => file.split('_')[0] <= upTo)) await copyFile(path.join('db', 'migrations', file), path.join(workspace, 'db', 'migrations', file));
   if (with029 != null) await writeFile(path.join(workspace, 'db', 'migrations', '029_classroom_multiroom.sql'), with029);
+  if (with030 != null) await writeFile(path.join(workspace, 'db', 'migrations', '030_classroom_programs.sql'), with030);
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [path.resolve('scripts/migrate-database.mjs')], {
       cwd: workspace, windowsHide: true,
@@ -234,5 +237,55 @@ describe('028 and the draft 029 through the project\'s migration runner (B5)', (
     const rls = await restored`SELECT bool_and(c.relrowsecurity) AS on FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relname LIKE 'classroom_%'`;
     expect(rls[0].on).toBe(true);
     expect((await createPostgresClassroomStore(restored).block(block.block.blockId)).code).toBe('TEST-MIGB2');
+  });
+});
+
+// Draft 030 (programs and courses, 2026-11-09) after 029, through the same runner.
+describe('the draft 030 on top of 029 (B5/§7)', () => {
+  test('a database at 029 with blocks takes 030: blocks keep working with and without a course; a second run changes nothing; a block reads its course', async () => {
+    const sql = await database('mig_030');
+    expect((await migrate('mig_030', { with029: up029 })).status).toBe(0);
+    const store = createPostgresClassroomStore(sql);
+    expect(await store.listPrograms()).toEqual({ programs: [], courses: [] });
+    const before = await aBlock(store, 30);
+    const run = await migrate('mig_030', { with029: up029, with030: up030 });
+    expect(run.report.applied).toEqual(['030_classroom_programs.sql']);
+    expect((await store.block(before.block.blockId)).courseId).toBeNull();
+    const at = new Date(START).toISOString();
+    await store.createProgram({ id: 'PG-1', code: 'TEST-MIGP', name: 'Synthetic', archived: false, createdBy: 'o@example.test', createdAt: at, updatedAt: at });
+    await store.createCourse({ id: 'CR-1', programId: 'PG-1', code: 'TEST-MIGC', name: 'Synthetic', timeZone: 'America/New_York', cancelled: false, createdBy: 'o@example.test', createdAt: at, updatedAt: at });
+    const withCourse = await createClassroomBlock({ store, actor: 'mig-owner@example.test', now: START - 60 * MIN, input: {
+      code: 'TEST-MIGB31', date: '2026-12-02', time: '16:00', minutes: 60, rooms: ['R1'], course: 'TEST-MIGC', sourceKey: 's:20261202:1600:1700',
+      members: [{ code: 'TEST-MIGB31-M', role: 'manager', englishName: 'Mia Manager', email: 'migb-m31@example.test' }, { code: 'TEST-MIGB31-S', role: 'student', englishName: 'Amy Wang' }], assignments: [],
+    } });
+    expect(await store.blockBySource('CR-1', 's:20261202:1600:1700')).toMatchObject({ id: withCourse.block.blockId, courseId: 'CR-1' });
+    // The same place in the course twice is refused by the database itself.
+    await expect(sql`UPDATE public.classroom_blocks SET course_id = 'CR-1', source_key = 's:20261202:1600:1700' WHERE id = ${before.block.blockId}`).rejects.toThrow(/classroom_blocks_course_source/);
+    await expect(sql`UPDATE public.classroom_blocks SET source_key = 's:x' WHERE id = ${before.block.blockId}`).rejects.toThrow(/classroom_blocks_source_needs_course/);
+    const schema = schemaOf('mig_030');
+    expect((await migrate('mig_030', { with029: up029, with030: up030 })).report.applied).toEqual([]);
+    await runFile('mig_030', up030);
+    expect(schemaOf('mig_030')).toBe(schema);
+  });
+
+  test('a broken 030 leaves nothing behind; the rollback refuses while programs exist and, once they are gone, gives back 029 exactly', async () => {
+    const sql = await database('mig_030b');
+    expect((await migrate('mig_030b', { with029: up029 })).status).toBe(0);
+    const schema029 = schemaOf('mig_030b');
+    const failed = await migrate('mig_030b', { with029: up029, with030: `${up030}
+SELECT 1 / 0;
+` });
+    expect(failed.status).toBe(1);
+    expect(await tableNames(sql)).not.toContain('classroom_programs');
+    expect(await columns(sql, 'classroom_blocks')).not.toContain('course_id');
+    expect(schemaOf('mig_030b')).toBe(schema029);
+    expect((await migrate('mig_030b', { with029: up029, with030: up030 })).report.applied).toEqual(['030_classroom_programs.sql']);
+    await sql`INSERT INTO public.classroom_programs (id, code, name, created_by) VALUES ('PG-2', 'TEST-MIGP2', 'Synthetic', 'o@example.test')`;
+    await expect(runFile('mig_030b', down030)).rejects.toThrow(/programs or courses exist/);
+    expect(await tableNames(sql)).toContain('classroom_programs');
+    await sql`DELETE FROM public.classroom_programs`;
+    await runFile('mig_030b', down030);
+    expect(schemaOf('mig_030b')).toBe(schema029);
+    expect(await recorded(sql)).not.toContain('030');
   });
 });

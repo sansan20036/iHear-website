@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { validateAcademyContentBackup } from "./academy-content-backup.mjs";
-import { CLASSROOM_TABLE_NAMES, validateClassroomBackup } from "./classroom-backup-tables.mjs";
+import { classroomBackupVersion, classroomLevels, classroomTableNamesFor, validateClassroomBackup } from "./classroom-backup-tables.mjs";
 
 function checksum(value) {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -39,7 +39,7 @@ try {
   }
   if (
     backup.payload?.format !== "ihear-postgres-backup" ||
-    ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].includes(backup.payload?.version)
+    ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].includes(backup.payload?.version)
   ) {
     throw new Error("Unsupported backup format.");
   }
@@ -65,13 +65,19 @@ try {
   if (backup.payload.version >= 9) required.push('media_galleries', 'media_gallery_assets', 'media_gallery_operations');
   if (backup.payload.version >= 10) required.push("resource_links");
   // Version 11: migration 028's classroom tables (only when the daily backup's classroom part is on).
-  if (backup.payload.version >= 11) required.push(...CLASSROOM_TABLE_NAMES);
+  // Version 12: also the blocks (029) and, when stated, programs and courses (030). The levels the
+  // backup states must be the ones its version means, or the file is refused.
+  const levels = backup.payload.version >= 11 ? classroomLevels(backup.payload.classroomSchema) : [];
+  if (backup.payload.version >= 11 && classroomBackupVersion(levels) !== backup.payload.version) {
+    throw new Error("Backup version does not match its classroom levels.");
+  }
+  if (backup.payload.version >= 11) required.push(...classroomTableNamesFor(levels));
   for (const tableName of required) {
     if (!Array.isArray(tables[tableName])) {
       throw new Error(`Backup is missing ${tableName}.`);
     }
   }
-  if (backup.payload.version >= 11) validateClassroomBackup(tables);
+  if (backup.payload.version >= 11) validateClassroomBackup(tables, levels);
 
   if (backup.payload.version >= 10) assertUnique(tables.resource_links, row => row.id, "resource_links");
   if (tables.resource_links?.some(row => row.category !== undefined && !['form', 'article'].includes(row.category))) throw new Error("Invalid resource category in backup");
@@ -132,6 +138,7 @@ try {
       verified: true,
       path: path.relative(process.cwd(), backupPath),
       version: backup.payload.version,
+      ...(levels.length ? { classroomSchema: levels } : {}),
       checksum: backup.checksum,
       createdAt: backup.payload.createdAt,
     }),

@@ -75,6 +75,17 @@ export type ClassroomBlock = {
   members: ClassroomBlockMember[];
   // Goes up by one with every change; a manager's change names the version it was made on.
   version: number;
+  // Draft 030 (optional): the course it belongs to, and for an imported block its place in that
+  // course's schedule (so importing the same schedule again finds it).
+  courseId?: string | null;
+  sourceKey?: string | null;
+};
+// Draft 030: a program (教學計畫) holds courses (課程); a course holds blocks. Never people's names.
+export type ClassroomProgram = { id: string; code: string; name: string; archived: boolean; createdBy: string; createdAt: string; updatedAt: string };
+export type ClassroomCourse = {
+  id: string; programId: string; code: string; name: string;
+  // The IANA time zone the course's schedule is written in.
+  timeZone: string; cancelled: boolean; createdBy: string; createdAt: string; updatedAt: string;
 };
 // A seat change in one step: a member takes an assigned or a visiting seat in a room (giving up
 // the one of that kind it had in another room), or gives it up (roomId null). The room holds at
@@ -255,6 +266,14 @@ export type ClassroomStore = {
   // (never one held for consent, withdrawal or an unknown person) gets its job back in the queue,
   // with the facts stored; anything else changes nothing. Two retries at once: one is made.
   requeueFiling(input: { providerFileId: string; now: number; events: ClassroomEvent[] }): Promise<{ ok: true } | { ok: false; reason: "NOT_FOUND" | "ALREADY_ARCHIVED" | "HELD" | "NOT_FAILED" }>;
+  // Draft 030: programs and courses (none where 030 is not applied), a code already taken refused
+  // (ClassroomLessonConflictError), and the block an import made for this place in a course.
+  listPrograms(): Promise<{ programs: ClassroomProgram[]; courses: ClassroomCourse[] }>;
+  createProgram(program: ClassroomProgram): Promise<void>;
+  updateProgram(id: string, change: { name?: string; archived?: boolean; updatedAt: string }): Promise<ClassroomProgram | null>;
+  createCourse(course: ClassroomCourse): Promise<void>;
+  updateCourse(id: string, change: { name?: string; cancelled?: boolean; updatedAt: string }): Promise<ClassroomCourse | null>;
+  blockBySource(courseId: string, sourceKey: string): Promise<ClassroomBlock | null>;
 };
 export type FilingRow = { record: RecordingFile; job: { status: string; attempts: number; error: string | null; blockedReason: string | null } | null };
 export type BlockChange = {
@@ -380,9 +399,11 @@ type FileState = {
   files: Record<string, RecordingFile>;
   anomalies: ClassroomAnomaly[];
   blocks: ClassroomBlock[];
+  programs?: ClassroomProgram[];
+  courses?: ClassroomCourse[];
 };
 
-const emptyState = (): FileState => ({ lessons: [], consents: [], notices: [], tokens: [], events: {}, jobs: {}, files: {}, anomalies: [], blocks: [] });
+const emptyState = (): FileState => ({ lessons: [], consents: [], notices: [], tokens: [], events: {}, jobs: {}, files: {}, anomalies: [], blocks: [], programs: [], courses: [] });
 
 function readers(state: FileState) {
   const lesson = (id: string) => clone(state.lessons.find((item) => item.id === id) ?? null);
@@ -662,9 +683,41 @@ export function createFileClassroomStore(filePath: string): ClassroomStore {
         || state.lessons.some((item) => codes.has(item.code) || lessons.some((lesson) => lesson.id === item.id))) {
         throw new ClassroomLessonConflictError("A block or lesson with this code already exists");
       }
+      if (block.courseId && !(state.courses ?? []).some((course) => course.id === block.courseId)) throw new ClassroomLessonConflictError("No such course");
+      if (block.sourceKey && state.blocks.some((item) => item.courseId === block.courseId && item.sourceKey === block.sourceKey)) {
+        throw new ClassroomLessonConflictError("This course already has a block for that place in its schedule");
+      }
       state.blocks.push(clone(block));
       for (const lesson of lessons) state.lessons.push(clone(lesson));
     }),
+    listPrograms: () => run((state) => clone({
+      programs: [...(state.programs ?? [])].sort((a, b) => a.code.localeCompare(b.code)),
+      courses: [...(state.courses ?? [])].sort((a, b) => a.code.localeCompare(b.code)),
+    }), false),
+    createProgram: (program) => run((state) => {
+      state.programs ??= [];
+      if (state.programs.some((item) => item.id === program.id || item.code === program.code)) throw new ClassroomLessonConflictError("A program with this code already exists");
+      state.programs.push(clone(program));
+    }),
+    updateProgram: (id, change) => run((state) => {
+      const program = (state.programs ?? []).find((item) => item.id === id);
+      if (!program) return null;
+      Object.assign(program, Object.fromEntries(Object.entries(change).filter(([, value]) => value !== undefined)));
+      return clone(program);
+    }),
+    createCourse: (course) => run((state) => {
+      state.courses ??= [];
+      if (!(state.programs ?? []).some((item) => item.id === course.programId)) throw new ClassroomLessonConflictError("No such program");
+      if (state.courses.some((item) => item.id === course.id || item.code === course.code)) throw new ClassroomLessonConflictError("A course with this code already exists");
+      state.courses.push(clone(course));
+    }),
+    updateCourse: (id, change) => run((state) => {
+      const course = (state.courses ?? []).find((item) => item.id === id);
+      if (!course) return null;
+      Object.assign(course, Object.fromEntries(Object.entries(change).filter(([, value]) => value !== undefined)));
+      return clone(course);
+    }),
+    blockBySource: (courseId, sourceKey) => run((state) => clone(state.blocks.find((item) => item.courseId === courseId && item.sourceKey === sourceKey) ?? null), false),
     block: (id) => run((state) => readers(state).block(id), false),
     lessonsOfBlock: (id) => run((state) => clone(state.lessons.filter((lesson) => lesson.blockId === id)), false),
     blockVersion: (id) => run((state) => state.blocks.find((item) => item.id === id)?.version ?? null, false),
@@ -862,7 +915,22 @@ async function blocksWith(sql: Sql, rows: Record<string, unknown>[]): Promise<Cl
       joinKeyHash: member.join_key_hash == null ? null : String(member.join_key_hash).trim(),
     })),
     version: Number(row.version),
+    courseId: row.course_id == null ? null : String(row.course_id),
+    sourceKey: row.source_key == null ? null : String(row.source_key),
   }));
+}
+
+function fromProgramRow(row: Record<string, unknown>): ClassroomProgram {
+  return {
+    id: String(row.id), code: String(row.code), name: String(row.name), archived: Boolean(row.archived), createdBy: String(row.created_by),
+    createdAt: new Date(row.created_at as string).toISOString(), updatedAt: new Date(row.updated_at as string).toISOString(),
+  };
+}
+function fromCourseRow(row: Record<string, unknown>): ClassroomCourse {
+  return {
+    id: String(row.id), programId: String(row.program_id), code: String(row.code), name: String(row.name), timeZone: String(row.time_zone), cancelled: Boolean(row.cancelled),
+    createdBy: String(row.created_by), createdAt: new Date(row.created_at as string).toISOString(), updatedAt: new Date(row.updated_at as string).toISOString(),
+  };
 }
 
 async function readConsents(sql: Sql, codes: string[]): Promise<ClassroomConsent[]> {
@@ -1356,10 +1424,19 @@ export function createPostgresClassroomStore(sql: postgres.Sql): ClassroomStore 
     async createBlock(block, lessons) {
       try {
         await sql.begin(async (tx) => {
-          await tx`
-            INSERT INTO public.classroom_blocks (id, code, lesson_date, starts_at, ends_at, cancelled, version, created_by, created_at)
-            VALUES (${block.id}, ${block.code}, ${block.date}, ${new Date(block.startsAt)}, ${new Date(block.endsAt)}, ${block.cancelled}, ${block.version}, ${block.createdBy}, ${new Date(block.createdAt)})
-          `;
+          // The course columns (draft 030) only when the block names a course, so a database with 029
+          // alone still takes blocks made without one.
+          if (block.courseId) {
+            await tx`
+              INSERT INTO public.classroom_blocks (id, code, lesson_date, starts_at, ends_at, cancelled, version, created_by, created_at, course_id, source_key)
+              VALUES (${block.id}, ${block.code}, ${block.date}, ${new Date(block.startsAt)}, ${new Date(block.endsAt)}, ${block.cancelled}, ${block.version}, ${block.createdBy}, ${new Date(block.createdAt)}, ${block.courseId}, ${block.sourceKey ?? null})
+            `;
+          } else {
+            await tx`
+              INSERT INTO public.classroom_blocks (id, code, lesson_date, starts_at, ends_at, cancelled, version, created_by, created_at)
+              VALUES (${block.id}, ${block.code}, ${block.date}, ${new Date(block.startsAt)}, ${new Date(block.endsAt)}, ${block.cancelled}, ${block.version}, ${block.createdBy}, ${new Date(block.createdAt)})
+            `;
+          }
           for (const member of block.members) {
             await tx`
               INSERT INTO public.classroom_block_members (block_id, member_id, code, role, english_name, staff_email, join_key_hash)
@@ -1381,9 +1458,59 @@ export function createPostgresClassroomStore(sql: postgres.Sql): ClassroomStore 
         });
       } catch (error) {
         if ((error as { code?: string }).code === "23505") throw new ClassroomLessonConflictError("A block or lesson with this code already exists");
+        if ((error as { code?: string }).code === "23503") throw new ClassroomLessonConflictError("No such course");
         throw error;
       }
     },
+    // Draft 030. Without it there are no programs or courses (the reads answer "none").
+    async listPrograms() {
+      return withoutBlocks(async () => ({
+        programs: (await sql`SELECT * FROM public.classroom_programs ORDER BY code`).map(fromProgramRow),
+        courses: (await sql`SELECT * FROM public.classroom_courses ORDER BY code`).map(fromCourseRow),
+      }), { programs: [], courses: [] });
+    },
+    async createProgram(program) {
+      try {
+        await sql`
+          INSERT INTO public.classroom_programs (id, code, name, archived, created_by, created_at, updated_at)
+          VALUES (${program.id}, ${program.code}, ${program.name}, ${program.archived}, ${program.createdBy}, ${new Date(program.createdAt)}, ${new Date(program.updatedAt)})
+        `;
+      } catch (error) {
+        if ((error as { code?: string }).code === "23505") throw new ClassroomLessonConflictError("A program with this code already exists");
+        throw error;
+      }
+    },
+    async updateProgram(id, change) {
+      const [row] = await sql`
+        UPDATE public.classroom_programs
+        SET name = COALESCE(${change.name ?? null}, name), archived = COALESCE(${change.archived ?? null}::boolean, archived), updated_at = ${new Date(change.updatedAt)}
+        WHERE id = ${id} RETURNING *
+      `;
+      return row ? fromProgramRow(row) : null;
+    },
+    async createCourse(course) {
+      try {
+        await sql`
+          INSERT INTO public.classroom_courses (id, program_id, code, name, time_zone, cancelled, created_by, created_at, updated_at)
+          VALUES (${course.id}, ${course.programId}, ${course.code}, ${course.name}, ${course.timeZone}, ${course.cancelled}, ${course.createdBy}, ${new Date(course.createdAt)}, ${new Date(course.updatedAt)})
+        `;
+      } catch (error) {
+        if ((error as { code?: string }).code === "23505") throw new ClassroomLessonConflictError("A course with this code already exists");
+        if ((error as { code?: string }).code === "23503") throw new ClassroomLessonConflictError("No such program");
+        throw error;
+      }
+    },
+    async updateCourse(id, change) {
+      const [row] = await sql`
+        UPDATE public.classroom_courses
+        SET name = COALESCE(${change.name ?? null}, name), cancelled = COALESCE(${change.cancelled ?? null}::boolean, cancelled), updated_at = ${new Date(change.updatedAt)}
+        WHERE id = ${id} RETURNING *
+      `;
+      return row ? fromCourseRow(row) : null;
+    },
+    blockBySource: (courseId, sourceKey) => withoutBlocks(async () => (await blocksWith(sql, await sql`
+      SELECT * FROM public.classroom_blocks WHERE course_id = ${courseId} AND source_key = ${sourceKey}
+    `))[0] ?? null, null),
     // Where the draft 029 is not applied (every real database today), there are no blocks: the
     // reads answer "none" rather than fail, so nothing that lists lessons breaks.
     block: (id) => withoutBlocks(() => readBlock(sql, id), null),

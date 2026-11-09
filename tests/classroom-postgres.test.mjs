@@ -706,7 +706,7 @@ describe('backups, the restore check, the monthly drill and the audit with the c
     ['a participant of a lesson that is not in the backup', payload => { payload.tables.classroom_participants[0].lesson_id = 'L-not-backed-up'; }, /lesson/i],
     ['a column the table does not have', payload => { payload.tables.classroom_participants[0].join_key = 'planted-raw-key'; }, /column/i],
     ['migration 028 missing from the record', payload => { payload.tables.schema_migrations = payload.tables.schema_migrations.filter(row => String(row.version) !== '028'); }, /028/],
-    ['a version nobody writes', payload => { payload.version = 12; }, /unsupported/i],
+    ['a version nobody writes', payload => { payload.version = 13; }, /unsupported/i],
   ])('the backup file check refuses %s', async (_name, change, message) => {
     let file;
     if (change) file = await resigned(change);

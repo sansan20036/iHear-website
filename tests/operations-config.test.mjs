@@ -178,7 +178,7 @@ describe("production operations configuration", () => {
 
     expect(backup).toContain("site_media_assets: siteMediaAssets");
     expect(backup).toContain("site_media_variants: siteMediaVariants");
-    expect(verifier).toContain("[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]");
+    expect(verifier).toContain("[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]");
     expect(backup).toContain("resource_links: resourceLinks");
     expect(verifier).toContain('required.push("resource_links")');
     expect(restoreVerifier).toContain("INSERT INTO resource_links");
@@ -306,6 +306,22 @@ describe("production operations configuration", () => {
     expect(example).not.toContain("GOOGLE_CLOUD_PRIVATE_KEY=");
   });
 
+  // P3 classroom CI (2026-11-09): every classroom PostgreSQL and browser suite runs in CI, each
+  // script CI names exists, and CI reads no secret and asks only to read the repository.
+  it("runs every classroom PostgreSQL and browser suite in CI, with no secrets", async () => {
+    const ci = await read(".github/workflows/ci.yml");
+    const { scripts } = JSON.parse(await read("package.json"));
+    for (const match of ci.matchAll(/npm run ([a-z0-9:-]+)/g)) expect(scripts, match[1]).toHaveProperty(match[1]);
+    const classroomSuites = Object.keys(scripts).filter(name => /^test:classroom:(.*postgres|migration|backup-v12|multi-load|browser|controls|rate-limit|multi-browser)$/.test(name));
+    expect(classroomSuites.length).toBeGreaterThanOrEqual(10);
+    for (const name of classroomSuites) expect(ci, name).toContain(`npm run ${name}`);
+    expect(ci).toContain("node tests/classroom-auth.smoke.mjs");
+    expect(ci).not.toMatch(/secrets\./);
+    expect(ci).toMatch(/permissions:\r?\n  contents: read/);
+    expect(ci).toMatch(/classroom-postgres:\r?\n    runs-on: ubuntu-latest/);
+    expect(ci).toMatch(/classroom-browser:\r?\n    runs-on: ubuntu-latest/);
+  });
+
   // D1 (2026-11-07): migration 028's nine classroom tables in every backup, restore and audit path,
   // checked only once 028 is recorded; the daily backup's classroom part stays off until iHear
   // confirms encryption, access and retention (H8). Run for real in tests/classroom-postgres.test.mjs.
@@ -329,9 +345,18 @@ describe("production operations configuration", () => {
     for (const script of [backup, verifier, restore, audit]) expect(script).toContain('from "./classroom-backup-tables.mjs"');
     expect(backup).toContain('process.env.BACKUP_INCLUDE_CLASSROOM === "1"');
     expect(daily).not.toContain("BACKUP_INCLUDE_CLASSROOM");
-    expect(verifier).toContain("validateClassroomBackup(tables)");
+    expect(verifier).toContain("validateClassroomBackup(tables, levels)");
     expect(verifier).toContain('backup.payload.version >= 11 ? "028"');
-    expect(restore).toContain("validateClassroomBackup(tables)");
+    expect(restore).toContain("validateClassroomBackup(tables, levels)");
+    // Version 12 (P3-Multi): the blocks (029) and programs (030) by level, checked before writing,
+    // never replayed into a database without that structure; the audit and drill know them too.
+    expect(tables).toContain('export const CLASSROOM_LEVELS = ["028", "029", "030"];');
+    expect(backup).toContain("validateClassroomBackup(classroomTables, classroomLevels);");
+    expect(backup).toContain("classroomSchema: classroomLevels");
+    for (const script of [verifier, restore]) expect(script).toContain("[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].includes(backup.payload?.version)");
+    expect(restore).toContain("This database does not have the classroom structure the backup needs");
+    expect(audit).toContain("block_student_links_not_hashed");
+    expect(drill).toContain("to_jsonb(person)->>'member_id' IS NULL");
     expect(audit).toContain('migration.version === CLASSROOM_MIGRATION');
     expect(drill).toContain("WHERE version = '028'");
     expect(drill).toContain("Row level security is off on a restored classroom table");

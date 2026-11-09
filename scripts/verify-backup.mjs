@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { validateAcademyContentBackup } from "./academy-content-backup.mjs";
-import { CLASSROOM_TABLE_NAMES, CLASSROOM_TABLES, validateClassroomBackup } from "./classroom-backup-tables.mjs";
+import { classroomBackupVersion, classroomLevels, classroomLevelsOf, classroomTableNamesFor, classroomTablesFor, validateClassroomBackup } from "./classroom-backup-tables.mjs";
 
 import nextEnv from "@next/env";
 import postgres from "postgres";
@@ -97,11 +97,11 @@ async function currentCounts(client) {
   const localizedTranslationStates = translationTable.available ? await client`SELECT COUNT(*)::INTEGER AS count FROM localized_translation_states` : [{ count: 0 }];
   const [resourceTable] = await client`SELECT to_regclass('public.resource_links') IS NOT NULL AS available`;
   const resources = resourceTable.available ? await client`SELECT COUNT(*)::INTEGER AS count FROM resource_links` : [{ count: 0 }];
-  // Migration 028's classroom tables, once they exist (the names are the module's constants).
-  const [classroomTable] = await client`SELECT to_regclass('public.classroom_lessons') IS NOT NULL AS available`;
+  // The classroom tables of the levels this database has (the names are the module's constants).
+  const levelsHere = await classroomLevelsOf(client);
   const classroom = {};
-  if (classroomTable.available) {
-    for (const name of CLASSROOM_TABLE_NAMES) classroom[name] = Number((await client.unsafe(`SELECT COUNT(*)::INTEGER AS count FROM public.${name}`))[0].count);
+  if (levelsHere.length) {
+    for (const name of classroomTableNamesFor(levelsHere)) classroom[name] = Number((await client.unsafe(`SELECT COUNT(*)::INTEGER AS count FROM public.${name}`))[0].count);
   }
   return {
     ...classroom,
@@ -161,7 +161,7 @@ try {
   }
   if (
     backup.payload?.format !== "ihear-postgres-backup" ||
-    ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].includes(backup.payload?.version)
+    ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].includes(backup.payload?.version)
   ) {
     throw new Error("Unsupported backup format.");
   }
@@ -230,7 +230,17 @@ try {
   assertUnique(adminActivityLog, (row) => row.id, "admin_activity_log");
   assertUnique(localizedTranslationStates, (row) => `${row.resource_type}\u0000${row.resource_scope}\u0000${row.resource_id}\u0000${row.field_key}\u0000${row.locale}`, "localized_translation_states");
   const hasClassroom = backup.payload.version >= 11;
-  if (hasClassroom) validateClassroomBackup(tables);
+  // Version 12: the backup's classroom levels, matching its version, all present in this database
+  // (a backup with blocks is never replayed into a database without them).
+  const levels = hasClassroom ? classroomLevels(backup.payload.classroomSchema) : [];
+  if (hasClassroom && classroomBackupVersion(levels) !== backup.payload.version) throw new Error("Backup version does not match its classroom levels.");
+  if (hasClassroom) validateClassroomBackup(tables, levels);
+  if (hasClassroom) {
+    const levelsHere = await classroomLevelsOf(sql);
+    const missing = levels.filter((level) => !levelsHere.includes(level));
+    if (missing.length) throw new Error(`This database does not have the classroom structure the backup needs (${missing.join(", ")}).`);
+  }
+  const classroomNames = hasClassroom ? classroomTableNamesFor(levels) : [];
 
   const countsBefore = await currentCounts(sql);
   const revisionsBefore = await currentRevisions(sql);
@@ -651,12 +661,13 @@ try {
         }
       }
 
-      // Version 11: write the nine classroom tables back (lessons first, so every reference holds),
+      // Version 11/12: write the classroom tables of the backup's levels back, each after the ones it
+      // refers to (programs, courses, blocks, members, lessons, …),
       // then compare every row as stored with the backup. Table and column names are the module's
       // constants; the values are parameters.
       if (hasClassroom) {
         const keyOf = (table, row) => table.key.map((column) => String(row[column]).trim()).join("\u0000");
-        for (const table of CLASSROOM_TABLES) {
+        for (const table of classroomTablesFor(levels)) {
           const updates = table.columns.filter((column) => !table.key.includes(column));
           const placeholders = table.columns.map((column, index) => `$${index + 1}${table.json?.includes(column) ? "::jsonb" : ""}`);
           const upsert = `INSERT INTO public.${table.name} (${table.columns.join(", ")}) VALUES (${placeholders.join(", ")})
@@ -677,7 +688,7 @@ try {
 
       const restoredCounts = await currentCounts(transaction);
       for (const [tableName, expectedRows] of Object.entries({
-        ...(hasClassroom ? Object.fromEntries(CLASSROOM_TABLE_NAMES.map((name) => [name, tables[name].length])) : {}),
+        ...(hasClassroom ? Object.fromEntries(classroomNames.map((name) => [name, tables[name].length])) : {}),
         impact_milestones: impactMilestones.length,
         impact_milestone_settings: impactMilestoneSettings.length,
         content_overrides: contentOverrides.length,
@@ -749,7 +760,7 @@ try {
     databaseUnchanged: true,
     triggerRevisionCheck,
     rowCounts: {
-      ...(hasClassroom ? Object.fromEntries(CLASSROOM_TABLE_NAMES.map((name) => [name, tables[name].length])) : {}),
+      ...(hasClassroom ? Object.fromEntries(classroomNames.map((name) => [name, tables[name].length])) : {}),
       impact_milestones: impactMilestones.length,
       impact_milestone_settings: impactMilestoneSettings.length,
       content_overrides: contentOverrides.length,

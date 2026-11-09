@@ -55,7 +55,11 @@ function roomRole(member: ClassroomBlockMember): ClassroomParticipant["role"] {
 export type BlockInput = {
   code?: unknown; date?: unknown; time?: unknown; minutes?: unknown;
   rooms?: unknown; members?: unknown; assignments?: unknown;
+  // Draft 030: the course the block belongs to (optional), and for an imported block its place in
+  // that course's schedule (set by the schedule import only).
+  course?: unknown; sourceKey?: unknown;
 };
+const SOURCE_KEY = /^[A-Za-z0-9:._-]{1,120}$/;
 
 // A block with its Lobby, rooms, members and first seats, all in one step. Students' personal
 // links are in this answer only (their hashes are kept). Times are Taipei time, as for lessons;
@@ -118,12 +122,25 @@ export async function createClassroomBlock({ store, input, actor, now }: { store
   for (const label of labels) {
     if ([...seats.values()].filter((value) => value === label).length > ROOM_CAPACITY) issues.assignments = `A room holds at most ${ROOM_CAPACITY} people`;
   }
+  // Draft 030: a course that exists, is not cancelled and whose program is not archived.
+  let courseId: string | null = null;
+  if (input.course != null && input.course !== "") {
+    const { programs, courses } = await store.listPrograms();
+    const course = courses.find((item) => item.id === input.course || item.code === input.course);
+    const program = course ? programs.find((item) => item.id === course.programId) : null;
+    if (!course || !program) issues.course = "No such course";
+    else if (course.cancelled || program.archived) issues.course = "That course is cancelled or its program archived";
+    else courseId = course.id;
+  }
+  const sourceKey = input.sourceKey == null || input.sourceKey === "" ? null : String(input.sourceKey);
+  if (sourceKey && (!SOURCE_KEY.test(sourceKey) || input.course == null)) issues.sourceKey = "A schedule place needs a course";
   if (Object.keys(issues).length) throw new ClassroomInputError("The block is not valid", issues);
 
   const startsAt = Date.parse(`${date}T${time}:00+08:00`);
   const block: ClassroomBlock = {
     id: shortId("B"), code, date, startsAt: new Date(startsAt).toISOString(), endsAt: new Date(startsAt + minutes * 60_000).toISOString(),
     cancelled: false, createdBy: actor, createdAt: new Date(now).toISOString(), lobbyId: shortId("L"), roomIds: labels.map(() => shortId("L")), members, version: 0,
+    ...(courseId ? { courseId, sourceKey } : {}),
   };
   const lessonOf = (id: string, kind: "lobby" | "room", label: string, participants: ClassroomParticipant[]): ClassroomLesson => ({
     id, code: `${code}-${label}`, date, startsAt: block.startsAt, endsAt: block.endsAt, cancelled: false, createdBy: actor, createdAt: block.createdAt,
@@ -562,7 +579,7 @@ export async function myClassroomBlocks({ store, email, now }: { store: Classroo
 
 export async function listClassroomBlocks({ store, now }: { store: ClassroomStore; now: number }) {
   const blocks = await store.listBlocks({ from: now - DAY_MS, to: now + 14 * DAY_MS });
-  return blocks.map((block) => ({ blockId: block.id, code: block.code, startsAt: block.startsAt, endsAt: block.endsAt, cancelled: block.cancelled, rooms: block.roomIds.length, members: block.members.length }));
+  return blocks.map((block) => ({ blockId: block.id, code: block.code, startsAt: block.startsAt, endsAt: block.endsAt, cancelled: block.cancelled, rooms: block.roomIds.length, members: block.members.length, courseId: block.courseId ?? null }));
 }
 
 // 18.5 (P3-Multi): the owners' list of block recordings and where each one's filing stands,

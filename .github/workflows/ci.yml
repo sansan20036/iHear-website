@@ -48,3 +48,112 @@ jobs:
           test -s public/assets/vendor/avatar-segmentation/selfie_segmentation.js
           test -s public/assets/vendor/avatar-segmentation/selfie_segmentation.tflite
           test -s public/assets/vendor/avatar-segmentation/selfie_segmentation_solution_simd_wasm_bin.wasm
+
+  # P3 classroom (2026-11-09). Two longer jobs beside the quick checks above (which already run the
+  # classroom, recording-pathway, API and operations unit suites through `npm run check`):
+  #   classroom-postgres: every classroom PostgreSQL suite. Each test starts its own disposable
+  #     postgres:17-alpine on a random localhost port and removes it, one suite after another, so
+  #     no two share a database. Synthetic data only; no secret and no hosted database is used.
+  #   classroom-browser: the built site in Chromium with synthetic accounts and the stand-in for
+  #     Zoom (no Zoom, Google or student data), behind the checked-in hosting headers.
+  # Any failing suite fails its job. Not yet run on GitHub: the first remote run is to be checked.
+  classroom-postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.11.1
+          cache: npm
+
+      - name: Pin npm used by the lockfile
+        run: npm install --global npm@11.6.2
+
+      - name: Install dependencies
+        run: npm ci --include=optional
+
+      - name: Pull the disposable PostgreSQL image
+        run: docker pull postgres:17-alpine
+
+      - name: Classroom on PostgreSQL (028, backups, drill, audit)
+        run: npm run test:classroom:postgres
+
+      - name: Sign-in boundaries on PostgreSQL
+        run: npm run test:classroom:auth-postgres
+
+      - name: Rate limits on PostgreSQL
+        run: npm run test:classroom:rate-limit-postgres
+
+      - name: Multi-room blocks on PostgreSQL (draft 029)
+        run: npm run test:classroom:multi-postgres
+
+      - name: Migrations 028, 029 and 030 (new, old, failing, concurrent, rollback)
+        run: npm run test:classroom:migration
+
+      - name: Backup version 12 (blocks, programs, tampering, restore)
+        run: npm run test:classroom:backup-v12
+
+      - name: Load on PostgreSQL (queries per request, concurrency, simulated distance)
+        run: npm run test:classroom:multi-load
+
+      - name: Keep the load results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: classroom-load-${{ github.run_id }}-${{ github.run_attempt }}
+          path: output/load/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Leftover test databases (diagnostics)
+        if: always()
+        run: docker ps -a --filter label=ihear-test --format '{{.Names}} {{.Status}}'
+
+  classroom-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.11.1
+          cache: npm
+
+      - name: Pin npm used by the lockfile
+        run: npm install --global npm@11.6.2
+
+      - name: Install dependencies
+        run: npm ci --include=optional
+
+      - name: Install Playwright Chromium and system dependencies
+        run: npx playwright install --with-deps chromium
+
+      - name: Build the site
+        run: npm run build
+
+      - name: Classroom in a browser (one-to-one)
+        run: npm run test:classroom:browser
+
+      - name: Classroom controls (emergency stop, filing, room moves)
+        run: npm run test:classroom:controls
+
+      - name: Classroom rate limits in a browser
+        run: npm run test:classroom:rate-limit
+
+      - name: Classroom sign-in boundaries in a browser
+        run: node tests/classroom-auth.smoke.mjs
+
+      - name: Multi-room blocks in a browser (E1–E14)
+        run: npm run test:classroom:multi-browser
+
+      - name: Keep screenshots and reports when a check fails
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: classroom-browser-${{ github.run_id }}-${{ github.run_attempt }}
+          path: output/playwright/
+          if-no-files-found: warn
+          retention-days: 7

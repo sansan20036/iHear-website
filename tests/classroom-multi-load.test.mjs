@@ -54,7 +54,7 @@ beforeAll(async () => {
 afterAll(async () => {
   results.finishedAt = new Date().toISOString();
   await mkdir('output/load', { recursive: true });
-  await writeFile(path.join('output', 'load', 'classroom-multi-load.json'), `${JSON.stringify(results, null, 2)}\n`);
+  await writeFile(path.join('output', 'load', `classroom-multi-load-rtt${RTT_MS}.json`), `${JSON.stringify(results, null, 2)}\n`);
   for (const client of clients) await client.end({ timeout: 2 });
   if (started) docker(['rm', '--force', '--volumes', container]);
   if (workspace && (await realpath(workspace)).startsWith(await realpath(os.tmpdir()))) await rm(workspace, { recursive: true, force: true });
@@ -194,6 +194,8 @@ describe('P3-Multi load on PostgreSQL (B4)', () => {
       await measure(tag('cheap where (one by one)'), i => blockWhere({ store: far[0], blockId: one.block.id, key: one.keys[i], since: v3, now: START + 4 * MIN }), 8);
       await measure(tag('join a room (one by one)'), i => joinClassroom({ store: far[0], provider, lessonId: one.block.roomIds[i % ROOMS], key: one.keys[i], now: START + 4 * MIN }), 8);
       await measure(tag('manager console (one by one)'), () => blockManageView({ store: far[0], blockId: one.block.id, principal: { email: 'load-m4@example.test', owner: false }, now: START + 4 * MIN }), 4);
+      // Every block's manager console refreshing at the same moment (one per block).
+      expect(await concurrent(tag(`manager consoles: ${BLOCKS} at once`), blocks.map(({ block: item }, index) => () => blockManageView({ store: far[index % INSTANCES], blockId: item.id, principal: { email: `load-m${index + 1}@example.test`, owner: false }, now: START + 4 * MIN })))).toEqual([]);
       // Steady polling of two blocks (60 students), one full answer in five, spread over the instances.
       const two = [blocks[3], blocks[4]].flatMap(({ block: item, keys: list }) => list.map((key, index) => ({ blockId: item.id, key, roomId: item.roomIds[index % ROOMS] })));
       const latest = new Map(await Promise.all([blocks[3], blocks[4]].map(async ({ block: item }) => [item.id, (await store.block(item.id)).version])));

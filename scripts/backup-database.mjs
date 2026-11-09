@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { validateAcademyContentBackup } from "./academy-content-backup.mjs";
-import { CLASSROOM_BACKUP_VERSION, CLASSROOM_TABLE_NAMES, CLASSROOM_TABLES } from "./classroom-backup-tables.mjs";
+import { classroomBackupVersion, classroomLevelsOf, classroomTablesFor, validateClassroomBackup } from "./classroom-backup-tables.mjs";
 
 import nextEnv from "@next/env";
 import postgres from "postgres";
@@ -95,13 +95,18 @@ try {
   // to confirm encryption, access and the 35-day retention for lesson data (H8, 2026-11-07). Until
   // then the daily backup stays as it was (version 10); the weekly full dump already includes them.
   const includeClassroom = process.env.BACKUP_INCLUDE_CLASSROOM === "1";
-  const [classroomTable] = await sql`SELECT to_regclass('public.classroom_lessons') IS NOT NULL AS available`;
+  // Version 12: the classroom levels this database has (028; 029 blocks; 030 programs). Each table
+  // is read whole and checked before anything is written: a column or table the tools do not know
+  // stops the backup instead of being left out.
+  const classroomLevels = await classroomLevelsOf(sql);
+  const classroomTable = { available: classroomLevels.length > 0 };
   const classroomTables = {};
   if (includeClassroom && classroomTable.available) {
     // The table names and key columns are the module's constants, never values from elsewhere.
-    for (const table of CLASSROOM_TABLES) {
+    for (const table of classroomTablesFor(classroomLevels)) {
       classroomTables[table.name] = await sql.unsafe(`SELECT * FROM public.${table.name} ORDER BY ${table.key.join(", ")}`);
     }
+    validateClassroomBackup(classroomTables, classroomLevels);
   }
   const hasClassroom = Object.keys(classroomTables).length > 0;
   const schemaTables = [
@@ -122,7 +127,7 @@ try {
     "resource_links",
     "schema_migrations",
     "site_content_revisions",
-    ...(hasClassroom ? CLASSROOM_TABLE_NAMES : []),
+    ...(hasClassroom ? Object.keys(classroomTables) : []),
   ];
   const constraints = await sql`
     SELECT
@@ -154,8 +159,9 @@ try {
   const resourceLinks = resourceTable.available ? await sql`SELECT * FROM public.resource_links ORDER BY id` : [];
   const payload = {
     format: "ihear-postgres-backup",
-    version: hasClassroom ? CLASSROOM_BACKUP_VERSION : resourceTable.available ? 10 : galleryTable.available ? 9 : hasTranslationStates ? 8 : hasAdminTables ? 7 : hasSiteLayouts ? 6 : hasSiteSettings ? 5 : hasSiteMediaTables ? 4 : hasLocalizedContent ? 3 : 2,
+    version: hasClassroom ? classroomBackupVersion(classroomLevels) : resourceTable.available ? 10 : galleryTable.available ? 9 : hasTranslationStates ? 8 : hasAdminTables ? 7 : hasSiteLayouts ? 6 : hasSiteSettings ? 5 : hasSiteMediaTables ? 4 : hasLocalizedContent ? 3 : 2,
     createdAt: new Date().toISOString(),
+    ...(hasClassroom ? { classroomSchema: classroomLevels } : {}),
     tables: {
       ...classroomTables,
       ...galleryTables,
@@ -201,6 +207,7 @@ try {
     path: path.relative(process.cwd(), backupPath),
     checksum: backup.checksum,
     classroom: includeClassroom ? (classroomTable.available ? "included" : "not-applied") : "off",
+    ...(hasClassroom ? { classroomSchema: classroomLevels } : {}),
     rowCounts: {
       ...Object.fromEntries(Object.entries(classroomTables).map(([name, rows]) => [name, rows.length])),
       ...Object.fromEntries(Object.entries(galleryTables).map(([name, rows]) => [name, rows.length])),

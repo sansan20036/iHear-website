@@ -296,6 +296,35 @@ try {
     await shot(manage, 'm13-ended');
   });
 
+  await check('E15', '課程與課表匯入：建立計畫與課程、預覽（不改資料）、確認時區後建立班次；同一份課表再匯入不會重複', async () => {
+    await admin.goto(`${origin}/admin/classrooms/schedule`);
+    await admin.getByLabel('計畫代碼').fill('TEST-MP');
+    await admin.getByLabel('計畫名稱').fill('Synthetic Program');
+    await admin.getByRole('button', { name: '新增教學計畫' }).click();
+    await expect(admin.locator('form[aria-label="新增課程"] select').first().locator('option', { hasText: 'TEST-MP' })).toHaveCount(1);
+    await admin.locator('form[aria-label="新增課程"] select').first().selectOption({ label: 'TEST-MP' });
+    await admin.getByLabel('課程代碼').fill('TEST-MC');
+    await admin.getByLabel('課程名稱').fill('Synthetic Course');
+    await admin.getByRole('button', { name: '新增課程' }).click();
+    await expect(admin.locator('[data-course="TEST-MC"]')).toBeVisible();
+    const day = new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 10);
+    await admin.locator('label:has-text("課程") select').last().selectOption({ label: 'TEST-MC（America/New_York）' });
+    await admin.getByLabel('管理老師（名冊代碼）').fill('TEST-IM');
+    await admin.locator('label:has-text("課表 CSV") textarea').fill(`Tutee,Date,Start,End,Lead Tutor,Co-Tutor,Observer,Pre-assign Room Name,Email Address\nAmy,${day},4:00 PM,5:00 PM,Carol,,,R1,\n`);
+    await admin.locator('label:has-text("人員名冊 CSV") textarea').fill(`Code,Role,English Name,Sign-in Email,Schedule Names\nTEST-IM,manager,Mia Manager,import-m@example.test,\nTEST-IT,tutor,Carol Chen,import-t@example.test,Carol\nTEST-IS,student,Amy Wang,,Amy\n`);
+    await admin.getByRole('button', { name: '預覽' }).click();
+    await expect(admin.locator('[data-plan-block]')).toHaveAttribute('data-status', 'new');
+    const confirm = admin.getByRole('button', { name: /確認並建立 1 個班次/ });
+    await expect(confirm).toBeDisabled();
+    await admin.getByLabel(/我確認課表上的時間是 America\/New_York 的時間/).check();
+    await shot(admin, 'm15-import-preview');
+    await confirm.click();
+    await expect(admin.locator('[data-applied="1"]')).toBeVisible();
+    await expect(admin.locator('[data-student-link="TEST-IS"]')).toBeVisible();
+    await admin.getByRole('button', { name: '預覽' }).click();
+    await expect(admin.locator('[data-plan-block]')).toHaveAttribute('data-status', 'unchanged');
+  });
+
   await check('E14', '沒有對外請求、沒有被限流、沒有非預期的瀏覽器錯誤；Classroom Only 不顯示錄影中', async () => {
     expect(report.externalRequests).toEqual([]);
     expect(limited).toEqual([]);
