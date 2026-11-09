@@ -27,7 +27,9 @@ async function check(name, action) {
   catch (error) { report.checks.push({ name, status: 'failed', error: error.message }); throw error; }
 }
 const shot = (page, name) => page.screenshot({ path: path.join(directory, `${name}.png`), fullPage: true });
-const context = options => localContext(browser, origin, { external: report.externalRequests, secret, ...options });
+// The pages are checked in Traditional Chinese unless a check asks for another language (a CI runner's
+// browser defaults to English).
+const context = options => localContext(browser, origin, { external: report.externalRequests, secret, locale: 'zh-TW', ...options });
 const expectedRefusal = text => /Failed to load resource: the server responded with a status of (401|403)/.test(text);
 // This run makes about 30 admin requests in its first minute, about 20 of them the overview's own
 // tick. Until R-8 those shared the owner's 30-a-minute admin allowance and one was now and then

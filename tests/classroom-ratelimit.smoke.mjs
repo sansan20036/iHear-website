@@ -30,7 +30,7 @@ let browser;
 let limitedConsole = 0;
 try {
   browser = await chromium.launch({ headless: process.env.IHEAR_HEADED !== '1', slowMo: Number(process.env.IHEAR_E2E_SLOWMO || 0) });
-  const context = await localContext(browser, origin, { email: owner, secret, external: report.externalRequests });
+  const context = await localContext(browser, origin, { email: owner, secret, external: report.externalRequests, locale: 'zh-TW' });
   const admin = await context.newPage();
   admin.on('pageerror', error => report.pageProblems.push(error.message));
   admin.on('response', item => { if (item.status() === 429) report.limited.push(new URL(item.url()).pathname); });

@@ -43,7 +43,7 @@ const zoomUser = (userKey, uuid, times = {}) => ({ user: { id: '16778240', name:
 let browser;
 try {
   browser = await chromium.launch({ headless: process.env.IHEAR_HEADED !== '1', slowMo: Number(process.env.IHEAR_E2E_SLOWMO || 0) });
-  const context = await localContext(browser, origin, { email: owner, secret, external: report.externalRequests });
+  const context = await localContext(browser, origin, { email: owner, secret, external: report.externalRequests, locale: 'zh-TW' });
   const admin = await context.newPage();
   admin.on('pageerror', error => report.pageProblems.push(error.message));
   admin.on('console', message => { if (message.type() === 'error') report.pageProblems.push(message.text()); });
