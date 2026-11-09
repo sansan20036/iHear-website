@@ -220,13 +220,34 @@ export async function ingestWebhook({ headers, rawBody, secret, now, store, budg
   } catch {
     return { status: 400, body: { error: 'invalid JSON' } };
   }
-  if (event.event === 'endpoint.url_validation') {
-    const plainToken = String(event.payload?.plainToken || '');
-    return { status: 200, body: { plainToken, encryptedToken: createHmac('sha256', secret).update(plainToken).digest('hex') } };
-  }
+  if (event.event === 'endpoint.url_validation') return { status: 200, body: urlValidationAnswer(secret, event) };
   const fact = minimizeZoomEvent(event, now);
   if (!fact) return { status: 200, body: { ignored: event.event } };
   return persist(store, [fact], budgetMs);
+}
+
+// Zoom's endpoint check: the plainToken it sent, and its HMAC SHA-256 (hex) with the Secret Token.
+function urlValidationAnswer(secret, event) {
+  const plainToken = String(event.payload?.plainToken || '');
+  return { plainToken, encryptedToken: createHmac('sha256', secret).update(plainToken).digest('hex') };
+}
+
+// While the classroom is closed (2026-11-10): Zoom saves an event subscription only after the
+// endpoint answers its URL validation, and revalidates it every 72 hours (6 failures disable it),
+// so a signed validation is answered with the Secret Token alone. Every other signed delivery is
+// acknowledged and stored nowhere: no lesson runs, and sessions of the same Zoom account outside
+// the site (local tests) must not reach the live database. A bad signature still answers 401.
+export function answerWhileClosed({ headers, rawBody, secret, now }) {
+  const problem = verifyZoomRequest({ headers, rawBody, secret, now });
+  if (problem) return { status: 401, body: { error: problem } };
+  let event;
+  try {
+    event = JSON.parse(rawBody);
+  } catch {
+    return { status: 400, body: { error: 'invalid JSON' } };
+  }
+  if (event?.event === 'endpoint.url_validation') return { status: 200, body: urlValidationAnswer(secret, event) };
+  return { status: 200, body: { ignored: String(event?.event ?? ''), closed: true } };
 }
 
 // A session id as a vendor gives it: Zoom's are base64 (letters, digits, + / =).

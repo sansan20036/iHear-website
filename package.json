@@ -29,6 +29,7 @@
     "test:classroom:rate-limit-postgres": "vitest run tests/classroom-admin-rate-limit-postgres.test.mjs",
     "test:classroom:multi-postgres": "vitest run tests/classroom-multi-postgres.test.mjs",
     "test:classroom:multi-load": "vitest run tests/classroom-multi-load.test.mjs",
+    "test:classroom:zoom-webhook-postgres": "vitest run tests/classroom-zoom-webhook-postgres.test.mjs",
     "test:classroom:migration": "vitest run tests/classroom-migration-029.test.mjs",
     "test:classroom:backup-v12": "vitest run tests/classroom-backup-v12-postgres.test.mjs",
     "acceptance:classroom": "node tools/classroom-acceptance/run.mjs --local",

@@ -6,7 +6,7 @@ import { runClassroomTick } from "../../../../../lib/classroom-service";
 import { classroomStore } from "../../../../../lib/classroom-store";
 import { NO_STORE_HEADERS } from "../../../../../lib/response-headers";
 // @ts-ignore - shared classroom logic, plain JavaScript tested with node --test.
-import { ingestWebhook } from "../../../../../tools/recording-pathway/classroom/webhook-ingest.mjs";
+import { answerWhileClosed, ingestWebhook } from "../../../../../tools/recording-pathway/classroom/webhook-ingest.mjs";
 
 export const dynamic = "force-dynamic";
 
@@ -32,9 +32,17 @@ export async function POST(request: Request) {
   } catch {
     secret = null;
   }
-  if (!secret) return NextResponse.json({ error: "Not configured" }, { status: 503, headers: NO_STORE_HEADERS });
+  // The classroom closed (no provider set) but Zoom's Secret Token configured: only Zoom's URL
+  // validation is answered, so the event subscription can be created and stays validated before
+  // the classroom opens; nothing is stored (webhook-ingest.mjs answerWhileClosed).
+  const closedSecret = !secret && !process.env.CLASSROOM_PROVIDER ? (process.env.ZOOM_VIDEO_SDK_WEBHOOK_SECRET || "").trim() : "";
+  if (!secret && !closedSecret) return NextResponse.json({ error: "Not configured" }, { status: 503, headers: NO_STORE_HEADERS });
   const rawBody = await request.text();
   const headers = Object.fromEntries(request.headers.entries());
+  if (!secret) {
+    const closed = answerWhileClosed({ headers, rawBody, secret: closedSecret, now: Date.now() });
+    return NextResponse.json(closed.body, { status: closed.status, headers: NO_STORE_HEADERS });
+  }
   const store = classroomStore();
   const result = await ingestWebhook({ headers, rawBody, secret, now: Date.now(), store });
   const lessonId = result.status === 200 && "stored" in result.body ? lessonOf(rawBody) : null;

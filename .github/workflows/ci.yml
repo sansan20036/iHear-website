@@ -98,6 +98,9 @@ jobs:
       - name: Load on PostgreSQL (queries per request, concurrency, simulated distance)
         run: npm run test:classroom:multi-load
 
+      - name: Zoom webhook to PostgreSQL to recording state (synthetic deliveries, closed-classroom validation)
+        run: npm run test:classroom:zoom-webhook-postgres
+
       - name: Keep the load results
         if: always()
         uses: actions/upload-artifact@v7
