@@ -7,8 +7,14 @@
 import { createHmac } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { chromium, expect } from '@playwright/test';
+import { chromium, expect as playwrightExpect } from '@playwright/test';
 import { localContext, setSession, startAcademyServer } from './helpers/academy-smoke.mjs';
+
+// A member's page learns of a move, a recall, a revoke or the end of the block on its next
+// question to the server: up to 8 s (waiting) plus 0.5 s of jitter plus the request itself
+// (B4 polling). Playwright's default 5 s wait is shorter than that, so every check here waits
+// up to 15 s for what it expects; nothing is accepted that was not shown.
+const expect = playwrightExpect.configure({ timeout: 15_000 });
 
 const secret = 'classroom-multi-local-acceptance-only';
 const webhookSecret = 'classroom-multi-webhook-local-only';
