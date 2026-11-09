@@ -8,6 +8,7 @@ const publicApis = new Set([
   "/api/impact-milestones", "/api/site-media", "/api/site-metrics", "/api/resources",
   "/api/site-theme", "/api/site-theme/bootstrap", "/api/live-revisions",
   "/api/site-layout", "/api/site-layout/bootstrap", "/api/media-galleries",
+  "/api/home-calendar",
 ]);
 
 // Fail closed: even a GET to an administrative endpoint is outside this inspection.
