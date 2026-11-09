@@ -64,6 +64,7 @@ export const LABELS = Object.freeze({
     DRIVE_QUOTA: '雲端硬碟空間不足',
     DRIVE_AUTH: '雲端硬碟授權失效',
     DRIVE_FOLDER_MISSING: '歸檔資料夾不存在或無權限',
+    DRIVE_SHARING: '歸檔資料夾的共用範圍超出錄影政策（例如「知道連結的任何人」），未存入；原檔保留在視訊服務',
     VENDOR_AUTH: '視訊服務下載授權失效',
     // Reasons a filing failed for good (shown with 歸檔失敗).
     VENDOR_FILE_GONE: '視訊服務上已沒有這個錄影檔',

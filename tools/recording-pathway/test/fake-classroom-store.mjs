@@ -356,6 +356,11 @@ export function createDrive({ quotaLimit = null, clock = null, msPerByte = 0 } =
     trash(id) {
       files.get(id).trashed = true;
     },
+    // Deleted for good (a copy shared beyond the recording policy).
+    remove(id) {
+      counters.removed = (counters.removed ?? 0) + 1;
+      files.delete(id);
+    },
     // Who can open a file (P3-Multi, 18.5): its owner, plus sharing set on it or a folder above
     // it (share() stands in for someone sharing it in Drive).
     permissions(id) {
@@ -368,6 +373,13 @@ export function createDrive({ quotaLimit = null, clock = null, msPerByte = 0 } =
     },
     share(id, permission) {
       sharing.set(id, [...(sharing.get(id) ?? []), permission]);
+    },
+    // Someone narrows the sharing again (a test's stand-in for fixing it in Drive).
+    unshare(id) {
+      sharing.delete(id);
+    },
+    folderCount() {
+      return folders.size;
     },
     // Stands in for an upload made some other way, for example by a worker that lost track of it.
     addFile({ name, parentId, appProperties, size }) {

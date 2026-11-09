@@ -41,13 +41,14 @@ export const FAILURE = Object.freeze({
   DRIVE_QUOTA: 'DRIVE_QUOTA',                   // blocked until there is room
   DRIVE_AUTH: 'DRIVE_AUTH',                     // blocked until access is restored
   DRIVE_FOLDER_MISSING: 'DRIVE_FOLDER_MISSING', // blocked: the destination is gone or not ours
+  DRIVE_SHARING: 'DRIVE_SHARING',               // blocked: the destination is shared beyond the recording policy
   SESSION_GONE: 'SESSION_GONE',                 // the resumable session expired: start a new one
   VENDOR_AUTH: 'VENDOR_AUTH',                   // blocked until Zoom access is restored
   VENDOR_FILE_GONE: 'VENDOR_FILE_GONE',         // Zoom no longer has the file: fail now
   SIZE_MISMATCH: 'SIZE_MISMATCH',               // the vendor's file is not the size its notice said: fail now
   INVALID: 'INVALID',                           // a malformed request or a bug: retried, counted
 });
-const BLOCKING = new Set([FAILURE.DRIVE_QUOTA, FAILURE.DRIVE_AUTH, FAILURE.DRIVE_FOLDER_MISSING, FAILURE.VENDOR_AUTH]);
+const BLOCKING = new Set([FAILURE.DRIVE_QUOTA, FAILURE.DRIVE_AUTH, FAILURE.DRIVE_FOLDER_MISSING, FAILURE.DRIVE_SHARING, FAILURE.VENDOR_AUTH]);
 // Retrying cannot change these: the filing fails at once.
 const FINAL_FAILURES = new Set([FAILURE.VENDOR_FILE_GONE, FAILURE.SIZE_MISMATCH]);
 
@@ -275,6 +276,17 @@ export function drivePermissionProblems(permissions, allowedDomains = []) {
   return [...new Set(problems)];
 }
 
+// 18.5, for every recording (2026-11-10, after the first real Drive test found the chosen folder
+// open to anyone with the link): whatever is filed in a folder inherits its sharing, so the
+// destination is checked before a byte is uploaded or a folder made in it, and the copy again
+// once it is in Drive. Shared too widely, nothing is delivered: filing waits (DRIVE_SHARING, shown
+// to owners) until the destination is fixed, and Zoom's copy is kept.
+async function assertShareable(drive, id, what) {
+  if (typeof drive.permissions !== 'function') throw new FilingError(FAILURE.DRIVE_SHARING, `who can open ${what} cannot be checked`);
+  const problems = drivePermissionProblems(await drive.permissions(id), allowedDriveDomains());
+  if (problems.length) throw new FilingError(FAILURE.DRIVE_SHARING, `${what} is shared beyond the recording policy (${problems.join(', ')})`);
+}
+
 // The planned name itself, or a later part of the same base (taken by another file in the folder).
 export function namedAsPlanned(name, plannedName, extension) {
   if (name === plannedName) return true;
@@ -334,9 +346,13 @@ async function transfer({ store, drive, download, job, leaseVersion, record, fol
   }
   if (!uri) {
     await ensureRoom(drive, record.size);
+    // The chosen folder first (nothing is made in it if it is shared too widely), then the folder
+    // the copy goes into (it may have been shared on its own).
+    await assertShareable(drive, rootFolderId, 'the recording folder');
     // Found or made one level at a time under the test folder (Drive's root for the app).
     let folderId = rootFolderId;
     for (const name of folderPath) folderId = await drive.ensureFolder(folderId, name);
+    if (folderId !== rootFolderId) await assertShareable(drive, folderId, `the folder ${folderPath.join(' / ')}`);
     const name = await freeName(drive, folderId, record.plannedName, record.extension);
     uri = await drive.startUpload({ name, parentId: folderId, size: record.size, appProperties: { providerFileId: record.providerFileId, lessonId: record.lessonId } });
     if (!(await save(0))) return { status: 'LEASE_LOST', fileId: null };
@@ -428,10 +444,22 @@ export async function fileRecording({ store, drive, download, job, leaseVersion,
     for (const name of folderPath) expectedFolder = await drive.ensureFolder(expectedFolder, name);
     if (keep.parentId && keep.parentId !== expectedFolder) throw new FilingError(FAILURE.INVALID, `the Drive copy is not in ${folderPath.join(' / ')}`);
     if (record.plannedName && keep.name && !namedAsPlanned(keep.name, record.plannedName, record.extension)) throw new FilingError(FAILURE.INVALID, 'the Drive copy does not carry the planned name');
-    // Who can open it (its own and inherited sharing) must be what the recording policy allows.
-    if (typeof drive.permissions !== 'function') throw new FilingError(FAILURE.INVALID, 'who can open the Drive copy cannot be checked');
-    const shared = drivePermissionProblems(await drive.permissions(keep.id), allowedDriveDomains());
-    if (shared.length) throw new FilingError(FAILURE.INVALID, `the Drive copy is shared beyond the recording policy (${shared.join(', ')})`);
+  }
+  // Every recording (2026-11-10): who can open the copy, its own and inherited sharing, must be
+  // what the recording policy allows. If not (the folder was shared more widely while the upload
+  // ran, or the copy itself was shared), it never counts as filed and our copies are deleted for
+  // good: Drive's trash still lets everyone who had access open a file. Zoom's copy is kept, since
+  // only a stored copy lets it be deleted, and filing waits (DRIVE_SHARING) until this is fixed.
+  try {
+    await assertShareable(drive, keep.id, 'the Drive copy');
+  } catch (error) {
+    if (error?.code !== FAILURE.DRIVE_SHARING) throw error;
+    const latest = await store.fileRecord(record.providerFileId);
+    if (latest?.status === 'STORED') return { status: 'LEASE_LOST' };
+    const ours = new Set([keep.id, mine, ...copies.map(copy => copy.id)].filter(Boolean));
+    for (const id of ours) await (typeof drive.remove === 'function' ? drive.remove(id) : drive.trash(id));
+    if (!(await store.recordTransfer({ jobId: job.id, leaseVersion, providerFileId: record.providerFileId, uri: null, uploadedBytes: 0, now: time(), leaseMs, events: [] }))) return { status: 'LEASE_LOST' };
+    throw error;
   }
   // Which Drive it is (google, or the local stand-in for synthetic tests), so a stand-in copy is
   // never shown as stored in Google Drive.

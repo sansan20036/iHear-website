@@ -183,9 +183,11 @@ export async function startMockDrive({ account = 'synthetic-tester@example.test'
       // stand-in file or folder to share it.
       const permissionsMatch = /^\/drive\/v3\/files\/([^/]+)\/permissions$/.exec(url.pathname);
       if (permissionsMatch && request.method === 'GET') {
+        const permissions = [{ type: 'user', role: 'owner', emailAddress: 'mock-owner@example.test' }];
+        // My Drive's root (the alias the A1 runs file under) cannot be shared: its owner only.
+        if (decodeURIComponent(permissionsMatch[1]) === 'root') return json(response, 200, { permissions });
         const file = files.get(decodeURIComponent(permissionsMatch[1]));
         if (!file) return driveError(response, 404, 'notFound');
-        const permissions = [{ type: 'user', role: 'owner', emailAddress: 'mock-owner@example.test' }];
         for (let at = file, hops = 0; at && hops < 50; at = files.get(at.parentId), hops += 1) permissions.push(...(at.sharing ?? []));
         return json(response, 200, { permissions });
       }

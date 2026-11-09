@@ -98,7 +98,9 @@ test('through the adapter: a 5xx keeps the session; a 403 for a full Drive spend
   mock.addForeignUsage(10 * 1024 * 1024 - 300 * KiB);           // someone else's files fill the Drive
   assert.deepEqual((await run.next(60_000)).map(result => [result.status, result.reason]), [['BLOCKED', FAILURE.DRIVE_QUOTA]]);
   assert.equal(run.record().uploadSessionUri, null, 'the 4xx spent the session');
-  mock.files.clear();                                             // space is freed
+  // Space is freed: the files go, the recording's folders stay (filing checks the folder it
+  // uploads into, and Drive refuses an upload into a folder that is gone).
+  for (const [id, entry] of mock.files) if (entry.mimeType !== 'application/vnd.google-apps.folder') mock.files.delete(id);
   await run.next(31 * 60_000);
   assert.equal(run.record().status, 'STORED');
   assert.equal(mock.sessions.size, 2, 'a new session after the 4xx');

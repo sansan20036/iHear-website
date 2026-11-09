@@ -482,6 +482,74 @@ test('revoked Drive access or a missing folder blocks filing with its own reason
   }
 });
 
+// 2026-11-10: the first real Drive test filed into a folder open to anyone with the link (edit).
+// Every recording, one-to-one lessons included, is checked before anything is uploaded.
+test('a recording folder open to anyone with the link: nothing is uploaded or made in it, filing waits with its reason, and resumes once it is fixed', async () => {
+  const w = await world();
+  const file = video('f-video', 1, 59, 3 * CHUNK);
+  w.drive.share(ROOT, { type: 'anyone', role: 'writer' });
+  await deliver(w, completed('L-TEST-001', 'sess-1', [file], w.clock.now()));
+  assert.deepEqual((await invoke(w)).map(result => [result.status, result.reason]), [['BLOCKED', FAILURE.DRIVE_SHARING]]);
+  assert.equal(w.drive.counters.sessionsStarted, 0, 'no upload was started');
+  assert.equal(w.drive.folderCount(), 0, 'no folder was made in the shared folder');
+  assert.equal(copiesOf(w, file.id).length, 0);
+  assert.notEqual(w.store.fileRecord(file.id).status, 'STORED');
+  assert.equal(w.store.jobs().some(entry => entry.type === 'delete_vendor_copy'), false, "Zoom's copy is kept");
+  const state = stateOf(w, w.lessons[0]);
+  assert.equal(state.anomalies.find(entry => entry.code === 'FILING_BLOCKED')?.reason, FAILURE.DRIVE_SHARING);
+  assert.match(lessonCard(state, w.clock.now()).filing.reasonLabel, /共用範圍超出錄影政策/);
+  // Still shared: it stays blocked, without uploading.
+  w.clock.advance(31 * MIN);
+  assert.deepEqual((await invoke(w)).map(result => result.reason), [FAILURE.DRIVE_SHARING]);
+  assert.equal(w.drive.counters.sessionsStarted, 0);
+  // Someone points filing at a folder that is not shared that way (or fixes it): filed once.
+  w.drive.unshare(ROOT);
+  w.clock.advance(31 * MIN);
+  await runUntilSettled(w);
+  assertStoredOnce(w, file);
+});
+
+test('a domain-wide share, or a month folder shared with anyone on its own, also stops the upload', async () => {
+  const w = await world();
+  const file = video('f-video', 1, 59, 2 * CHUNK);
+  w.drive.share(ROOT, { type: 'domain', role: 'reader', domain: 'example.test' });
+  await deliver(w, completed('L-TEST-001', 'sess-1', [file], w.clock.now()));
+  assert.deepEqual((await invoke(w)).map(result => result.reason), [FAILURE.DRIVE_SHARING]);
+  w.drive.unshare(ROOT);
+  const month = await w.drive.ensureFolder(ROOT, MONTH);
+  w.drive.share(month, { type: 'anyone', role: 'reader' });
+  w.clock.advance(31 * MIN);
+  assert.deepEqual((await invoke(w)).map(result => result.reason), [FAILURE.DRIVE_SHARING]);
+  assert.equal(w.drive.counters.sessionsStarted, 0, 'no upload was started');
+});
+
+test('the folder is shared with anyone while the upload runs: the copy never counts as filed, is deleted for good (not left in the trash), and Zoom keeps its copy', async () => {
+  const w = await world({ msPerByte: 50 });
+  const file = video('f-video', 1, 59, 8 * CHUNK);
+  await deliver(w, completed('L-TEST-001', 'sess-1', [file], w.clock.now()));
+  assert.equal((await invoke(w, { budgetMs: 40_000 }))[0].status, 'CONTINUE', 'part of the file is in Drive');
+  w.drive.share(ROOT, { type: 'anyone', role: 'writer' });
+  w.clock.advance(MIN);
+  const results = [];
+  for (let calls = 0; calls < 20 && !results.some(result => result.status === 'BLOCKED'); calls++) {
+    results.push(...await invoke(w, { budgetMs: 40_000 }));
+    w.clock.advance(MIN);
+  }
+  assert.deepEqual(results.at(-1) && [results.at(-1).status, results.at(-1).reason], ['BLOCKED', FAILURE.DRIVE_SHARING]);
+  assert.equal(w.drive.counters.uploadsFinished, 1, 'the upload did finish');
+  assert.equal(copiesOf(w, file.id).length, 0, 'no copy is left in the folder');
+  assert.equal(w.drive.trashedFiles().length, 0, 'nor in the trash, where everyone with access could still open it');
+  assert.equal(w.drive.counters.removed, 1);
+  assert.notEqual(w.store.fileRecord(file.id).status, 'STORED');
+  assert.equal(w.store.fileRecord(file.id).uploadSessionUri, null, 'the spent session is forgotten');
+  assert.equal(w.store.events().some(event => event.type === 'p1.filing' && event.status === 'STORED'), false);
+  assert.equal(w.store.jobs().some(entry => entry.type === 'delete_vendor_copy'), false, "Zoom's copy is kept");
+  w.drive.unshare(ROOT);
+  w.clock.advance(31 * MIN);
+  await runUntilSettled(w, { budgetMs: 40_000 });
+  assertStoredOnce(w, file);
+});
+
 test('an expired upload session starts over in a new one and still leaves one copy', async () => {
   const w = await world({ msPerByte: 50 });
   const file = video('f-video', 1, 59, 8 * CHUNK);

@@ -45,8 +45,12 @@ export type ClassroomDrive = {
   // answer says where the session stands.
   uploadChunk(uri: string, chunk: { offset: number; bytes: Buffer; total: number }): Promise<{ received: number; fileId: string | null }>;
   trash(id: string): Promise<void>;
-  // 18.5 (P3-Multi): who can open the file, its own and inherited access, to check against the
-  // recording policy before the copy counts as archived.
+  // Deletes a copy this app made for good (Drive's trash still lets everyone who had access open
+  // it): used only for a copy that turned out to be shared beyond the recording policy.
+  remove(id: string): Promise<void>;
+  // 18.5 (P3-Multi): who can open the file or folder, its own and inherited access, to check
+  // against the recording policy before anything is uploaded into it and before a copy counts as
+  // archived (2026-11-10: every recording).
   permissions(id: string): Promise<DrivePermission[]>;
 };
 export type DrivePermission = { type: string; role: string; domain?: string | null; emailAddress?: string | null };
@@ -141,6 +145,9 @@ export function createLocalDrive(directory: string, { quotaLimit = null }: { quo
     }),
     trash: (id) => run((index) => {
       if (index.files[id]) index.files[id].trashed = true;
+    }),
+    remove: (id) => run((index) => {
+      delete index.files[id];
     }),
     // The local stand-in shares nothing: only its owner can open a file.
     permissions: async () => [{ type: "user", role: "owner", emailAddress: null }],
@@ -239,7 +246,9 @@ export function googleClassroomDrive(env: Record<string, string | undefined>, { 
     uploadStatus: (uri) => drive.uploadStatus(uri) as Promise<UploadStatus>,
     uploadChunk: (uri, chunk) => drive.uploadChunk(uri, chunk) as Promise<{ received: number; fileId: string | null }>,
     trash: (id) => drive.trash(id),
-    permissions: (id) => drive.permissions(id),
+    remove: (id) => drive.remove(id),
+    // The chosen folder is checked by its own id, before anything is made in it.
+    permissions: async (id) => drive.permissions(id === GOOGLE_ROOT ? await rootId() : id),
   };
 }
 
