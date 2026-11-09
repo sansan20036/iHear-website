@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
-  createMediaAdapter, hostReportFor, MediaAdapterUnavailableError, SYNTHETIC_SCENARIOS, SyntheticMediaAdapter,
+  createMediaAdapter, hostReportFor, MAX_REMOTE_VIDEOS, MediaAdapterUnavailableError, SYNTHETIC_SCENARIOS, SyntheticMediaAdapter,
   type ClassroomMediaAdapter, type ConnectionState, type DeviceKind, type DeviceProblem, type DeviceState, type MediaEvent, type MediaSystemCheck, type SyntheticScenario,
 } from "../../../lib/classroom-media";
 import { classroomDeviceOf, deviceLimits, type CapabilityName, type ClassroomDevice } from "../../../lib/classroom-capabilities";
@@ -45,7 +45,7 @@ type Media = {
   devices: Record<DeviceKind, DeviceState>;
   // Why a device that was pressed did not start, for the message beside "Try again".
   deviceProblems: Partial<Record<DeviceKind, DeviceProblem>>;
-  remote: { present: boolean; camera: boolean; microphone: boolean; seen: boolean };
+  remote: { present: boolean; camera: boolean; microphone: boolean; seen: boolean; others?: number; waiting?: number };
   share: "none" | "sending" | "receiving";
   whiteboard: "none" | "presenting" | "viewing";
 };
@@ -84,12 +84,20 @@ function badgeOf(recording: Recording | null): "recording" | "starting" | "pause
 // the personal key itself (joinKey), enters at once once the person has entered before
 // (autoEnter), and hears when this room's entry ended so it can ask where to go now. Without these
 // the page is exactly the one-to-one lesson's.
+// After a move the camera and microphone start off in the new room. The page never turns them on
+// by itself (the browser may have to ask again): it offers one press to turn on what was on before
+// (restoreDevices), and tells the block's page what this person turned on or off (onDevicesChange).
 type BlockRoomProps = {
   joinKey?: string | null; autoEnter?: boolean; roomLabel?: string | null; signInPath?: string;
   onEntered?: () => void; onEntryEnded?: (code: string) => void;
+  restoreDevices?: { camera: boolean; microphone: boolean } | null;
+  onDevicesChange?: (devices: { camera: boolean; microphone: boolean }) => void;
 };
 
-export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey, autoEnter = false, roomLabel = null, signInPath, onEntered, onEntryEnded }: { lessonId: string; synthetic: boolean } & BlockRoomProps) {
+export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey, autoEnter = false, roomLabel = null, signInPath, onEntered, onEntryEnded, restoreDevices = null, onDevicesChange }: { lessonId: string; synthetic: boolean } & BlockRoomProps) {
+  const devicesChanged = useRef(onDevicesChange);
+  devicesChanged.current = onDevicesChange;
+  const [restoreOffered, setRestoreOffered] = useState(true);
   const [locale, setLocale] = useState<Locale>("zhHant");
   const [joinKey, setJoinKey] = useState<string | null>(givenKey ?? null);
   const blockMode = givenKey !== undefined;
@@ -121,6 +129,8 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   const [rejoinProblem, setRejoinProblem] = useState("");
   const vendorStage = useRef<HTMLDivElement | null>(null);
   const [device, setDevice] = useState<ClassroomDevice>("desktop");
+  const deviceRef = useRef<ClassroomDevice>("desktop");
+  deviceRef.current = device;
   const adapter = useRef<ClassroomMediaAdapter | null>(null);
   const connection = useRef<ConnectionState>("idle");
   const text = copy[locale];
@@ -219,7 +229,8 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
     if (phase !== "joined" || !joined) return;
     let current: ClassroomMediaAdapter;
     try {
-      current = createMediaAdapter(joined.provider);
+      // A phone or tablet draws at most 9 videos, a computer 25 (P3-Multi rooms hold up to 10).
+      current = createMediaAdapter(joined.provider, { maxVideos: deviceRef.current === "desktop" ? MAX_REMOTE_VIDEOS.desktop : MAX_REMOTE_VIDEOS.mobile });
     } catch (error) {
       if (!(error instanceof MediaAdapterUnavailableError)) throw error;
       setMedia((state) => ({ ...state, available: false }));
@@ -237,7 +248,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
           deviceProblems: { ...state.deviceProblems, [event.kind]: event.state === "failed" ? event.problem ?? "error" : undefined },
         }));
       } else if (event.type === "remote") {
-        setMedia((state) => ({ ...state, remote: { present: event.present, camera: event.camera, microphone: event.microphone, seen: state.remote.seen || event.present } }));
+        setMedia((state) => ({ ...state, remote: { present: event.present, camera: event.camera, microphone: event.microphone, seen: state.remote.seen || event.present, others: event.others, waiting: event.videosWaiting } }));
       } else if (event.type === "share") {
         setMedia((state) => ({ ...state, share: event.state }));
       } else if (event.type === "whiteboard") {
@@ -343,7 +354,20 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   async function toggle(kind: DeviceKind) {
     const current = adapter.current;
     if (!current) return;
-    await current.setDevice(kind, media.devices[kind] !== "on");
+    const on = media.devices[kind] !== "on";
+    // What this person wants on, from their own presses only (P3-Multi: offered again after a move).
+    devicesChanged.current?.({ camera: kind === "camera" ? on : media.devices.camera === "on", microphone: kind === "microphone" ? on : media.devices.microphone === "on" });
+    await current.setDevice(kind, on);
+  }
+
+  // After a move: one press turns on again what was on in the previous room (never by itself).
+  async function restoreNow() {
+    const current = adapter.current;
+    setRestoreOffered(false);
+    if (!current || !restoreDevices) return;
+    for (const kind of ["camera", "microphone"] as DeviceKind[]) {
+      if (restoreDevices[kind] && media.devices[kind] !== "on") await current.setDevice(kind, true).catch(() => undefined);
+    }
   }
 
   // The tutor's materials and whiteboard (Zoom). Starting either can be refused by the browser or
@@ -445,7 +469,20 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
               {media.available ? text.connection[media.connection] : text.connection.idle}
             </span>
             <span className={`classroom-room-badge ${badge}`} role="status" aria-label={`${text.recording}：${text.badge[badge]}`}>{text.badge[badge]}</span>
+            {blockMode && media.remote.others != null && <span className="classroom-room-connection" role="status" data-headcount={media.remote.others + 1}>{locale === "en" ? `${media.remote.others + 1} in the room` : `教室人數：${media.remote.others + 1}`}</span>}
           </div>
+          {blockMode && (media.remote.waiting ?? 0) > 0 && (
+            <p className="classroom-room-note" role="note" data-videos-waiting={media.remote.waiting}>
+              {locale === "en" ? `This device shows a limited number of videos; ${media.remote.waiting} more appear when a tile is free.` : `這台裝置能同時顯示的視訊有限，另有 ${media.remote.waiting} 位的視訊會在有空位時出現。`}
+            </p>
+          )}
+          {blockMode && restoreDevices && restoreOffered && ((restoreDevices.camera && media.devices.camera !== "on") || (restoreDevices.microphone && media.devices.microphone !== "on")) && (
+            <div className="classroom-room-note" role="note" data-restore-devices>
+              <p>{locale === "en" ? "You moved to another room, so your camera and microphone start off here. Turn on what you had on before?" : "換了教室，攝影機和麥克風先保持關閉。要重新開啟你在上一間教室開著的裝置嗎？"}</p>
+              <button type="button" className="classroom-room-secondary" onClick={() => void restoreNow()}>{locale === "en" ? "Turn them on" : "重新開啟"}</button>
+              <button type="button" className="classroom-room-secondary" onClick={() => setRestoreOffered(false)}>{locale === "en" ? "Not now" : "不用"}</button>
+            </div>
+          )}
 
           {VENDOR_PROVIDERS.has(joined.provider) && (() => {
             const limits = deviceLimits(joined.provider, device);

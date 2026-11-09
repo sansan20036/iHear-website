@@ -166,3 +166,19 @@ export function newYorkDate(at: string | number) {
   const parts = Object.fromEntries(NEW_YORK.formatToParts(new Date(at)).map((part) => [part.type, part.value]));
   return `${parts.year}-${parts.month}-${parts.day}`;
 }
+
+// How many connections of this member are open in the lesson now: joins minus leaves of any of
+// their ids. More than one is the same personal link (or sign-in) in use on two devices at once
+// (task book section 5): shown to the manager; what to do about it is iHear's policy (H5: alert).
+export function openConnections(lesson: ClassroomLesson, events: ClassroomEvent[], member: ClassroomBlockMember) {
+  const ids = new Set(lesson.participants.filter((entry) => entry.memberId === member.id).map((entry) => entry.id));
+  let open = 0;
+  for (const event of events.filter((item) => item.lessonId === lesson.id && ids.has(String(item.participantId))).sort(byTime)) {
+    if (IN.has(String(event.type))) open += 1;
+    else if (OUT.has(String(event.type))) open = Math.max(0, open - 1);
+  }
+  return open;
+}
+// Still in a room the server no longer has them in, for longer than a move takes (Zoom's word
+// against the server's seats): the manager sees it; the page there is told to leave at its next check.
+export const STALE_PRESENCE_MS = 2 * 60_000;

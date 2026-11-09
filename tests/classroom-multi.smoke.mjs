@@ -198,10 +198,20 @@ try {
     await expect(manage.locator('[data-room="R2"] [data-occupied]')).toHaveAttribute('data-occupied', '3');
     await manage.getByRole('button', { name: '結束巡視' }).click();
     await expect(target(lobbyPage)).toHaveAttribute('data-target', 'lobby');
+    // S1 has the camera on in R1; after the move it starts off in R2 and the page offers, never
+    // does by itself, to turn it on again (B3).
+    const cameraOf = page => page.getByRole('button', { name: /^攝影機：/ });
+    await cameraOf(studentPages[1]).click();
+    await expect(cameraOf(studentPages[1])).toHaveText('攝影機：開');
     await manage.getByLabel(`${code}-S1 的教室`).selectOption('R2');
     await expect(target(studentPages[1])).toHaveAttribute('data-target', 'R2');
     await expect.poll(() => studentPages[1].joins.get(roomId('R2'))?.tpc).toBe(`ihear-${roomId('R2').toLowerCase()}`);
+    await expect(studentPages[1].locator('[data-restore-devices]')).toBeVisible();
+    await expect(cameraOf(studentPages[1])).toHaveText('攝影機：關');
     await shot(studentPages[1], 'm07-moved-to-r2');
+    await studentPages[1].locator('[data-restore-devices]').getByRole('button', { name: '重新開啟' }).click();
+    await expect(cameraOf(studentPages[1])).toHaveText('攝影機：開');
+    await expect(studentPages[1].locator('[data-restore-devices]')).toHaveCount(0);
   });
 
   await check('E8', '學生按權限回到主會議室，再回到自己的教室', async () => {
@@ -211,17 +221,25 @@ try {
     await expect(target(studentPages[2])).toHaveAttribute('data-target', 'R2');
   });
 
-  await check('E9', '斷線後安全重新加入：離線再上線仍在原房間；重新開啟個人連結回到同一間', async () => {
+  await check('E9', '斷線後安全重新加入：離線再上線仍在原房間；同一連結開第二個分頁時只有一個分頁在教室（可選擇接手），關閉後原分頁自動接回', async () => {
     await studentContexts[2].setOffline(true);
     await studentPages[2].waitForTimeout(6000);
     await studentContexts[2].setOffline(false);
     await expect(target(studentPages[2])).toHaveAttribute('data-target', 'R2');
     const again = watch(await studentContexts[2].newPage());
     await again.goto(links[2]);
+    // The second tab waits (it does not ask the server or enter Zoom) until the person chooses it.
+    await expect(again.locator('[data-other-tab]')).toBeVisible();
+    await shot(again, 'm09-second-tab-waits');
+    await again.getByRole('button', { name: '在這個分頁繼續' }).click();
     await expect(target(again)).toHaveAttribute('data-target', 'R2');
+    await expect(studentPages[2].locator('[data-other-tab]')).toBeVisible();
     await enterOnce(again);
     await expect(again.locator('[data-room-label="R2"]')).toBeVisible();
     await again.close();
+    // The first tab takes over again by itself and goes back into its room.
+    await expect(target(studentPages[2])).toHaveAttribute('data-target', 'R2');
+    await expect(studentPages[2].locator('[data-room-label="R2"]')).toBeVisible();
   });
 
   await check('E10', '撤銷連結後不能再取得有效授權', async () => {

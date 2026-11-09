@@ -31,7 +31,7 @@ export async function POST(request: Request, context: Context) {
       store: classroomStore(), blockId,
       key,
       sessionEmail,
-      report: body?.report ?? null, now: Date.now(),
+      report: body?.report ?? null, since: body?.since, now: Date.now(),
     });
     return respond(result.body, result.status);
   } catch {

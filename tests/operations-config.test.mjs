@@ -7,7 +7,7 @@ const read = async (path) => (await readFile(new URL(`../${path}`, import.meta.u
 describe("production operations configuration", () => {
   it("permits same-origin Academy embedding only on the exact editor route", async () => {
     const { headers: rules } = JSON.parse(await read("vercel.json"));
-    expect(rules.map(rule => rule.source)).toEqual(["/(.*)", "/admin/media", "/admin/academy", "/classroom/:lessonId"]);
+    expect(rules.map(rule => rule.source)).toEqual(["/(.*)", "/admin/media", "/admin/academy", "/classroom/:lessonId", "/classroom/b/:blockId"]);
     const headerMap = rule => Object.fromEntries(rule.headers.map(header => [header.key.toLowerCase(), header.value]));
     const defaults = headerMap(rules[0]);
     expect(defaults["x-frame-options"]).toBe("DENY");
@@ -32,10 +32,16 @@ describe("production operations configuration", () => {
     const headerMap = rule => Object.fromEntries(rule.headers.map(header => [header.key.toLowerCase(), header.value]));
     const defaults = headerMap(rules[0]);
     expect(defaults["permissions-policy"]).toBe("camera=(), microphone=(), geolocation=(), payment=()");
-    const others = rules.slice(0, -1).map(headerMap);
+    const others = rules.slice(0, -2).map(headerMap);
     expect(others.every(rule => !/camera=\(self|tencentclass|zoom\.us/.test(`${rule["permissions-policy"] ?? ""} ${rule["content-security-policy"] ?? ""}`))).toBe(true);
-    const classroom = rules.at(-1);
+    const classroom = rules.at(-2);
     expect(classroom.source).toBe("/classroom/:lessonId");
+    // P3-Multi (2026-11-09): a block's page (/classroom/b/<id>, two segments, which the one-segment
+    // rule above does not match) shows the same classroom, so it gets exactly the same two headers;
+    // its manage console (/classroom/b/<id>/manage) has no camera and keeps the defaults.
+    const block = rules.at(-1);
+    expect(block.source).toBe("/classroom/b/:blockId");
+    expect(block.headers).toEqual(classroom.headers);
     const room = headerMap(classroom);
     expect(Object.keys(room).sort()).toEqual(["content-security-policy", "permissions-policy"]);
     const tencent = '"https://www.tencentclass.com"';

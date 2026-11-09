@@ -92,6 +92,15 @@ export function getRecordingEligibility({ lesson, consents, notices, policy, now
   }
 }
 
+// The policy versions in force, from configuration (synthetic until the consent policy is approved).
+// The website's consentPolicy() and the filing's per-person evidence (18.4) both read this.
+export function defaultConsentPolicy(env = process.env) {
+  return {
+    consentVersion: env.CLASSROOM_CONSENT_VERSION || 'synthetic-2026-11',
+    staffNoticeVersion: env.CLASSROOM_STAFF_NOTICE_VERSION || 'synthetic-2026-11',
+  };
+}
+
 // One person's consent or one staff member's notice, as the whole-room rule reads it (P3-Multi
 // uses these before letting someone into a room that may record).
 export function personConsentProblem(record, policy, now) {

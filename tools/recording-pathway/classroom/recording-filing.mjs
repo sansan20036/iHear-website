@@ -259,6 +259,22 @@ function finish(store, record, job, leaseVersion, status, driveFileId, now, plac
   });
 }
 
+// 18.5 (P3-Multi): who may open an archived recording. Until iHear confirms its recording policy:
+// never "anyone with the link" and never a whole domain; with CLASSROOM_DRIVE_ALLOWED_DOMAINS set
+// (comma separated), people and groups only within those domains. A folder's sharing passes to what
+// is inside, so a parent folder shared too widely stops every recording in it from counting.
+export const allowedDriveDomains = (env = process.env) => String(env.CLASSROOM_DRIVE_ALLOWED_DOMAINS || '').split(',').map(entry => entry.trim().toLowerCase()).filter(Boolean);
+export function drivePermissionProblems(permissions, allowedDomains = []) {
+  const problems = [];
+  for (const entry of permissions ?? []) {
+    const domain = String(entry.domain ?? String(entry.emailAddress ?? '').split('@')[1] ?? '').toLowerCase();
+    if (entry.type === 'anyone') problems.push('PUBLIC_LINK');
+    else if (entry.type === 'domain' && !allowedDomains.includes(domain)) problems.push('DOMAIN_WIDE');
+    else if ((entry.type === 'user' || entry.type === 'group') && entry.role !== 'owner' && allowedDomains.length && !allowedDomains.includes(domain)) problems.push('OUTSIDE_DOMAINS');
+  }
+  return [...new Set(problems)];
+}
+
 // The planned name itself, or a later part of the same base (taken by another file in the folder).
 export function namedAsPlanned(name, plannedName, extension) {
   if (name === plannedName) return true;
@@ -381,9 +397,8 @@ export async function fileRecording({ store, drive, download, job, leaseVersion,
   // Without its lesson a recording cannot be named into a lesson folder: it waits in _待確認 too.
   const quarantine = record.hold === 'CONSENT_WITHDRAWN' || withdrawnAt != null || !lesson;
   const outcome = quarantine ? 'QUARANTINED' : 'STORED';
-  // A block's room (P3-Multi, 18.3): the New York date of its scheduled start names the month's
-  // folder and the room's own folder.
-  const folderPath = quarantine ? [QUARANTINE_FOLDER] : lesson.blockId ? blockFolderPath(lesson) : [Core.monthlyFolderName(lesson.date), lessonFolderName(lesson)];
+  // A block's room (P3-Multi, section 9): <parent>/<students>/<tutors>/, the parts of its own name.
+  const folderPath = quarantine ? [QUARANTINE_FOLDER] : lesson.blockId ? blockFolderPath(record.plannedName) : [Core.monthlyFolderName(lesson.date), lessonFolderName(lesson)];
 
   // Already uploaded, for example by a worker that was stopped after its upload but before
   // writing to the database: adopt that copy, upload nothing.
@@ -413,6 +428,10 @@ export async function fileRecording({ store, drive, download, job, leaseVersion,
     for (const name of folderPath) expectedFolder = await drive.ensureFolder(expectedFolder, name);
     if (keep.parentId && keep.parentId !== expectedFolder) throw new FilingError(FAILURE.INVALID, `the Drive copy is not in ${folderPath.join(' / ')}`);
     if (record.plannedName && keep.name && !namedAsPlanned(keep.name, record.plannedName, record.extension)) throw new FilingError(FAILURE.INVALID, 'the Drive copy does not carry the planned name');
+    // Who can open it (its own and inherited sharing) must be what the recording policy allows.
+    if (typeof drive.permissions !== 'function') throw new FilingError(FAILURE.INVALID, 'who can open the Drive copy cannot be checked');
+    const shared = drivePermissionProblems(await drive.permissions(keep.id), allowedDriveDomains());
+    if (shared.length) throw new FilingError(FAILURE.INVALID, `the Drive copy is shared beyond the recording policy (${shared.join(', ')})`);
   }
   // Which Drive it is (google, or the local stand-in for synthetic tests), so a stand-in copy is
   // never shown as stored in Google Drive.

@@ -7,7 +7,7 @@ import { useCallback, useEffect, useState } from "react";
 // page only shows the server's answer. A change made on an older version is refused (another
 // manager changed the block meanwhile); the page then shows the block as it is now.
 
-type Person = { code: string; role: string; englishName: string; seat: string | null; visit: string | null; target: string | null; heldBack: string | null; state: string };
+type Person = { code: string; role: string; englishName: string; seat: string | null; visit: string | null; target: string | null; heldBack: string | null; state: string; devices?: number; staleIn?: string[] };
 type Operation = { action: string; state: string; attempts: number; sessions: string[] };
 type Room = {
   label: string; kind: string; lessonId: string; capacity: number | null; occupied: number;
@@ -60,10 +60,20 @@ export default function BlockManage({ blockId }: { blockId: string }) {
     }
   }, [base]);
 
+  // Every 4 s while the console is on screen, never two refreshes at once; a hidden tab does not ask
+  // (B4), and on coming back it refreshes at once.
   useEffect(() => {
-    void load();
-    const timer = setInterval(() => { void load(); }, 4000);
-    return () => clearInterval(timer);
+    let running = false;
+    const refresh = async () => {
+      if (running || document.hidden) return;
+      running = true;
+      try { await load(); } finally { running = false; }
+    };
+    void refresh();
+    const timer = setInterval(() => { void refresh(); }, 4000);
+    const onVisible = () => { if (!document.hidden) void refresh(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { clearInterval(timer); document.removeEventListener("visibilitychange", onVisible); };
   }, [load]);
 
   async function act(action: string, input: Record<string, unknown> = {}, confirmText?: string) {
@@ -153,7 +163,7 @@ export default function BlockManage({ blockId }: { blockId: string }) {
                 <td>{ROLE[person.role] ?? person.role}</td>
                 <td>{person.englishName}</td>
                 <td>{STATE[person.state] ?? person.state}</td>
-                <td>{person.target === "Lobby" ? "主會議室" : person.target ?? "—"}{person.visit ? `（巡視 ${person.visit}）` : ""}{person.heldBack ? "（錄影中，暫留主會議室）" : ""}</td>
+                <td>{person.target === "Lobby" ? "主會議室" : person.target ?? "—"}{person.visit ? `（巡視 ${person.visit}）` : ""}{person.heldBack ? "（錄影中，暫留主會議室）" : ""}{(person.devices ?? 0) > 1 ? <span className="block-manage-alert" data-multi-device>（同一連結 {person.devices} 個裝置）</span> : null}{person.staleIn?.length ? <span className="block-manage-alert" data-stale-in>（仍在 {person.staleIn.join("、")}）</span> : null}</td>
                 <td>
                   {person.role === "manager" ? "—" : (
                     <select aria-label={`${person.code} 的教室`} value={person.seat ?? ""} disabled={busy || ended} onChange={(event) => void act("assign", { member: person.code, room: event.target.value || null })}>

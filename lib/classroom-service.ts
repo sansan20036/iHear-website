@@ -1,7 +1,7 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 
 // @ts-ignore - shared classroom logic, plain JavaScript tested with node --test.
-import { getJoinEligibility, getRecordingEligibility, JOIN_WINDOW_AFTER_MS, JOIN_WINDOW_BEFORE_MS, personConsentProblem, roomNameOf, staffNoticeProblem } from "../tools/recording-pathway/classroom/eligibility.mjs";
+import { defaultConsentPolicy, getJoinEligibility, getRecordingEligibility, JOIN_WINDOW_AFTER_MS, JOIN_WINDOW_BEFORE_MS, personConsentProblem, roomNameOf, staffNoticeProblem } from "../tools/recording-pathway/classroom/eligibility.mjs";
 import { memberOf, roomMayRecordByMode, rowIn, targetOf, type BlockTarget } from "./classroom-block-rules";
 // @ts-ignore - shared classroom logic, plain JavaScript tested with node --test.
 import { fileRecording, ingestApiSnapshot, ingestHostReport, processJobs, storeEvent } from "../tools/recording-pathway/classroom/webhook-ingest.mjs";
@@ -40,11 +40,9 @@ export class ClassroomInputError extends Error {
 
 // Policy versions come from configuration. Until Justine approves the consent policy only
 // synthetic versions are used.
-export function consentPolicy() {
-  return {
-    consentVersion: process.env.CLASSROOM_CONSENT_VERSION || "synthetic-2026-11",
-    staffNoticeVersion: process.env.CLASSROOM_STAFF_NOTICE_VERSION || "synthetic-2026-11",
-  };
+export function consentPolicy(): { consentVersion: string; staffNoticeVersion: string } {
+  // The same reading the filing's per-person evidence uses (eligibility.mjs).
+  return defaultConsentPolicy();
 }
 
 const hashKey = (key: string) => createHash("sha256").update(key).digest("hex");
@@ -254,9 +252,12 @@ export async function admittedToBlockLesson({ store, lesson, key, sessionEmail, 
   if (!block || (lesson.id !== block.lobbyId && !block.roomIds.includes(lesson.id))) return deny("LESSON_NOT_FOUND");
   const member = memberOf(block, key, sessionEmail);
   if (!member) return deny(key ? "NOT_ON_ROSTER" : "IDENTITY_UNVERIFIED");
-  const lobbyEvents = await store.eventsFor([block.lobbyId]);
-  const rooms = (await Promise.all(block.roomIds.map((id) => store.lesson(id)))).filter((room): room is ClassroomLesson => Boolean(room));
-  const target = await effectiveTarget({ store, block, rooms, member, lobbyEvents, now });
+  // The block's lessons and facts in two reads (B4: the door is asked often).
+  const lessons = await store.lessonsOfBlock(block.id);
+  const rooms = lessons.filter((entry) => entry.roomKind === "room");
+  const facts = await store.eventsFor(lessons.map((entry) => entry.id));
+  const lobbyEvents = facts.filter((event) => event.lessonId === block.lobbyId);
+  const target = await effectiveTarget({ store, block, rooms, member, lobbyEvents, now, facts });
   if (target.kind === "cancelled") return deny("BLOCK_CANCELLED");
   if (target.kind === "ended") return deny("BLOCK_ENDED");
   if (target.kind === "wait") return deny("LOBBY_NOT_OPEN");
@@ -271,13 +272,13 @@ export async function admittedToBlockLesson({ store, lesson, key, sessionEmail, 
 // Where a member belongs now, as every door applies it: the block's answer (targetOf), except that
 // a room that may be recording takes nobody without a valid consent (a student) or notice (staff):
 // they wait in the Lobby instead, with the reason (18.2: a safe place, never the room).
-export async function effectiveTarget({ store, block, rooms, member, lobbyEvents, now }: {
-  store: ClassroomStore; block: ClassroomBlock; rooms: ClassroomLesson[]; member: ClassroomBlockMember; lobbyEvents: ClassroomEvent[]; now: number;
+export async function effectiveTarget({ store, block, rooms, member, lobbyEvents, now, facts }: {
+  store: ClassroomStore; block: ClassroomBlock; rooms: ClassroomLesson[]; member: ClassroomBlockMember; lobbyEvents: ClassroomEvent[]; now: number; facts?: ClassroomEvent[];
 }): Promise<BlockTarget> {
   const target = targetOf({ block, rooms, member, lobbyEvents });
   if (target.kind !== "room" || !target.lessonId) return target;
   const room = rooms.find((entry) => entry.id === target.lessonId);
-  const gate = room ? await recordingRoomGate(store, room, member, now) : "NOT_A_ROOM";
+  const gate = room ? await recordingRoomGate(store, room, member, now, facts?.filter((event) => event.lessonId === room.id)) : "NOT_A_ROOM";
   return gate ? { kind: "lobby", lessonId: block.lobbyId, label: "Lobby", heldBack: gate } : target;
 }
 
@@ -293,8 +294,8 @@ export async function roomMayRecordNow(store: ClassroomStore, room: ClassroomLes
 
 // 18.2 step 7: someone without a valid consent (a student) or notice (staff) never enters a room
 // that may be recording; null when they may.
-export async function recordingRoomGate(store: ClassroomStore, room: ClassroomLesson, member: { code: string; role: string }, now: number) {
-  if (!(await roomMayRecordNow(store, room, now))) return null;
+export async function recordingRoomGate(store: ClassroomStore, room: ClassroomLesson, member: { code: string; role: string }, now: number, roomEvents?: ClassroomEvent[]) {
+  if (!(await roomMayRecordNow(store, room, now, roomEvents))) return null;
   const policy = consentPolicy();
   if (member.role === "student") {
     const [record] = await store.listConsents([member.code]);

@@ -509,3 +509,35 @@ describe("staff see their blocks", () => {
     expect(await myClassroomBlocks({ store, email: "stranger@example.test", now: START })).toEqual([]);
   });
 });
+
+describe("asking where to be, cheaply and safely (B4), and what the manager sees about devices (section 5)", () => {
+  test("the cheap question answers 'unchanged' while the block's version stands, and a move, a recall or a revoke changes it; the full answer gives the next delay and the room's size", async () => {
+    const ctx = await makeBlock();
+    await openAndBreakout(ctx);
+    const full = await where(ctx, asStudent(ctx, 1));
+    expect(full.body).toMatchObject({ ok: true, pollMs: 4000, roomSize: 3, target: { label: "R1" } });
+    const cheap = await blockWhere({ store, blockId: ctx.block.id, ...asStudent(ctx, 1), since: full.body.version, now: START });
+    expect(cheap.body).toEqual({ ok: true, unchanged: true, version: full.body.version });
+    await manage(ctx, "assign", { member: `${ctx.code}-S1`, room: "R2" });
+    const after = await blockWhere({ store, blockId: ctx.block.id, ...asStudent(ctx, 1), since: full.body.version, now: START });
+    expect(after.body).toMatchObject({ ok: true, target: { label: "R2" } });
+    expect(after.body.unchanged).toBeUndefined();
+    // Revoked: the version moves, so the next cheap question gets the full (refused) answer.
+    await manage(ctx, "revoke_link", { member: `${ctx.code}-S1` });
+    expect((await blockWhere({ store, blockId: ctx.block.id, ...asStudent(ctx, 1), since: after.body.version, now: START })).status).toBe(403);
+  });
+
+  test("one link in use on two devices, and someone still in a room they were moved out of: both shown to the manager", async () => {
+    const ctx = await makeBlock();
+    await openAndBreakout(ctx);
+    const r1 = await store.lesson((await lessonByLabel(ctx, "R1")).id);
+    const s1 = participantOf(r1, ctx, "S1").id;
+    await fact(r1.id, "session.user_joined", START + MIN, { providerSessionId: "ZS-DEV", participantId: s1 });
+    await fact(r1.id, "session.user_joined", START + MIN + 5 * SEC, { providerSessionId: "ZS-DEV", participantId: s1 });
+    let view = await blockView({ store, blockId: ctx.block.id, now: START + 2 * MIN });
+    expect(view.members.find(member => member.code === `${ctx.code}-S1`).devices).toBe(2);
+    await manage(ctx, "assign", { member: `${ctx.code}-S1`, room: "R2" }, { now: START + 3 * MIN });
+    view = await blockView({ store, blockId: ctx.block.id, now: START + 6 * MIN });
+    expect(view.members.find(member => member.code === `${ctx.code}-S1`).staleIn).toEqual(["R1"]);
+  });
+});

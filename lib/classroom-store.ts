@@ -171,6 +171,9 @@ export type ClassroomTransaction = {
   // recordings and keeping each one's participant snapshot (18.4).
   block(id: string): Promise<ClassroomBlock | null>;
   eventsOf(lessonId: string): Promise<ClassroomEvent[]>;
+  // 18.4: each person's own consent or notice, kept as evidence with each recording.
+  consents(codes: string[]): Promise<ClassroomConsent[]>;
+  notices(codes: string[]): Promise<ClassroomStaffNotice[]>;
 };
 
 export type OperationState = "IN_FLIGHT" | "UNCERTAIN" | "UNKNOWN" | "NOT_EXECUTED" | "DONE";
@@ -223,6 +226,8 @@ export type ClassroomStore = {
   setStaffNotice(notice: ClassroomStaffNotice): Promise<void>;
   recordJoinToken(token: ClassroomJoinToken): Promise<void>;
   listJoinTokens(lessonId: string): Promise<ClassroomJoinToken[]>;
+  // The join tokens of several lessons in one read (a block's console, B4).
+  listJoinTokensFor(lessonIds: string[]): Promise<ClassroomJoinToken[]>;
   syncAnomalies(lessonId: string, active: ActiveAnomaly[], now: number): Promise<void>;
   listAnomalies(lessonIds: string[]): Promise<ClassroomAnomaly[]>;
   acknowledgeAnomaly(input: { lessonId: string; code: string; actor: string; note: string; now: number }): Promise<ClassroomAnomaly | null>;
@@ -230,6 +235,10 @@ export type ClassroomStore = {
   // step or none (a code already taken: ClassroomLessonConflictError).
   createBlock(block: ClassroomBlock, lessons: ClassroomLesson[]): Promise<void>;
   block(id: string): Promise<ClassroomBlock | null>;
+  // A block's Lobby and rooms in one read (two queries), and its version alone (one): the doors and
+  // the members' "where" answers ask these often (P3-Multi, B4).
+  lessonsOfBlock(id: string): Promise<ClassroomLesson[]>;
+  blockVersion(id: string): Promise<number | null>;
   listBlocks(window: { from: number; to: number }): Promise<ClassroomBlock[]>;
   // The blocks where this (lower-case) e-mail is a staff member, overlapping the window.
   listBlocksForStaff(email: string, window: { from: number; to: number }): Promise<ClassroomBlock[]>;
@@ -240,7 +249,14 @@ export type ClassroomStore = {
   // that student rotated, D-4 style), the block and its lessons cancelled, and the facts. The
   // block's version goes up by one.
   changeBlock(change: BlockChange): Promise<BlockChangeResult>;
+  // 18.5 (P3-Multi): the recordings of these lessons with their filing job, for the owners' list.
+  filings(lessonIds: string[]): Promise<FilingRow[]>;
+  // An owner's retry of a failed filing, in one step: only a FAILED recording that is not held
+  // (never one held for consent, withdrawal or an unknown person) gets its job back in the queue,
+  // with the facts stored; anything else changes nothing. Two retries at once: one is made.
+  requeueFiling(input: { providerFileId: string; now: number; events: ClassroomEvent[] }): Promise<{ ok: true } | { ok: false; reason: "NOT_FOUND" | "ALREADY_ARCHIVED" | "HELD" | "NOT_FAILED" }>;
 };
+export type FilingRow = { record: RecordingFile; job: { status: string; attempts: number; error: string | null; blockedReason: string | null } | null };
 export type BlockChange = {
   blockId: string;
   expectedVersion?: number | null;
@@ -438,6 +454,8 @@ function fileTransaction(state: FileState): ClassroomTransaction {
     unknownJoinAt: async (id) => read.unknownJoinAt(id),
     block: async (id) => read.block(id),
     eventsOf: async (lessonId) => clone(Object.values(state.events).filter((event) => event.lessonId === lessonId)),
+    consents: async (codes) => clone(state.consents.filter((item) => codes.includes(item.personCode))),
+    notices: async (codes) => clone(state.notices.filter((item) => codes.includes(item.personCode))),
   };
 }
 
@@ -608,6 +626,7 @@ export function createFileClassroomStore(filePath: string): ClassroomStore {
       if (!state.tokens.some((item) => item.tokenHash === token.tokenHash)) state.tokens.push(clone(token));
     }),
     listJoinTokens: (lessonId) => run((state) => clone(state.tokens.filter((item) => item.lessonId === lessonId)), false),
+    listJoinTokensFor: (lessonIds) => run((state) => clone(state.tokens.filter((item) => lessonIds.includes(item.lessonId))), false),
     syncAnomalies: (lessonId, active, now) => run((state) => {
       for (const anomaly of active) {
         const existing = state.anomalies.find((item) => item.lessonId === lessonId && item.code === anomaly.code);
@@ -647,6 +666,8 @@ export function createFileClassroomStore(filePath: string): ClassroomStore {
       for (const lesson of lessons) state.lessons.push(clone(lesson));
     }),
     block: (id) => run((state) => readers(state).block(id), false),
+    lessonsOfBlock: (id) => run((state) => clone(state.lessons.filter((lesson) => lesson.blockId === id)), false),
+    blockVersion: (id) => run((state) => state.blocks.find((item) => item.id === id)?.version ?? null, false),
     listBlocks: ({ from, to }) => run((state) => clone(state.blocks
       .filter((block) => Date.parse(block.startsAt) < to && Date.parse(block.endsAt) > from)
       .sort((a, b) => Date.parse(a.startsAt) - Date.parse(b.startsAt) || a.code.localeCompare(b.code))), false),
@@ -654,6 +675,21 @@ export function createFileClassroomStore(filePath: string): ClassroomStore {
       .filter((block) => Date.parse(block.startsAt) < to && Date.parse(block.endsAt) > from)
       .filter((block) => block.members.some((member) => member.role !== "student" && member.staffEmail === email))
       .sort((a, b) => Date.parse(a.startsAt) - Date.parse(b.startsAt) || a.code.localeCompare(b.code)) : []), false),
+    filings: (lessonIds) => run((state) => clone(Object.values(state.files).filter((file) => lessonIds.includes(String(file.lessonId))).map((record) => {
+      const job = state.jobs[`file:${record.providerFileId}`];
+      return { record, job: job ? { status: job.status, attempts: job.attempts, error: job.error ?? null, blockedReason: job.blockedReason ?? null } : null };
+    })), false),
+    requeueFiling: ({ providerFileId, now, events }) => run((state) => {
+      const record = state.files[providerFileId];
+      const refused = requeueRefusal(record ?? null);
+      if (refused) return { ok: false as const, reason: refused };
+      const id = `file:${providerFileId}`;
+      const job = state.jobs[id] ?? (state.jobs[id] = newJob({ id, type: "file_recording", lessonId: record.lessonId, providerFileId }));
+      Object.assign(job, { status: "pending", attempts: 0, availableAt: now, error: null, blockedReason: null, leaseOwner: null });
+      record.status = "PENDING";
+      for (const event of events) state.events[event.key] ??= clone(event);
+      return { ok: true as const };
+    }),
     changeBlock: (change) => run((state): BlockChangeResult => {
       const block = state.blocks.find((item) => item.id === change.blockId) ?? null;
       const rooms = block ? state.lessons.filter((lesson) => lesson.blockId === block.id) : [];
@@ -829,12 +865,46 @@ async function blocksWith(sql: Sql, rows: Record<string, unknown>[]): Promise<Cl
   }));
 }
 
-// A database without the draft 029 has no block tables (PostgreSQL's undefined_table, 42P01).
+async function readConsents(sql: Sql, codes: string[]): Promise<ClassroomConsent[]> {
+  if (!codes.length) return [];
+  return (await sql`SELECT * FROM public.classroom_consents WHERE person_code IN ${sql(codes)}`).map((row) => ({
+    personCode: String(row.person_code),
+    status: row.status as ClassroomConsent["status"],
+    version: String(row.version),
+    grantedAt: asMs(row.granted_at),
+    withdrawnAt: asMs(row.withdrawn_at),
+    expiresAt: asMs(row.expires_at),
+    synthetic: Boolean(row.synthetic),
+    recordedBy: String(row.recorded_by),
+  }));
+}
+
+async function readNotices(sql: Sql, codes: string[]): Promise<ClassroomStaffNotice[]> {
+  if (!codes.length) return [];
+  return (await sql`SELECT * FROM public.classroom_staff_notices WHERE person_code IN ${sql(codes)}`).map((row) => ({
+    personCode: String(row.person_code),
+    version: String(row.version),
+    acknowledgedAt: asMs(row.acknowledged_at) ?? 0,
+    recordedBy: String(row.recorded_by),
+  }));
+}
+
+// Whether an owner may send a filing back to the queue (18.5): only a FAILED one, never one held.
+function requeueRefusal(record: RecordingFile | null): "NOT_FOUND" | "ALREADY_ARCHIVED" | "HELD" | "NOT_FAILED" | null {
+  if (!record) return "NOT_FOUND";
+  if (record.status === "STORED") return "ALREADY_ARCHIVED";
+  if (record.hold || record.status === "HOLD" || record.status === "QUARANTINED") return "HELD";
+  if (record.status !== "FAILED") return "NOT_FAILED";
+  return null;
+}
+
+// A database without the draft 029 has no block tables (PostgreSQL's undefined_table, 42P01) and
+// no block columns on the lessons (undefined_column, 42703). Only the block reads use this.
 async function withoutBlocks<T>(read: () => Promise<T>, none: T): Promise<T> {
   try {
     return await read();
   } catch (error) {
-    if ((error as { code?: string }).code === "42P01") return none;
+    if (["42P01", "42703"].includes(String((error as { code?: string }).code))) return none;
     throw error;
   }
 }
@@ -964,6 +1034,8 @@ function postgresTransaction(sql: postgres.TransactionSql): ClassroomTransaction
     async eventsOf(lessonId) {
       return (await sql`SELECT data FROM public.classroom_events WHERE lesson_id = ${lessonId} ORDER BY occurred_at, key`).map(fromEventRow);
     },
+    consents: (codes) => readConsents(sql, codes),
+    notices: (codes) => readNotices(sql, codes),
   };
 }
 
@@ -1199,19 +1271,7 @@ export function createPostgresClassroomStore(sql: postgres.Sql): ClassroomStore 
         return true;
       }) as Promise<boolean>;
     },
-    async listConsents(codes) {
-      if (!codes.length) return [];
-      return (await sql`SELECT * FROM public.classroom_consents WHERE person_code IN ${sql(codes)}`).map((row) => ({
-        personCode: String(row.person_code),
-        status: row.status as ClassroomConsent["status"],
-        version: String(row.version),
-        grantedAt: asMs(row.granted_at),
-        withdrawnAt: asMs(row.withdrawn_at),
-        expiresAt: asMs(row.expires_at),
-        synthetic: Boolean(row.synthetic),
-        recordedBy: String(row.recorded_by),
-      }));
-    },
+    listConsents: (codes) => readConsents(sql, codes),
     async setConsent(consent) {
       await sql`
         INSERT INTO public.classroom_consents (person_code, status, version, granted_at, withdrawn_at, expires_at, synthetic, recorded_by, updated_at)
@@ -1221,15 +1281,7 @@ export function createPostgresClassroomStore(sql: postgres.Sql): ClassroomStore 
           expires_at = EXCLUDED.expires_at, synthetic = EXCLUDED.synthetic, recorded_by = EXCLUDED.recorded_by, updated_at = NOW()
       `;
     },
-    async listStaffNotices(codes) {
-      if (!codes.length) return [];
-      return (await sql`SELECT * FROM public.classroom_staff_notices WHERE person_code IN ${sql(codes)}`).map((row) => ({
-        personCode: String(row.person_code),
-        version: String(row.version),
-        acknowledgedAt: asMs(row.acknowledged_at) ?? 0,
-        recordedBy: String(row.recorded_by),
-      }));
-    },
+    listStaffNotices: (codes) => readNotices(sql, codes),
     async setStaffNotice(notice) {
       await sql`
         INSERT INTO public.classroom_staff_notices (person_code, version, acknowledged_at, recorded_by)
@@ -1246,6 +1298,16 @@ export function createPostgresClassroomStore(sql: postgres.Sql): ClassroomStore 
     },
     async listJoinTokens(lessonId) {
       return (await sql`SELECT * FROM public.classroom_join_tokens WHERE lesson_id = ${lessonId}`).map((row) => ({
+        tokenHash: String(row.token_hash).trim(),
+        lessonId: String(row.lesson_id),
+        participantId: String(row.participant_id),
+        issuedAt: asMs(row.issued_at) ?? 0,
+        expiresAt: asMs(row.expires_at) ?? 0,
+      }));
+    },
+    async listJoinTokensFor(lessonIds) {
+      if (!lessonIds.length) return [];
+      return (await sql`SELECT * FROM public.classroom_join_tokens WHERE lesson_id IN ${sql(lessonIds)}`).map((row) => ({
         tokenHash: String(row.token_hash).trim(),
         lessonId: String(row.lesson_id),
         participantId: String(row.participant_id),
@@ -1325,6 +1387,13 @@ export function createPostgresClassroomStore(sql: postgres.Sql): ClassroomStore 
     // Where the draft 029 is not applied (every real database today), there are no blocks: the
     // reads answer "none" rather than fail, so nothing that lists lessons breaks.
     block: (id) => withoutBlocks(() => readBlock(sql, id), null),
+    lessonsOfBlock: (id) => withoutBlocks(async () => lessonsWith(sql, await sql`SELECT * FROM public.classroom_lessons WHERE block_id = ${id} ORDER BY room_kind, room_label`), []),
+    async blockVersion(id) {
+      return withoutBlocks(async () => {
+        const [row] = await sql`SELECT version FROM public.classroom_blocks WHERE id = ${id}`;
+        return row ? Number(row.version) : null;
+      }, null);
+    },
     async listBlocks({ from, to }) {
       return withoutBlocks(async () => blocksWith(sql, await sql`
         SELECT * FROM public.classroom_blocks WHERE starts_at < ${new Date(to)} AND ends_at > ${new Date(from)} ORDER BY starts_at, code
@@ -1338,6 +1407,30 @@ export function createPostgresClassroomStore(sql: postgres.Sql): ClassroomStore 
           AND EXISTS (SELECT 1 FROM public.classroom_block_members m WHERE m.block_id = b.id AND m.role <> 'student' AND m.staff_email = ${email})
         ORDER BY b.starts_at, b.code
       `), []);
+    },
+    async filings(lessonIds) {
+      if (!lessonIds.length) return [];
+      const rows = await sql`
+        SELECT f.*, j.status AS job_status, j.attempts AS job_attempts, j.error AS job_error, j.blocked_reason AS job_blocked
+        FROM public.classroom_recording_files f LEFT JOIN public.classroom_jobs j ON j.id = 'file:' || f.provider_file_id
+        WHERE f.lesson_id IN ${sql(lessonIds)} ORDER BY f.created_at, f.provider_file_id
+      `;
+      return rows.map((row) => ({ record: fromFileRow(row), job: row.job_status == null ? null : { status: String(row.job_status), attempts: Number(row.job_attempts), error: row.job_error == null ? null : String(row.job_error), blockedReason: row.job_blocked == null ? null : String(row.job_blocked) } }));
+    },
+    // The recording's row and its job locked (FOR UPDATE): of two retries at once, one requeues.
+    async requeueFiling({ providerFileId, now, events }) {
+      return sql.begin(async (tx) => {
+        const [row] = await tx`SELECT * FROM public.classroom_recording_files WHERE provider_file_id = ${providerFileId} FOR UPDATE`;
+        const refused = requeueRefusal(row ? fromFileRow(row) : null);
+        if (refused) return { ok: false as const, reason: refused };
+        const id = `file:${providerFileId}`;
+        const [job] = await tx`SELECT id FROM public.classroom_jobs WHERE id = ${id} FOR UPDATE`;
+        if (!job) await postgresTransaction(tx).insertJob({ id, type: "file_recording", lessonId: row.lesson_id == null ? null : String(row.lesson_id), providerFileId });
+        await tx`UPDATE public.classroom_jobs SET status = 'pending', attempts = 0, available_at = ${new Date(now)}, error = NULL, blocked_reason = NULL, lease_owner = NULL, updated_at = NOW() WHERE id = ${id}`;
+        await tx`UPDATE public.classroom_recording_files SET status = 'PENDING', updated_at = NOW() WHERE provider_file_id = ${providerFileId}`;
+        for (const event of events) await postgresTransaction(tx).insertEvent(event);
+        return { ok: true as const };
+      }) as Promise<{ ok: true } | { ok: false; reason: "NOT_FOUND" | "ALREADY_ARCHIVED" | "HELD" | "NOT_FAILED" }>;
     },
     // Every change to a block under its row lock (FOR UPDATE), so changes to one block run one at
     // a time whatever the number of instances: the version check, the room's capacity and the

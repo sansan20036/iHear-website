@@ -90,3 +90,51 @@ describe('R-8 on PostgreSQL: the tick and admin changes are counted apart', () =
     expect(await rows()).toEqual([1, 3]);
   });
 });
+
+// P3-Multi B4 (2026-11-09): a classroom poll counts the shared allowance (everyone behind one
+// address) and the person's own in one statement. Same limits as two separate checks; refused when
+// either is used up; many people sharing one address at the same moment neither deadlock nor lose a count.
+describe('B4 on PostgreSQL: two allowances counted in one statement', () => {
+  const pair = (person, { perPlace = 1200, perPerson = 60 } = {}) => limiter.enforceRateLimits(request(), [
+    { scope: 'b4-where', limit: perPlace, windowSeconds: 60, identifier: '203.0.113.9:block-1' },
+    { scope: 'b4-where-person', limit: perPerson, windowSeconds: 60, identifier: `203.0.113.9:block-1:${person}` },
+  ]);
+
+  test('one statement per request; a person who used up their own allowance is refused while others behind the same address go on', async () => {
+    await sql`DELETE FROM public.api_rate_limits`;
+    for (let n = 0; n < 5; n += 1) expect((await pair('p1', { perPerson: 5 })).limited).toBe(false);
+    const refused = await pair('p1', { perPerson: 5 });
+    expect(refused.limited).toBe(true);
+    expect(refused.response.status).toBe(429);
+    expect((await pair('p2', { perPerson: 5 })).limited).toBe(false);
+    // The shared counter saw all seven; the two people six and one.
+    expect(await rows()).toEqual([1, 6, 7]);
+  });
+
+  test('the shared allowance used up: everyone behind that address is refused', async () => {
+    await sql`DELETE FROM public.api_rate_limits`;
+    for (let n = 0; n < 3; n += 1) expect((await pair(`q${n}`, { perPlace: 3 })).limited).toBe(false);
+    expect((await pair('q9', { perPlace: 3 })).limited).toBe(true);
+  });
+
+  test('120 people behind one address at the same moment, twice each: no deadlock, exact counts', async () => {
+    await sql`DELETE FROM public.api_rate_limits`;
+    const decisions = await Promise.all(Array.from({ length: 240 }, (_, n) => pair(`r${n % 120}`)));
+    expect(decisions.every(decision => !decision.limited)).toBe(true);
+    const counts = await rows();
+    expect(counts.at(-1)).toBe(240);
+    expect(counts.slice(0, -1).every(count => count === 2)).toBe(true);
+    expect(counts).toHaveLength(121);
+  });
+
+  test('buckets with different windows are refused as a configuration error (503), never half-counted', async () => {
+    await sql`DELETE FROM public.api_rate_limits`;
+    const bad = await limiter.enforceRateLimits(request(), [
+      { scope: 'b4-a', limit: 5, windowSeconds: 60, identifier: 'x' },
+      { scope: 'b4-b', limit: 5, windowSeconds: 600, identifier: 'x' },
+    ]);
+    expect(bad.limited).toBe(true);
+    expect(bad.response.status).toBe(503);
+    expect(await rows()).toEqual([]);
+  });
+});

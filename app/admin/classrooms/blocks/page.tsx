@@ -9,6 +9,10 @@ import { useAdmin } from "../../admin-context";
 // manage page by its manager. Synthetic data only until the policies are approved.
 
 type BlockRow = { blockId: string; code: string; startsAt: string; endsAt: string; cancelled: boolean; rooms: number; members: number };
+type Filing = {
+  recordingId: string; block: string; room: string | null; date: string; name: string | null; status: string; hold: string | null;
+  job: { status: string; attempts: number; error: string | null; blockedReason: string | null } | null; retryable: boolean;
+};
 type Created = { block: { blockId: string; code: string }; studentLinks: { code: string; link: string }[] };
 
 const ROLES = ["manager", "lead_tutor", "co_tutor", "observer", "student"];
@@ -36,12 +40,30 @@ export default function ClassroomBlocksPage() {
   const [busy, setBusy] = useState(false);
   const owner = principal.role === "owner";
 
+  const [filings, setFilings] = useState<Filing[]>([]);
+  const [filingNote, setFilingNote] = useState("");
   const load = useCallback(async () => {
     const response = await fetch("/api/admin/classrooms/blocks", { cache: "no-store" });
     const data = await response.json().catch(() => ({}));
     if (response.ok && Array.isArray(data?.blocks)) setBlocks(data.blocks);
+    const archive = await fetch("/api/admin/classrooms/filings", { cache: "no-store" });
+    const listed = await archive.json().catch(() => ({}));
+    if (archive.ok && Array.isArray(listed?.filings)) setFilings(listed.filings);
   }, []);
   useEffect(() => { if (owner) void load(); }, [owner, load]);
+
+  // 18.5: an owner retries a failed filing, saying why; the server allows it only for a failed,
+  // not-held recording, and files it with the same checks as the first time.
+  async function retry(recording: string) {
+    const reason = window.prompt("重新處理的理由（會記錄在稽核紀錄）：") ?? "";
+    if (!reason.trim()) return;
+    const response = await fetch("/api/admin/classrooms/filings", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "retry", recording, reason }),
+    });
+    const data = await response.json().catch(() => ({}));
+    setFilingNote(response.ok ? `已重新排入歸檔：${recording}` : `無法重新處理：${data?.code ?? response.status}`);
+    await load();
+  }
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -96,6 +118,23 @@ export default function ClassroomBlocksPage() {
           <p>學生個人連結（只顯示這一次，請交給家長）：</p>
           <ul>{created.studentLinks.map((entry) => <li key={entry.code} data-student-link={entry.code}>{entry.code}：<code>{`${window.location.origin}${entry.link}`}</code></li>)}</ul>
         </div>
+      )}
+      <h2>錄影歸檔（依美東日期，新的在前）</h2>
+      {filingNote && <p role="status">{filingNote}</p>}
+      {filings.length === 0 ? <p>目前沒有錄影。</p> : (
+        <table aria-label="錄影歸檔">
+          <thead><tr><th>美東日期</th><th>班次</th><th>教室</th><th>檔名</th><th>狀態</th><th>原因</th><th>操作</th></tr></thead>
+          <tbody>
+            {filings.map((entry) => (
+              <tr key={entry.recordingId} data-filing={entry.recordingId} data-status={entry.status}>
+                <td>{entry.date}</td><td>{entry.block}</td><td>{entry.room}</td><td>{entry.name ?? "—"}</td>
+                <td>{entry.status === "ARCHIVED" ? "ARCHIVED 歸檔完成" : entry.status}</td>
+                <td>{entry.hold ?? entry.job?.error ?? entry.job?.blockedReason ?? ""}</td>
+                <td>{entry.retryable && <button type="button" onClick={() => void retry(entry.recordingId)}>重新處理</button>}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       )}
       <h2>班次</h2>
       <ul>{blocks.map((block) => <li key={block.blockId}><a href={`/classroom/b/${block.blockId}/manage`}>{block.code}</a>（{block.rooms} 間教室，{block.members} 人{block.cancelled ? "，已取消" : ""}）</li>)}</ul>

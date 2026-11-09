@@ -31,7 +31,9 @@ export type MediaEvent =
   | { type: "device"; kind: DeviceKind; state: DeviceState; problem?: DeviceProblem; at: number }
   // The other person in the room. A real adapter also passes their user key (our participant
   // id, which the session token carries) so the tutor's page can report joins and leaves.
-  | { type: "remote"; present: boolean; camera: boolean; microphone: boolean; userKey: string | null; at: number }
+  // P3-Multi: in a room of several, how many others are there and how many of their videos are shown
+  // (a phone shows at most 9 tiles, a computer 25) or waiting for a free tile.
+  | { type: "remote"; present: boolean; camera: boolean; microphone: boolean; userKey: string | null; at: number; others?: number; videosShown?: number; videosWaiting?: number }
   // Materials and the whiteboard: what this page is showing or sending right now.
   | { type: "share"; state: "none" | "sending" | "receiving"; at: number }
   | { type: "whiteboard"; state: "none" | "presenting" | "viewing"; at: number }
@@ -272,6 +274,12 @@ export async function loadZoomVideoSdkPackage(): Promise<ZoomVideoSdk> {
 
 const ZOOM_CONNECTION: Record<string, ConnectionState> = { Connected: "connected", Reconnecting: "reconnecting", Closed: "disconnected", Fail: "failed" };
 const VIDEO_720P = 3;
+// From the fourth video on, each is drawn at 360p (P3-Multi): several 720p videos at once are more
+// than a phone or a slow connection carries. One or two people: 720p, as before.
+const VIDEO_360P = 2;
+// Remote videos drawn at once: Zoom's web rendering limit less this page's own (a computer 25, a
+// phone or tablet 9); the others wait for a free tile.
+export const MAX_REMOTE_VIDEOS = { desktop: 24, mobile: 8 } as const;
 // How long a press of the camera or microphone may wait for Zoom before the page offers to try
 // again; starting normally takes a second or two.
 const DEVICE_START_MS = 10_000;
@@ -308,6 +316,9 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
   private sharer: number | null = null;
   private board: "none" | "presenting" | "viewing" = "none";
   private readonly tiles = new Map<number, unknown>();
+  // Remote videos that are on but wait for a free tile (P3-Multi), in the order they started.
+  private readonly waitingVideos = new Set<number>();
+  private readonly maxVideos: number;
   // The listeners of the current client, removed when it is released.
   private handlers: ZoomHandler[] = [];
   private connection: ConnectionState = "idle";
@@ -325,8 +336,9 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
   private readonly streamWaiters = new Set<() => void>();
   private readonly deviceStartMs: number;
 
-  constructor(private readonly load: () => Promise<ZoomVideoSdk> = loadZoomVideoSdkPackage, private readonly now: () => number = Date.now, options: { deviceStartMs?: number } = {}) {
+  constructor(private readonly load: () => Promise<ZoomVideoSdk> = loadZoomVideoSdkPackage, private readonly now: () => number = Date.now, options: { deviceStartMs?: number; maxVideos?: number } = {}) {
     this.deviceStartMs = options.deviceStartMs ?? DEVICE_START_MS;
+    this.maxVideos = options.maxVideos ?? MAX_REMOTE_VIDEOS.desktop;
   }
 
   subscribe(listener: (event: MediaEvent) => void) {
@@ -684,27 +696,38 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
 
   private reportRemote() {
     const self = this.client?.getCurrentUserInfo()?.userId;
-    const other = this.client?.getAllUser().find(user => user.userId !== self) ?? null;
+    const others = this.client?.getAllUser().filter(user => user.userId !== self) ?? [];
+    const other = others[0] ?? null;
     // The user key is our participant id from the join token; Zoom reports it on each person.
     this.emit({
       type: "remote", present: Boolean(other), camera: Boolean(other?.bVideoOn), microphone: Boolean(other && other.audio && !other.muted),
       userKey: other ? (other.userKey ?? other.userIdentity ?? null) : null, at: this.now(),
+      others: others.length, videosShown: [...this.tiles.keys()].length, videosWaiting: this.waitingVideos.size,
     });
   }
 
   private async peerVideo(payload: { action?: string; userId?: number }) {
     if (payload.userId == null) return;
     if (payload.action === "Start") await this.attach(payload.userId);
-    else if (payload.action === "Stop") { await this.stream?.detachVideo(payload.userId); this.tiles.delete(payload.userId); }
+    else if (payload.action === "Stop") {
+      if (this.waitingVideos.delete(payload.userId)) { this.reportRemote(); return; }
+      await this.stream?.detachVideo(payload.userId);
+      this.tiles.delete(payload.userId);
+      // A tile came free: the longest-waiting video takes it.
+      const next = this.waitingVideos.values().next();
+      if (!next.done) { this.waitingVideos.delete(next.value); await this.attach(next.value); }
+    }
     this.reportRemote();
   }
 
   private async attach(userId: number) {
     if (!this.stream || !this.stage || this.tiles.has(userId)) return;
+    // No free tile (P3-Multi): the video waits until one is.
+    if (this.tiles.size >= this.maxVideos) { this.waitingVideos.add(userId); return; }
     // Claimed before the wait, so Zoom's report and the finished call never draw one video twice.
     this.tiles.set(userId, null);
     try {
-      const element = await this.stream.attachVideo(userId, VIDEO_720P);
+      const element = await this.stream.attachVideo(userId, this.tiles.size > 3 ? VIDEO_360P : VIDEO_720P);
       this.tiles.set(userId, element);
       if (isNode(element)) this.stage.videos.append(element);
     } catch (error) {
@@ -828,11 +851,11 @@ export class LcicEmbedAdapter implements ClassroomMediaAdapter {
   }
 }
 
-export type MediaAdapterOptions = SyntheticOptions & { loadZoomSdk?: () => Promise<ZoomVideoSdk> };
+export type MediaAdapterOptions = SyntheticOptions & { loadZoomSdk?: () => Promise<ZoomVideoSdk>; maxVideos?: number };
 
 export function createMediaAdapter(provider: string, options?: MediaAdapterOptions): ClassroomMediaAdapter {
   if (provider === "synthetic") return new SyntheticMediaAdapter(options);
-  if (provider === "zoom-video-sdk") return new ZoomVideoSdkMediaAdapter(options?.loadZoomSdk);
+  if (provider === "zoom-video-sdk") return new ZoomVideoSdkMediaAdapter(options?.loadZoomSdk, undefined, { maxVideos: options?.maxVideos });
   if (provider === "tencent-lcic") return new LcicEmbedAdapter();
   throw new MediaAdapterUnavailableError(provider);
 }

@@ -150,6 +150,15 @@ export function createGoogleDrive({ accessToken, rootFolderId = 'root', apiBase 
     async trash(id) {
       await api('PATCH', `files/${encodeURIComponent(id)}`, 'trash', { query: { fields: 'id' }, json: { trashed: true } });
     },
+    // 18.5 (P3-Multi): who can open a file, its own and inherited access. drive.file allows this
+    // for files the app created.
+    async permissions(id) {
+      const url = new URL(`${apiBase}/drive/v3/files/${encodeURIComponent(id)}/permissions`);
+      url.searchParams.set('fields', 'permissions(type,role,domain,emailAddress)');
+      const response = await request('GET', url, { operation: 'permissions' });
+      if (!response.ok) await fail(response, 'permissions');
+      return ((await response.json()).permissions ?? []).map(entry => ({ type: String(entry.type), role: String(entry.role), domain: entry.domain ?? null, emailAddress: entry.emailAddress ?? null }));
+    },
     // Test cleanup only: permanently deletes a file or folder this app created.
     async remove(id) {
       await api('DELETE', `files/${encodeURIComponent(id)}`, 'remove');

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { classroomStore } from "./classroom-store";
-import { clientIp, enforceRateLimit } from "./rate-limit";
+import { clientIp, enforceRateLimit, enforceRateLimits } from "./rate-limit";
 
 // The limit for a lesson's door: a one-to-one lesson keeps its own (one allowance per address and
 // lesson, as verified); only a block's Lobby or room, which many people share, counts per person.
@@ -20,8 +20,10 @@ export async function lessonDoorLimit(request: Request, { scope, lessonId, perso
 export async function personAndPlaceLimit(request: Request, { scope, place, person, perPerson, perPlace }: {
   scope: string; place: string; person: string | null; perPerson: number; perPlace: number;
 }) {
-  const shared = await enforceRateLimit(request, { scope, limit: perPlace, windowSeconds: 60, identifier: `${clientIp(request)}:${place}` });
-  if (shared.limited) return shared;
   const who = createHash("sha256").update(person || "anonymous").digest("hex").slice(0, 16);
-  return enforceRateLimit(request, { scope: `${scope}-person`, limit: perPerson, windowSeconds: 60, identifier: `${clientIp(request)}:${place}:${who}` });
+  // Both counted in one statement (B4): one database call per request, not two.
+  return enforceRateLimits(request, [
+    { scope, limit: perPlace, windowSeconds: 60, identifier: `${clientIp(request)}:${place}` },
+    { scope: `${scope}-person`, limit: perPerson, windowSeconds: 60, identifier: `${clientIp(request)}:${place}:${who}` },
+  ]);
 }

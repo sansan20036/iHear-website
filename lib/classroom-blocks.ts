@@ -4,12 +4,14 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { deriveLesson } from "../tools/recording-pathway/classroom/lesson-state.mjs";
 // @ts-ignore - shared classroom logic, plain JavaScript tested with node --test.
 import { LABELS } from "../tools/recording-pathway/classroom/live-dashboard.mjs";
+// @ts-ignore - shared classroom logic, plain JavaScript tested with node --test.
+import { FILE_NAME_SAFE } from "../tools/recording-pathway/classroom/block-naming.mjs";
 // @ts-ignore - shared classroom logic, plain JavaScript.
 import { OPERATION_EVENT } from "../tools/recording-pathway/classroom/operations.mjs";
 // @ts-ignore - shared classroom logic, plain JavaScript tested with node --test.
 import { storeEvent } from "../tools/recording-pathway/classroom/webhook-ingest.mjs";
 import {
-  blockPhase, hashKey, inBlockWindow, isStaff, MAX_MEMBERS, MAX_ROOMS, memberOf, memberState, recordingModeOf, ROOM_CAPACITY, seatOf,
+  blockPhase, hashKey, inBlockWindow, isStaff, MAX_MEMBERS, MAX_ROOMS, memberOf, memberState, newYorkDate, openConnections, presenceIn, recordingModeOf, ROOM_CAPACITY, seatOf, STALE_PRESENCE_MS,
   type BlockPhase, type BlockTarget, type RecordingMode,
 } from "./classroom-block-rules";
 import type { ClassroomDrive } from "./classroom-drive";
@@ -32,8 +34,10 @@ const RECORDING_LABELS: Record<string, string> = LABELS.recording;
 const BLOCK_CODE = /^[A-Za-z0-9-]{1,30}$/;
 const ROOM_LABEL = /^[A-Za-z0-9-]{1,8}$/;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-// The confirmed English display name (18.4): letters, spaces and . ' - only, as the person spells it.
-const ENGLISH_NAME = /^[A-Za-z][A-Za-z .'-]{0,79}$/;
+// The confirmed English display name (18.4) as it appears in Drive's file names: letters, spaces,
+// . and ' only, up to 60 characters. "-" joins names and "_" separates the parts of a file name, so
+// a name holding either (Mary-Jane) is entered the way iHear confirms it for files (Mary Jane).
+const ENGLISH_NAME: RegExp = FILE_NAME_SAFE;
 const ROLES: BlockRole[] = ["manager", "lead_tutor", "co_tutor", "observer", "student"];
 const shortId = (prefix: string) => `${prefix}-${randomUUID().replace(/-/g, "")}`;
 const blockLinkOf = (blockId: string, key: string) => `/classroom/b/${blockId}#k=${key}`;
@@ -83,7 +87,7 @@ export async function createClassroomBlock({ store, input, actor, now }: { store
     const where = `members.${index}`;
     if (!PERSON_CODE.test(memberCode)) issues[`${where}.code`] = "Use 1–20 letters, digits or hyphens";
     if (!ROLES.includes(role)) issues[`${where}.role`] = `Use one of: ${ROLES.join(", ")}`;
-    if (!ENGLISH_NAME.test(englishName)) issues[`${where}.englishName`] = "Enter the confirmed English name (letters, spaces, . ' -)";
+    if (!ENGLISH_NAME.test(englishName)) issues[`${where}.englishName`] = "Enter the confirmed English name for file names (letters, spaces, . and '; no - or _)";
     if (role === "student") {
       if (email) issues[`${where}.email`] = "Students enter with their personal link, not an e-mail";
       const key = randomBytes(32).toString("base64url");
@@ -378,36 +382,56 @@ async function closeLessons({ store, provider, drive, block, reason, now }: { st
 // Where a member of the block belongs now (the student's link page and the staff's page ask this
 // every few seconds), with their state (18.2). The page may say how joining went (joining or
 // failed); that is kept as the page's own word, never as having joined.
-export async function blockWhere({ store, blockId, key, sessionEmail, report, now }: {
-  store: ClassroomStore; blockId: string; key?: string | null; sessionEmail?: string | null; report?: unknown; now: number;
+// B4: how soon the page asks again. Sooner while someone is between rooms; slower when nothing is
+// expected to change. A move, a recall or the end changes the block's version, which the page's
+// cheap question ("since") notices at its next ask.
+export const POLL_MS = { moving: 2_000, breakout: 4_000, steady: 6_000, waiting: 8_000 } as const;
+const MOVING_STATES = new Set(["MOVING", "JOINING", "RETURNING", "FAILED"]);
+
+export async function blockWhere({ store, blockId, key, sessionEmail, report, since, now }: {
+  store: ClassroomStore; blockId: string; key?: string | null; sessionEmail?: string | null; report?: unknown; since?: unknown; now: number;
 }) {
+  // The cheap question (B4): has anything about the block changed since the version the page last
+  // saw? One read; it says nothing about anyone. The page still asks fully at least every 30 s
+  // (what no version marks, such as a consent lapsing, is also enforced at every door).
+  if (Number.isInteger(since) && report == null) {
+    const version = await store.blockVersion(blockId);
+    if (version != null && version === since) return { status: 200, body: { ok: true, unchanged: true, version } };
+  }
   const block = await store.block(blockId);
   if (!block) return refused(404, "BLOCK_NOT_FOUND", "Block not found");
   const member = memberOf(block, key, sessionEmail);
   if (!member) return refused(403, key ? "NOT_ON_ROSTER" : "IDENTITY_UNVERIFIED", "You are not in this block");
   if (block.cancelled) return refused(403, "BLOCK_CANCELLED", "The block is cancelled");
   if (!inBlockWindow(block, now)) return refused(403, "OUTSIDE_JOIN_WINDOW", "The block is not open now");
-  const lobbyEvents = await store.eventsFor([block.lobbyId]);
-  const rooms = await roomsOf(store, block);
-  const target = await effectiveTarget({ store, block, rooms, member, lobbyEvents, now });
+  // The block's lessons and all their facts in two reads; the target's join tokens in one.
+  const lessons = await store.lessonsOfBlock(block.id);
+  const rooms = lessons.filter((lesson) => lesson.roomKind === "room");
+  const facts = await store.eventsFor(lessons.map((lesson) => lesson.id));
+  const lobbyEvents = facts.filter((event) => event.lessonId === block.lobbyId);
+  const target = await effectiveTarget({ store, block, rooms, member, lobbyEvents, now, facts });
   if (target.kind === "ended") return refused(403, "BLOCK_ENDED", "The block has ended");
   const page = report as { state?: unknown; lessonId?: unknown } | null;
   if (page && (page.state === "joining" || page.state === "failed") && typeof page.lessonId === "string" && page.lessonId === target.lessonId) {
     await store.transaction((tx) => tx.keepLatest({ source: "server", type: "server.member_report", lessonId: block.lobbyId, memberId: member.id, report: page.state, forLesson: page.lessonId, occurredAt: now, receivedAt: now, key: `server.member_report:${member.id}` }));
   }
-  const lessons = [await store.lesson(block.lobbyId), ...rooms].filter((lesson): lesson is ClassroomLesson => Boolean(lesson));
-  const state = memberState({
-    member, target, lessons, eventsByLesson: await eventsByLesson(store, lessons), tokensByLesson: await tokensByLesson(store, lessons),
-    lobbyEvents: await store.eventsFor([block.lobbyId]), now,
-  });
+  const byLesson = new Map(lessons.map((lesson) => [lesson.id, facts.filter((event) => event.lessonId === lesson.id)]));
+  const tokens = new Map(target.lessonId ? [[target.lessonId, await store.listJoinTokens(target.lessonId)]] : []);
+  const state = memberState({ member, target, lessons, eventsByLesson: byLesson, tokensByLesson: tokens, lobbyEvents, now });
+  const phase = blockPhase(lobbyEvents).phase;
+  const room = target.kind === "room" ? rooms.find((entry) => entry.id === target.lessonId) : null;
   return {
     status: 200,
     body: {
       ok: true,
-      block: { code: block.code, startsAt: block.startsAt, endsAt: block.endsAt, phase: blockPhase(lobbyEvents).phase },
+      version: block.version,
+      pollMs: MOVING_STATES.has(state) ? POLL_MS.moving : phase === "BREAKOUT" ? POLL_MS.breakout : target.kind === "wait" ? POLL_MS.waiting : POLL_MS.steady,
+      block: { code: block.code, startsAt: block.startsAt, endsAt: block.endsAt, phase },
       member: { code: member.code, role: member.role },
-      // Only where this person belongs; never another room's id.
+      // Only where this person belongs; never another room's id or anyone's name.
       target: { kind: target.kind, lessonId: target.lessonId, label: target.label, ...(target.heldBack ? { heldBack: target.heldBack } : {}) },
+      // How many hold a seat in that room (a phone shows at most 9 videos).
+      ...(room ? { roomSize: room.participants.filter((entry) => entry.active !== false && (entry.seat === "assigned" || entry.seat === "visit")).length } : {}),
       state,
     },
   };
@@ -437,9 +461,8 @@ async function eventsByLesson(store: ClassroomStore, lessons: ClassroomLesson[])
   return map;
 }
 async function tokensByLesson(store: ClassroomStore, lessons: ClassroomLesson[]) {
-  const map = new Map<string, Awaited<ReturnType<ClassroomStore["listJoinTokens"]>>>();
-  for (const lesson of lessons) map.set(lesson.id, await store.listJoinTokens(lesson.id));
-  return map;
+  const all = await store.listJoinTokensFor(lessons.map((lesson) => lesson.id));
+  return new Map(lessons.map((lesson) => [lesson.id, all.filter((token) => token.lessonId === lesson.id)]));
 }
 
 // What the block's manager (or an owner) sees (18.7): the phase and version, each person's place and
@@ -449,30 +472,35 @@ async function tokensByLesson(store: ClassroomStore, lessons: ClassroomLesson[])
 export async function blockView({ store, blockId, now }: { store: ClassroomStore; blockId: string; now: number }) {
   const block = await store.block(blockId);
   if (!block) return null;
-  const lobby = await store.lesson(block.lobbyId);
-  const rooms = await roomsOf(store, block);
-  const lessons = [lobby, ...rooms].filter((lesson): lesson is ClassroomLesson => Boolean(lesson));
+  const lessons = await store.lessonsOfBlock(block.id);
+  const lobby = lessons.find((lesson) => lesson.id === block.lobbyId) ?? null;
+  const rooms = lessons.filter((lesson) => lesson.roomKind === "room").sort((a, b) => String(a.roomLabel).localeCompare(String(b.roomLabel)));
+  // B4: every fact, token and recording of the block in one read each (it was ~55 reads a refresh).
   const byLesson = await eventsByLesson(store, lessons);
+  const facts = [...byLesson.values()].flat();
   const tokens = await tokensByLesson(store, lessons);
   const lobbyEvents = byLesson.get(block.lobbyId) ?? [];
   const { phase } = blockPhase(lobbyEvents);
   const mode = recordingModeOf(lobbyEvents);
   const members = [];
   for (const member of block.members) {
-    const target: BlockTarget = await effectiveTarget({ store, block, rooms, member, lobbyEvents, now });
+    const target: BlockTarget = await effectiveTarget({ store, block, rooms, member, lobbyEvents, now, facts });
     members.push({
       code: member.code, role: member.role, englishName: member.englishName,
       seat: seatOf(rooms, member, "assigned")?.room.roomLabel ?? null,
       visit: seatOf(rooms, member, "visit")?.room.roomLabel ?? null,
       target: target.label, heldBack: target.heldBack ?? null,
       state: memberState({ member, target, lessons, eventsByLesson: byLesson, tokensByLesson: tokens, lobbyEvents, now }),
+      // The same link or sign-in in use on more than one device right now (alert only, H5).
+      devices: lessons.reduce((sum, lesson) => sum + openConnections(lesson, byLesson.get(lesson.id) ?? [], member), 0),
+      // Still in another room, by Zoom's word, longer than a move takes.
+      staleIn: lessons.filter((lesson) => lesson.id !== target.lessonId).filter((lesson) => {
+        const presence = presenceIn(lesson, byLesson.get(lesson.id) ?? [], member);
+        return presence.state === "in" && presence.at != null && now - presence.at > STALE_PRESENCE_MS;
+      }).map((lesson) => (lesson.roomKind === "lobby" ? "Lobby" : lesson.roomLabel)),
     });
   }
-  const files = await store.transaction(async (tx) => {
-    const all: Record<string, unknown>[] = [];
-    for (const lesson of lessons) for (const file of await tx.fileRecordsForLesson(lesson.id)) all.push({ lessonId: lesson.id, name: file.plannedName ?? null, status: file.status, hold: file.hold ?? null });
-    return all;
-  });
+  const files = (await store.filings(lessons.map((lesson) => lesson.id))).map(({ record: file }) => ({ lessonId: String(file.lessonId), name: file.plannedName ?? null, status: file.status, hold: file.hold ?? null }));
   const roomCard = (lesson: ClassroomLesson) => {
     const facts = byLesson.get(lesson.id) ?? [];
     const state = deriveLesson(forRules(lesson, facts), facts, now);
@@ -535,4 +563,47 @@ export async function myClassroomBlocks({ store, email, now }: { store: Classroo
 export async function listClassroomBlocks({ store, now }: { store: ClassroomStore; now: number }) {
   const blocks = await store.listBlocks({ from: now - DAY_MS, to: now + 14 * DAY_MS });
   return blocks.map((block) => ({ blockId: block.id, code: block.code, startsAt: block.startsAt, endsAt: block.endsAt, cancelled: block.cancelled, rooms: block.roomIds.length, members: block.members.length }));
+}
+
+// 18.5 (P3-Multi): the owners' list of block recordings and where each one's filing stands,
+// newest New York date first (section 9), with what may be retried. Codes and file names only.
+export async function listBlockFilings({ store, now }: { store: ClassroomStore; now: number }) {
+  const blocks = await store.listBlocks({ from: now - 90 * DAY_MS, to: now + DAY_MS });
+  const rooms = new Map<string, { block: ClassroomBlock; lesson: ClassroomLesson }>();
+  for (const block of blocks) {
+    for (const id of block.roomIds) {
+      const lesson = await store.lesson(id);
+      if (lesson) rooms.set(id, { block, lesson });
+    }
+  }
+  const rows = await store.filings([...rooms.keys()]);
+  return rows.map(({ record, job }) => {
+    const place = rooms.get(String(record.lessonId))!;
+    return {
+      recordingId: record.providerFileId, block: place.block.code, room: place.lesson.roomLabel, date: newYorkDate(place.lesson.startsAt),
+      recordingStart: (record.recordingStart as number | null | undefined) ?? null, name: (record.plannedName as string | null | undefined) ?? null,
+      status: record.status === "STORED" ? "ARCHIVED" : record.status, hold: (record.hold as string | null | undefined) ?? null,
+      job, retryable: record.status === "FAILED" && !record.hold,
+    };
+  }).sort((a, b) => b.date.localeCompare(a.date) || (b.recordingStart ?? 0) - (a.recordingStart ?? 0) || a.recordingId.localeCompare(b.recordingId));
+}
+
+// An owner sends a failed filing back to the queue, with a reason (18.7: who, when, why). Only a
+// FAILED recording of a block room that is not held: a recording held for consent, a withdrawal or
+// an unknown person is never sent on this way, and one already archived is left alone. The job runs
+// again under its own id, so filing it twice is impossible (the same checks, no second copy).
+export async function retryBlockFiling({ store, providerFileId, actor, reason, now }: { store: ClassroomStore; providerFileId: unknown; actor: string; reason: unknown; now: number }) {
+  const id = String(providerFileId ?? "");
+  const why = String(reason ?? "").trim();
+  if (!id) return refused(400, "RECORDING_REQUIRED", "Name the recording");
+  if (why.length < 3 || why.length > 300) return refused(400, "REASON_REQUIRED", "Say why (3–300 characters)");
+  const record = await store.fileRecord(id);
+  const lesson = record?.lessonId ? await store.lesson(String(record.lessonId)) : null;
+  if (!record || !lesson?.blockId) return refused(404, "NOT_FOUND", "No such recording in a block");
+  const result = await store.requeueFiling({
+    providerFileId: id, now,
+    events: [{ source: "server", type: "p1.filing_retry", lessonId: lesson.id, providerFileId: id, actor, reason: why, occurredAt: now, receivedAt: now, key: `p1.filing_retry:${id}:${now}:${randomUUID()}` }],
+  });
+  if (!result.ok) return refused(result.reason === "NOT_FOUND" ? 404 : 409, result.reason, result.reason === "HELD" ? "A held recording is never filed this way" : result.reason === "ALREADY_ARCHIVED" ? "Already archived" : "Only a failed filing can be retried");
+  return { status: 200, body: { ok: true, requeued: id } };
 }

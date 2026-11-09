@@ -178,6 +178,17 @@ export async function startMockDrive({ account = 'synthetic-tester@example.test'
         const meta = JSON.parse(body.toString() || '{}');
         return json(response, 200, { id: createFile({ name: meta.name, parentId: meta.parents?.[0], mimeType: meta.mimeType, appProperties: meta.appProperties }).id });
       }
+      // Who can open a file (P3-Multi, 18.5): its owner, plus any sharing set on it or on a folder
+      // above it (Drive passes a folder's sharing on to what is inside). Tests set `sharing` on a
+      // stand-in file or folder to share it.
+      const permissionsMatch = /^\/drive\/v3\/files\/([^/]+)\/permissions$/.exec(url.pathname);
+      if (permissionsMatch && request.method === 'GET') {
+        const file = files.get(decodeURIComponent(permissionsMatch[1]));
+        if (!file) return driveError(response, 404, 'notFound');
+        const permissions = [{ type: 'user', role: 'owner', emailAddress: 'mock-owner@example.test' }];
+        for (let at = file, hops = 0; at && hops < 50; at = files.get(at.parentId), hops += 1) permissions.push(...(at.sharing ?? []));
+        return json(response, 200, { permissions });
+      }
       const fileMatch = /^\/drive\/v3\/files\/([^/]+)$/.exec(url.pathname);
       if (fileMatch) {
         const file = files.get(decodeURIComponent(fileMatch[1]));

@@ -16,7 +16,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 // A static import, so bundlers include P1's rules; Core.js stays a plain Apps Script file.
 import Core from '../apps-script/Core.js';
 import { blockBaseName, recordingSnapshot } from './block-naming.mjs';
-import { generationOfRoom } from './eligibility.mjs';
+import { defaultConsentPolicy, generationOfRoom } from './eligibility.mjs';
 import { filingEvent, runsPast } from './recording-filing.mjs';
 import { isFiledKind, LESSON_ID, neutralKind, validateRecordingFact } from './recording-adapter.mjs';
 
@@ -28,7 +28,7 @@ export const STORE_BUDGET_MS = 2000;           // leaves room inside Zoom's 3-se
 // combined lesson video ('composite': Zoom's combined view, LCIC's mixed recording). Each
 // vendor's own type names are mapped there. To check against real recordings of each.
 const ZOOM = 'zoom-video-sdk';
-const HELD_AT_ZOOM = ['AFTER_WITHDRAWAL', 'UNKNOWN_PARTICIPANT', 'NO_CONSENT', 'BEFORE_CONSENT', 'UNKNOWN_SESSION'];
+const HELD_AT_ZOOM = ['AFTER_WITHDRAWAL', 'UNKNOWN_PARTICIPANT', 'NO_CONSENT', 'BEFORE_CONSENT', 'UNKNOWN_SESSION', 'PARTICIPANT_CONSENT_MISSING'];
 
 const RECORDING_EVENTS = {
   'session.recording_started': 'Recording',
@@ -390,6 +390,9 @@ async function recordFiles(tx, event) {
     }
     const planned = lesson ? await planName(tx, lesson, record, generation) : null;
     record.plannedName = planned?.name ?? null;
+    // P3-Multi (18.4): a block room's recording that covers anyone whose own consent (a student) or
+    // notice (staff) was not valid for their part is held at Zoom, never uploaded.
+    if (!record.hold && planned?.snapshot?.people.some(entry => entry.covered && entry.problem)) record.hold = 'PARTICIPANT_CONSENT_MISSING';
     await tx.insertFileRecord(record);
     // P3-Multi (18.4): each recording of a block's room keeps who it covers, with the decision
     // that covers it and the hold it got, under its own key (one per recording).
@@ -427,7 +430,11 @@ async function planBlockName(tx, lesson, record, generation) {
   const events = await tx.eventsOf(lesson.id);
   const before = Number.isFinite(record.recordingStart) ? record.recordingStart + CONSENT_CLOCK_TOLERANCE_MS : undefined;
   const decision = await tx.eligibility(lesson.id, generation ?? undefined, before);
-  const snapshot = recordingSnapshot({ lesson, block, events, record, generation, decision, withdrawnAt: await tx.withdrawalAt(lesson.id) });
+  const members = block?.members ?? [];
+  const consents = await tx.consents(members.filter(member => member.role === 'student').map(member => member.code));
+  const notices = await tx.notices(members.filter(member => member.role !== 'student').map(member => member.code));
+  const lobbyEvents = block?.lobbyId ? await tx.eventsOf(block.lobbyId) : [];
+  const snapshot = recordingSnapshot({ lesson, block, events, record, generation, decision, withdrawnAt: await tx.withdrawalAt(lesson.id), consents, notices, lobbyEvents, policy: defaultConsentPolicy() });
   const base = blockBaseName({ students: snapshot.names.students, tutors: snapshot.names.tutors, date: snapshot.date });
   // The first recording with these names gets the plain name; each later one the next part.
   const taken = (await tx.fileRecordsForLesson(lesson.id)).map(entry => entry.plannedName).filter(name => name === `${base}.${record.extension}` || String(name || '').startsWith(`${base}_P`));

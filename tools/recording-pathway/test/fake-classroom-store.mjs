@@ -203,6 +203,9 @@ export function createDrive({ quotaLimit = null, clock = null, msPerByte = 0 } =
   const folders = new Map();
   const sessions = new Map();
   let ids = 0;
+  // P3-Multi (18.5): sharing set on a file or folder, and a folder's parent (its key is parent/name).
+  const sharing = new Map();
+  const folderParent = id => { const key = [...folders.entries()].find(([, value]) => value === id)?.[0]; return key ? key.slice(0, key.indexOf('/')) : null; };
   let created = 0;
   const faults = { failures: [], crashAfterChunks: null, crashAfterComplete: 0, reportGoneOnce: 0, holdUpload: null, keepPartialOnce: 0, otherUsage: 0, searchLagging: false, hiddenFromSearch: new Set() };
   const counters = { sessionsStarted: 0, uploadsFinished: 0, chunks: 0, bytesUploaded: 0 };
@@ -233,6 +236,8 @@ export function createDrive({ quotaLimit = null, clock = null, msPerByte = 0 } =
   };
   const view = ({ content: _content, ...file }) => file;
   return {
+    // The folder filing starts from when a test does not name one (P3-Multi tests share it).
+    rootFolderId: 'fake-root',
     faults,
     counters,
     failNext(op, code, { retryAfterMs = 0, times = 1 } = {}) {
@@ -350,6 +355,19 @@ export function createDrive({ quotaLimit = null, clock = null, msPerByte = 0 } =
     },
     trash(id) {
       files.get(id).trashed = true;
+    },
+    // Who can open a file (P3-Multi, 18.5): its owner, plus sharing set on it or a folder above
+    // it (share() stands in for someone sharing it in Drive).
+    permissions(id) {
+      const permissions = [{ type: 'user', role: 'owner', emailAddress: 'fake-owner@example.test' }];
+      for (let at = id, hops = 0; at && hops < 50; hops += 1) {
+        permissions.push(...(sharing.get(at) ?? []));
+        at = files.get(at)?.parentId ?? folderParent(at);
+      }
+      return permissions;
+    },
+    share(id, permission) {
+      sharing.set(id, [...(sharing.get(id) ?? []), permission]);
     },
     // Stands in for an upload made some other way, for example by a worker that lost track of it.
     addFile({ name, parentId, appProperties, size }) {

@@ -469,12 +469,13 @@ describe("browser adapters", () => {
     const hangs = { video: videoHangs, audio: audioHangs };
     const never = () => new Promise(() => {});
     let capturing = false;
+    const qualities = [];
     const stream = {
       startAudio: async () => { calls.push("startAudio"); if (hangs.audio > 0) { hangs.audio -= 1; await never(); } },
       stopAudio: async () => calls.push("stopAudio"), muteAudio: async () => calls.push("muteAudio"), unmuteAudio: async () => calls.push("unmuteAudio"),
       startVideo: async () => { calls.push("startVideo"); if (videoError) throw videoError; if (hangs.video > 0) { hangs.video -= 1; await never(); } capturing = true; },
       stopVideo: async () => { calls.push("stopVideo"); capturing = false; }, isCapturingVideo: () => capturing,
-      attachVideo: async (userId) => { calls.push(`attach:${userId}`); return { nodeType: 1, tag: `video:${userId}` }; }, detachVideo: async (userId) => calls.push(`detach:${userId}`),
+      attachVideo: async (userId, quality) => { calls.push(`attach:${userId}`); qualities.push([userId, quality]); return { nodeType: 1, tag: `video:${userId}` }; }, detachVideo: async (userId) => calls.push(`detach:${userId}`),
       isStartShareScreenWithVideoElement: () => true,
       startShareScreen: async (target) => { calls.push(`share:${target.tag}`); if (shareError) throw shareError; },
       stopShareScreen: async () => calls.push("stopShare"),
@@ -514,7 +515,7 @@ describe("browser adapters", () => {
     };
     const listening = () => Object.fromEntries([...live].filter(([, set]) => set.size > 0).map(([name, set]) => [name, set.size]));
     const holdNextJoin = () => { let release; heldJoin = new Promise(resolve => { release = resolve; }); return () => release(); };
-    return { calls, handlers, users, sdk, created, listening, holdNextJoin, releaseJoin: () => releaseJoin() };
+    return { calls, handlers, users, sdk, created, listening, holdNextJoin, releaseJoin: () => releaseJoin(), qualities };
   }
   const zoomJoin = { sessionToken: "synthetic.jwt.token", sessionName: "ihear-l-test-v01", lessonCode: "TEST-V01", participantCode: "TEST-T01", role: "tutor" };
   // Zoom calls its handlers without waiting; let their asynchronous work finish.
@@ -529,6 +530,26 @@ describe("browser adapters", () => {
     const [share, whiteboard, videos, ownShare] = dom.root.children;
     return { zoom, adapter, events, share, whiteboard, videos, ownShare };
   };
+
+  test("P3-Multi: several cameras at once are drawn up to the device's limit (the rest wait for a free tile, the longest-waiting first), from the fourth at 360p, with the headcount", async () => {
+    const { zoom, events } = await joined({}, { maxVideos: 4 });
+    for (let id = 2; id <= 7; id += 1) zoom.users.push({ userId: id, userIdentity: `P-${id}`, bVideoOn: true });
+    for (let id = 2; id <= 7; id += 1) { zoom.handlers.get("peer-video-state-change")({ action: "Start", userId: id }); await settle(); }
+    const attached = () => zoom.calls.filter(call => typeof call === "string" && call.startsWith("attach:"));
+    expect(attached()).toEqual(["attach:2", "attach:3", "attach:4", "attach:5"]);
+    expect(zoom.qualities.map(([, quality]) => quality)).toEqual([3, 3, 3, 2]);
+    expect(events.filter(event => event.type === "remote").at(-1)).toMatchObject({ others: 6, videosShown: 4, videosWaiting: 2 });
+    // One camera goes off: the longest-waiting video takes its tile.
+    zoom.handlers.get("peer-video-state-change")({ action: "Stop", userId: 3 });
+    await settle();
+    expect(attached().at(-1)).toBe("attach:6");
+    expect(events.filter(event => event.type === "remote").at(-1)).toMatchObject({ videosShown: 4, videosWaiting: 1 });
+    // A waiting one stops: nothing to detach, one fewer waiting.
+    zoom.handlers.get("peer-video-state-change")({ action: "Stop", userId: 7 });
+    await settle();
+    expect(zoom.calls).not.toContain("detach:7");
+    expect(events.filter(event => event.type === "remote").at(-1)).toMatchObject({ videosWaiting: 0 });
+  });
 
   test("Zoom: joins the token's topic with the participant code as the name; the other person's key comes from Zoom", async () => {
     const { zoom, events, videos, adapter } = await joined();
