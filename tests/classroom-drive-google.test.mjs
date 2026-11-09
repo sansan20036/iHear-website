@@ -120,6 +120,40 @@ describe("Google Drive for the local recording test", () => {
     expect([answered instanceof FilingError, answered.code]).toEqual([true, FAILURE.DRIVE_AUTH]);
   });
 
+  test("the approved production grant (CLASSROOM_DRIVE_GRANT=production) runs on a hosted site from configuration only, files under the named folder only, and keeps the exact drive.file rule", async () => {
+    const saved = JSON.parse(await (await import("node:fs/promises")).readFile(env.CLASSROOM_GOOGLE_TOKEN_FILE, "utf8"));
+    const helper = googleClassroomDrive(env);
+    const parent = await helper.ensureFolder(helper.rootFolderId, "iHear production folder (synthetic)");
+    const hosted = {
+      VERCEL: "1", VERCEL_ENV: "production", CLASSROOM_DRIVE_GRANT: "production",
+      CLASSROOM_GOOGLE_CLIENT_ID: "mock-client.apps.googleusercontent.com", CLASSROOM_GOOGLE_CLIENT_SECRET: "mock-not-secret", CLASSROOM_GOOGLE_REFRESH_TOKEN: saved.refresh_token,
+      CLASSROOM_DRIVE_PARENT_FOLDER_ID: parent, CLASSROOM_GOOGLE_API_BASE: mock.url, CLASSROOM_GOOGLE_TOKEN_ENDPOINT: mock.endpoints.token,
+    };
+    const drive = googleClassroomDrive(hosted);
+    expect((await fileWith(await storedRecording("SYN-G-PROD"), drive)).map(result => result.status)).toEqual(["STORED"]);
+    const video = filesIn().find(file => file.appProperties.providerFileId === "SYN-G-PROD");
+    const month = filesIn().find(file => file.id === filesIn().find(item => item.id === video.parentId).parentId);
+    expect(month.parentId).toBe(parent);
+    // Without the approval, a hosted site is still refused; with it, nothing may be missing.
+    const refused = (changes, message) => expect(() => googleClassroomDrive({ ...hosted, ...changes })).toThrow(message);
+    refused({ CLASSROOM_DRIVE_GRANT: undefined }, /local recording test/);
+    refused({ CLASSROOM_DRIVE_GRANT: "yes" }, /local recording test/);
+    refused({ CLASSROOM_GOOGLE_REFRESH_TOKEN: "" }, /CLASSROOM_GOOGLE_REFRESH_TOKEN/);
+    refused({ CLASSROOM_DRIVE_PARENT_FOLDER_ID: "" }, /CLASSROOM_DRIVE_PARENT_FOLDER_ID/);
+    refused({ CLASSROOM_GOOGLE_API_BASE: "https://drive.example.invalid" }, /Only Google itself or the local stand-in/);
+    // Google answering with more than drive.file, or not saying which scope: filing pauses (DRIVE_AUTH).
+    const answers = change => async (url, init) => {
+      const response = await fetch(url, init);
+      if (!String(url).endsWith("/token")) return response;
+      const body = change(await response.json());
+      return new Response(JSON.stringify(body), { status: response.status, headers: { "content-type": "application/json" } });
+    };
+    for (const change of [body => ({ ...body, scope: `${body.scope} https://www.googleapis.com/auth/drive` }), ({ scope, ...body }) => { void scope; return body; }]) {
+      const error = await googleClassroomDrive(hosted, { fetchImpl: answers(change) }).quota().catch(caught => caught);
+      expect([error instanceof FilingError, error.code]).toEqual([true, FAILURE.DRIVE_AUTH]);
+    }
+  });
+
   test("it is refused on a hosted site, with grant files inside the site or in OneDrive, with another address than Google's or the local stand-in's, or a folder not marked as a test", () => {
     const refused = (changes, message) => expect(() => googleClassroomDrive({ ...env, ...changes })).toThrow(message);
     refused({ VERCEL: "1" }, ClassroomDriveUnavailableError);

@@ -103,14 +103,17 @@ export async function authorize({ clientFile, tokenFile, endpoints = GOOGLE, ope
 // refresh (revoked, expired after 7 days in Testing) is DRIVE_AUTH: filing pauses. With
 // `requireScope`, a grant whose scopes are not exactly that one is refused the same way, both as
 // saved and as Google states it on each refresh, so a broader grant is never used.
-/** @param {{ clientFile: string, tokenFile: string, endpoint?: string, fetchImpl?: typeof fetch, requireScope?: string | null }} input */
-export function tokenProvider({ clientFile, tokenFile, endpoint = GOOGLE.token, fetchImpl = globalThis.fetch, requireScope = null }) {
+// With `grant` (the approved production grant, 2026-11-09) the client and the refresh token come
+// from the site's configuration instead of the two files, and Google's answer must state the
+// scope, which must be exactly the one allowed: nothing is assumed about a grant not seen.
+/** @param {{ clientFile?: string, tokenFile?: string, grant?: { clientId: string, clientSecret: string, refreshToken: string } | null, endpoint?: string, fetchImpl?: typeof fetch, requireScope?: string | null }} input */
+export function tokenProvider({ clientFile, tokenFile, grant = null, endpoint = GOOGLE.token, fetchImpl = globalThis.fetch, requireScope = null }) {
   let cached = null;
   const exactly = scope => String(scope ?? '').split(/\s+/).filter(Boolean).join(' ') === requireScope;
   return async () => {
     if (cached && cached.expiresAt - 60_000 > Date.now()) return cached.token;
-    const client = await readClient(clientFile);
-    const saved = JSON.parse(await readFile(tokenFile, 'utf8'));
+    const client = grant ? { clientId: grant.clientId, clientSecret: grant.clientSecret } : await readClient(clientFile);
+    const saved = grant ? { refresh_token: grant.refreshToken, scope: requireScope } : JSON.parse(await readFile(tokenFile, 'utf8'));
     const refreshToken = saved.refresh_token;
     if (requireScope && !exactly(saved.scope)) throw new FilingError(FAILURE.DRIVE_AUTH, 'the saved grant is not limited to the one scope allowed');
     let response;
@@ -126,6 +129,7 @@ export function tokenProvider({ clientFile, tokenFile, endpoint = GOOGLE.token, 
     const body = await response.json().catch(() => ({}));
     if (!response.ok) throw new FilingError(response.status === 400 || response.status === 401 ? FAILURE.DRIVE_AUTH : FAILURE.TRANSIENT, `token refresh refused (${body.error ?? response.status})`);
     if (requireScope && body.scope != null && !exactly(body.scope)) throw new FilingError(FAILURE.DRIVE_AUTH, 'the refreshed token carries scopes beyond the one allowed');
+    if (grant && requireScope && body.scope == null) throw new FilingError(FAILURE.DRIVE_AUTH, 'Google did not state the scope of the production grant');
     cached = { token: body.access_token, expiresAt: Date.now() + Number(body.expires_in ?? 0) * 1000 };
     return cached.token;
   };

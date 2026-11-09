@@ -193,17 +193,30 @@ function googleAddress(value: string | undefined, google: string) {
  * (CLASSROOM_DRIVE_ROOT_NAME, starting "[測試]"), so nothing else in that Drive is visible to it.
  * A grant that is not exactly drive.file pauses filing (DRIVE_AUTH). Never on a hosted site until
  * a production grant is approved.
+ *
+ * The approved production grant (2026-11-09): only with CLASSROOM_DRIVE_GRANT=production, the
+ * site (Vercel included) takes the OAuth client and the folder owner's refresh token from its
+ * encrypted configuration (CLASSROOM_GOOGLE_CLIENT_ID, CLASSROOM_GOOGLE_CLIENT_SECRET,
+ * CLASSROOM_GOOGLE_REFRESH_TOKEN), files only under CLASSROOM_DRIVE_PARENT_FOLDER_ID, and uses the
+ * grant only while Google states it is exactly drive.file. Nothing else changes.
  */
 export function googleClassroomDrive(env: Record<string, string | undefined>, { fetchImpl = globalThis.fetch, siteFolder = process.cwd() }: { fetchImpl?: typeof fetch; siteFolder?: string } = {}): ClassroomDrive {
-  if (env.VERCEL || env.VERCEL_ENV || env.NETLIFY) throw new ClassroomDriveUnavailableError("Google Drive filing runs only in the local recording test until a production grant is approved");
-  const clientFile = privateFile(env, "CLASSROOM_GOOGLE_CLIENT_FILE", siteFolder);
-  const tokenFile = privateFile(env, "CLASSROOM_GOOGLE_TOKEN_FILE", siteFolder);
+  const production = env.CLASSROOM_DRIVE_GRANT === "production";
+  if ((env.VERCEL || env.VERCEL_ENV || env.NETLIFY) && !production) throw new ClassroomDriveUnavailableError("Google Drive filing runs only in the local recording test until a production grant is approved");
+  const endpoint = googleAddress(env.CLASSROOM_GOOGLE_TOKEN_ENDPOINT, GOOGLE.token);
+  let accessToken: () => Promise<string>;
+  if (production) {
+    const [clientId, clientSecret, refreshToken] = ["CLASSROOM_GOOGLE_CLIENT_ID", "CLASSROOM_GOOGLE_CLIENT_SECRET", "CLASSROOM_GOOGLE_REFRESH_TOKEN"].map((name) => (env[name] || "").trim());
+    if (!clientId || !clientSecret || !refreshToken) throw new ClassroomDriveUnavailableError("The production grant needs CLASSROOM_GOOGLE_CLIENT_ID, CLASSROOM_GOOGLE_CLIENT_SECRET and CLASSROOM_GOOGLE_REFRESH_TOKEN");
+    if (!driveParentFolderId(env)) throw new ClassroomDriveUnavailableError("The production grant files only under the folder named by CLASSROOM_DRIVE_PARENT_FOLDER_ID");
+    accessToken = tokenProvider({ grant: { clientId, clientSecret, refreshToken }, fetchImpl, requireScope: DRIVE_FILE_SCOPE, endpoint });
+  } else {
+    const clientFile = privateFile(env, "CLASSROOM_GOOGLE_CLIENT_FILE", siteFolder);
+    const tokenFile = privateFile(env, "CLASSROOM_GOOGLE_TOKEN_FILE", siteFolder);
+    accessToken = tokenProvider({ clientFile, tokenFile, fetchImpl, requireScope: DRIVE_FILE_SCOPE, endpoint });
+  }
   const rootName = (env.CLASSROOM_DRIVE_ROOT_NAME || GOOGLE_TEST_ROOT_NAME).trim();
-  if (!rootName.startsWith("[測試] ") || rootName.length > 100) throw new ClassroomDriveUnavailableError("The test folder's name starts with \"[測試] \"");
-  const accessToken = tokenProvider({
-    clientFile, tokenFile, fetchImpl, requireScope: DRIVE_FILE_SCOPE,
-    endpoint: googleAddress(env.CLASSROOM_GOOGLE_TOKEN_ENDPOINT, GOOGLE.token),
-  });
+  if (!production && (!rootName.startsWith("[測試] ") || rootName.length > 100)) throw new ClassroomDriveUnavailableError("The test folder's name starts with \"[測試] \"");
   const drive = createGoogleDrive({ accessToken, fetchImpl, apiBase: googleAddress(env.CLASSROOM_GOOGLE_API_BASE, "https://www.googleapis.com") });
   // The folder recordings go under: the parent folder named by configuration (P3-Multi, 第五部分 8),
   // or else the test folder, found or made once (and again after a failure).
