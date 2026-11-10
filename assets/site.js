@@ -709,10 +709,23 @@
     return true;
   }
 
+  function savedLanguageCookie() {
+    const match = /(?:^|;\s*)ihear-lang=([^;]*)/.exec(document.cookie || "");
+    if (!match) return "";
+    try { return decodeURIComponent(match[1]); } catch { return ""; }
+  }
+
+  // The language a page opens in, in this order (2026-11-10):
+  //   1. the visitor's own choice, kept in localStorage (written only when they pick a language);
+  //   2. the ihear-lang cookie: the language the server rendered this page in, kept for a year;
+  //   3. the browser's language, only when nothing is saved.
+  // A saved language is never replaced by the browser's language.
   function initialLanguage() {
     let saved = "";
     try { saved = localStorage.getItem("ihear-lang") || ""; } catch {}
     if (languageAttributes[saved]) return saved;
+    const cookie = savedLanguageCookie();
+    if (languageAttributes[cookie]) return cookie;
     const browserLanguage = (navigator.language || "").toLowerCase();
     if (!browserLanguage.startsWith("zh")) return "en";
     return /tw|hk|mo|hant/.test(browserLanguage) ? "zhTW" : "zhCN";
