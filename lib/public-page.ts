@@ -6,11 +6,14 @@ import { publicContentStore, readContentStore } from "./content-store";
 import { renderPageContent, requestContentLocale } from "./render-page-content";
 import { getCurrentSiteMetrics } from "./impact-store";
 import { publicImpactMilestone } from "./impact-types";
+import { privacyPolicyAvailable } from "./privacy-policy";
 
-export const PUBLIC_PAGES = ["/", "/about", "/programs", "/impact", "/team", "/submit-bio", "/stories", "/get-involved", "/academy", "/donate", "/resources", "/faq", "/contact", "/events"];
+export const PUBLIC_PAGES = ["/", "/about", "/programs", "/impact", "/team", "/submit-bio", "/stories", "/get-involved", "/academy", "/donate", "/resources", "/faq", "/contact", "/events", "/privacy"];
 
 export async function servePublicPage(request: Request, page: string) {
   if (!PUBLIC_PAGES.includes(page)) return new NextResponse("Not found", { status: 404 });
+  // A draft privacy policy is reviewed locally and in previews only (lib/privacy-policy.ts).
+  if (page === "/privacy" && !privacyPolicyAvailable()) return new NextResponse("Not found", { status: 404 });
   const locale = requestContentLocale(request);
   try {
     const [template, content, metrics] = await Promise.all([

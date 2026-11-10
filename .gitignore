@@ -7,6 +7,7 @@ data/*
 !data/academy-fields.json
 !data/classroom-entry.json
 !data/backup-policy.json
+!data/privacy-policy.json
 backups/
 scheduling/
 node_modules/

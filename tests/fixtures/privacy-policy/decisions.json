@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "note": "TEST FIXTURE for the privacy page builder. These are not iHear's decisions; the real registry is kept outside the repository until iHear approves the policy.",
+  "statuses": ["pending", "approved", "not-applicable"],
+  "decisions": [
+    { "id": "PD-01", "status": "pending", "title": { "zhHant": "Fixture 決策一", "en": "Fixture decision one" }, "overlaps": [] },
+    { "id": "PD-02", "status": "pending", "title": { "zhHant": "Fixture 決策二", "en": "Fixture decision two" }, "overlaps": ["PD-03"] },
+    { "id": "PD-03", "status": "pending", "title": { "zhHant": "Fixture 決策三", "en": "Fixture decision three" }, "overlaps": [] }
+  ],
+  "oauthDecisions": [
+    { "id": "OD-1", "status": "pending", "title": { "zhHant": "Fixture OAuth 決策", "en": "Fixture OAuth decision" } }
+  ],
+  "pilotDecisionList": {}
+}

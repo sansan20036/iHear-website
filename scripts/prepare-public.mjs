@@ -2,11 +2,17 @@ import { copyFile, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs
 import path from "node:path";
 import { prepareAcademy } from "./prepare-academy.mjs";
 import { applyClassroomEntry, applyClassroomSwitch, readClassroomEntrySwitch } from "./classroom-entry.mjs";
+import { applyPolicyRegions, applyPrivacyLink, policyProblems, privacyPolicyShown, readPolicyInputs, renderPolicyRegions, sitemapWithPrivacy, templateProblems } from "./privacy-policy.mjs";
 
 const root = process.cwd();
 // The online classroom's release switch: off, the home page entries are left out of the built
 // pages and the header script keeps its entries closed (scripts/classroom-entry.mjs).
 const classroomEntryReleased = await readClassroomEntrySwitch(root);
+// The privacy policy: a draft until iHear approves it, its texts kept outside the repository (F-06).
+// The page is built only with texts to show and only in an explicit local preview or once approved;
+// anywhere else the page, its footer link and its sitemap entry are left out (scripts/privacy-policy.mjs).
+const privacyInputs = await readPolicyInputs(root);
+const privacyShown = Boolean(privacyInputs.sources) && privacyPolicyShown(privacyInputs.state);
 const publicDir = path.join(root, "public");
 const privateDir = path.join(root, ".private");
 
@@ -25,11 +31,12 @@ const htmlFiles = [
   "faq.html",
   "contact.html",
   "events.html",
+  "privacy.html",
 ];
 
 const passthroughFiles = ["robots.txt", "sitemap.xml", "CNAME", "favicon.ico"];
 const dynamicI18nKeys = new Set(["latest_label", "latest_period", "latest_headline", "latest_description", "latest_link", "stat_asof", "stat_countries_sub"]);
-const clientAssetVersion = "20261024-academy-wrap-team-toggle-v1";
+const clientAssetVersion = "20261110-privacy-policy-v1";
 const homeCalendarAssetVersion = "20261029-home-calendar-v1";
 const themeInitScript = `<script data-site-theme-init>(function(){var a={warm:1,ocean:1,sage:1,lavender:1,slate:1},t="warm";try{var s=localStorage.getItem("ihear:site-theme");if(a[s])t=s}catch(e){}document.documentElement.setAttribute("data-theme",t)})()</script>`;
 const themeBootstrapScript = `<script src="/api/site-theme/bootstrap" data-site-theme-bootstrap></script>`;
@@ -196,6 +203,9 @@ if (JSON.stringify(sourceHtmlFiles) !== JSON.stringify([...htmlFiles].sort())) {
 }
 
 await rm(publicDir, { recursive: true, force: true });
+// The private templates are rebuilt from scratch too: a page left out of this build (the draft
+// privacy policy on a hosted build) must not survive from an earlier one.
+await rm(privateDir, { recursive: true, force: true });
 await mkdir(publicDir, { recursive: true });
 await mkdir(privateDir, { recursive: true });
 await copyDir(path.join(root, "assets"), path.join(publicDir, "assets"));
@@ -276,7 +286,18 @@ await writeFile(path.join(publicDir, "assets", "layout-slots.json"), JSON.string
 for (const file of htmlFiles) {
   const sourcePath = path.join(root, file);
   const targetPath = path.join(file === "team.html" ? privateDir : publicDir, file);
-  const html = applyClassroomEntry(await readFile(sourcePath, "utf8"), classroomEntryReleased);
+  let source = await readFile(sourcePath, "utf8");
+  if (file === "privacy.html") {
+    const templateIssues = templateProblems(source);
+    if (templateIssues.length) throw new Error(`privacy.html must stay a template in the repository: ${templateIssues.join("; ")}`);
+    if (privacyInputs.sources) {
+      source = applyPolicyRegions(source, renderPolicyRegions(privacyInputs));
+      const problems = policyProblems(source, privacyInputs);
+      if (problems.length) throw new Error(`The privacy page is not consistent: ${problems.join("; ")}`);
+    }
+    if (!privacyShown) continue;
+  }
+  const html = applyPrivacyLink(applyClassroomEntry(source, classroomEntryReleased), privacyShown);
   verifyContentBuild(html, file, catalogIdentities);
   await writeFile(targetPath, withClientScripts(html, file), "utf8");
   // Public copies support the local legacy fixture. Production serves only the
@@ -285,6 +306,7 @@ for (const file of htmlFiles) {
 }
 
 for (const file of htmlFiles) {
+  if (file === "privacy.html" && !privacyShown) continue;
   const html = await readFile(path.join(file === "team.html" ? privateDir : publicDir, file), "utf8");
   verifyThemeBuild(html, file);
   verifyMediaBuild(html, file);
@@ -302,4 +324,9 @@ for (const file of passthroughFiles) {
   }
 }
 
-console.log(`Prepared ${htmlFiles.length} HTML pages in public/ (online classroom entry ${classroomEntryReleased ? "on" : "off"}).`);
+if (!privacyShown) {
+  const sitemap = path.join(publicDir, "sitemap.xml");
+  await writeFile(sitemap, sitemapWithPrivacy(await readFile(sitemap, "utf8"), false), "utf8");
+}
+
+console.log(`Prepared ${htmlFiles.length} HTML pages in public/ (online classroom entry ${classroomEntryReleased ? "on" : "off"}; privacy policy ${privacyInputs.state.status}, ${privacyShown ? `shown (${privacyInputs.origin} texts)` : privacyInputs.sources ? "checked but left out of this build" : "no texts configured, left out of this build"}).`);

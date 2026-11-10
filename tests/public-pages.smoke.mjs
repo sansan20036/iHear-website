@@ -1,10 +1,10 @@
 // Exercise the actual built Next routes; only local, read-only HTTP requests.
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp } from 'node:fs/promises';
 import path from 'node:path';
 const origin = 'http://127.0.0.1:3214';
-const pages = ['/', '/about', '/programs', '/impact', '/team', '/submit-bio', '/stories', '/get-involved', '/academy', '/donate', '/resources', '/faq', '/contact', '/events'];
+const pages = ['/', '/about', '/programs', '/impact', '/team', '/submit-bio', '/stories', '/get-involved', '/academy', '/donate', '/resources', '/faq', '/contact', '/events', '/privacy'];
 const academyPath = '/academy/courses';
 const academyAssets = '/academy/courses';
 const academyCanonical = `https://www.ihearus.org${academyPath}`;
@@ -127,9 +127,13 @@ async function checkAcademyPage(page, lang) {
 }
 
 await mkdir('output', { recursive: true });
+// The privacy page is left out of a default build (fail closed): render it from the test fixture
+// in an explicit local preview, and put the default pages back at the end.
+const privacyPreview = { IHEAR_PRIVACY_PREVIEW: '1', IHEAR_PRIVACY_SOURCES: 'tests/fixtures/privacy-policy', VERCEL_ENV: '' };
+execFileSync(process.execPath, ['scripts/prepare-public.mjs'], { env: { ...process.env, ...privacyPreview }, stdio: 'pipe' });
 const isolatedData = await mkdtemp(path.resolve('output/public-smoke-'));
 const child = spawn(process.execPath, ['node_modules/next/dist/bin/next', 'start', '--hostname', '127.0.0.1', '--port', '3214'], {
-  env: { ...process.env, NODE_ENV: 'production', VERCEL: '', NETLIFY: '', CONTEXT: '', POSTGRES_URL: '', DATABASE_URL: '', IHEAR_FORCE_FILE_STORE: '1', IHEAR_TEST_DATA_DIR: isolatedData },
+  env: { ...process.env, ...privacyPreview, NODE_ENV: 'production', VERCEL: '', NETLIFY: '', CONTEXT: '', POSTGRES_URL: '', DATABASE_URL: '', IHEAR_FORCE_FILE_STORE: '1', IHEAR_TEST_DATA_DIR: isolatedData },
   windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
 });
 let logs = '';
@@ -186,7 +190,32 @@ try {
     assert.equal(final.status, 200, `Old Academy URL remains usable: ${alias}`);
     assert.equal(final.url, origin + destination, `Old Academy URL resolves without a redirect loop: ${alias}`);
   }
+  // The privacy policy (2026-11-10): a draft, in three languages chosen like every page, not indexed,
+  // linked from every public page's footer and listed in the sitemap of a local or preview build.
+  for (const [cookie, lang, title] of [['en', 'en', 'Privacy Policy'], ['zhTW', 'zh-Hant', '隱私權政策'], ['zhCN', 'zh-Hans', '隐私政策']]) {
+    const response = await fetch(origin + '/privacy', { headers: { cookie: `ihear-lang=${cookie}` } });
+    assert.equal(response.status, 200, `/privacy (${cookie})`);
+    const html = await response.text();
+    assert.equal(tags(html, 'html')[0]?.lang, lang, `Privacy page language: ${cookie}`);
+    assert.equal(tags(html, 'meta').filter(meta => meta.name === 'robots' && meta.content === 'noindex').length, 1, 'A draft policy is not indexed');
+    assert.deepEqual(tags(html, 'article').map(article => article.lang), ['en', 'zh-Hant', 'zh-Hans'], 'All three languages are in the page');
+    assert.equal((html.match(/class="policy-draft-notice"/g) || []).length, 3, 'Every language says it is a draft');
+    assert.ok(html.includes(`<h1 id="privacy-${lang}-title">${title}</h1>`), `Privacy title: ${lang}`);
+    assert.equal(tags(html, 'link').find(link => link.rel === 'canonical')?.href, 'https://www.ihearus.org/privacy');
+  }
+  for (const page of pages) {
+    const html = await (await fetch(origin + page)).text();
+    const links = [...html.matchAll(/<a class="foot-privacy" href="([^"]+)" data-privacy-link>/g)];
+    assert.equal(links.length, 1, `Footer privacy link: ${page}`);
+    assert.equal(links[0][1], '/privacy', `Footer privacy link target: ${page}`);
+  }
+  const sitemap = await (await fetch(origin + '/sitemap.xml')).text();
+  assert.match(sitemap, /<loc>https:\/\/www\.ihearus\.org\/privacy<\/loc>/, 'Sitemap lists the privacy policy');
+  assert.equal((await fetch(origin + '/privacy', { method: 'HEAD' })).status, 200, 'HEAD /privacy');
   assert.equal((await fetch(origin + '/unknown-page')).status, 404);
   console.log(`Built public routes passed: ${pages.length} current-data pages and two complete Academy locales; canonical/language URLs, HEAD, redirects, ${checkedAssets.size} Academy resources, official Academy navigation and unknown-route protection.`);
 } catch (error) { console.error(logs.slice(-3000)); throw error; }
-finally { child.kill(); }
+finally {
+  child.kill();
+  execFileSync(process.execPath, ['scripts/prepare-public.mjs'], { env: { ...process.env, IHEAR_PRIVACY_PREVIEW: '', IHEAR_PRIVACY_SOURCES: '' }, stdio: 'pipe' });
+}

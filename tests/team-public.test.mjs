@@ -18,11 +18,15 @@ import { servePublicPage, PUBLIC_PAGES } from "../lib/public-page";
 import { getCurrentSiteMetrics } from "../lib/impact-store";
 beforeEach(() => {
   vi.resetAllMocks();
+  vi.unstubAllEnvs();
   readContentStore.mockResolvedValue({ version: 3, updatedAt: "", locales: Object.fromEntries(["en", "zhHant", "zhHans"].map(locale => [locale, { pages: {}, itemUpdatedAt: {} }])) });
   getCurrentSiteMetrics.mockResolvedValue(null);
 });
 
 test.each(PUBLIC_PAGES)("%s serves current page and shared text without waiting for browser fetch", async route => {
+  // The privacy policy is a draft, served only in an explicit local preview (lib/privacy-policy.ts);
+  // here its rendering is checked like every other page's.
+  if (route === "/privacy") vi.stubEnv("IHEAR_PRIVACY_PREVIEW", "1");
   readFile.mockResolvedValue('<html lang="en"><head></head><body><h1 data-editable-content="test.heading">Old title</h1><a href="/" data-editable-content="site.nav.about" data-editable-page="/__global__">Old navigation</a></body></html>');
   const store = await readContentStore();
   for (const locale of ["en", "zhHant", "zhHans"]) {
@@ -162,4 +166,11 @@ test("recreating a slot with the same record version gets a different cache URL"
   expect(first.src).not.toBe(replacement.src);
   expect(new URL(replacement.src, "https://www.ihearus.org").searchParams.get("asset")).toBe("team-test/upload-b/480.webp");
   expect(replacement.variants[0]).not.toHaveProperty("storagePath");
+});
+
+test("/privacy answers 404 without an explicit local preview (fail closed), before reading its template", async () => {
+  vi.stubEnv("IHEAR_PRIVACY_PREVIEW", "");
+  const response = await servePublicPage(new Request("https://www.ihearus.org/privacy"), "/privacy");
+  expect(response.status).toBe(404);
+  expect(readFile).not.toHaveBeenCalled();
 });

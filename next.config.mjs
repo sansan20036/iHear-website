@@ -11,12 +11,18 @@ const htmlRoutes = [
   ["faq", "faq.html"],
   ["contact", "contact.html"],
   ["events", "events.html"],
+  ["privacy", "privacy.html"],
 ];
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   turbopack: {
     root: process.cwd(),
+  },
+  // The privacy policy's sources and template are read only while building (scripts/privacy-policy.mjs).
+  // Some routes trace the whole project folder, so keep them out of every server bundle.
+  outputFileTracingExcludes: {
+    "/**": ["./content/privacy-policy/**", "./privacy.html"],
   },
   // Sharp loads its platform-specific libvips package dynamically. Include the
   // installed @img runtime files in media API functions so Vercel's output
