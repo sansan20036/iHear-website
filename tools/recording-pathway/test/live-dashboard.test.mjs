@@ -133,22 +133,106 @@ test('an accepted start request (202) is only "start requested"; Zoom has to con
   assert.equal(byWebhook.recording.source, 'zoom_webhook');
 });
 
-test('no confirmation within two minutes is a presumed failure; a late confirmation turns it back', () => {
-  const events = [...base(), ...asked(1, T + MIN + 5 * SEC)];
+// P3-R1 (2026-11-11): silence after an accepted start is not a failure. In the first real Zoom
+// rehearsal the server's start was accepted (202) and Zoom recorded, but no recording notice came
+// (no public webhook on this computer, nothing from the tutor's page): the old rule called that
+// "failed" after two minutes and asked again.
+const snapshot = (at, fields = {}) => fact('api.snapshot', at, { live: true, present: [TUTOR, STUDENT], ...fields }, 'zoom_api');
+
+test('P3-R1: no confirmation within two minutes is overdue, never a failure; one more try; a late confirmation turns it to recording', () => {
+  const t1 = T + MIN + 5 * SEC;
+  const events = [...base(), ...asked(1, t1)];
   const now = T + 3 * MIN + 5 * SEC;
-  const failed = deriveLesson(lesson, [...events, beat(now - 5 * SEC)], now);
-  assert.deepEqual([failed.recording.status, failed.recording.basis, failed.recording.reason], ['FAILED', 'inferred', 'START_UNCONFIRMED']);
-  assert.equal(lessonCard(failed, now).recording.label, '錄影失敗（推測）');
-  assert.deepEqual(codes(failed), ['START_UNCONFIRMED']);
-  assert.equal(failed.dataState.value, 'ANOMALY');
+  const overdue = deriveLesson(lesson, [...events, beat(now - 5 * SEC)], now);
+  assert.deepEqual([overdue.recording.status, overdue.recording.basis, overdue.recording.confirmation], ['START_REQUESTED', 'requested', 'OVERDUE']);
+  assert.equal(lessonCard(overdue, now).recording.label, '已送出錄影啟動請求（尚未取得視訊服務確認）');
+  assert.deepEqual(overdue.anomalies.map(entry => [entry.code, entry.severity]), [['START_UNCONFIRMED', 'warning']]);
+  // Still the one extra try the old rule made, so a start that never reached Zoom is sent again.
   const retry = planActions(lesson, [...events, beat(now - 5 * SEC)], now).find(action => action.type === 'START_RECORDING');
   assert.deepEqual([retry.attempt, retry.key], [2, `start:${lesson.id}:2`]);
+  // Ten minutes after the accepted start, still nothing: an error for the administrator, and still not "failed".
+  const later = t1 + TIMING.startUnconfirmedErrorMs;
+  const stale = deriveLesson(lesson, [...events, beat(later - 5 * SEC)], later);
+  assert.deepEqual([stale.recording.status, stale.anomalies.find(entry => entry.code === 'START_UNCONFIRMED')?.severity, stale.dataState.value], ['START_REQUESTED', 'error', 'ANOMALY']);
   // The webhook for the first request finally arrives.
   const late = recording('Recording', T + MIN + 7 * SEC, 'zoom_webhook', { receivedAt: T + 3 * MIN + 30 * SEC });
   const fixed = deriveLesson(lesson, [...events, beat(now), late], T + 3 * MIN + 35 * SEC);
-  assert.deepEqual([fixed.recording.status, fixed.recording.lateConfirmation], ['RECORDING', true]);
+  assert.deepEqual([fixed.recording.status, fixed.recording.basis, fixed.recording.lateConfirmation], ['RECORDING', 'confirmed', true]);
   assert.equal(lessonCard(fixed, T + 3 * MIN + 35 * SEC).recording.label, '錄影中（延遲確認）');
   assert.deepEqual(codes(fixed), []);
+  assert.equal(types(planActions(lesson, [...events, beat(now), late], T + 3 * MIN + 35 * SEC)).includes('START_RECORDING'), false);
+});
+
+test('P3-R1: Zoom\'s REST answer that the session has a recording confirms the start, once, dated at the accepted start', () => {
+  const t1 = T + MIN + 5 * SEC;
+  const events = [...base(), ...asked(1, t1), snapshot(t1 + 50 * SEC, { hasRecording: true })];
+  const now = t1 + 55 * SEC;
+  const state = deriveLesson(lesson, [...events, beat(now)], now);
+  assert.deepEqual([state.recording.status, state.recording.basis, state.recording.source, state.recording.since], ['RECORDING', 'confirmed', 'zoom_api', t1]);
+  // Every later snapshot says the same: still one start, no retry, no anomaly, past the old two minutes too.
+  const many = [...events, snapshot(t1 + 110 * SEC, { hasRecording: true }), snapshot(t1 + 170 * SEC, { hasRecording: true })];
+  const later = t1 + 3 * MIN;
+  const again = deriveLesson(lesson, [...many, beat(later)], later);
+  assert.deepEqual([again.recording.status, again.recording.since], ['RECORDING', t1]);
+  assert.deepEqual(codes(again), []);
+  assert.equal(types(planActions(lesson, [...many, beat(later)], later)).includes('START_RECORDING'), false);
+  // A live session's "no recording" is no answer (it may lag): still only requested.
+  const no = deriveLesson(lesson, [...base(), ...asked(1, t1), snapshot(t1 + 50 * SEC, { hasRecording: false }), beat(now)], now);
+  assert.deepEqual([no.recording.status, no.recording.confirmation], ['START_REQUESTED', 'PENDING']);
+  // A recording Zoom reports that we never asked for is still a recording we did not start.
+  const unasked = deriveLesson(lesson, [...base(), snapshot(T + 2 * MIN, { hasRecording: true }), beat(T + 2 * MIN)], T + 2 * MIN);
+  assert.ok(codes(unasked).includes('UNAPPROVED_RECORDING_START'));
+});
+
+test('P3-R1: duplicate, late and out-of-order notices never leave a wrong recording state', () => {
+  const t1 = T + MIN + 5 * SEC;
+  const startedHook = recording('Recording', t1 + 3 * SEC);
+  const stoppedHook = recording('Stopped', t1 + 4 * MIN);
+  const stopAsk = fact('server.stop_requested', t1 + 4 * MIN - 2 * SEC, { reason: 'lesson_end', attempt: 1, key: `stop:${lesson.id}:1` }, 'server');
+  const now = t1 + 5 * MIN;
+  // The stop delivered before the start, the start twice, and a snapshot after the stop that still
+  // says "has a recording" (has_recording stays true once a recording began).
+  const events = [...base(), ...asked(1, t1), stopAsk, stoppedHook, startedHook, { ...startedHook }, snapshot(t1 + 4 * MIN + 30 * SEC, { hasRecording: true }), beat(now)];
+  const expected = deriveLesson(lesson, events, now);
+  assert.deepEqual([expected.recording.status, expected.recording.basis], ['STOPPED', 'confirmed']);
+  assert.deepEqual(codes(expected), []);
+  const random = seeded(20261111);
+  for (let i = 0; i < 50; i++) assert.deepEqual(deriveLesson(lesson, shuffled(events, random), now), expected);
+  // Only snapshots (no webhook at all): the start is confirmed from the first one, and a stop Zoom
+  // reported later is not undone by later snapshots.
+  const apiOnly = [...base(), ...asked(1, t1), snapshot(t1 + 50 * SEC, { hasRecording: true }), stopAsk, stoppedHook, snapshot(t1 + 4 * MIN + 30 * SEC, { hasRecording: true }), beat(now)];
+  assert.equal(deriveLesson(lesson, apiOnly, now).recording.status, 'STOPPED');
+  for (let i = 0; i < 20; i++) assert.equal(deriveLesson(lesson, shuffled(apiOnly, random), now).recording.status, 'STOPPED');
+});
+
+test('P3-R1: a failure is what Zoom confirms: three refused starts, or an ended session Zoom says has no recording', () => {
+  const t1 = T + MIN + 5 * SEC;
+  const end = t1 + 3 * MIN;
+  const now = end + MIN;
+  const noRecording = deriveLesson(lesson, [...base(), ...asked(1, t1), endedFact(end), snapshot(end + 30 * SEC, { live: false, present: [], hasRecording: false })], now);
+  assert.deepEqual([noRecording.recording.status, noRecording.recording.basis, noRecording.recording.reason], ['FAILED', 'confirmed', 'NOT_RECORDED']);
+  assert.deepEqual(noRecording.anomalies.filter(entry => entry.code === 'RECORDING_FAILED').map(entry => entry.reason), ['NOT_RECORDED']);
+  assert.equal(lessonCard(noRecording, now).recording.label.startsWith('錄影失敗'), true);
+  // The same ended session without Zoom's answer: still only requested, overdue. Silence is not a failure.
+  const silent = deriveLesson(lesson, [...base(), ...asked(1, t1), endedFact(end)], now);
+  assert.deepEqual([silent.recording.status, silent.recording.confirmation], ['START_REQUESTED', 'OVERDUE']);
+  // An ended session Zoom says has a recording: it began, and it presumably stopped with the session.
+  const recorded = deriveLesson(lesson, [...base(), ...asked(1, t1), endedFact(end), snapshot(end + 30 * SEC, { live: false, present: [], hasRecording: true })], now);
+  assert.deepEqual([recorded.recording.status, recorded.recording.basis], ['POSSIBLY_STOPPED', 'inferred']);
+  // Three refused starts are Zoom's own "no".
+  const refused = [...base(), ...asked(1, t1, false), ...asked(2, t1 + 10 * SEC, false), ...asked(3, t1 + 40 * SEC, false)];
+  const failed = deriveLesson(lesson, [...refused, beat(t1 + MIN)], t1 + MIN);
+  assert.deepEqual([failed.recording.status, failed.recording.basis, failed.recording.reason], ['FAILED', 'confirmed', 'START_API_ERROR']);
+  assert.deepEqual(failed.anomalies.filter(entry => entry.code === 'RECORDING_FAILED').map(entry => entry.reason), ['START_API_ERROR']);
+});
+
+test('P3-R1: a REST snapshot keeps Zoom\'s has_recording only when Zoom gave one', () => {
+  const input = { lessonId: lesson.id, providerSessionId: 'sess-1', users: [], recordings: [], observedAt: T };
+  const snap = details => normalizeApiSnapshot({ ...input, details }).find(entry => entry.type === 'api.snapshot');
+  assert.equal(snap({ start_time: iso(T - MIN), has_recording: true }).hasRecording, true);
+  assert.equal(snap({ start_time: iso(T - MIN), end_time: iso(T), has_recording: false }).hasRecording, false);
+  assert.equal('hasRecording' in snap({ start_time: iso(T - MIN) }), false);
+  assert.equal('hasRecording' in snap({ start_time: iso(T - MIN), has_recording: 'yes' }), false);
 });
 
 test('three API errors in a row are a recording failure, with retries spaced 10 and 30 seconds', () => {

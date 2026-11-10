@@ -184,6 +184,21 @@ describe("Zoom Video SDK, server side", () => {
     expect(await provider(() => ({ status: 500, body: "" }), "s-1").provider.snapshot(lesson)).toBeNull();
   });
 
+  // P3-R1 (2026-11-11): has_recording in a session's details (seen on an ended session Zoom recorded).
+  test("P3-R1: has_recording — true confirms a start; an ended session's false says nothing was recorded; a live session's false, or none, is no answer", async () => {
+    const details = (type, extra) => request => (request.url.endsWith(`?type=${type}`) ? { status: 200, body: JSON.stringify({ id: "s-1", ...extra }) } : { status: 404, body: "{}" });
+    const observe = answer => provider(answer, "s-1").provider.observe(lesson, "s-1");
+    expect(await observe(details("live", { has_recording: true }))).toEqual({ live: true, recording: null, started: true });
+    expect(await observe(details("live", { has_recording: false }))).toEqual({ live: true, recording: null, started: null });
+    expect(await observe(details("live", {}))).toEqual({ live: true, recording: null, started: null });
+    expect(await observe(details("past", { end_time: "2026-11-03T03:00:00Z", has_recording: true }))).toEqual({ live: false, recording: false, started: true });
+    expect(await observe(details("past", { end_time: "2026-11-03T03:00:00Z", has_recording: false }))).toEqual({ live: false, recording: false, started: false });
+    expect(await observe(() => ({ status: 500, body: "" }))).toEqual({ live: null, recording: null, started: null });
+    // The snapshot passes the details on as they are, has_recording included, for lesson-state to read.
+    const live = provider(request => (request.url.includes("/recordings") ? { status: 404, body: "{}" } : request.url.includes("/users") ? { status: 200, body: JSON.stringify({ users: [] }) } : details("live", { has_recording: true })(request)), "s-1");
+    expect((await live.provider.snapshot(lesson)).details).toMatchObject({ has_recording: true });
+  });
+
   // --- P-3: a lesson in several sessions ----------------------------------------------------------
 
   test("a lesson in several sessions: earlier sessions' recordings are asked for until known, each file from its own session", async () => {

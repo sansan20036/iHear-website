@@ -40,8 +40,10 @@ export type KnownSession = { id: string; ended: boolean; recordingsKnown: boolea
 export type SessionCheck = { verified: true; ended: boolean; name?: string } | { verified: false; reason: "NOT_FOUND" | "MISMATCH" } | null;
 export type SessionToken = { token: string; issuedAt: number; expiresAt: number };
 // What the vendor says about one session right now (G1, 2026-11-09): whether it is still live and
-// whether it is recording; null for anything it would not or could not say.
-export type ProviderObservation = { live: boolean | null; recording: boolean | null };
+// whether it is recording; null for anything it would not or could not say. `started` (P3-R1,
+// 2026-11-11): whether a recording ever began in the session (Zoom's has_recording), which
+// confirms a start but says nothing about a stop, since it stays true after the recording stops.
+export type ProviderObservation = { live: boolean | null; recording: boolean | null; started?: boolean | null };
 // What the browser needs to enter: a token for an SDK (Zoom, synthetic), or the address of the
 // vendor's classroom page (LCIC). The token's hash is what iHear stores, never the token.
 export type PreparedJoin =
@@ -159,7 +161,8 @@ function syntheticProvider(): ClassroomProvider {
       const calls = (await readSynthetic()).calls.filter((call) => call.lessonId === lesson.id && call.detail === sessionId);
       const ended = calls.some((call) => call.type === "session.end");
       const last = calls.filter((call) => call.type === "recording.start" || call.type === "recording.stop").pop();
-      return { live: !ended, recording: !ended && last?.type === "recording.start" };
+      // started (P3-R1): a recording began in the session at some point, as Zoom's has_recording says.
+      return { live: !ended, recording: !ended && last?.type === "recording.start", started: calls.some((call) => call.type === "recording.start") };
     },
     async snapshot(lesson) {
       return (await readSynthetic()).snapshots[lesson.id] ?? null;

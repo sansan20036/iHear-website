@@ -708,16 +708,20 @@ async function observeOperation({ store, provider, lesson, action, since, now, v
     if (action.type === "START_RECORDING" && lastStatus === "Recording") { verdicts.push("DONE"); continue; }
     if (action.type === "STOP_RECORDING" && (lastStatus === "Stopped" || ended)) { verdicts.push("DONE"); continue; }
     if (action.type === "END_SESSION" && ended) { verdicts.push("DONE"); continue; }
-    let seen: { live: boolean | null; recording: boolean | null } = { live: null, recording: null };
+    let seen: { live: boolean | null; recording: boolean | null; started?: boolean | null } = { live: null, recording: null, started: null };
     try {
       if (provider.observe) seen = await provider.observe(lesson, sessionId);
     } catch {
-      seen = { live: null, recording: null };
+      seen = { live: null, recording: null, started: null };
     }
     const fact = (type: string, fields: Record<string, unknown>) => facts.push({ source: "zoom_api", type, lessonId: lesson.id, providerSessionId: sessionId, occurredAt: now, receivedAt: now, key: `observed:${action.key}:${version}:${sessionId}:${type}`, ...fields });
     if (seen.live === false) fact("server.session_verified", { source: "server", ended: true });
     if (action.type === "START_RECORDING") {
-      if (seen.recording === true) { fact("session.recording_started", { status: "Recording" }); verdicts.push("DONE"); } else if (seen.recording === false || seen.live === false) verdicts.push("NOT_DONE");
+      // P3-R1 (2026-11-11): Zoom saying a recording began in the session (has_recording) confirms
+      // the start as well. The fact is dated at the start it confirms, never later, so it cannot
+      // undo a stop or an end Zoom reported after that start.
+      if (seen.recording === true || seen.started === true) { fact("session.recording_started", { status: "Recording", occurredAt: Math.min(now, since) }); verdicts.push("DONE"); }
+      else if (seen.recording === false || seen.live === false || seen.started === false) verdicts.push("NOT_DONE");
       else verdicts.push("UNKNOWN");
     } else if (action.type === "STOP_RECORDING") {
       if (seen.recording === false || seen.live === false) { if (seen.live !== false) fact("session.recording_stopped", { status: "Stopped" }); verdicts.push("DONE"); } else if (seen.recording === true) verdicts.push("NOT_DONE");

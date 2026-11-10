@@ -149,12 +149,18 @@ export function zoomVideoSdkProvider(config: ZoomVideoSdkConfig, options: Option
     },
     // What Zoom says about one session now (G1, 2026-11-09), asked before a recording request whose
     // answer was lost is sent again: live, or over (then it is not recording either). Whether a live
-    // session is recording is not something its details are known to say (unverified, V-14), so
-    // that stays null and the server waits for Zoom's own recording notice instead.
+    // session is recording NOW is not something its details are known to say (V-14), so that stays
+    // null. P3-R1 (2026-11-11): has_recording says whether a recording ever began in the session.
+    // An ended session's details carry it (read on 11/11: true for the session Zoom recorded);
+    // whether a LIVE session's details already say true while it records is still to be seen for
+    // real. true confirms a start; an ended session's false says nothing was recorded; a live
+    // session's false is not taken as an answer (it may lag).
     async observe(_lesson, sessionId) {
       const found = await details(sessionId, ["live", "past"]);
-      if (!found.found) return { live: null, recording: null };
-      return found.type === "past" ? { live: false, recording: false } : { live: true, recording: null };
+      if (!found.found) return { live: null, recording: null, started: null };
+      const flag = typeof found.body?.has_recording === "boolean" ? found.body.has_recording : null;
+      const started = flag === true ? true : flag === false && found.type === "past" ? false : null;
+      return found.type === "past" ? { live: false, recording: false, started } : { live: true, recording: null, started };
     },
     // The current session's details and people (as past once it has ended), its recordings, and
     // the recordings of any earlier session whose files are not known yet. Recordings are asked

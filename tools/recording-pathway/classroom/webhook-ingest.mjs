@@ -343,6 +343,10 @@ export function normalizeApiSnapshot({ lessonId, providerSessionId, details, use
       occurredAt: observedAt,
       live: !details.end_time,
       present: users.filter(user => user.join_time && !user.leave_time).map(user => user.user_key).filter(Boolean).sort(),
+      // P3-R1 (2026-11-11): Zoom's has_recording, when its answer carries one (true, false or
+      // absent). lesson-state reads true as Zoom's confirmation that recording began in this
+      // session, and false for an ended session as Zoom saying nothing was recorded there.
+      ...(typeof details.has_recording === 'boolean' ? { hasRecording: details.has_recording } : {}),
     });
   }
   return facts;

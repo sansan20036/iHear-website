@@ -163,6 +163,22 @@ describe("G1: one executor per recording action", () => {
     expect((await eventsOf(ctx)).filter(event => event.type === "server.start_requested")).toHaveLength(1);
   });
 
+  // P3-R1 (2026-11-11): what the first real rehearsal lacked. Zoom cannot say whether a live session
+  // records NOW, but its has_recording says a recording began there: that settles the start.
+  test("P3-R1: an answer that was lost, and Zoom says the session has a recording (has_recording): the start is done, never sent again, and shown as confirmed from the time of the start", async () => {
+    const ctx = await liveLesson();
+    const fake = zoom({ start: async () => ({ ok: false, httpStatus: 0 }), observe: async () => ({ live: true, recording: null, started: true }) });
+    for (const at of [10, 20, 30, 40, 70, 130, 250]) await tick(ctx, fake.provider, ctx.start + at * SEC);
+    expect(fake.starts()).toBe(1);
+    expect(await operationOf(ctx, `start:${ctx.lesson.id}:1`)).toMatchObject({ state: "DONE" });
+    const observed = (await eventsOf(ctx)).filter(event => event.type === "session.recording_started" && event.source === "zoom_api");
+    expect(observed).toHaveLength(1);
+    expect(observed[0].occurredAt).toBeLessThanOrEqual(ctx.start + 30 * SEC);
+    const state = await stateOf(ctx, ctx.start + 251 * SEC);
+    expect(state.recording).toMatchObject({ status: "RECORDING", basis: "confirmed" });
+    expect(state.anomalies.map(entry => entry.code)).not.toContain("START_UNCONFIRMED");
+  });
+
   test("the executor stopped right after claiming the start, before asking Zoom: while its lease holds no other tick sends it; after the lease a tick asks Zoom's state first (not done), and the tick after sends it once", async () => {
     const ctx = await liveLesson();
     const fake = zoom({ observe: async () => ({ live: true, recording: false }) });

@@ -75,8 +75,9 @@ export const LABELS = Object.freeze({
   anomaly: {
     TUTOR_ABSENT: '小老師未到',
     STUDENT_ABSENT: '學生未到',
-    START_UNCONFIRMED: '錄影啟動未獲視訊服務確認',
-    RECORDING_FAILED: '錄影啟動失敗',
+    // P3-R1 (2026-11-11): only "not confirmed yet"; a failure is only what Zoom confirmed.
+    START_UNCONFIRMED: '錄影啟動尚未獲視訊服務確認（不代表錄影失敗）',
+    RECORDING_FAILED: '錄影啟動失敗（視訊服務確認）',
     RECORDING_STOPPED_UNEXPECTEDLY: '錄影意外停止',
     UNAPPROVED_RECORDING_START: '出現未經核准的錄影',
     CONSENT_WITHDRAWN: '課中撤回錄影同意',
@@ -125,6 +126,7 @@ function recordingCard(recording) {
   let text = label('recording', recording.status, recording.basis);
   if (recording.status === 'BLOCKED' && LABELS.recordingBlocked[recording.reason]) text = LABELS.recordingBlocked[recording.reason];
   if (recording.status === 'START_REQUESTED' && recording.retrying) text += '（重試中）';
+  else if (recording.status === 'START_REQUESTED' && recording.confirmation === 'OVERDUE') text += '（尚未取得視訊服務確認）';
   if (recording.status === 'RECORDING' && recording.pending === 'STOP_REQUESTED') text += '（已送出停止請求）';
   if (recording.lateConfirmation) text += '（延遲確認）';
   return {

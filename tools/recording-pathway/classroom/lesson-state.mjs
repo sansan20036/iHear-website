@@ -17,7 +17,11 @@ export const TIMING = Object.freeze({
   lateAfterMs: 5 * 60_000,
   absentAfterMs: 10 * 60_000,
   startReconcileMs: 60_000,
+  // A start Zoom accepted (202) but has not confirmed is "overdue" after this long: still a request
+  // whose outcome is unknown, never a failure (P3-R1, 2026-11-11). After the second wait it is an
+  // error for the administrator, still without calling it failed.
   startConfirmMs: 2 * 60_000,
+  startUnconfirmedErrorMs: 10 * 60_000,
   startRetryDelaysMs: [10_000, 30_000],   // three attempts in about a minute
   maxStartAttempts: 3,
   stopRetryMs: 30_000,
@@ -131,6 +135,9 @@ function analyze(lesson, events, now) {
     decisions: [], resumes: [],
     // Recording actions carried out under a claim (G1, 2026-11-09), by action key.
     operations: new Map(),
+    // What Zoom's REST answers said about recording in each session (P3-R1): when one first said
+    // the session has a recording, and when an ended session was said to have none.
+    apiRecording: new Map(),
   };
   const lessonEvents = ordered(events.filter(entry => entry.lessonId === lesson.id), now);
   // A reissued link gives the student a new participant id (D-4). Facts about the old id from
@@ -216,6 +223,13 @@ function analyze(lesson, events, now) {
         if (event.live) for (const id of event.present) people.get(id)?.facts.push({ kind: 'present', at, source: event.source });
         // Zoom's own answer that the session is over confirms an end (G-2).
         if (trusted && event.live === false) trusted.endedAt = earliest(trusted.endedAt, at);
+        // P3-R1: Zoom's answer about recording in this session (has_recording), when it gave one.
+        if (sid && typeof event.hasRecording === 'boolean') {
+          const seen = f.apiRecording.get(sid) ?? { recordingAt: null, noneAfterEndAt: null };
+          if (event.hasRecording) seen.recordingAt = earliest(seen.recordingAt, at);
+          else if (event.live === false) seen.noneAfterEndAt = latest(seen.noneAfterEndAt, at);
+          f.apiRecording.set(sid, seen);
+        }
         break;
       case 'session.recording_started':
       case 'session.recording_resumed':
@@ -297,6 +311,22 @@ function analyze(lesson, events, now) {
         break;
     }
   }
+  // P3-R1 (2026-11-11): Zoom's REST answer that a session has a recording confirms that a start
+  // reached it, when no webhook and no report from the tutor's page said so (a rehearsal on this
+  // computer has no public webhook). It is one fact per session, however many snapshots repeat it,
+  // and it is dated at the accepted start it confirms (never later than that start's own facts),
+  // so a later stop, pause or end is never undone by a snapshot that still says "has a recording".
+  // A recording Zoom reports with no accepted start of ours keeps the snapshot's time, so it is
+  // judged like any recording we did not start.
+  for (const [sid, seen] of f.apiRecording) {
+    if (seen.recordingAt == null || f.recording.some(fact => fact.sessionId === sid && fact.status === 'Recording')) continue;
+    const accepted = f.startResponses.filter(response => response.ok && response.at <= seen.recordingAt
+      && (!response.targets?.length || response.targets.includes(sid)));
+    const at = accepted.length ? Math.min(...accepted.map(response => response.at)) : seen.recordingAt;
+    f.recording.push({ status: 'Recording', at, source: 'zoom_api', receivedAt: seen.recordingAt, sessionId: sid, observed: true });
+    f.lastConfirmedAt = latest(f.lastConfirmedAt, seen.recordingAt);
+  }
+  f.recording.sort((a, b) => a.at - b.at);
   // The room's current generation, and each known session's (from its name; null when Zoom did
   // not give one, or it is not a name of this lesson's room).
   const newest = f.generations.reduce((best, entry) => (!best || entry.generation > best.generation ? entry : best), null);
@@ -628,9 +658,21 @@ function recordingOf(f, phase, now) {
     }
     return { status: 'START_REQUESTED', basis: 'requested', since: request.at, retrying: true };
   }
-  // Zoom accepted the request (202) but never confirmed: that is a guess that it failed.
-  if (response && now - response.at >= TIMING.startConfirmMs) {
-    return { status: 'FAILED', basis: 'inferred', since: response.at + TIMING.startConfirmMs, reason: 'START_UNCONFIRMED' };
+  // Zoom accepted the request (202) and has not said the recording started. Silence is not a
+  // failure (P3-R1, 2026-11-11): the request stays "start requested", marked overdue once
+  // startConfirmMs has passed, until Zoom confirms either way. Zoom confirms a failure only by
+  // refusing the start (above) or, once a session the start went to has ended, by answering that
+  // the session has no recording at all.
+  if (response) {
+    const targets = response.targets?.length ? response.targets : [...f.known.keys()];
+    const refusedBy = targets.map(id => f.apiRecording.get(id)?.noneAfterEndAt).filter(at => at != null && at >= response.at);
+    if (refusedBy.length && refusedBy.length === targets.length && !liveSessions(f).length) {
+      return { status: 'FAILED', basis: 'confirmed', since: Math.max(...refusedBy), reason: 'NOT_RECORDED', source: 'zoom_api' };
+    }
+    if (now - response.at >= TIMING.startConfirmMs) {
+      return { status: 'START_REQUESTED', basis: 'requested', since: request.at, confirmation: 'OVERDUE', overdueSince: response.at + TIMING.startConfirmMs };
+    }
+    return { status: 'START_REQUESTED', basis: 'requested', since: request.at, confirmation: 'PENDING' };
   }
   return { status: 'START_REQUESTED', basis: 'requested', since: request.at };
 }
@@ -719,7 +761,14 @@ function anomaliesOf({ f, phase, attendance, recording, filing, start, end, now 
     const absent = attendance.filter(entry => entry.role === 'student' && entry.status === 'NOT_JOINED').length;
     if (absent) add('STUDENT_ABSENT', 'warning', start + TIMING.absentAfterMs, { count: absent });
   }
-  if (recording.status === 'FAILED') add(recording.reason === 'START_UNCONFIRMED' ? 'START_UNCONFIRMED' : 'RECORDING_FAILED', 'error', recording.since);
+  // A failure is only what Zoom confirmed: a refused start, or an ended session with no recording.
+  if (recording.status === 'FAILED') add('RECORDING_FAILED', 'error', recording.since, { reason: recording.reason });
+  // P3-R1: a start Zoom accepted but has not confirmed yet. A warning, then (startUnconfirmedErrorMs
+  // after the accepted start) an error for the administrator to look at; never called a failure.
+  if (recording.status === 'START_REQUESTED' && recording.confirmation === 'OVERDUE') {
+    const errorAt = recording.overdueSince - TIMING.startConfirmMs + TIMING.startUnconfirmedErrorMs;
+    add('START_UNCONFIRMED', now >= errorAt ? 'error' : 'warning', recording.overdueSince);
+  }
   const last = f.recording[f.recording.length - 1];
   if (last?.status === 'Stopped' && phase.value === 'LIVE' && !f.stopRequests.some(request => request.at <= last.at + TIMING.clockSkewMs)) {
     add('RECORDING_STOPPED_UNEXPECTEDLY', 'error', last.at);
@@ -922,7 +971,10 @@ export function planActions(lesson, events, now) {
     if (recording.status === 'NOT_REQUESTED' || (neverStarted && !captureMayBeOn(f))) want(`start:${id}:1`, 'START_RECORDING', { attempt: 1, ...startIn });
     else if (recording.status === 'START_REQUESTED' && response && !response.ok && attempt < TIMING.maxStartAttempts
       && now >= response.at + TIMING.startRetryDelaysMs[attempt - 1]) want(`start:${id}:${attempt + 1}`, 'START_RECORDING', { attempt: attempt + 1, ...startIn });
-    else if (recording.status === 'FAILED' && recording.reason === 'START_UNCONFIRMED' && f.startResponses.filter(entry => entry.ok).length === 1) {
+    // One more try for a start Zoom accepted but has not confirmed once it is overdue (P3-R1: it is
+    // still "start requested", not failed). A start Zoom confirmed by any means (webhook, the
+    // tutor's page, or its REST answer) is RECORDING by then, so it is never sent again.
+    else if (recording.status === 'START_REQUESTED' && recording.confirmation === 'OVERDUE' && f.startResponses.filter(entry => entry.ok).length === 1) {
       want(`start:${id}:${attempt + 1}`, 'START_RECORDING', { attempt: attempt + 1, ...startIn });
     }
   }
