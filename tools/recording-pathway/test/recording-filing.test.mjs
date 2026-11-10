@@ -123,13 +123,15 @@ function assertStoredOnce(w, file, { name, folder = lessonFolderOf(w, file) } = 
 
 // --- Which lesson, names and part numbers ---------------------------------------------------
 
-test('a notice for one of our lessons is filed under that lesson; a notice for an unknown session stays at Zoom', async () => {
+test('a notice for one of our lessons is filed under that lesson; a notice for a lesson this site does not hold is not stored at all and stays at Zoom', async () => {
   const w = await world();
   const ours = video('f-ours', 1, 59, 300);
   const stray = video('f-stray', 1, 59, 300);
   await deliver(w, completed('L-TEST-001', 'sess-1', [ours], w.clock.now()));
   await deliver(w, completed('L-TEST-999', 'sess-x', [stray], w.clock.now()));
-  assert.deepEqual([w.store.fileRecord('f-stray').status, w.store.fileRecord('f-stray').hold], ['HOLD', 'UNKNOWN_SESSION']);
+  // W1 (2026-11-11): a session outside the site (a local rehearsal on the same Zoom account) leaves
+  // nothing in the database, not even a held record; before, it was kept as HOLD / UNKNOWN_SESSION.
+  assert.equal(w.store.fileRecord('f-stray'), null);
   await runUntilSettled(w);
   assertStoredOnce(w, ours, { name: '2026-11-03_TEST-S01_TEST-T01_P01.mp4' });
   assert.equal(copiesOf(w, 'f-stray').length, 0, 'nothing from an unknown session is uploaded');

@@ -386,6 +386,12 @@ describe("Zoom webhooks", () => {
 
   test("a redelivered event is stored once and still answered 200, without personal data", async () => {
     at("2026-11-20T07:50:00Z");
+    // A lesson of the site's own (W1, 2026-11-11: deliveries about any other lesson are not stored).
+    await classroomStore().createLesson({
+      id: lesson.lessonId, code: "TEST-WEBHOOK", date: "2026-11-20", startsAt: "2026-11-20T07:30:00.000Z", endsAt: "2026-11-20T08:30:00.000Z", cancelled: false,
+      createdBy: "owner@example.test", createdAt: "2026-11-20T07:00:00.000Z",
+      participants: [{ id: `${lesson.lessonId}-T`, code: "TEST-WEBHOOK-T", role: "tutor", staffEmail: "tutor-webhook@example.test", joinKeyHash: null }],
+    });
     const object = zoomUser("P-webhookuser", "UUID-W1", { join_time: "2026-11-20T07:49:00Z" });
     const first = await zoom("session.user_joined", lesson, object);
     at("2026-11-20T07:55:00Z");

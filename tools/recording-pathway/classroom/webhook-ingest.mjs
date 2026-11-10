@@ -223,6 +223,20 @@ export async function ingestWebhook({ headers, rawBody, secret, now, store, budg
   if (event.event === 'endpoint.url_validation') return { status: 200, body: urlValidationAnswer(secret, event) };
   const fact = minimizeZoomEvent(event, now);
   if (!fact) return { status: 200, body: { ignored: event.event } };
+  // W1 (2026-11-11): only deliveries about a lesson this site holds are stored. The same Zoom
+  // account runs sessions outside the site (local rehearsals, the trial server), signed the same
+  // way and naming lessons this database never had (their session_key), or none at all; with the
+  // classroom open they would otherwise land in the live database, completed recordings included.
+  // They are acknowledged (200, so Zoom does not deliver again) and stored nowhere. A lookup that
+  // fails answers 503, as a failed store does, so a real lesson's delivery is never lost.
+  if (!fact.lessonId) return { status: 200, body: { ignored: 'NO_LESSON' } };
+  let lesson;
+  try {
+    lesson = await withTimeout(Promise.resolve(store.lesson(fact.lessonId)), budgetMs);
+  } catch {
+    return { status: 503, body: { error: 'not stored, please retry' } };
+  }
+  if (!lesson) return { status: 200, body: { ignored: 'UNKNOWN_LESSON' } };
   return persist(store, [fact], budgetMs);
 }
 

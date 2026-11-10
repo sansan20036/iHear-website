@@ -186,7 +186,119 @@ describe('Zoom webhook → PostgreSQL → recording state (synthetic)', () => {
     for (const secret of ['SYN-DOWNLOAD-TOKEN', 'zoom.example.test', 'Synthetic Person Name', 'person@example.test', '198.51.100.7', 'SYN-ACCOUNT']) expect(everything).not.toContain(secret);
   }, 60000);
 
+  // W1 (2026-11-11): what the first real rehearsal showed, through the live route and database. The
+  // start accepted but unconfirmed (R1: overdue, not failed); Zoom's REST has_recording confirms it;
+  // the webhook then arrives late and once more with another event_ts; a forged stop; the finished
+  // recording before the stop; a snapshot after the stop that still says "has a recording"; and the
+  // start delivered once more at the very end. The shapes are those of the 11/11 recording (one
+  // shared_screen_with_speaker_view MP4 of 4,854,150 bytes, 203 s); the values are synthetic.
+  test('W1: R1 and the webhook together — overdue start, REST confirmation, late and repeated deliveries, completion before the stop, a forged stop — end in one consistent state, one file and one job', async () => {
+    const now = Date.now();
+    const id = 'L-TEST-W1';
+    const lesson = {
+      id, code: 'TEST-W1', date: new Date(now).toISOString().slice(0, 10), startsAt: new Date(now - 10 * MIN).toISOString(), endsAt: new Date(now + 50 * MIN).toISOString(), cancelled: false,
+      createdBy: 'owner@example.test', createdAt: new Date(now - 60 * MIN).toISOString(),
+      participants: [
+        { id: `${id}-T`, code: 'TEST-W1-T', role: 'tutor', staffEmail: 'tutor-w1@example.test', joinKeyHash: null },
+        { id: `${id}-S`, code: 'TEST-W1-S', role: 'student', staffEmail: null, joinKeyHash: 'b'.repeat(64) },
+      ],
+    };
+    await store().createLesson(lesson);
+    await service.setSyntheticConsent({ store: store(), personCode: 'TEST-W1-S', role: 'student', status: 'granted', actor: 'owner@example.test', now: now - 20 * MIN, synthetic: false });
+    await service.setSyntheticConsent({ store: store(), personCode: 'TEST-W1-T', role: 'tutor', status: 'granted', actor: 'owner@example.test', now: now - 20 * MIN, synthetic: false });
+    const server = (type, at, extra = {}) => store().transaction(tx => ingest.storeEvent(tx, { source: 'server', type, lessonId: id, occurredAt: at, receivedAt: at, key: `${type}:${id}`, ...extra }));
+    const t0 = now - 4 * MIN;
+    await server('server.recording_eligibility', now - 15 * MIN, { eligible: true });
+    await server('server.start_requested', t0, { attempt: 1 });
+    await server('server.start_response', t0, { attempt: 1, ok: true, httpStatus: 202 });
+    // A session id of Zoom's real shape (base64, with "=" padding).
+    const session = { session_id: 'W1synTestSessionAbCdEf==', session_key: id, session_name: 'ihear-test-w1', id: 'W1synTestSessionAbCdEf==' };
+    const at = ms => new Date(t0 + ms).toISOString();
+    const person = (key, ms) => ({ user_key: key, participant_uuid: `uuid-${key}`, join_time: at(ms) });
+    const send = (event, object, options) => post({ event, event_ts: Date.now(), payload: { account_id: 'SYN-ACCOUNT', object: { ...session, ...object } } }, options);
+    const card = () => cardOf('TEST-W1');
+    const recordingFacts = async () => (await sql`SELECT type, source FROM public.classroom_events WHERE lesson_id = ${id} AND type LIKE 'session.recording_%'`).map(row => `${row.source}:${row.type}`).sort();
+
+    expect((await send('session.started', { start_time: at(-7000) })).status).toBe(200);
+    await send('session.user_joined', { user: person(`${id}-T`, -6000) });
+    await send('session.user_joined', { user: person(`${id}-S`, -2000) });
+    // 1. Four minutes after Zoom accepted the start, nothing has confirmed it: overdue, a warning, not failed (R1).
+    let now1 = await card();
+    expect(now1.recording).toMatchObject({ status: 'START_REQUESTED', label: '已送出錄影啟動請求（尚未取得視訊服務確認）' });
+    expect(now1.anomalies.map(entry => `${entry.severity}:${entry.code}`)).toEqual(['warning:START_UNCONFIRMED']);
+    // 2. The tick's REST snapshot: Zoom says the session has a recording. Confirmed, dated at the accepted start.
+    await ingest.ingestApiSnapshot({ store: store(), now: t0 + 60_000, snapshot: { lessonId: id, providerSessionId: session.session_id, details: { start_time: at(-7000), session_name: session.session_name, has_recording: true }, users: [person(`${id}-T`, -6000), person(`${id}-S`, -2000)], recordings: [] } });
+    now1 = await card();
+    expect(now1.recording).toMatchObject({ status: 'RECORDING', basis: 'confirmed', source: 'zoom_api' });
+    expect(now1.anomalies).toEqual([]);
+    // 3. The webhook for the start arrives late; Zoom delivers it again with another event_ts: stored once.
+    expect((await send('session.recording_started', { recording_file: { recording_start: at(3000) } })).body).toMatchObject({ stored: 1 });
+    expect((await send('session.recording_started', { recording_file: { recording_start: at(3000) } })).body).toMatchObject({ duplicates: 1 });
+    expect((await card()).recording).toMatchObject({ status: 'RECORDING', basis: 'confirmed' });
+    // 4. A forged stop (another secret) and a replayed stop with a stale timestamp: 401, nothing stored, nothing changes.
+    expect((await send('session.recording_stopped', { recording_file: { recording_end: at(100_000) } }, { secret: 'not-the-secret' })).status).toBe(401);
+    expect((await send('session.recording_stopped', { recording_file: { recording_end: at(100_000) } }, { at: Date.now() - 10 * MIN })).status).toBe(401);
+    expect((await card()).recording.status).toBe('RECORDING');
+    // 5. The finished recording arrives before the stop and the end (deliveries cross).
+    const completed = { recording_files: [{ id: 'SYN-W1-VIDEO', recording_type: 'shared_screen_with_speaker_view', file_type: 'MP4', file_extension: 'MP4', file_size: 4854150, status: 'completed',
+      download_url: 'https://zoom.example.test/rec/download/SYN-W1-VIDEO', recording_start: at(3000), recording_end: at(206_000) }] };
+    expect((await send('session.recording_completed', completed)).body).toMatchObject({ stored: 1 });
+    // Not "completed" while nothing has said the recording stopped: it may still be on.
+    expect((await card()).recording.status).toBe('RECORDING');
+    await send('session.recording_stopped', { recording_file: { recording_end: at(206_000) } });
+    await send('session.user_left', { user: { ...person(`${id}-S`, -2000), leave_time: at(206_500), leave_reason: 'left the session' } });
+    await send('session.user_left', { user: { ...person(`${id}-T`, -6000), leave_time: at(207_000), leave_reason: 'left the session' } });
+    await send('session.ended', { end_time: at(207_000) });
+    expect((await card()).recording).toMatchObject({ status: 'COMPLETED', label: '錄影已完成' });
+    // 6. A snapshot after the stop still says "has a recording" (it stays true): nothing goes back to recording.
+    await ingest.ingestApiSnapshot({ store: store(), now: t0 + 240_000, snapshot: { lessonId: id, providerSessionId: session.session_id, details: { start_time: at(-7000), end_time: at(207_000), session_name: session.session_name, has_recording: true }, users: [], recordings: [] } });
+    // 7. The start delivered once more, last of all: a duplicate, and the state stays.
+    expect((await send('session.recording_started', { recording_file: { recording_start: at(3000) } })).body).toMatchObject({ duplicates: 1 });
+    const final = await card();
+    expect(final.recording).toMatchObject({ status: 'COMPLETED', basis: 'confirmed', label: '錄影已完成' });
+    expect(final.filing).toMatchObject({ status: 'PENDING' });
+    expect(final.anomalies).toEqual([]);
+    // One start fact from Zoom's webhook (the REST confirmation is derived, not stored as a second start), one stop, one completion.
+    expect(await recordingFacts()).toEqual(['zoom_webhook:session.recording_completed', 'zoom_webhook:session.recording_started', 'zoom_webhook:session.recording_stopped']);
+    const files = await sql`SELECT provider_file_id, extension, size, status FROM public.classroom_recording_files WHERE lesson_id = ${id}`;
+    expect(files.map(row => [row.provider_file_id, row.extension, Number(row.size), row.status])).toEqual([['SYN-W1-VIDEO', 'mp4', 4854150, 'PENDING']]);
+    const jobs = await sql`SELECT id, status FROM public.classroom_jobs WHERE lesson_id = ${id}`;
+    expect(jobs.map(row => [row.id, row.status])).toEqual([['file:SYN-W1-VIDEO', 'pending']]);
+    // The download address never reached the database.
+    expect(JSON.stringify(await sql`SELECT row_to_json(e) AS row FROM public.classroom_events e WHERE lesson_id = ${id}`)).not.toContain('zoom.example.test');
+  }, 60000);
+
+  // W1 (2026-11-11): with the classroom OPEN, the same Zoom account's sessions outside the site (the
+  // 11/11 local rehearsal's lesson key, a trial server's) are signed like any other delivery.
+  test('W1: the classroom open, deliveries about a lesson the database does not hold, or none, are 200 and stored nowhere — no event, no file record, no filing job, no work after the answer', async () => {
+    const local = { session_id: 'W1localRehearsalSess==', session_key: 'L-6f754d704ac2449383991fe0dd9a11b9', session_name: 'ihear-l-6f754d704ac2449383991fe0dd9a11b9', id: 'W1localRehearsalSess==' };
+    const counts = async () => (await sql`SELECT (SELECT count(*) FROM public.classroom_events)::int AS e, (SELECT count(*) FROM public.classroom_recording_files)::int AS f, (SELECT count(*) FROM public.classroom_jobs)::int AS j`)[0];
+    const before = await counts();
+    const queued = afterResponse.length;
+    const t = Date.now() - 5 * MIN;
+    const at = ms => new Date(t + ms).toISOString();
+    const send = (event, object) => post({ event, event_ts: Date.now(), payload: { account_id: 'SYN-ACCOUNT', object: { ...local, ...object } } });
+    for (const [event, object] of [
+      ['session.started', { start_time: at(0) }],
+      ['session.user_joined', { user: { user_key: 'P-LOCAL-T', participant_uuid: 'uuid-local-t', join_time: at(1000) } }],
+      ['session.recording_started', { recording_file: { recording_start: at(5000) } }],
+      ['session.recording_stopped', { recording_file: { recording_end: at(208_000) } }],
+      ['session.recording_completed', { recording_files: [{ id: 'SYN-LOCAL-VIDEO', recording_type: 'shared_screen_with_speaker_view', file_type: 'MP4', file_extension: 'MP4', file_size: 4854150, status: 'completed', download_url: 'https://zoom.example.test/rec/local', recording_start: at(5000), recording_end: at(208_000) }] }],
+      ['session.ended', { end_time: at(210_000) }],
+    ]) expect(await send(event, object)).toEqual({ status: 200, body: { ignored: 'UNKNOWN_LESSON' } });
+    // A delivery that names no lesson at all.
+    expect(await post({ event: 'session.started', event_ts: Date.now(), payload: { object: { session_id: 'W1noKeySession==', id: 'W1noKeySession==', start_time: at(0) } } })).toEqual({ status: 200, body: { ignored: 'NO_LESSON' } });
+    expect(await counts()).toEqual(before);
+    expect(afterResponse.length).toBe(queued);
+    expect(Number((await sql`SELECT count(*)::int AS n FROM public.classroom_events WHERE lesson_id = 'L-6f754d704ac2449383991fe0dd9a11b9' OR lesson_id IS NULL`)[0].n)).toBe(0);
+  }, 60000);
+
   test('the database refuses a write: 503 so Zoom delivers again, and the retry is stored once', async () => {
+    // A lesson of the site's own (W1: deliveries about any other lesson are not stored at all).
+    const at = Date.now();
+    await store().createLesson({ id: 'L-TEST-ZWH-R', code: 'TEST-ZWH-R', date: new Date(at).toISOString().slice(0, 10), startsAt: new Date(at - 10 * MIN).toISOString(), endsAt: new Date(at + 50 * MIN).toISOString(), cancelled: false,
+      createdBy: 'owner@example.test', createdAt: new Date(at - 60 * MIN).toISOString(),
+      participants: [{ id: 'L-TEST-ZWH-R-T', code: 'TEST-ZWH-R-T', role: 'tutor', staffEmail: 'tutor-r@example.test', joinKeyHash: null }, { id: 'L-TEST-ZWH-R-S', code: 'TEST-ZWH-R-S', role: 'student', staffEmail: null, joinKeyHash: 'c'.repeat(64) }] });
     const body = { event: 'session.started', event_ts: Date.now(), payload: { object: { session_id: 'SYN-ZOOM-SESSION-RETRY', session_key: 'L-TEST-ZWH-R', start_time: new Date().toISOString() } } };
     await sql.unsafe('ALTER TABLE public.classroom_events ADD CONSTRAINT webhook_test_refuse CHECK (false) NOT VALID');
     try {

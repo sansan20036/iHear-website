@@ -98,6 +98,34 @@ test('a webhook is answered 200 only once its event is committed', async () => {
   assert.equal(stored[0].lessonId, 'L-TEST-001');
 });
 
+// W1 (2026-11-11): the same Zoom account runs sessions outside the site (the 11/11 local rehearsal's
+// lesson key below); signed like any other, they must never reach the live database.
+test('W1: a signed delivery about a lesson this site does not hold, or about none, is acknowledged and stored nowhere; a failed lookup is 503', async () => {
+  const { store } = await setup();
+  const before = store.events().length;
+  const outside = { session_key: 'L-6f754d704ac2449383991fe0dd9a11b9', session_name: 'ihear-l-6f754d704ac2449383991fe0dd9a11b9', session_id: 'sess-LOCAL-REHEARSAL', id: 'sess-LOCAL-REHEARSAL' };
+  const about = (body, object) => ({ ...body, payload: { ...body.payload, object: { ...body.payload.object, ...object } } });
+  const noKey = body => { const copy = structuredClone(body); delete copy.payload.object.session_key; return copy; };
+  for (const body of [about(joined(START + MIN), outside), about(completed(START + 70 * MIN, [video('f-local', START + MIN, START + 4 * MIN)]), outside)]) {
+    const answer = await ingestWebhook({ ...delivery(body, START + 70 * MIN), store });
+    assert.deepEqual([answer.status, answer.body], [200, { ignored: 'UNKNOWN_LESSON' }]);
+  }
+  const none = await ingestWebhook({ ...delivery(noKey(joined(START + MIN)), START + MIN), store });
+  assert.deepEqual([none.status, none.body], [200, { ignored: 'NO_LESSON' }]);
+  // Nothing stored: no event, no file record, no filing job.
+  assert.equal(store.events().length, before);
+  assert.deepEqual([store.fileRecords().length, store.jobs().length], [0, 0]);
+  assert.equal(store.events().some(event => event.lessonId === 'L-6f754d704ac2449383991fe0dd9a11b9' || event.lessonId == null), false);
+  // The site's own lesson is still stored as before.
+  assert.equal((await ingestWebhook({ ...delivery(joined(START + MIN), START + MIN), store })).status, 200);
+  assert.equal(store.events().length, before + 1);
+  // The lookup fails (the database is down): 503, so Zoom delivers again; nothing stored.
+  const broken = { ...store, lesson: () => { throw new Error('database unavailable'); } };
+  const failed = await ingestWebhook({ ...delivery(joined(START + 2 * MIN), START + 2 * MIN), store: broken });
+  assert.equal(failed.status, 503);
+  assert.equal(store.events().length, before + 1);
+});
+
 test('a storage failure answers 503 and writes nothing; the retries are stored once', async () => {
   const { store } = await setup();
   const body = completed(START + 70 * MIN, [video('f-video', START + MIN, START + 60 * MIN), audio('f-audio', START + MIN, START + 60 * MIN)]);
