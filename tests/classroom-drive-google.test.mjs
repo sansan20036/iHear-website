@@ -167,14 +167,25 @@ describe("Google Drive for the local recording test", () => {
     refused({ CLASSROOM_DRIVE_ROOT_NAME: "iHear 錄影" }, /\[測試\]/);
   });
 
-  test("the website picks it with CLASSROOM_DRIVE=google, and names nothing when no destination is set", () => {
+  test("the website picks it with CLASSROOM_DRIVE=google; with no destination set nothing can be filed anywhere (P3-MVP)", async () => {
     for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value);
     vi.stubEnv("VERCEL", "");
     vi.stubEnv("VERCEL_ENV", "");
     vi.stubEnv("NETLIFY", "");
     vi.stubEnv("CLASSROOM_DRIVE", "google");
     expect(classroomDrive().rootFolderId).toBe("google-test-root");
+    // Unset (the lessons profile): a destination that refuses every operation as a blocking
+    // failure, so routes that only need a Drive to file still answer, and nothing is ever filed.
     vi.stubEnv("CLASSROOM_DRIVE", "");
-    expect(() => classroomDrive()).toThrow(/No recording destination/);
+    const none = classroomDrive();
+    expect(none).toMatchObject({ kind: "none", rootFolderId: "" });
+    for (const call of [() => none.quota(), () => none.ensureFolder("x", "y"), () => none.listNames("x"), () => none.findByAppProperty("k", "v"), () => none.getFile("x"),
+      () => none.startUpload({ name: "x", parentId: "y", size: 1, appProperties: {} }), () => none.uploadStatus("u"), () => none.uploadChunk("u", { offset: 0, bytes: Buffer.alloc(1), total: 1 }),
+      () => none.trash("x"), () => none.remove("x"), () => none.permissions("x")]) {
+      await expect(call()).rejects.toMatchObject({ code: FAILURE.DRIVE_FOLDER_MISSING });
+    }
+    // Anything else is still refused outright.
+    vi.stubEnv("CLASSROOM_DRIVE", "dropbox");
+    expect(() => classroomDrive()).toThrow(ClassroomDriveUnavailableError);
   });
 });

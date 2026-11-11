@@ -30,8 +30,8 @@ export type UploadStatus = { state: "active"; received: number } | { state: "com
 
 export type ClassroomDrive = {
   // Which Drive this is, recorded with each filed copy: Google Drive, or the local stand-in that
-  // synthetic tests use (never shown as Google Drive).
-  kind: "local" | "google";
+  // synthetic tests use (never shown as Google Drive); "none" files nothing (noRecordingDestination).
+  kind: "local" | "google" | "none";
   rootFolderId: string;
   quota(): Promise<{ limit: number | null; usage: number }>;
   ensureFolder(parentId: string, name: string): Promise<string>;
@@ -252,6 +252,22 @@ export function googleClassroomDrive(env: Record<string, string | undefined>, { 
   };
 }
 
+// No recording destination is configured (CLASSROOM_DRIVE unset): the closed trial's lessons with
+// nothing recorded (P3-MVP, env-check --profile lessons). The classroom still runs, because the
+// tutor's reports, the overview's tick and the emergency stop take a Drive only to file
+// recordings. Here every Drive operation is refused as a blocking filing failure, so a recording
+// that should not exist (Zoom recording on its own) is never filed anywhere: its filing waits and
+// Zoom's copy is kept (deleting it is off). Whether a recording may start is decided by consent
+// alone and is not changed by this.
+export function noRecordingDestination(): ClassroomDrive {
+  const refuse = async (): Promise<never> => { throw new FilingError(FAILURE.DRIVE_FOLDER_MISSING, "No recording destination is configured"); };
+  return {
+    kind: "none", rootFolderId: "",
+    quota: refuse, ensureFolder: refuse, listNames: refuse, findByAppProperty: refuse, getFile: refuse,
+    startUpload: refuse, uploadStatus: refuse, uploadChunk: refuse, trash: refuse, remove: refuse, permissions: refuse,
+  };
+}
+
 export function classroomDrive(): ClassroomDrive {
   const kind = process.env.CLASSROOM_DRIVE || "";
   if (kind === "local") {
@@ -261,5 +277,6 @@ export function classroomDrive(): ClassroomDrive {
     return createLocalDrive(path.join(directory, "synthetic-drive"), { quotaLimit: Number.isFinite(quota) && quota > 0 ? quota : null });
   }
   if (kind === "google") return googleClassroomDrive(process.env);
-  throw new ClassroomDriveUnavailableError("No recording destination is configured");
+  if (!kind) return noRecordingDestination();
+  throw new ClassroomDriveUnavailableError("Unknown recording destination (CLASSROOM_DRIVE is local or google, or unset)");
 }
