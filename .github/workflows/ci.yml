@@ -10,9 +10,16 @@ permissions:
   contents: read
 
 jobs:
+  # The browser jobs run in the official Playwright image of the version the lockfile pins
+  # (@playwright/test 1.62.0): Chromium with its system libraries and fonts is already in it, so no
+  # `playwright install --with-deps` (apt) runs. 2026-11-11: four runs in a row failed there because
+  # the runners could not resolve the Ubuntu package mirror, before any test started. Keep the image
+  # tag equal to the locked Playwright version when it is upgraded.
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    container:
+      image: mcr.microsoft.com/playwright:v1.62.0-noble
     steps:
       - uses: actions/checkout@v7
 
@@ -27,19 +34,14 @@ jobs:
       - name: Install dependencies including native optional packages
         run: npm ci --include=optional
 
-      - name: Install Playwright Chromium and system dependencies
-        run: npx playwright install --with-deps chromium
-
       - name: Verify sharp on Linux
         run: node -e "require('sharp')({ create:{ width:8,height:8,channels:3,background:'#263974' } }).webp().toBuffer().then(b=>{ if(!b.length) process.exit(1) })"
 
       - name: Run complete project checks
         run: npm run check
 
-      - name: Verify isolated Academy PostgreSQL migrations and transactions
-        run: |
-          docker pull postgres:17-alpine
-          npm run test:academy:postgres
+      # The Academy PostgreSQL suite starts its own Docker containers, which a job running in a
+      # container cannot do; it runs in classroom-postgres (below) instead, unchanged.
 
       - name: Verify self-hosted compression library
         run: |
@@ -76,6 +78,10 @@ jobs:
 
       - name: Pull the disposable PostgreSQL image
         run: docker pull postgres:17-alpine
+
+      # Moved here from verify (2026-11-11), which now runs in the Playwright image without Docker.
+      - name: Verify isolated Academy PostgreSQL migrations and transactions
+        run: npm run test:academy:postgres
 
       - name: Classroom on PostgreSQL (028, backups, drill, audit)
         run: npm run test:classroom:postgres
@@ -117,6 +123,8 @@ jobs:
   classroom-browser:
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    container:
+      image: mcr.microsoft.com/playwright:v1.62.0-noble
     steps:
       - uses: actions/checkout@v7
 
@@ -130,9 +138,6 @@ jobs:
 
       - name: Install dependencies
         run: npm ci --include=optional
-
-      - name: Install Playwright Chromium and system dependencies
-        run: npx playwright install --with-deps chromium
 
       - name: Build the site
         run: npm run build
