@@ -632,3 +632,41 @@ function mulberry32(seed) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
+
+// 2026-11-10 readiness audit: the two branches of the sharing gate the mutation check found untested.
+test('a Drive that cannot say who can open the folder counts as shared too widely: nothing is uploaded or made, and filing resumes once it can', async () => {
+  const w = await world();
+  const file = video('f-video', 1, 59, 2 * CHUNK);
+  const permissions = w.drive.permissions;
+  w.drive.permissions = undefined;
+  await deliver(w, completed('L-TEST-001', 'sess-1', [file], w.clock.now()));
+  assert.deepEqual((await invoke(w)).map(result => [result.status, result.reason]), [['BLOCKED', FAILURE.DRIVE_SHARING]]);
+  assert.equal(w.drive.counters.sessionsStarted, 0, 'no upload was started');
+  assert.equal(w.drive.folderCount(), 0, 'no folder was made');
+  assert.notEqual(w.store.fileRecord(file.id).status, 'STORED');
+  w.drive.permissions = permissions;
+  w.clock.advance(31 * MIN);
+  await runUntilSettled(w);
+  assertStoredOnce(w, file);
+});
+
+test('a copy found shared after another worker already stored the recording is left to that worker: nothing is deleted', async () => {
+  const w = await world();
+  const file = video('f-video', 1, 59, 2 * CHUNK);
+  await deliver(w, completed('L-TEST-001', 'sess-1', [file], w.clock.now()));
+  const permissions = w.drive.permissions.bind(w.drive);
+  let raced = false;
+  w.drive.permissions = async id => {
+    if (!raced && w.drive.activeFiles().some(entry => entry.id === id)) {
+      raced = true;
+      await w.store.transaction(tx => tx.updateFileRecord(file.id, { status: 'STORED' }));
+      w.drive.share(id, { type: 'anyone', role: 'reader' });
+    }
+    return permissions(id);
+  };
+  const results = await invoke(w);
+  assert.equal(raced, true, 'the copy was checked after the upload');
+  assert.deepEqual(results.map(result => result.status), ['LEASE_LOST']);
+  assert.equal(w.drive.counters.removed ?? 0, 0, 'the stored copy is not deleted by the worker that lost');
+  assert.equal(copiesOf(w, file.id).length, 1);
+});

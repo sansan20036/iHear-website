@@ -81,7 +81,10 @@ async function lessonBy(owner) {
   return { code, id: created.body.lesson.lessonId };
 }
 
-describe("R-8: the overview's tick and the owner's changes have separate allowances", () => {
+// Each case sends 60–100 real requests through the routes. Alone they take about 1.5 s each; in the
+// full classroom suite (I1, 2026-11-11: the preflight tests now run beside them) they can pass the
+// default 5 s, so they get a longer timeout. The limits they check are unchanged.
+describe("R-8: the overview's tick and the owner's changes have separate allowances", { timeout: 30_000 }, () => {
   test("the tick allows its own 60 a minute and then answers 429 with Retry-After; meanwhile revoke, reissue, consent, a new lesson and cancel all still succeed", async () => {
     const owner = OWNERS[0];
     const lesson = await lessonBy(owner);
