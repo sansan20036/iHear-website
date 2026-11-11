@@ -18,9 +18,12 @@ const START = "<!-- classroom-entry:start -->";
 const END = "<!-- classroom-entry:end -->";
 
 describe("one release switch for the home page entries and the header", () => {
-  test("it is off in the repository: it is turned on only after the staff acceptance on the live site", async () => {
-    expect(JSON.parse(await source("data/classroom-entry.json"))).toEqual({ released: false });
-    expect(await readClassroomEntrySwitch(root)).toBe(false);
+  // P3 D2 (2026-11-12): the owner decided that teachers and students find the classroom on the
+  // home page, so the switch is on in this commit of its own; switching it off again is rolling
+  // that deployment back (or this commit reverted), never an address parameter.
+  test("it is on in the repository: the classroom entries are open to everyone (P3 D2, the owner's decision)", async () => {
+    expect(JSON.parse(await source("data/classroom-entry.json"))).toEqual({ released: true });
+    expect(await readClassroomEntrySwitch(root)).toBe(true);
   });
 
   test("the switch file is kept in the repository, so every build reads the same switch", async () => {

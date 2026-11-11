@@ -16,6 +16,10 @@ Object.assign(process.env, {
   CLASSROOM_PROVIDER: 'synthetic', CLASSROOM_DRIVE: 'local', CLASSROOM_WEBHOOK_SECRET: webhookSecret,
   CLASSROOM_SYNTHETIC_SECRET: 'classroom-token-local-acceptance-only', VERCEL_ENV: '',
 });
+// The release switch this build was made with (data/classroom-entry.json, on since P3 D2): the
+// /classroom checks below take the real server answer for it and replay the other state in the
+// browser, so both what a visitor sees now and what they would see after a rollback are checked.
+const released = JSON.parse(await readFile('data/classroom-entry.json', 'utf8')).released === true;
 const server = await startAcademyServer({ port: 3242, secret, owners: [owner], name: 'classroom' });
 const { origin, directory } = server;
 const report = { startedAt: new Date().toISOString(), origin, synthetic: true, zoomVerified: false, checks: [], externalRequests: [], status: 'running' };
@@ -451,11 +455,14 @@ try {
   });
 
   // /classroom (2026-11-06; D2 2026-11-07): the entry page the home page links to once it opens.
-  // Until then (the switch in data/classroom-entry.json is off here, as in the repository) only
-  // staff the server confirms see more than "not open yet"; an address parameter changes nothing.
-  await check('/classroom before it opens: a visitor sees only "not open yet" and a staff sign-in, whatever the address says', async () => {
+  // While it is not open (the switch off, as after a rollback) only staff the server confirms see
+  // more than "not open yet"; an address parameter changes nothing.
+  await check('/classroom while it is not open (the real answer, or replayed in this browser once the switch is on): a visitor sees only "not open yet" and a staff sign-in, whatever the address says', async () => {
     const visitorContext = await context({ locale: 'zh-TW', viewport: { width: 390, height: 844 } });
     const visitor = watch(await visitorContext.newPage());
+    // The server's own answer to a visitor, asked outside the browser.
+    expect(await (await fetch(`${origin}/api/classroom/entry`)).json()).toEqual({ released, preview: false, signedIn: false });
+    if (released) await visitor.route('**/api/classroom/entry', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ released: false, preview: false, signedIn: false }) }));
     for (const address of ['/classroom', '/classroom?classroom-preview=1']) {
       await visitor.goto(`${origin}${address}`);
       await expect(visitor.getByText('線上教室尚未開放。')).toBeVisible();
@@ -471,10 +478,10 @@ try {
     await visitorContext.close();
   });
 
-  await check("/classroom once open (the server's answer replayed in this browser only): the tutor sign-in, and a pasted link opens only this site's room", async () => {
+  await check("/classroom once open (the real answer, or replayed in this browser while the switch is off): the tutor sign-in, and a pasted link opens only this site's room", async () => {
     const visitorContext = await context({ locale: 'zh-TW', viewport: { width: 390, height: 844 } });
     const visitor = watch(await visitorContext.newPage());
-    await visitor.route('**/api/classroom/entry', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ released: true, preview: false, signedIn: false }) }));
+    if (!released) await visitor.route('**/api/classroom/entry', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ released: true, preview: false, signedIn: false }) }));
     const requests = [];
     visitor.on('request', item => requests.push(item.url()));
     await visitor.goto(`${origin}/classroom`);
@@ -500,14 +507,14 @@ try {
     await visitorContext.close();
   });
 
-  await check('/classroom for the signed-in tutor before it opens: the server confirms the preview; only their lessons; an open one is entered from 我的課程, a cancelled one cannot be', async () => {
+  await check('/classroom for the signed-in tutor (a preview the server confirms while it is not open): only their lessons; an open one is entered from 我的課程, a cancelled one cannot be', async () => {
     const mine = watch(await tutorContext.newPage());
     await mine.goto(`${origin}/classroom`);
-    await expect(mine.getByText('工作人員預覽', { exact: false })).toBeVisible();
-    expect(await mine.evaluate(async () => (await fetch('/api/classroom/entry')).json())).toEqual({ released: false, preview: true, signedIn: true });
+    expect(await mine.evaluate(async () => (await fetch('/api/classroom/entry')).json())).toEqual(released ? { released: true, preview: false, signedIn: true } : { released: false, preview: true, signedIn: true });
     const open = mine.locator('.classroom-mine li', { hasText: lesson.code });
     const cancelled = mine.locator('.classroom-mine li', { hasText: linkLesson.code });
     await expect(open).toContainText('可以進入');
+    await expect(mine.getByText('工作人員預覽', { exact: false })).toHaveCount(released ? 0 : 1);
     await expect(cancelled).toContainText('已取消');
     await expect(cancelled.getByRole('link')).toHaveCount(0);
     const answer = await mine.evaluate(async () => JSON.stringify(await (await fetch('/api/classroom/my-lessons')).json()));
@@ -519,11 +526,11 @@ try {
     await mine.close();
   });
 
-  await check('/classroom for an owner who teaches nothing here: the preview, no lessons, and the way to the overview', async () => {
+  await check('/classroom for an owner who teaches nothing here: no lessons, the way to the overview (and the preview while it is not open)', async () => {
     const page = watch(await ownerContext.newPage());
     await page.goto(`${origin}/classroom`);
-    await expect(page.getByText('工作人員預覽', { exact: false })).toBeVisible();
     await expect(page.getByText('目前沒有你的課程。')).toBeVisible();
+    await expect(page.getByText('工作人員預覽', { exact: false })).toHaveCount(released ? 0 : 1);
     await expect(page.getByRole('link', { name: '管理全部課程' })).toHaveAttribute('href', '/admin/classrooms');
     await page.close();
   });
@@ -533,7 +540,7 @@ try {
     const page = watch(await hansContext.newPage());
     await page.goto(`${origin}/classroom`);
     await expect(page.getByRole('heading', { name: '我的课程' })).toBeVisible();
-    await expect(page.getByText('工作人员预览', { exact: false })).toBeVisible();
+    await expect(page.getByText('工作人员预览', { exact: false })).toHaveCount(released ? 0 : 1);
     await expect(page.locator('html')).toHaveAttribute('lang', 'zh-Hans');
     await page.goto(`${origin}/classroom/${lesson.id}`);
     await expect(page.getByRole('button', { name: '进入教室' })).toBeVisible();

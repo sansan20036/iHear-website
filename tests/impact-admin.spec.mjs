@@ -2650,6 +2650,10 @@ test("mobile editor has no horizontal overflow at supported narrow widths", asyn
     await page.goto("/about");
     await page.locator("#navToggle").click();
     await page.getByRole("button", { name: "繁" }).click();
+    // Close the menu first, as a person would: once the classroom entries are on (P3 D2) the open
+    // menu holds one more link for an administrator and can lie over the page's editor button.
+    await page.locator("#navToggle").click();
+    await expect(page.locator("#navToggle")).toHaveAttribute("aria-expanded", "false");
     await page.getByRole("button", { name: "新增歷程" }).click();
 
     const sizes = await page.evaluate(() => ({
@@ -3129,6 +3133,15 @@ test.describe("the header sign-in by who is signed in", () => {
     tutor: { name: "Tutor Example", email: "tutor@example.test", isAdmin: false, adminRole: null },
   };
   const RELEASE_OFF = "const CLASSROOM_ENTRY_RELEASED = false;";
+  const RELEASE_ON = "const CLASSROOM_ENTRY_RELEASED = true;";
+  // The built header script with its release switch either way, whichever way this build set it
+  // (data/classroom-entry.json, on since P3 D2): each test says which classroom state it is about.
+  async function headerScript(released) {
+    const built = (await readFile(path.resolve(publicDir, "assets/auth.js"), "utf8")).replace(RELEASE_ON, RELEASE_OFF);
+    expect(built.split(RELEASE_OFF)).toHaveLength(2);
+    return released ? built.replace(RELEASE_OFF, RELEASE_ON) : built;
+  }
+  const opened = new WeakSet();
   // The session the server answers with; registered after mockApplication's, so it is the one used.
   const answerSession = (page, user) => page.route("**/api/auth/session", route => route.fulfill({
     status: 200, contentType: "application/json", body: JSON.stringify(user ? { user } : {}),
@@ -3137,12 +3150,17 @@ test.describe("the header sign-in by who is signed in", () => {
     await mockApplication(page, { admin: false });
     await answerSession(page, user);
     await page.addInitScript(lang => { localStorage.setItem("ihear-lang", lang); }, language);
+    // The classroom is not open here unless the test opened it first.
+    if (!opened.has(page)) {
+      const body = await headerScript(false);
+      await page.route("**/assets/auth.js*", route => route.fulfill({ contentType: "text/javascript", body }));
+    }
   }
   // The classroom open to everyone: the same script, served with its release switch on.
   async function classroomOpen(page) {
-    const source = await readFile(path.resolve(publicDir, "assets/auth.js"), "utf8");
-    expect(source).toContain(RELEASE_OFF);
-    await page.route("**/assets/auth.js*", route => route.fulfill({ contentType: "text/javascript", body: source.replace(RELEASE_OFF, "const CLASSROOM_ENTRY_RELEASED = true;") }));
+    opened.add(page);
+    const body = await headerScript(true);
+    await page.route("**/assets/auth.js*", route => route.fulfill({ contentType: "text/javascript", body }));
   }
   async function openMenu(page) {
     await page.locator("[data-auth-desktop] .auth-profile").click();
@@ -3317,14 +3335,14 @@ test.describe("the home page's classroom entry and its release switch", () => {
     await answerSession(page, user);
     await page.addInitScript(lang => { localStorage.setItem("ihear-lang", lang); }, language);
   }
-  // The home page built with the switch on: the entries from the source page put back where the
-  // switched-off build left them out, and the header script with its switch on.
-  async function switchedOn(page, { serverLocale = null } = {}) {
-    const built = await readFile(path.resolve(publicDir, "index.html"), "utf8");
-    const source = await readFile(path.resolve("index.html"), "utf8");
-    expect(built).not.toContain("/classroom");
-    let html = built.replace(/\r\n/g, "\n");
-    const lines = source.split(/\r?\n/);
+  const RELEASE_ON = "const CLASSROOM_ENTRY_RELEASED = true;";
+  // The built home page either way, whichever way this build set the switch (on since P3 D2): a
+  // switched-off build leaves the source page's entries out, so they are put back after the line
+  // before them; a switched-on build keeps them with their markers removed, so they are taken out.
+  async function homePage(released, serverLocale = null) {
+    let html = (await readFile(path.resolve(publicDir, "index.html"), "utf8")).replace(/\r\n/g, "\n");
+    const builtOn = html.includes("data-classroom-entry");
+    const lines = (await readFile(path.resolve("index.html"), "utf8")).split(/\r?\n/);
     let anchor = "";
     for (let index = 0; index < lines.length; index += 1) {
       if (!lines[index].includes(START)) {
@@ -3334,23 +3352,49 @@ test.describe("the home page's classroom entry and its release switch", () => {
       const block = [];
       while (!lines[index].includes(END)) block.push(lines[index++]);
       block.push(lines[index]);
-      const at = html.indexOf(anchor);
-      expect(at, "the line before an entry is in the built page once").toBeGreaterThan(-1);
-      expect(html.lastIndexOf(anchor)).toBe(at);
-      const lineEnd = html.indexOf("\n", at);
-      html = `${html.slice(0, lineEnd + 1)}${block.join("\n").replace(START, "").replace(END, "")}\n${html.slice(lineEnd + 1)}`;
+      const text = block.join("\n").replace(START, "").replace(END, "");
+      if (builtOn && !released) {
+        expect(html.split(`${text}\n`), "an entry is in the switched-on build once").toHaveLength(2);
+        html = html.replace(`${text}\n`, "");
+      } else if (!builtOn && released) {
+        const at = html.indexOf(anchor);
+        expect(at, "the line before an entry is in the built page once").toBeGreaterThan(-1);
+        expect(html.lastIndexOf(anchor)).toBe(at);
+        const lineEnd = html.indexOf("\n", at);
+        html = `${html.slice(0, lineEnd + 1)}${text}\n${html.slice(lineEnd + 1)}`;
+      }
     }
+    expect(html.includes("/classroom")).toBe(released);
     // As the live site serves it: the page language set by the server from the visitor's choice.
     if (serverLocale) html = renderPageContent(html, "/", EMPTY_STORE, serverLocale);
-    const auth = await readFile(path.resolve(publicDir, "assets/auth.js"), "utf8");
-    expect(auth).toContain(RELEASE_OFF);
+    return html;
+  }
+  async function headerScript(released) {
+    const built = (await readFile(path.resolve(publicDir, "assets/auth.js"), "utf8")).replace(RELEASE_ON, RELEASE_OFF);
+    expect(built.split(RELEASE_OFF)).toHaveLength(2);
+    return released ? built.replace(RELEASE_OFF, RELEASE_ON) : built;
+  }
+  // The home page and the header script as built with the switch on.
+  async function switchedOn(page, { serverLocale = null } = {}) {
+    const html = await homePage(true, serverLocale);
+    const auth = await headerScript(true);
     await page.route(`${e2eOrigin}/`, route => route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: html }));
-    await page.route("**/assets/auth.js*", route => route.fulfill({ contentType: "text/javascript", body: auth.replace(RELEASE_OFF, "const CLASSROOM_ENTRY_RELEASED = true;") }));
+    await page.route("**/assets/auth.js*", route => route.fulfill({ contentType: "text/javascript", body: auth }));
+  }
+  // The same, switched off (as after a rollback): the home page at any address, the header script.
+  async function switchedOff(page) {
+    const html = await homePage(false);
+    const auth = await headerScript(false);
+    const home = new RegExp(`^${e2eOrigin.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/(\\?.*)?$`);
+    await page.route(home, route => route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: html }));
+    await page.route("**/assets/auth.js*", route => route.fulfill({ contentType: "text/javascript", body: auth }));
+    return { html, auth };
   }
   const entries = page => page.locator("a[data-classroom-entry]");
 
   test("switched off, the built home page has no entry, and nobody signed out is asked about a preview, address or not", async ({ page }) => {
     await visit(page);
+    const served = await switchedOff(page);
     const asked = await answerEntry(page, { released: false, preview: true, signedIn: false });
     const response = await page.goto("/?classroom-preview=1");
     const html = await response.text();
@@ -3361,11 +3405,12 @@ test.describe("the home page's classroom entry and its release switch", () => {
     await page.goto("/team");
     await expect(page.locator("[data-auth-desktop] [data-auth-signin]")).toBeVisible();
     expect(asked).toEqual([]);
-    expect(await readFile(path.resolve(publicDir, "assets/auth.js"), "utf8")).toContain(RELEASE_OFF);
+    expect(served.auth).toContain(RELEASE_OFF);
   });
 
   test("the address alone opens nothing: signed in, the preview shows only if the server says this person is staff", async ({ page }) => {
     await visit(page, { user: TUTOR });
+    await switchedOff(page);
     let asked = await answerEntry(page, { released: false, preview: false, signedIn: true });
     await page.goto("/?classroom-preview=1");
     await expect(page.locator("[data-auth-desktop] .auth-profile")).toBeVisible();
@@ -3389,6 +3434,7 @@ test.describe("the home page's classroom entry and its release switch", () => {
   for (const language of ["en", "zhTW", "zhCN"]) {
     test(`staff the server confirms see the preview link and their classroom entry; ?classroom-preview=0 ends it (${language})`, async ({ page }) => {
       await visit(page, { user: TUTOR, language });
+      await switchedOff(page);
       const asked = await answerEntry(page, { released: false, preview: true, signedIn: true });
       await page.goto("/?classroom-preview=1");
       const chip = page.locator("a[data-classroom-preview]");
@@ -3412,6 +3458,7 @@ test.describe("the home page's classroom entry and its release switch", () => {
 
   test("an owner's preview shows the classroom overview in the menu, and the preview link stays fixed so nothing on the page moves", async ({ page }) => {
     await visit(page, { user: OWNER });
+    await switchedOff(page);
     await answerEntry(page, { released: false, preview: true, signedIn: true });
     await page.goto("/?classroom-preview=1");
     const chip = page.locator("a[data-classroom-preview]");
@@ -3483,6 +3530,7 @@ test.describe("the home page's classroom entry and its release switch", () => {
       return urls.filter(url => !url.includes("/api/live-revisions")).length;
     };
     await page.setViewportSize({ width: 1280, height: 900 });
+    await switchedOff(page);
     const off = await count();
     await switchedOn(page);
     const on = await count();

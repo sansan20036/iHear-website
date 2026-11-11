@@ -823,35 +823,42 @@ describe("my lessons (/classroom)", () => {
 
 // The home page's classroom entry (D2, 2026-11-07): before it opens to everyone, the server alone
 // decides who may preview it. A parameter in the address only asks; this answer is what counts.
+// The route answers from the repository's switch (data/classroom-entry.json, on since P3 D2,
+// 2026-11-12): switched on, everyone is told it is open and nobody needs a preview; switched off
+// again (a rollback), the preview rules below apply, and classroomEntryAccess is checked in both
+// states in classroom-site-entry.test.mjs.
 describe("who may preview the classroom entry (/api/classroom/entry)", () => {
   async function entry(email, extra = {}) {
     auth.mockResolvedValue(email ? { user: { email, ...extra } } : null);
     const route = await import("../app/api/classroom/entry/route");
     return read(await route.GET(new Request(`${ORIGIN}/api/classroom/entry?classroom-preview=1`)));
   }
+  const released = async () => (await import("../lib/classroom-entry")).CLASSROOM_ENTRY_RELEASED;
+  // The answer for this person: open to everyone, or (switched off) a preview for staff only.
+  const expected = async (signedIn, staff) => ((await released()) ? { released: true, preview: false, signedIn } : { released: false, preview: staff, signedIn });
 
   test("the answer says only whether it is open and whether this person may preview it, and is never cached", async () => {
     at("2026-11-21T01:00:00Z");
     const anonymous = await entry(null);
-    expect(anonymous).toMatchObject({ status: 200, body: { released: false, preview: false, signedIn: false } });
+    expect(anonymous).toMatchObject({ status: 200, body: await expected(false, false) });
     expect(Object.keys(anonymous.body).sort()).toEqual(["preview", "released", "signedIn"]);
     expect(anonymous.headers.get("cache-control")).toBe("private, no-store, max-age=0");
-    expect((await entry(OWNER, { isAdmin: true })).body).toEqual({ released: false, preview: true, signedIn: true });
+    expect((await entry(OWNER, { isAdmin: true })).body).toEqual(await expected(true, true));
     // Only the server's own administrator mark counts; anyone else signed in is not staff.
-    expect((await entry("someone@example.test")).body).toEqual({ released: false, preview: false, signedIn: true });
-    expect((await entry("someone@example.test", { isAdmin: "true" })).body).toEqual({ released: false, preview: false, signedIn: true });
+    expect((await entry("someone@example.test")).body).toEqual(await expected(true, false));
+    expect((await entry("someone@example.test", { isAdmin: "true" })).body).toEqual(await expected(true, false));
   });
 
   test("a tutor of a lesson in the coming two weeks may preview; while the classroom is closed, only administrators", async () => {
     at("2026-11-21T01:00:00Z");
     await createLesson({ date: "2026-11-22", code: "TEST-E1", time: "10:00", tutorCode: "TEST-ET1", studentCode: "TEST-ES1", tutorEmail: "entry-tutor@example.test" });
     const tutor = await entry("Entry-Tutor@example.test");
-    expect(tutor.body).toEqual({ released: false, preview: true, signedIn: true });
+    expect(tutor.body).toEqual(await expected(true, true));
     expect(JSON.stringify(tutor.body)).not.toMatch(/@|TEST-|L-/);
     vi.stubEnv("CLASSROOM_PROVIDER", "");
     try {
-      expect((await entry("entry-tutor@example.test")).body).toEqual({ released: false, preview: false, signedIn: true });
-      expect((await entry(OWNER, { isAdmin: true })).body).toEqual({ released: false, preview: true, signedIn: true });
+      expect((await entry("entry-tutor@example.test")).body).toEqual(await expected(true, false));
+      expect((await entry(OWNER, { isAdmin: true })).body).toEqual(await expected(true, true));
     } finally {
       vi.stubEnv("CLASSROOM_PROVIDER", "synthetic");
     }
