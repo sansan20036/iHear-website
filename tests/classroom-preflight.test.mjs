@@ -17,7 +17,7 @@ vi.mock('../lib/classroom-store', async original => ({
   }),
 }));
 
-const { checkMetadata, checkValues, summary, PILOT_REQUIRED, PILOT_CONSENT_VERSION } = await import('../tools/classroom-preflight/env-check.mjs');
+const { checkMetadata, checkValues, summary, PILOT_REQUIRED, PILOT_CONSENT_VERSION, LESSONS_REQUIRED, RECORDING_SETTINGS } = await import('../tools/classroom-preflight/env-check.mjs');
 const { assessSettings } = await import('../tools/classroom-preflight/zoom-settings.mjs');
 const { describeSession, describeRecordings } = await import('../tools/classroom-preflight/zoom-sessions.mjs');
 const { runSafeChecks, validationBody, ONLY_EVENT } = await import('../tools/classroom-preflight/webhook-safe-check.mjs');
@@ -100,6 +100,36 @@ describe('env-check', () => {
     const zoomEnv = Object.fromEntries(Object.entries(goodValues).filter(([k]) => k.startsWith('ZOOM_')));
     expect(checkValues(goodValues, { zoomEnv })).toEqual([]);
     expect(codes(checkValues(goodValues, { zoomEnv: { ...zoomEnv, ZOOM_VIDEO_SDK_WEBHOOK_SECRET: 'another-webhook-secret-xyz' } }))).toEqual(['error:ZOOM_VIDEO_SDK_WEBHOOK_SECRET:DIFFERS_FROM_THE_CHECKED_ZOOM_ENV']);
+  });
+
+  // P3-MVP: the closed trial's real lessons, nothing recorded.
+  const lessonsListing = [...closedListing, ...Object.keys(LESSONS_REQUIRED).filter(k => k !== 'ZOOM_VIDEO_SDK_WEBHOOK_SECRET').map(key => ({ key, type: 'sensitive', target: ['production'] })), { key: 'CLASSROOM_SESSION_REPORTS', type: 'sensitive', target: ['production'] }];
+  const lessonsValues = Object.fromEntries(Object.entries(goodValues).filter(([k]) => !RECORDING_SETTINGS.includes(k)));
+
+  test('the lessons profile: the provider and Zoom only; every setting that records or files is refused', () => {
+    expect(RECORDING_SETTINGS).toEqual(['CLASSROOM_PILOT_CONSENT', 'CLASSROOM_CONSENT_VERSION', 'CLASSROOM_STAFF_NOTICE_VERSION', 'CLASSROOM_DRIVE', 'CLASSROOM_DRIVE_GRANT', 'CLASSROOM_GOOGLE_CLIENT_ID', 'CLASSROOM_GOOGLE_CLIENT_SECRET', 'CLASSROOM_GOOGLE_REFRESH_TOKEN', 'CLASSROOM_DRIVE_PARENT_FOLDER_ID', 'CLASSROOM_DRIVE_ALLOWED_DOMAINS']);
+    expect(checkMetadata(lessonsListing, 'lessons')).toEqual([]);
+    expect(codes(checkMetadata(closedListing, 'lessons'))).toEqual(['error:CLASSROOM_PROVIDER:MISSING', 'error:ZOOM_VIDEO_SDK_KEY:MISSING', 'error:ZOOM_VIDEO_SDK_SECRET:MISSING', 'error:ZOOM_VIDEO_SDK_API_KEY:MISSING', 'error:ZOOM_VIDEO_SDK_API_SECRET:MISSING', 'warn:CLASSROOM_SESSION_REPORTS:RECOMMENDED_MISSING']);
+    for (const name of RECORDING_SETTINGS) expect(codes(checkMetadata([...lessonsListing, { key: name, type: 'sensitive', target: ['production'] }], 'lessons'))).toEqual([`error:${name}:RECORDS_OR_FILES`]);
+    expect(codes(checkMetadata(pilotListing, 'lessons')).filter(c => c.endsWith(':RECORDS_OR_FILES'))).toHaveLength(9);
+    expect(codes(checkMetadata([...lessonsListing, { key: 'CLASSROOM_VENDOR_DELETION', type: 'sensitive', target: ['production'] }], 'lessons'))).toEqual(['error:CLASSROOM_VENDOR_DELETION:FORBIDDEN_IN_PRODUCTION']);
+    expect(codes(checkMetadata(lessonsListing.map(e => (e.key === 'ZOOM_VIDEO_SDK_KEY' ? { ...e, target: ['preview', 'production'] } : e)), 'lessons'))).toEqual(['error:ZOOM_VIDEO_SDK_KEY:NOT_PRODUCTION_ONLY']);
+    // The pilot profile is unchanged by it.
+    expect(checkMetadata(pilotListing, 'pilot')).toEqual([]);
+    expect(() => checkMetadata(lessonsListing, 'open')).toThrow(/closed, pilot or lessons/);
+  });
+
+  test('a lessons values file: complete passes; a consent or Drive value in it fails', () => {
+    expect(checkValues(lessonsValues, { profile: 'lessons' })).toEqual([]);
+    expect(codes(checkValues({ ...lessonsValues, CLASSROOM_PILOT_CONSENT: '1' }, { profile: 'lessons' }))).toEqual(['error:CLASSROOM_PILOT_CONSENT:RECORDS_OR_FILES']);
+    expect(codes(checkValues({ ...lessonsValues, CLASSROOM_DRIVE: 'google' }, { profile: 'lessons' }))).toEqual(['error:CLASSROOM_DRIVE:RECORDS_OR_FILES']);
+    expect(codes(checkValues({ ...lessonsValues, CLASSROOM_PROVIDER: 'synthetic' }, { profile: 'lessons' }))).toEqual(['error:CLASSROOM_PROVIDER:WRONG_VALUE']);
+    expect(codes(checkValues({ ...lessonsValues, ZOOM_VIDEO_SDK_API_KEY: undefined }, { profile: 'lessons' }))).toEqual(['error:ZOOM_VIDEO_SDK_API_KEY:MISSING']);
+    expect(codes(checkValues({ ...lessonsValues, CLASSROOM_TRIAL_CONSENT: '1' }, { profile: 'lessons' }))).toEqual(['error:CLASSROOM_TRIAL_CONSENT:FORBIDDEN_IN_PRODUCTION']);
+    expect(codes(checkValues({ ...lessonsValues, SOMETHING_ELSE: 'x' }, { profile: 'lessons' }))).toEqual(['error:SOMETHING_ELSE:NOT_A_LESSONS_SETTING']);
+    expect(codes(checkValues(goodValues, { profile: 'lessons' })).filter(c => c.endsWith(':RECORDS_OR_FILES'))).toHaveLength(9);
+    expect(checkValues(goodValues)).toEqual([]);
+    expect(() => checkValues(lessonsValues, { profile: 'closed' })).toThrow(/pilot or lessons/);
   });
 
   test('no finding ever carries a value', () => {
