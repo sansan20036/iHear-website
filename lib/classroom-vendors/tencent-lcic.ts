@@ -96,8 +96,11 @@ export type LcicRoomRegistry = {
 
 export function fileRoomRegistry(file = path.join(process.env.IHEAR_TEST_DATA_DIR || path.join(process.cwd(), "data"), "lcic-rooms.json")): LcicRoomRegistry {
   let queue: Promise<unknown> = Promise.resolve();
+  // The registry is written at run time by this same code and is never part of a deployment, so
+  // the build must not trace this read: a path it cannot work out makes Next's file tracing copy
+  // the whole project (public/, tests/, docs/, ...) into every classroom function (P4-B1).
   const read = async (): Promise<Record<string, LcicRoom>> => {
-    try { return JSON.parse(await readFile(file, "utf8")); } catch (error) {
+    try { return JSON.parse(await readFile(/*turbopackIgnore: true*/ file, "utf8")); } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
       throw error;
     }
