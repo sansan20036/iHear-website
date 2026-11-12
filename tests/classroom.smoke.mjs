@@ -278,6 +278,56 @@ try {
     for (const page of [tutorPage, student]) expect(await page.evaluate(() => window.__deviceRequests)).toBe(0);
   });
 
+  // 2026-11-12: chat and raised hands, with the controls drawn as icons. Each synthetic page stands
+  // alone (nothing travels between pages), so the other person's line and hand are played by the
+  // simulation buttons. Nothing is saved.
+  const openSimulation = async page => {
+    const panel = page.locator('details.classroom-room-simulator');
+    if (!(await panel.evaluate(element => element.open))) await panel.locator('summary').click();
+  };
+  await check('chat and raised hands: icon controls keep their words, nothing is saved, the other person is played by the simulation', async () => {
+    // The student, on a phone.
+    const chatButton = student.getByRole('button', { name: /^聊天/ });
+    await expect(chatButton).toHaveAttribute('aria-expanded', 'false');
+    await chatButton.click();
+    const log = student.getByRole('log', { name: '聊天' });
+    await expect(student.getByText('聊天內容不會保存，離開教室後就會消失。')).toBeVisible();
+    await expect(log).toContainText('還沒有訊息。');
+    await student.getByLabel('訊息').fill('TEST: 老師好');
+    await student.getByRole('button', { name: '送出', exact: true }).click();
+    await expect(log.locator('li.from-self')).toContainText('你');
+    await expect(log.locator('li.from-self')).toContainText('TEST: 老師好');
+    await expect(student.getByLabel('訊息')).toHaveValue('');
+    // A line while the chat is closed: the button counts it, in words for screen readers too.
+    await student.getByRole('button', { name: '關閉聊天', exact: true }).click();
+    await openSimulation(student);
+    await student.getByRole('button', { name: '對方傳來一則訊息', exact: true }).click();
+    await expect(chatButton).toHaveAccessibleName('聊天（1 則新訊息）');
+    await expect(student.locator('.classroom-room-unread')).toHaveText('1');
+    await chatButton.click();
+    await expect(log.locator('li.from-tutor')).toContainText('小老師');
+    await expect(chatButton).toHaveAccessibleName('聊天');
+    // Raising and lowering the hand.
+    await student.getByRole('button', { name: '舉手', exact: true }).click();
+    await expect(student.getByRole('button', { name: '放下手', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    expect(await noHorizontalOverflow(student)).toBe(true);
+    await shot(student, '07b-student-chat-hand');
+    await student.getByRole('button', { name: '放下手', exact: true }).click();
+    await expect(student.getByRole('button', { name: '舉手', exact: true })).toHaveAttribute('aria-pressed', 'false');
+    // The microphone and camera are icons now, and still read and say "麥克風：關".
+    await expect(student.getByRole('button', { name: /^麥克風：(開|關)$/ })).toHaveText(/^麥克風：(開|關)$/);
+
+    // The tutor has no hand to raise; a student's raised hand shows plainly and is lowered.
+    await expect(tutorPage.getByRole('button', { name: '舉手', exact: true })).toHaveCount(0);
+    await openSimulation(tutorPage);
+    await tutorPage.getByRole('button', { name: '學生舉手', exact: true }).click();
+    const raised = tutorPage.locator('.classroom-room-hands');
+    await expect(raised).toContainText('舉手：學生');
+    await shot(tutorPage, '07c-tutor-raised-hand');
+    await raised.getByRole('button', { name: '放下學生的手', exact: true }).click();
+    await expect(raised).toHaveCount(0);
+  });
+
   // R-1 and R-2 (2026-11-06): "Connect again" used to rejoin with the token given on entry (Zoom's
   // lasts 30 minutes). It now asks the protected join check for a new one each time.
   await check('RC-5: after a failed connection, "Connect again" asks the join check again (once, even on a double click) and reconnects', async () => {

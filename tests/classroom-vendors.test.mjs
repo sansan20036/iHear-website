@@ -2,7 +2,8 @@ import { createHash, createHmac } from "node:crypto";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { CLASSROOM_CAPABILITIES, classroomDeviceOf, deviceLimits } from "../lib/classroom-capabilities";
-import { LcicEmbedAdapter, LCIC_FRAME_PERMISSIONS, MediaAdapterUnavailableError, ZoomVideoSdkMediaAdapter } from "../lib/classroom-media";
+import { handCommand } from "../lib/classroom-chat";
+import { hostReportFor, LcicEmbedAdapter, LCIC_FRAME_PERMISSIONS, MediaAdapterUnavailableError, ZoomVideoSdkMediaAdapter } from "../lib/classroom-media";
 import { ClassroomProviderUnavailableError, classroomProvider } from "../lib/classroom-provider";
 import { isTestLesson, LcicApiError, lcicStatusOf, memoryRoomRegistry, tc3Sign, tencentLcicConfig, tencentLcicProvider, verifyLcicCallback } from "../lib/classroom-vendors/tencent-lcic";
 import { zoomApiToken, zoomSessionPath, zoomVideoSdkConfig, zoomVideoSdkProvider } from "../lib/classroom-vendors/zoom-video-sdk";
@@ -466,8 +467,16 @@ describe("browser adapters", () => {
     };
     return { doc, root: doc.createElement("div") };
   }
-  function fakeZoom({ joinError = null, videoError = null, shareError = null, canBoard = true, sharingAtJoin = 0, videoHangs = 0, audioHangs = 0, slowJoin = false, failedJoins = 0, sessionId = "" } = {}) {
+  function fakeZoom({ joinError = null, videoError = null, shareError = null, canBoard = true, sharingAtJoin = 0, videoHangs = 0, audioHangs = 0, slowJoin = false, failedJoins = 0, sessionId = "", chatAnswer = null, commandAnswer = null } = {}) {
     const calls = [];
+    // In-class chat and the command channel (2026-11-12), recorded apart from `calls` so the older
+    // checks of the call order stay as they were. A *Answer option stands for Zoom's failure answer.
+    const chatSent = [], privileges = [], commandsSent = [];
+    const chat = {
+      sendToAll: async (text) => { chatSent.push(text); return chatAnswer ?? { id: `m${chatSent.length}`, message: text, sender: { userId: 1, name: "TEST-T01" }, receiver: { userId: 0, name: "" }, timestamp: 1 }; },
+      setPrivilege: async (value) => { privileges.push(value); return ""; },
+    };
+    const command = { send: async (text, target) => { commandsSent.push(target === undefined ? text : [text, target]); return commandAnswer ?? { senderId: 1, text, timestamp: 1 }; } };
     const handlers = new Map();
     // Every listener registered and not yet removed, per event: a second one for the same event
     // means the page would hear Zoom twice.
@@ -516,6 +525,7 @@ describe("browser adapters", () => {
         if (joinFailures > 0) { joinFailures -= 1; throw new Error("join refused"); }
       },
       leave: async () => calls.push("leave"), getMediaStream: () => stream, getWhiteboardClient: () => whiteboard,
+      getChatClient: () => chat, getCommandClient: () => command,
       getCurrentUserInfo: () => ({ userId: 1 }), getAllUser: () => users,
       // Video SDK 2.6.0's SessionInfo; Zoom's id of the session once joined.
       getSessionInfo: () => ({ topic: "ihear-l-test-v01", isInMeeting: true, sessionId }),
@@ -530,7 +540,7 @@ describe("browser adapters", () => {
     };
     const listening = () => Object.fromEntries([...live].filter(([, set]) => set.size > 0).map(([name, set]) => [name, set.size]));
     const holdNextJoin = () => { let release; heldJoin = new Promise(resolve => { release = resolve; }); return () => release(); };
-    return { calls, handlers, users, sdk, created, listening, holdNextJoin, releaseJoin: () => releaseJoin(), qualities };
+    return { calls, handlers, users, sdk, created, listening, holdNextJoin, releaseJoin: () => releaseJoin(), qualities, chatSent, privileges, commandsSent };
   }
   const zoomJoin = { sessionToken: "synthetic.jwt.token", sessionName: "ihear-l-test-v01", lessonCode: "TEST-V01", participantCode: "TEST-T01", role: "tutor" };
   // Zoom calls its handlers without waiting; let their asynchronous work finish.
@@ -593,6 +603,105 @@ describe("browser adapters", () => {
     expect([share.tag, whiteboard.tag, videos.tag, ownShare.tag]).toEqual(["video-player-container", "div", "video-player-container", "div"]);
     expect([share.className, whiteboard.className, videos.className, ownShare.className]).toEqual(["classroom-zoom-share", "classroom-zoom-whiteboard", "classroom-zoom-videos", "classroom-zoom-own-share"]);
     expect([share.hidden, whiteboard.hidden, videos.hidden, ownShare.hidden]).toEqual([true, true, false, true]);
+  });
+
+  // In-class chat and raised hands (2026-11-12). Nothing is saved, and none of it is reported to iHear.
+  const studentJoined = async (options) => {
+    const zoom = fakeZoom(options), dom = fakeDom();
+    const adapter = new ZoomVideoSdkMediaAdapter(async () => zoom.sdk, () => 1);
+    const events = recorded(adapter);
+    adapter.mount(dom.root);
+    // This page (Zoom user 1) is the student's; the tutor, Zoom's host, is user 2.
+    zoom.users.push({ userId: 2, userIdentity: "P-TEST-T01", displayName: "TEST-T01", isHost: true });
+    await adapter.join({ ...zoomJoin, participantCode: "TEST-S01", role: "student" });
+    return { zoom, adapter, events };
+  };
+  const linesOf = events => events.filter(event => event.type === "chat").map(({ line }) => [line.id, line.from, line.name, line.text]);
+  const handsOf = events => events.filter(event => event.type === "hands").at(-1)?.raised ?? [];
+  const notReported = events => { for (const event of events.filter(item => item.type === "chat" || item.type === "hands")) expect(hostReportFor(event)).toBeNull(); };
+
+  test("Zoom chat: the tutor's page allows only public chat; a line goes to everyone and shows once; others' lines say tutor or student; files and empty lines are not shown", async () => {
+    const { zoom, adapter, events } = await joined();
+    await settle();
+    expect(zoom.privileges).toEqual([5]);
+    expect(await adapter.sendChat("  TEST: hello  ")).toBe(true);
+    expect(zoom.chatSent).toEqual(["TEST: hello"]);
+    const message = zoom.handlers.get("chat-on-message");
+    // Zoom may deliver this page's own line back to it: shown once.
+    message({ id: "m1", message: "TEST: hello", sender: { userId: 1, name: "TEST-T01" }, timestamp: 2 });
+    zoom.users.push({ userId: 2, userIdentity: "P-TEST-S01", displayName: "TEST-S01" });
+    message({ id: "m2", message: "TEST: hi\u0000", sender: { userId: 2, name: "TEST-S01" }, timestamp: 3 });
+    message({ id: "m3", message: "a file", file: { name: "x.pdf" }, sender: { userId: 2, name: "TEST-S01" }, timestamp: 4 });
+    message({ id: "m4", message: "   ", sender: { userId: 2, name: "TEST-S01" }, timestamp: 5 });
+    message({ id: "m2", message: "TEST: hi", sender: { userId: 2, name: "TEST-S01" }, timestamp: 3 });
+    message(null);
+    expect(linesOf(events)).toEqual([["zoom-m1", "self", "", "TEST: hello"], ["zoom-m2", "student", "TEST-S01", "TEST: hi"]]);
+    notReported(events);
+  });
+
+  test("Zoom chat: a student's page sets no chat privilege and sees the tutor's lines as the tutor's; a refused or empty line, or a room not joined, is not sent", async () => {
+    const { zoom, adapter, events } = await studentJoined({ chatAnswer: { type: "INVALID_OPERATION", reason: "chat is off", errorCode: 7 } });
+    await settle();
+    expect(zoom.privileges).toEqual([]);
+    zoom.handlers.get("chat-on-message")({ id: "t1", message: "TEST: welcome", sender: { userId: 2, name: "TEST-T01" }, timestamp: 2 });
+    expect(linesOf(events)).toEqual([["zoom-t1", "tutor", "TEST-T01", "TEST: welcome"]]);
+    expect(await adapter.sendChat("TEST: hello")).toBe(false);
+    expect(await adapter.sendChat("   ")).toBe(false);
+    expect(linesOf(events)).toHaveLength(1);
+    expect(await new ZoomVideoSdkMediaAdapter(async () => zoom.sdk).sendChat("TEST: hello")).toBe(false);
+  });
+
+  test("Zoom raised hands: a student's hand goes to everyone, is told again to someone new, and comes down when the tutor lowers it; nobody else can lower it", async () => {
+    const { zoom, adapter, events } = await studentJoined();
+    expect(await adapter.setHand(true)).toBe(true);
+    expect(zoom.commandsSent).toEqual([handCommand(true)]);
+    expect(handsOf(events)).toEqual([{ id: "1", name: "", self: true }]);
+    // Someone joins: they hear the raised hand too.
+    zoom.handlers.get("user-added")([{ userId: 3 }]);
+    expect(zoom.commandsSent).toEqual([handCommand(true), handCommand(true)]);
+    // Another student cannot lower it; the tutor (Zoom's host) can.
+    zoom.users.push({ userId: 3, displayName: "TEST-S02" });
+    zoom.handlers.get("command-channel-message")({ senderId: 3, text: handCommand(false, 1) });
+    expect(handsOf(events)).toEqual([{ id: "1", name: "", self: true }]);
+    zoom.handlers.get("command-channel-message")({ senderId: 2, text: handCommand(false, 1) });
+    expect(handsOf(events)).toEqual([]);
+    zoom.handlers.get("user-added")([{ userId: 4 }]);
+    expect(zoom.commandsSent).toHaveLength(2);
+    // The student lowers it themselves too, and never lowers anyone else's.
+    expect(await adapter.setHand(true)).toBe(true);
+    expect(await adapter.setHand(false)).toBe(true);
+    expect(zoom.commandsSent.slice(-2)).toEqual([handCommand(true), handCommand(false)]);
+    expect(await adapter.lowerHand("3")).toBe(false);
+    notReported(events);
+  });
+
+  test("Zoom raised hands: the tutor raises none, sees each student's hand with their code, lowers it for everyone; a student who leaves takes theirs along; the rest of the channel is ignored", async () => {
+    const { zoom, adapter, events } = await joined();
+    expect(await adapter.setHand(true)).toBe(false);
+    zoom.users.push({ userId: 2, displayName: "TEST-S01" }, { userId: 3, displayName: "TEST-S02" });
+    const command = zoom.handlers.get("command-channel-message");
+    command({ senderId: 2, text: handCommand(true) });
+    command({ senderId: 3, text: handCommand(true) });
+    for (const text of ["hello", '{"ihear":1,"hand":true,"for":2}', "", null]) command({ senderId: 3, text });
+    command({ text: handCommand(true) });
+    expect(handsOf(events)).toEqual([{ id: "2", name: "TEST-S01", self: false }, { id: "3", name: "TEST-S02", self: false }]);
+    expect(await adapter.lowerHand("2")).toBe(true);
+    expect(zoom.commandsSent).toEqual([handCommand(false, 2)]);
+    expect(handsOf(events)).toEqual([{ id: "3", name: "TEST-S02", self: false }]);
+    expect(await adapter.lowerHand("2")).toBe(false);
+    zoom.handlers.get("user-removed")([{ userId: 3 }]);
+    expect(handsOf(events)).toEqual([]);
+    // Leaving clears whatever is still raised.
+    command({ senderId: 2, text: handCommand(true) });
+    await adapter.leave();
+    expect(handsOf(events)).toEqual([]);
+    notReported(events);
+  });
+
+  test("Zoom raised hands: a command Zoom refuses is not taken as sent", async () => {
+    const { adapter, events } = await studentJoined({ commandAnswer: { type: "INVALID_OPERATION", reason: "channel not ready", errorCode: 7 } });
+    expect(await adapter.setHand(true)).toBe(false);
+    expect(handsOf(events)).toEqual([]);
   });
 
   test("Zoom: microphone starts audio once, then mutes; the camera starts video and shows it; a refusal is 'denied'", async () => {

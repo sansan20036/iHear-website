@@ -22,7 +22,7 @@ describe("the provider-neutral media adapter", () => {
     expect(MEDIA_PROVIDERS).toEqual(["synthetic", "zoom-video-sdk", "tencent-lcic"]);
     const synthetic = createMediaAdapter("synthetic", { connectDelayMs: 0 });
     expect(synthetic).toBeInstanceOf(SyntheticMediaAdapter);
-    expect(synthetic.capabilities).toEqual({ realMedia: false, screenShare: false, whiteboard: false, observable: true });
+    expect(synthetic.capabilities).toEqual({ realMedia: false, screenShare: false, whiteboard: false, observable: true, chat: true, raiseHand: true });
     expect(createMediaAdapter("zoom-video-sdk").provider).toBe("zoom-video-sdk");
     expect(createMediaAdapter("tencent-lcic").provider).toBe("tencent-lcic");
     for (const provider of ["tencent-rtc", "agora", ""]) expect(() => createMediaAdapter(provider)).toThrow(MediaAdapterUnavailableError);
@@ -99,6 +99,38 @@ describe("the provider-neutral media adapter", () => {
     expect(hostReportFor({ type: "remote", present: true, camera: true, microphone: true, userKey: null, at })).toBeNull();
     expect(hostReportFor({ type: "remote", present: true, camera: true, microphone: true, userKey: "P-1", at })).toEqual({ type: "user_added", userKey: "P-1" });
     expect(hostReportFor({ type: "remote", present: false, camera: false, microphone: false, userKey: "P-1", at })).toEqual({ type: "user_removed", userKey: "P-1" });
+  });
+
+  // 2026-11-12: chat and raised hands. Nothing is saved, and none of it is reported to iHear.
+  test("chat and raised hands in the synthetic room stay on this page: a tutor raises no hand, only a tutor lowers one, leaving clears them", async () => {
+    const student = new SyntheticMediaAdapter({ connectDelayMs: 0, now: () => 5 });
+    const events = recorded(student);
+    expect(await student.sendChat("before joining")).toBe(false);
+    await student.join({ ...joinInput, role: "student", participantCode: "TEST-MS1" });
+    expect(await student.sendChat("   ")).toBe(false);
+    expect(await student.sendChat("  TEST: hello\u0000 ")).toBe(true);
+    student.simulate("remote-chat");
+    expect(events.filter(event => event.type === "chat").map(event => event.line)).toEqual([
+      { id: "synthetic-1", from: "self", name: "", text: "TEST: hello", at: 5 },
+      { id: "synthetic-2", from: "tutor", name: "", text: expect.stringContaining("TEST"), at: 5 },
+    ]);
+    expect(await student.setHand(true)).toBe(true);
+    expect(events.filter(event => event.type === "hands").at(-1).raised).toEqual([{ id: "self", name: "", self: true }]);
+    expect(await student.lowerHand("self")).toBe(false);
+    await student.leave();
+    expect(events.filter(event => event.type === "hands").at(-1).raised).toEqual([]);
+    for (const event of events.filter(item => item.type === "chat" || item.type === "hands")) expect(hostReportFor(event)).toBeNull();
+
+    const tutor = new SyntheticMediaAdapter({ connectDelayMs: 0 });
+    const tutorEvents = recorded(tutor);
+    await tutor.join(joinInput);
+    expect(await tutor.setHand(true)).toBe(false);
+    tutor.simulate("remote-raises-hand");
+    expect(tutorEvents.filter(event => event.type === "hands").at(-1).raised).toEqual([{ id: "remote", name: "", self: false }]);
+    expect(await tutor.lowerHand("remote")).toBe(true);
+    expect(tutorEvents.filter(event => event.type === "hands").at(-1).raised).toEqual([]);
+    tutor.simulate("remote-chat");
+    expect(tutorEvents.filter(event => event.type === "chat").at(-1).line.from).toBe("student");
   });
 
   test("the synthetic adapter never touches the network or the browser's devices", async () => {

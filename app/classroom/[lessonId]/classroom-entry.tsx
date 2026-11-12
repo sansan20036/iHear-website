@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 
+import { appendChat, CHAT_MAX_LENGTH, chatTextOf, type ChatLine, type RaisedHand } from "../../../lib/classroom-chat";
 import {
   createMediaAdapter, hostReportFor, MAX_REMOTE_VIDEOS, MediaAdapterUnavailableError, SYNTHETIC_SCENARIOS, SyntheticMediaAdapter,
   type ClassroomMediaAdapter, type ConnectionState, type DeviceKind, type DeviceProblem, type DeviceState, type MediaEvent, type MediaSystemCheck, type SyntheticScenario,
@@ -10,6 +11,7 @@ import { classroomDeviceOf, deviceLimits, type CapabilityName, type ClassroomDev
 import { entryEndedBy, rejoinRoom, requestJoin, type JoinedSession } from "../../../lib/classroom-join-client";
 import { browserClassroomLocale, CLASSROOM_LOCALES, htmlLangOf, intlLocaleOf, LOCALE_NAMES, type ClassroomLocale } from "../../../lib/classroom-locale";
 import { roomCopy as copy, vendorCopy } from "./classroom-copy";
+import { RoomIcon } from "./classroom-icons";
 
 // The vendor-specific parts of the room (2026-10-30): Zoom draws its video in our page; LCIC is
 // Tencent's own classroom page in an iframe. Notes per device come from lib/classroom-capabilities
@@ -114,6 +116,20 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   // The vendor's own check of this browser, and a problem starting the materials or whiteboard.
   const [sdkCheck, setSdkCheck] = useState<MediaSystemCheck | null>(null);
   const [toolProblem, setToolProblem] = useState<"" | "share" | "board">("");
+  // In-class chat and raised hands (2026-11-12): on this page only and never saved (the owner's
+  // decision); leaving the room clears them. The unread count shows on the chat button while the
+  // chat is closed: a sign to see, not a sound.
+  const [features, setFeatures] = useState({ chat: false, raiseHand: false });
+  const [chat, setChat] = useState<readonly ChatLine[]>([]);
+  const [chatOpen, setChatOpen] = useState(false);
+  const chatOpenNow = useRef(false);
+  chatOpenNow.current = chatOpen;
+  const [unread, setUnread] = useState(0);
+  const [draft, setDraft] = useState("");
+  const [chatProblem, setChatProblem] = useState(false);
+  const [hands, setHands] = useState<RaisedHand[]>([]);
+  const [handProblem, setHandProblem] = useState(false);
+  const chatLog = useRef<HTMLOListElement | null>(null);
   // The provider's session token. It is never shown; it goes only to the media adapter.
   const session = useRef<JoinedSession | null>(null);
   // D-5 (2026-11-08): the server's regular answers say which room new tokens lead to. A page in
@@ -238,6 +254,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
     }
     adapter.current = current;
     setSimulator(current instanceof SyntheticMediaAdapter ? current : null);
+    setFeatures({ chat: current.capabilities.chat, raiseHand: current.capabilities.raiseHand });
     const unsubscribe = current.subscribe((event: MediaEvent) => {
       if (event.type === "connection") {
         connection.current = event.state;
@@ -253,6 +270,11 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
         setMedia((state) => ({ ...state, share: event.state }));
       } else if (event.type === "whiteboard") {
         setMedia((state) => ({ ...state, whiteboard: event.state }));
+      } else if (event.type === "chat") {
+        setChat((lines) => appendChat(lines, event.line));
+        if (event.line.from !== "self" && !chatOpenNow.current) setUnread((count) => count + 1);
+      } else if (event.type === "hands") {
+        setHands(event.raised);
       }
       // A session id changes nothing on screen; it is reported only when the join answer asked.
       if (joined.role === "tutor") {
@@ -279,8 +301,23 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
       setSdkCheck(null);
       setToolProblem("");
       connection.current = "idle";
+      // Chat is not kept: leaving the room (or moving to another) clears it.
+      setFeatures({ chat: false, raiseHand: false });
+      setChat([]);
+      setChatOpen(false);
+      setUnread(0);
+      setDraft("");
+      setChatProblem(false);
+      setHands([]);
+      setHandProblem(false);
     };
   }, [phase, joined, report]);
+
+  // The newest line stays in view.
+  useEffect(() => {
+    const log = chatLog.current;
+    if (log) log.scrollTop = log.scrollHeight;
+  }, [chat, chatOpen]);
 
   useEffect(() => {
     if (!isTutor) return;
@@ -390,6 +427,40 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
     if (on && !started) setToolProblem("board");
   }
 
+  // In-class chat and raised hands (2026-11-12). Opening the chat clears the unread count; a line
+  // that did not go through stays in the box to try again.
+  function toggleChat() {
+    const next = !chatOpen;
+    setChatOpen(next);
+    if (next) setUnread(0);
+  }
+
+  async function sendChat(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const current = adapter.current;
+    if (!current?.sendChat || !chatTextOf(draft)) return;
+    setChatProblem(false);
+    const sent = await current.sendChat(draft).catch(() => false);
+    if (sent) setDraft("");
+    else setChatProblem(true);
+  }
+
+  async function toggleHand() {
+    const current = adapter.current;
+    if (!current?.setHand) return;
+    setHandProblem(false);
+    const done = await current.setHand(!hands.some((hand) => hand.self)).catch(() => false);
+    if (!done) setHandProblem(true);
+  }
+
+  async function lowerHand(id: string) {
+    const current = adapter.current;
+    if (!current?.lowerHand) return;
+    setHandProblem(false);
+    const done = await current.lowerHand(id).catch(() => false);
+    if (!done) setHandProblem(true);
+  }
+
   // "Connect again" asks the protected join check again, exactly as entering does, and joins with
   // the new token; the token from entry is never reused (R-1). A refusal (the time window closed,
   // the lesson cancelled, the sign-in ended) is shown and nothing connects.
@@ -433,6 +504,10 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   const micText = { on: text.micOn, off: text.micOff, denied: text.micDenied, unavailable: text.micUnavailable, starting: text.micStarting, failed: text.micFailed }[media.devices.microphone];
   const otherName = joined?.role === "tutor" ? text.other_student : text.other_tutor;
   const connected = media.connection === "connected";
+  const handUp = hands.some((hand) => hand.self);
+  const othersHands = hands.filter((hand) => !hand.self);
+  // A chat line's time, Taipei like the lesson's.
+  const clock = (at: number) => until(new Date(at).toISOString());
 
   return (
     <main className="classroom-room">
@@ -497,18 +572,20 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
                     {media.whiteboard !== "none" && <p className="classroom-room-note" role="status">{media.whiteboard === "presenting" ? v.presenting : v.viewing}</p>}
                     {joined.role === "tutor" && (
                       <>
-                        <div className="classroom-room-controls" role="toolbar" aria-label={v.zoomVideo}>
-                          <button type="button" className="classroom-room-control" aria-pressed={media.share === "sending"} data-tool="share"
+                        <div className="classroom-room-controls classroom-room-iconbar" role="toolbar" aria-label={v.zoomVideo}>
+                          <button type="button" className="classroom-room-control classroom-room-iconbutton" aria-pressed={media.share === "sending"} data-tool="share"
                             disabled={!connected || device !== "desktop" || sdkCheck?.screenShare === false} onClick={toggleShare}>
-                            {media.share === "sending" ? v.shareStop : v.share}
+                            <RoomIcon name="share" /><span className="classroom-room-iconlabel">{media.share === "sending" ? v.shareStop : v.share}</span>
                           </button>
-                          <button type="button" className="classroom-room-control" aria-pressed={media.whiteboard === "presenting"} data-tool="whiteboard"
+                          <button type="button" className="classroom-room-control classroom-room-iconbutton" aria-pressed={media.whiteboard === "presenting"} data-tool="whiteboard"
                             disabled={!connected} onClick={toggleBoard}>
-                            {media.whiteboard === "presenting" ? v.whiteboardStop : v.whiteboard}
+                            <RoomIcon name="whiteboard" /><span className="classroom-room-iconlabel">{media.whiteboard === "presenting" ? v.whiteboardStop : v.whiteboard}</span>
                           </button>
                           {media.whiteboard === "presenting" && (
-                            <button type="button" className="classroom-room-secondary" data-tool="export"
-                              onClick={() => void adapter.current?.exportWhiteboard?.(`iHear-${joined.lesson.code}`).catch(() => setToolProblem("board"))}>{v.exportBoard}</button>
+                            <button type="button" className="classroom-room-secondary classroom-room-iconbutton" data-tool="export"
+                              onClick={() => void adapter.current?.exportWhiteboard?.(`iHear-${joined.lesson.code}`).catch(() => setToolProblem("board"))}>
+                              <RoomIcon name="download" /><span className="classroom-room-iconlabel">{v.exportBoard}</span>
+                            </button>
                           )}
                         </div>
                         <p className="classroom-room-muted">{device === "desktop" && sdkCheck?.screenShare !== false ? v.shareHint : v.noShareHere}</p>
@@ -576,19 +653,79 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
             return help ? <p key={kind} className="classroom-room-problem" role="alert">{help}</p> : null;
           })}
 
-          <div className="classroom-room-controls" role="toolbar" aria-label={text.controls}>
+          {/* The tutor sees who raised a hand, plainly on screen, and can lower it. */}
+          {isTutor && othersHands.length > 0 && (
+            <div className="classroom-room-hands" role="status" data-hands={othersHands.length}>
+              <RoomIcon name="hand" />
+              <span>{text.handsRaised}{othersHands.map((hand) => hand.name || text.student).join(text.nameSeparator)}</span>
+              {othersHands.map((hand) => (
+                <button key={hand.id} type="button" className="classroom-room-secondary" onClick={() => void lowerHand(hand.id)}>{text.handLower(hand.name)}</button>
+              ))}
+            </div>
+          )}
+
+          {/* Icons with a short word under each (2026-11-12); the state is in the icon and the colour,
+              and in words for screen readers, so each button still reads "Camera: on". */}
+          <div className="classroom-room-controls classroom-room-iconbar" role="toolbar" aria-label={text.controls}>
             {joined.provider !== "tencent-lcic" && (["microphone", "camera"] as const).map((kind) => {
               const state = media.devices[kind];
               const blocked = state === "denied" || state === "unavailable";
+              // The whole name in one piece ("Camera: on"): browsers may put a space between the
+              // word under the icon and the hidden state when they build a name from the parts.
+              const name = `${text[kind]}：${state === "on" ? text.on : state === "starting" ? text.starting : text.off}`;
               return (
-                <button key={kind} type="button" className="classroom-room-control" aria-pressed={state === "on"}
+                <button key={kind} type="button" className="classroom-room-control classroom-room-iconbutton" data-control={kind} aria-pressed={state === "on"} aria-label={name}
                   disabled={!media.available || !connected || blocked || state === "starting"} onClick={() => toggle(kind)}>
-                  {text[kind]}：{state === "on" ? text.on : state === "starting" ? text.starting : text.off}
+                  <RoomIcon name={state === "on" ? kind : `${kind}-off`} />
+                  <span className="classroom-room-iconlabel">{text[kind]}<span className="sr-only">{name.slice(text[kind].length)}</span></span>
                 </button>
               );
             })}
-            <button type="button" className="classroom-room-secondary" onClick={leave}>{text.leave}</button>
+            {features.raiseHand && isStudent && (
+              <button type="button" className="classroom-room-control classroom-room-iconbutton" data-control="hand" aria-pressed={handUp}
+                disabled={!connected} onClick={() => void toggleHand()}>
+                <RoomIcon name="hand" /><span className="classroom-room-iconlabel">{handUp ? text.handDown : text.handUp}</span>
+              </button>
+            )}
+            {features.chat && (
+              <button type="button" className="classroom-room-control classroom-room-iconbutton" data-control="chat" aria-expanded={chatOpen} aria-controls="classroom-chat"
+                aria-label={unread > 0 ? `${text.chat}（${text.chatUnread(unread)}）` : text.chat} onClick={toggleChat}>
+                <RoomIcon name="chat" /><span className="classroom-room-iconlabel">{text.chat}</span>
+                {unread > 0 && <span className="classroom-room-unread" aria-hidden="true">{unread > 99 ? "99+" : unread}</span>}
+              </button>
+            )}
+            <button type="button" className="classroom-room-secondary classroom-room-iconbutton" data-control="leave" onClick={leave}>
+              <RoomIcon name="leave" /><span className="classroom-room-iconlabel">{text.leave}</span>
+            </button>
           </div>
+          {handProblem && <p className="classroom-room-problem" role="alert">{text.handFailed}</p>}
+
+          {features.chat && chatOpen && (
+            <section id="classroom-chat" className="classroom-room-card classroom-room-chat" aria-labelledby="classroom-chat-title">
+              <div className="classroom-room-chat-head">
+                <h2 id="classroom-chat-title">{text.chat}</h2>
+                <button type="button" className="classroom-room-secondary" onClick={toggleChat}>{text.chatClose}</button>
+              </div>
+              <p className="classroom-room-muted">{text.chatNotSaved}</p>
+              <ol className="classroom-room-chat-lines" ref={chatLog} role="log" aria-live="polite" aria-label={text.chat}>
+                {chat.length === 0 && <li className="classroom-room-chat-empty">{text.chatEmpty}</li>}
+                {chat.map((line) => (
+                  <li key={line.id} className={`from-${line.from}`}>
+                    <span className="classroom-room-chat-who">{line.from === "self" ? text.chatYou : line.from === "tutor" ? text.tutor : `${text.student}${line.name ? ` ${line.name}` : ""}`}</span>
+                    <span className="classroom-room-chat-time">{clock(line.at)}</span>
+                    <p>{line.text}</p>
+                  </li>
+                ))}
+              </ol>
+              <form className="classroom-room-chat-form" onSubmit={(event) => void sendChat(event)}>
+                <label className="sr-only" htmlFor="classroom-chat-input">{text.chatLabel}</label>
+                <input id="classroom-chat-input" type="text" value={draft} maxLength={CHAT_MAX_LENGTH} autoComplete="off" placeholder={text.chatPlaceholder}
+                  disabled={!connected} onChange={(event) => { setDraft(event.target.value); setChatProblem(false); }} />
+                <button type="submit" className="classroom-room-primary" disabled={!connected || !chatTextOf(draft)}>{text.chatSend}</button>
+              </form>
+              {chatProblem && <p className="classroom-room-problem" role="alert">{text.chatFailed}</p>}
+            </section>
+          )}
 
           {joined.role === "tutor" ? (
             <section className="classroom-room-card" aria-live="polite">

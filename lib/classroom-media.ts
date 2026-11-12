@@ -15,6 +15,8 @@
 
 import type ZoomVideo from "@zoom/videosdk";
 
+import { chatNameOf, chatTextOf, handCommand, parseHandCommand, type ChatFrom, type ChatLine, type RaisedHand } from "./classroom-chat";
+
 export const MEDIA_PROVIDERS = ["synthetic", "zoom-video-sdk", "tencent-lcic"] as const;
 export type MediaProviderName = (typeof MEDIA_PROVIDERS)[number];
 
@@ -39,7 +41,12 @@ export type MediaEvent =
   | { type: "whiteboard"; state: "none" | "presenting" | "viewing"; at: number }
   // The vendor's id for the session this page joined. Nothing on the page shows it; the tutor's
   // page reports it where the server confirms such ids with the vendor.
-  | { type: "session"; sessionId: string; at: number };
+  | { type: "session"; sessionId: string; at: number }
+  // In-class chat (2026-11-12): one line, this page's own or someone else's. Never reported to iHear
+  // and never saved: the page shows it until the room is left.
+  | { type: "chat"; line: ChatLine; at: number }
+  // The hands raised in the room right now (this page's own among them, marked self).
+  | { type: "hands"; raised: RaisedHand[]; at: number };
 
 export type MediaCapabilities = {
   // True only for an adapter that really carries audio and video.
@@ -50,6 +57,9 @@ export type MediaCapabilities = {
   // False when the vendor's own page runs the call (LCIC): our page then sees no connection,
   // device or remote events, and the overview relies on the vendor's callbacks.
   observable: boolean;
+  // In-class chat and raised hands on our own page (LCIC has its own, inside Tencent's page).
+  chat: boolean;
+  raiseHand: boolean;
 };
 
 export type MediaJoin = {
@@ -73,6 +83,11 @@ export interface ClassroomMediaAdapter {
   setScreenShare?(on: boolean): Promise<boolean>;
   setWhiteboard?(on: boolean): Promise<boolean>;
   exportWhiteboard?(name: string): Promise<void>;
+  // A chat line to everyone in the room; true once it was sent. A student raises or lowers their
+  // own hand; the tutor lowers a student's (by the id a "hands" event gave). Nothing is saved.
+  sendChat?(text: string): Promise<boolean>;
+  setHand?(up: boolean): Promise<boolean>;
+  lowerHand?(id: string): Promise<boolean>;
 }
 
 export type MediaSystemCheck = { sdkVersion: string; audio: boolean; video: boolean; screenShare: boolean; unsupported: string[] };
@@ -88,24 +103,32 @@ export class MediaAdapterUnavailableError extends Error {
 export type SyntheticScenario =
   | "remote-joins" | "remote-leaves" | "remote-camera-off" | "remote-camera-on"
   | "network-drop" | "network-restore" | "connection-failed"
-  | "camera-denied" | "microphone-unavailable" | "devices-restored";
+  | "camera-denied" | "microphone-unavailable" | "devices-restored"
+  | "remote-chat" | "remote-raises-hand" | "remote-lowers-hand";
 
 export const SYNTHETIC_SCENARIOS: readonly SyntheticScenario[] = [
   "remote-joins", "remote-leaves", "remote-camera-off", "remote-camera-on",
   "network-drop", "network-restore", "connection-failed",
   "camera-denied", "microphone-unavailable", "devices-restored",
+  "remote-chat", "remote-raises-hand", "remote-lowers-hand",
 ];
+// The other person's line in the synthetic room: no real person writes it.
+const SYNTHETIC_CHAT = "TEST: Hello / 你好 / 你好";
 
 type SyntheticOptions = { connectDelayMs?: number; now?: () => number };
 
 export class SyntheticMediaAdapter implements ClassroomMediaAdapter {
   readonly provider = "synthetic" as const;
-  readonly capabilities: MediaCapabilities = { realMedia: false, screenShare: false, whiteboard: false, observable: true };
+  readonly capabilities: MediaCapabilities = { realMedia: false, screenShare: false, whiteboard: false, observable: true, chat: true, raiseHand: true };
   private readonly listeners = new Set<(event: MediaEvent) => void>();
   private connection: ConnectionState = "idle";
   private readonly devices: Record<DeviceKind, DeviceState> = { camera: "off", microphone: "off" };
   private readonly blocked: Record<DeviceKind, DeviceState | null> = { camera: null, microphone: null };
   private remote = { present: false, camera: false, microphone: false };
+  // Chat and raised hands stay on this page: nothing travels to another page or the server.
+  private role: MediaRole = "student";
+  private readonly hands = new Map<string, RaisedHand>();
+  private lines = 0;
   private readonly connectDelayMs: number;
   private readonly now: () => number;
 
@@ -128,6 +151,7 @@ export class SyntheticMediaAdapter implements ClassroomMediaAdapter {
   async join(input: MediaJoin) {
     if (!input.sessionToken) throw new Error("A session token from the join check is required");
     if (this.connection === "connected" || this.connection === "connecting") return;
+    this.role = input.role;
     this.setConnection("connecting");
     if (this.connectDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, this.connectDelayMs));
     // leave() or a simulated failure may have happened while connecting.
@@ -138,6 +162,7 @@ export class SyntheticMediaAdapter implements ClassroomMediaAdapter {
   async leave() {
     if (this.connection === "idle" || this.connection === "disconnected") return;
     this.setRemote({ present: false, camera: false, microphone: false });
+    this.clearHands();
     this.setConnection("disconnected");
   }
 
@@ -146,6 +171,39 @@ export class SyntheticMediaAdapter implements ClassroomMediaAdapter {
     this.devices[kind] = state;
     this.emit({ type: "device", kind, state, at: this.now() });
     return state;
+  }
+
+  // This page's own line, shown back to it; there is nobody real to send it to.
+  async sendChat(value: string) {
+    const text = chatTextOf(value);
+    if (!text || this.connection !== "connected") return false;
+    this.emit({ type: "chat", line: { id: `synthetic-${++this.lines}`, from: "self", name: "", text, at: this.now() }, at: this.now() });
+    return true;
+  }
+
+  // A student's own hand; a tutor has none to raise.
+  async setHand(up: boolean) {
+    if (this.role === "tutor" || this.connection !== "connected") return false;
+    this.setHandOf({ id: "self", name: "", self: true }, up);
+    return true;
+  }
+
+  async lowerHand(id: string) {
+    if (this.role !== "tutor" || this.connection !== "connected" || !this.hands.has(id)) return false;
+    this.setHandOf({ id, name: "", self: false }, false);
+    return true;
+  }
+
+  private setHandOf(hand: RaisedHand, up: boolean) {
+    if (up) this.hands.set(hand.id, hand);
+    else if (!this.hands.delete(hand.id)) return;
+    this.emit({ type: "hands", raised: [...this.hands.values()], at: this.now() });
+  }
+
+  private clearHands() {
+    if (this.hands.size === 0) return;
+    this.hands.clear();
+    this.emit({ type: "hands", raised: [], at: this.now() });
   }
 
   // The cases a demonstration or a test needs; a real SDK reports them on its own.
@@ -187,6 +245,19 @@ export class SyntheticMediaAdapter implements ClassroomMediaAdapter {
           this.emit({ type: "device", kind, state: "off", at: this.now() });
         }
         break;
+      // The other person's chat line and hand (the tutor's page shows a student's raised hand).
+      case "remote-chat":
+        if (this.connection === "connected") {
+          const from: ChatFrom = this.role === "tutor" ? "student" : "tutor";
+          this.emit({ type: "chat", line: { id: `synthetic-${++this.lines}`, from, name: "", text: SYNTHETIC_CHAT, at: this.now() }, at: this.now() });
+        }
+        break;
+      case "remote-raises-hand":
+        if (this.connection === "connected" && this.role === "tutor") this.setHandOf({ id: "remote", name: "", self: false }, true);
+        break;
+      case "remote-lowers-hand":
+        this.setHandOf({ id: "remote", name: "", self: false }, false);
+        break;
     }
   }
 
@@ -217,7 +288,13 @@ export class SyntheticMediaAdapter implements ClassroomMediaAdapter {
 // The part of the Zoom Video SDK (web 2.x) this adapter uses, as the official package declares it.
 // OfficialZoomSdk below makes TypeScript check every call against @zoom/videosdk's own types, so a
 // missing or changed call fails the type check; the tests stand in for the SDK with this shape.
-export type ZoomParticipant = { userId: number; userIdentity?: string; userKey?: string; bVideoOn?: boolean; muted?: boolean; audio?: string };
+export type ZoomParticipant = { userId: number; userIdentity?: string; userKey?: string; bVideoOn?: boolean; muted?: boolean; audio?: string; isHost?: boolean; displayName?: string };
+// In-class chat (2026-11-12): Zoom's ChatMessage, as far as this page reads it, and the two calls
+// it makes. Privilege 5 is ChatPrivilege.EveryonePublicly: everyone writes to everyone, nobody privately.
+export type ZoomChatMessage = { id?: string; message?: string; file?: unknown; sender?: { userId?: number; name?: string }; timestamp?: number };
+export type ZoomChat = { sendToAll(text: string): Promise<unknown>; setPrivilege(privilege: number): unknown };
+// The command channel carries raised hands; without a target a message goes to the whole session.
+export type ZoomCommand = { send(text: string, target?: number): Promise<unknown> };
 export type ZoomStream = {
   startAudio(): Promise<unknown>; stopAudio(): Promise<unknown>; muteAudio(): Promise<unknown>; unmuteAudio(): Promise<unknown>;
   startVideo(): Promise<unknown>; stopVideo(): Promise<unknown>; isCapturingVideo(): boolean;
@@ -245,7 +322,10 @@ export type ZoomClient = {
   leave(): Promise<unknown>;
   getMediaStream(): ZoomStream;
   getWhiteboardClient(): ZoomWhiteboard;
-  getCurrentUserInfo(): { userId: number; audio?: string } | null;
+  // Present in Zoom's client; a stand-in without them simply has no chat or raised hands.
+  getChatClient?(): ZoomChat;
+  getCommandClient?(): ZoomCommand;
+  getCurrentUserInfo(): { userId: number; audio?: string; isHost?: boolean; displayName?: string } | null;
   getAllUser(): ZoomParticipant[];
   // Video SDK 2.6.0: SessionInfo.sessionId, Zoom's id for the session joined.
   getSessionInfo?(): { sessionId?: string } | null;
@@ -302,10 +382,23 @@ const ZOOM_IN_SESSION = new Set<ConnectionState>(["connecting", "connected", "re
 // Zoom's client is one shared instance per page until it is destroyed, so a room waits for the
 // previous room on this page to finish releasing it before taking it.
 let zoomReleased: Promise<void> = Promise.resolve();
+// ChatPrivilege.EveryonePublicly in @zoom/videosdk 2.6.0: no private messages between participants.
+const CHAT_PUBLIC_ONLY = 5;
+// How many chat ids a page remembers, so a line Zoom delivers twice is shown once.
+const CHAT_IDS_KEPT = 500;
+// Zoom answers a call that did not go through with { type, reason, errorCode } rather than throwing.
+const isZoomFailure = (answer: unknown) => !answer || (typeof answer === "object" && "errorCode" in answer && !("sender" in answer));
 
 export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
   readonly provider = "zoom-video-sdk" as const;
-  readonly capabilities: MediaCapabilities = { realMedia: true, screenShare: true, whiteboard: true, observable: true };
+  readonly capabilities: MediaCapabilities = { realMedia: true, screenShare: true, whiteboard: true, observable: true, chat: true, raiseHand: true };
+  // Chat and raised hands (2026-11-12): who this page is, the hands raised in this session (by
+  // Zoom user id), whether this page's own hand is up, and the chat ids already shown.
+  private role: MediaRole = "student";
+  private readonly hands = new Map<number, RaisedHand>();
+  private handUp = false;
+  private readonly chatIds = new Set<string>();
+  private ownLines = 0;
   private readonly listeners = new Set<(event: MediaEvent) => void>();
   private sdk: Promise<ZoomVideoSdk> | null = null;
   private client: ZoomClient | null = null;
@@ -395,6 +488,7 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     // The client of a session that failed or closed: released, never reused.
     if (this.client) await this.teardown();
     if (attempt !== this.attempt) return;
+    this.role = input.role;
     this.setConnection("connecting");
     let client: ZoomClient | null = null;
     const listening: ZoomHandler[] = [];
@@ -429,7 +523,19 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
         if (state === "connected" && !this.stream) return;
         if (state) this.setConnection(state);
       });
-      for (const name of ["user-added", "user-updated", "user-removed"]) listen(name, () => this.reportRemote());
+      // Someone new hears this page's raised hand again (Zoom keeps no hands of its own); someone who
+      // leaves takes theirs along.
+      listen("user-added", () => {
+        this.reportRemote();
+        if (this.handUp) void this.sendCommand(handCommand(true));
+      });
+      listen("user-updated", () => this.reportRemote());
+      listen("user-removed", (payload) => {
+        this.reportRemote();
+        this.dropHands(payload);
+      });
+      listen("chat-on-message", (payload) => this.receiveChat(payload as ZoomChatMessage));
+      listen("command-channel-message", (payload) => this.receiveCommand(payload as { senderId?: number; text?: string }));
       listen("peer-video-state-change", (payload) => void this.peerVideo(payload as { action?: string; userId?: number }));
       listen("active-share-change", (payload) => void this.remoteShare(payload as { state?: string; userId?: number }));
       // The browser's own "stop sharing" button.
@@ -469,6 +575,9 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
       // SDK without it (or an empty id) just says nothing.
       const sessionId = client.getSessionInfo?.()?.sessionId;
       if (typeof sessionId === "string" && sessionId) this.emit({ type: "session", sessionId, at: this.now() });
+      // The tutor's page (the session's host) lets everyone chat to everyone, but nobody privately.
+      // Not waited for: a chat setting never holds up the lesson.
+      if (input.role === "tutor") void Promise.resolve().then(() => zoom.getChatClient?.().setPrivilege(CHAT_PUBLIC_ONLY)).catch(() => undefined);
       this.reportRemote();
       const sharing = this.stream.getActiveShareUserId();
       if (sharing) await this.remoteShare({ state: "Active", userId: sharing });
@@ -522,6 +631,11 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     }
     this.setShare("none");
     this.setBoard("none");
+    // Hands belong to the session that ended (Zoom gives new user ids on joining again). Chat lines
+    // already on the page stay there; only the ids Zoom gave this session are forgotten.
+    this.handUp = false;
+    this.chatIds.clear();
+    this.clearHands();
   }
 
   // Our listeners off, out of the session, and (unless told not to) Zoom's shared client destroyed,
@@ -689,6 +803,125 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     await this.client?.getWhiteboardClient().exportWhiteboard("pdf", name);
   }
 
+  // In-class chat (2026-11-12): a line to everyone in the session. Zoom answers with the message it
+  // sent; that line shows here at once, and not again if Zoom also delivers it as received.
+  async sendChat(value: string) {
+    const chat = this.client?.getChatClient?.();
+    const text = chatTextOf(value);
+    if (!chat || !text || this.connection !== "connected") return false;
+    let sent: unknown;
+    try {
+      sent = await chat.sendToAll(text);
+    } catch {
+      return false;
+    }
+    if (isZoomFailure(sent)) return false;
+    const id = (sent as ZoomChatMessage).id;
+    const key = id ? `zoom-${id}` : `own-${++this.ownLines}`;
+    if (this.rememberChat(key)) this.emit({ type: "chat", line: { id: key, from: "self", name: "", text, at: this.now() }, at: this.now() });
+    return true;
+  }
+
+  // A student's own hand, to everyone in the session; the tutor (the host) has none to raise.
+  async setHand(up: boolean) {
+    const self = this.client?.getCurrentUserInfo();
+    if (this.role === "tutor" || !self || this.connection !== "connected") return false;
+    if (!(await this.sendCommand(handCommand(up)))) return false;
+    this.handUp = up;
+    this.setHandOf(self.userId, "", up, true);
+    return true;
+  }
+
+  // The tutor lowers a student's hand: every page in the session takes it down.
+  async lowerHand(id: string) {
+    const userId = Number(id);
+    if (this.role !== "tutor" || !Number.isSafeInteger(userId) || !this.hands.has(userId) || this.connection !== "connected") return false;
+    if (!(await this.sendCommand(handCommand(false, userId)))) return false;
+    this.setHandOf(userId, "", false, false);
+    return true;
+  }
+
+  private async sendCommand(text: string) {
+    const channel = this.client?.getCommandClient?.();
+    if (!channel) return false;
+    try {
+      return !isZoomFailure(await channel.send(text));
+    } catch {
+      return false;
+    }
+  }
+
+  // A line someone wrote (or this page's own, when Zoom delivers it back). Files are not part of this
+  // classroom, and a line with no text left is not shown.
+  private receiveChat(message: ZoomChatMessage) {
+    if (!message || typeof message !== "object" || message.file) return;
+    const text = chatTextOf(message.message);
+    const senderId = message.sender?.userId;
+    if (!text || typeof senderId !== "number") return;
+    const key = message.id ? `zoom-${message.id}` : `zoom-${senderId}-${message.timestamp ?? this.now()}`;
+    if (!this.rememberChat(key)) return;
+    const self = this.client?.getCurrentUserInfo()?.userId;
+    const from: ChatFrom = senderId === self ? "self" : this.isHost(senderId) ? "tutor" : "student";
+    this.emit({ type: "chat", line: { id: key, from, name: from === "self" ? "" : chatNameOf(message.sender?.name), text, at: this.now() }, at: this.now() });
+  }
+
+  // A hand raised or lowered by someone in the session. Lowering someone else's counts only from the
+  // host (the tutor); anything else on the channel is not ours and is ignored.
+  private receiveCommand(payload: { senderId?: number; text?: string }) {
+    const command = parseHandCommand(payload?.text);
+    const sender = payload?.senderId;
+    if (!command || typeof sender !== "number") return;
+    const self = this.client?.getCurrentUserInfo()?.userId;
+    if (command.for !== undefined) {
+      if (!this.isHost(sender)) return;
+      if (command.for === self) this.handUp = false;
+      this.setHandOf(command.for, "", false, command.for === self);
+      return;
+    }
+    if (sender === self) return;
+    this.setHandOf(sender, this.nameOf(sender), command.hand, false);
+  }
+
+  private setHandOf(userId: number, name: string, up: boolean, self: boolean) {
+    if (up) {
+      const known = this.hands.get(userId);
+      if (known && known.name === name && known.self === self) return;
+      this.hands.set(userId, { id: String(userId), name, self });
+    } else if (!this.hands.delete(userId)) {
+      return;
+    }
+    this.emit({ type: "hands", raised: [...this.hands.values()], at: this.now() });
+  }
+
+  private dropHands(payload: unknown) {
+    const gone = (Array.isArray(payload) ? payload : [payload]).map(user => (user as { userId?: unknown } | null)?.userId);
+    let changed = false;
+    for (const userId of gone) if (typeof userId === "number" && this.hands.delete(userId)) changed = true;
+    if (changed) this.emit({ type: "hands", raised: [...this.hands.values()], at: this.now() });
+  }
+
+  private clearHands() {
+    if (this.hands.size === 0) return;
+    this.hands.clear();
+    this.emit({ type: "hands", raised: [], at: this.now() });
+  }
+
+  private isHost(userId: number) {
+    return this.client?.getAllUser().find(user => user.userId === userId)?.isHost === true;
+  }
+
+  // Names in the room are participant codes (the join passes the code as the name), never students' names.
+  private nameOf(userId: number) {
+    return chatNameOf(this.client?.getAllUser().find(user => user.userId === userId)?.displayName);
+  }
+
+  private rememberChat(key: string) {
+    if (this.chatIds.has(key)) return false;
+    this.chatIds.add(key);
+    if (this.chatIds.size > CHAT_IDS_KEPT) this.chatIds.delete(this.chatIds.values().next().value as string);
+    return true;
+  }
+
   private loadOnce() {
     this.sdk ??= this.load();
     return this.sdk.catch((error: unknown) => { this.sdk = null; throw error; });
@@ -803,7 +1036,7 @@ export const LCIC_FRAME_PERMISSIONS = "camera; microphone; fullscreen; display-c
 
 export class LcicEmbedAdapter implements ClassroomMediaAdapter {
   readonly provider = "tencent-lcic" as const;
-  readonly capabilities: MediaCapabilities = { realMedia: true, screenShare: true, whiteboard: true, observable: false };
+  readonly capabilities: MediaCapabilities = { realMedia: true, screenShare: true, whiteboard: true, observable: false, chat: false, raiseHand: false };
   private readonly listeners = new Set<(event: MediaEvent) => void>();
   private container: HTMLElement | null = null;
   private frame: HTMLIFrameElement | null = null;

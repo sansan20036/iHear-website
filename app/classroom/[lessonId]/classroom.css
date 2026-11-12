@@ -82,3 +82,31 @@
 .classroom-lcic-frame { display: block; width: 100%; height: min(78vh, 760px); border: 0; border-radius: 12px; background: #f4f6fb; }
 .classroom-room-limits ul { margin: 8px 0 0; padding-left: 20px; }
 .classroom-room-limits li { margin: 4px 0; }
+/* 2026-11-12: icon controls, raised hands and in-class chat. Each control is an icon with a short word
+   under it; a microphone or camera that is off has a slash in the warning colour. Nothing is saved. */
+.classroom-room .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.classroom-room-iconbar { align-items: stretch; }
+.classroom-room-iconbutton { position: relative; flex-direction: column; gap: 4px; min-width: 84px; min-height: 64px; padding: 8px 12px; font-size: 13px; line-height: 1.25; text-align: center; }
+.classroom-room-icon { width: 24px; height: 24px; flex: none; }
+.classroom-room-icon-off { stroke: var(--room-bad); }
+.classroom-room-iconlabel { max-width: 12em; }
+.classroom-room-unread { position: absolute; top: 4px; right: 6px; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; background: var(--room-bad); color: #fff; font-size: 12px; line-height: 20px; font-weight: 800; }
+.classroom-room-hands { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0; padding: 10px 14px; border-radius: 12px; background: var(--room-note-bg); color: var(--room-note); font-weight: 700; }
+.classroom-room-hands .classroom-room-secondary { min-height: 40px; padding: 8px 14px; }
+.classroom-room-chat { gap: 10px; }
+.classroom-room-chat-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.classroom-room-chat-head .classroom-room-secondary { min-height: 40px; padding: 8px 14px; }
+.classroom-room-chat-lines { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; max-height: min(40vh, 320px); overflow-y: auto; }
+.classroom-room-chat-lines li { display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; padding: 8px 12px; border-radius: 12px; background: #f1f4f9; }
+.classroom-room-chat-lines li.from-self { background: #e6edfb; }
+.classroom-room-chat-lines li.classroom-room-chat-empty { display: block; background: none; padding: 4px 0; color: var(--room-muted); }
+.classroom-room-chat-lines li p { grid-column: 1 / -1; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.classroom-room-chat-who { font-weight: 700; }
+.classroom-room-chat-time { justify-self: end; color: var(--room-muted); font-size: 13px; }
+.classroom-room-chat-form { display: flex; gap: 8px; }
+.classroom-room-chat-form input { flex: 1 1 auto; min-width: 0; min-height: 48px; padding: 10px 12px; border: 1px solid #80839a; border-radius: 12px; font: inherit; color: var(--room-ink); background: var(--bg-surface, #fff); }
+@media (max-width: 600px) {
+  /* Phones: the icon buttons share a row instead of one button per line. */
+  .classroom-room-controls.classroom-room-iconbar > * { flex: 1 1 64px; min-width: 64px; }
+  .classroom-room-iconbutton { padding: 8px 6px; }
+}
