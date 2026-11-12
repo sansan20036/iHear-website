@@ -1,13 +1,22 @@
-.classroom-room { --room-ink: var(--text-main, #1A2B4C); --room-muted: #5d6877; --room-line: #e3e8ef; --room-accent: #1A2B4C; --room-bad: #a3261d; --room-bad-bg: #fbe4e1; --room-note-bg: #fdf1d8; --room-note: #8a5a00; --room-ok: #1f6b3a; --room-ok-bg: #e3f3e8;
-  box-sizing:border-box; max-width:880px; margin:0 auto; padding:24px 16px 48px; color:var(--room-ink); font-family:system-ui,-apple-system,"Segoe UI","PingFang TC","Microsoft JhengHei",sans-serif; display:grid; gap:16px; }
+/* The online classroom. Before entering: one card with the button. Inside (Classroom 2.0, 2026-11-12):
+   a top bar, the stage with what is being taught, a column of people, one side panel and one toolbar.
+   The site's own colours and fonts (public/assets/site.css) with fallbacks. */
+.classroom-room { --room-ink: var(--text-main, #1A2B4C); --room-muted: #5d6877; --room-line: #e3e8ef; --room-accent: var(--navy, #263974); --room-accent-deep: var(--navy-deep, #1B2A57);
+  --room-orange: var(--orange, #E8964F); --room-orange-soft: var(--orange-soft, #F7DFC8); --room-surface: var(--bg-surface, #fff); --room-page: var(--bg-page, #FAF7F2); --room-subtle: var(--bg-subtle, #F0EAE1);
+  --room-bad: #a3261d; --room-bad-bg: #fbe4e1; --room-note-bg: #fdf1d8; --room-note: #8a5a00; --room-ok: #1f6b3a; --room-ok-bg: #e3f3e8;
+  --room-stage: #14213f; --room-focus: #1264A3;
+  box-sizing:border-box; max-width:880px; margin:0 auto; padding:24px 16px 48px; color:var(--room-ink);
+  font-family:var(--font-b, system-ui), system-ui,-apple-system,"Segoe UI","PingFang TC","Microsoft JhengHei",sans-serif; display:grid; gap:16px; }
 .classroom-room *, .classroom-room *::before, .classroom-room *::after { box-sizing:inherit; }
-.classroom-room-head { display:flex; justify-content:space-between; align-items:center; gap:12px; }
-.classroom-room-head h1 { margin:0; font-size:24px; }
-.classroom-lang { border:1px solid var(--room-line); background:var(--bg-surface, #fff); color:var(--room-ink); border-radius:999px; padding:6px 14px; font:inherit; cursor:pointer; }
+/* The title stays on one line (2026-11-12: it broke as "iHear 線上教 / 室" on phones); the language
+   buttons move to the next line when there is no room beside it. */
+.classroom-room-head { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:12px; }
+.classroom-room-head h1 { margin:0; font-size:24px; white-space:nowrap; }
+.classroom-lang { border:1px solid var(--room-line); background:var(--room-surface); color:var(--room-ink); border-radius:999px; padding:6px 14px; font:inherit; cursor:pointer; }
 .classroom-langs { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; }
 .classroom-room-note { margin:0; background:var(--room-note-bg); color:var(--room-note); border-radius:12px; padding:10px 14px; font-weight:700; }
-.classroom-room-card { background:var(--bg-surface, #fff); border:1px solid var(--room-line); border-radius:16px; padding:16px; display:grid; gap:10px; }
-.classroom-room-card h2 { margin:0; font-size:18px; }
+.classroom-room-card { background:var(--room-surface); border:1px solid var(--room-line); border-radius:16px; padding:16px; display:grid; gap:10px; }
+.classroom-room-card h2, .classroom-room-card h3 { margin:0; font-size:18px; }
 .classroom-room-card p { margin:0; line-height:1.6; }
 .classroom-room-problem { margin:0; color:var(--room-bad); background:var(--room-bad-bg); border-radius:10px; padding:8px 12px; }
 .classroom-room-problem-row { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px; }
@@ -16,15 +25,16 @@
 .classroom-room-primary, .classroom-room-secondary, .classroom-room-control { font:inherit; font-weight:700; border-radius:12px; padding:12px 20px; min-height:48px; cursor:pointer; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; }
 .classroom-room-primary { background:var(--room-accent); color:#fff; border:1px solid var(--room-accent); }
 .classroom-room-primary:disabled { opacity:.6; cursor:progress; }
-.classroom-room-secondary { background:var(--bg-surface, #fff); color:var(--room-ink); border:1px solid var(--room-line); }
+.classroom-room-secondary { background:var(--room-surface); color:var(--room-ink); border:1px solid var(--room-line); }
 .classroom-room-facts { margin:0; display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
-.classroom-room-facts div { background:var(--bg-surface, #fff); border:1px solid var(--room-line); border-radius:12px; padding:10px 12px; }
+.classroom-room-facts div { background:var(--room-surface); border:1px solid var(--room-line); border-radius:12px; padding:10px 12px; }
 .classroom-room-facts dt { color:var(--room-muted); font-size:13px; }
 .classroom-room-facts dd { margin:2px 0 0; font-weight:700; overflow-wrap:anywhere; }
+.classroom-room .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
-/* Connection and recording, side by side above the stage. */
+/* Connection and recording in words, always in sight. */
 .classroom-room-statusbar { display:flex; flex-wrap:wrap; gap:8px; }
-.classroom-room-connection, .classroom-room-badge { display:inline-flex; align-items:center; gap:6px; border-radius:999px; padding:6px 12px; font-weight:700; font-size:14px; border:1px solid var(--room-line); background:var(--bg-surface, #fff); }
+.classroom-room-connection, .classroom-room-badge { display:inline-flex; align-items:center; gap:6px; border-radius:999px; padding:5px 11px; font-weight:700; font-size:13px; border:1px solid var(--room-line); background:var(--room-surface); white-space:nowrap; }
 .classroom-room-connection::before, .classroom-room-badge::before { content:""; width:8px; height:8px; border-radius:50%; background:var(--room-muted); }
 .classroom-room-connection.connected { color:var(--room-ok); background:var(--room-ok-bg); border-color:transparent; }
 .classroom-room-connection.connected::before { background:var(--room-ok); }
@@ -35,68 +45,26 @@
 .classroom-room-badge.starting, .classroom-room-badge.paused { color:var(--room-note); background:var(--room-note-bg); border-color:transparent; }
 .classroom-room-badge.starting::before, .classroom-room-badge.paused::before { background:var(--room-note); }
 
-/* The video stage: the other person large, you small. The synthetic room only shows states. */
-.classroom-room-stage { position:relative; display:grid; grid-template-columns:3fr 1fr; gap:10px; border-radius:16px; background:#1f2733; padding:10px; }
-.classroom-room-tile { border-radius:12px; background:#2c3646; color:#d9e0ea; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; padding:16px; text-align:center; min-width:0; }
-.classroom-room-tile.remote { aspect-ratio:16/9; }
-.classroom-room-tile.self { align-self:end; aspect-ratio:4/3; font-size:14px; }
-.classroom-room-tile p { margin:0; line-height:1.5; overflow-wrap:anywhere; }
-.classroom-room-tile-name { font-weight:800; color:#fff; }
-.classroom-room-tile-sub { color:#a9b4c3; font-size:13px; }
-.classroom-room-stage-note { grid-column:1 / -1; margin:0; color:#a9b4c3; font-size:13px; text-align:center; }
-
-.classroom-room-controls { display:flex; flex-wrap:wrap; gap:10px; }
-.classroom-room-control { background:var(--bg-surface, #fff); color:var(--room-ink); border:1px solid var(--room-line); }
+.classroom-room-control { background:var(--room-surface); color:var(--room-ink); border:1px solid var(--room-line); }
 .classroom-room-control[aria-pressed="true"] { background:var(--room-accent); color:#fff; border-color:var(--room-accent); }
 .classroom-room-control:disabled { opacity:.5; cursor:not-allowed; }
-
 .classroom-room-recording { font-size:18px; font-weight:800; }
 .classroom-room-recording span { font-size:14px; font-weight:400; color:var(--room-muted); }
 .classroom-room-recording.RECORDING { color:var(--room-bad); }
-
 .classroom-room-simulator summary { cursor:pointer; font-weight:700; }
 .classroom-room-simulator-buttons { display:flex; flex-wrap:wrap; gap:8px; }
 .classroom-room-simulator-buttons .classroom-room-secondary { min-height:40px; padding:8px 14px; font-size:14px; }
-
-@media (max-width:600px) {
-  .classroom-room-facts { grid-template-columns:1fr; }
-  .classroom-room-stage { grid-template-columns:1fr; }
-  .classroom-room-tile.remote { aspect-ratio:4/3; }
-  .classroom-room-tile.self { aspect-ratio:auto; align-self:stretch; }
-  .classroom-room-actions > *, .classroom-room-controls > * { flex:1 1 100%; }
-}
-/* Vendor parts (2026-10-30): Zoom's video tiles, or Tencent's LCIC classroom in an iframe. */
-.classroom-vendor-stage { display: grid; gap: 8px; margin: 12px 0; }
-.classroom-vendor-stage:empty { display: none; }
-.classroom-vendor-stage video, .classroom-vendor-stage video-player { width: 100%; border-radius: 12px; background: #111; }
-/* Zoom: the shared screen and the whiteboard above the two video tiles (side by side on a computer). */
-.classroom-vendor-stage video-player-container { display: grid; gap: 8px; width: 100%; }
-.classroom-zoom-videos { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
-.classroom-zoom-videos video-player { aspect-ratio: 16 / 9; height: auto; }
-.classroom-zoom-share video-player { aspect-ratio: 16 / 9; height: auto; background: #0b1630; }
-.classroom-zoom-whiteboard { width: 100%; height: min(70vh, 640px); border-radius: 12px; overflow: hidden; background: #fff; border: 1px solid #d8deea; }
-.classroom-zoom-own-share video, .classroom-zoom-own-share canvas { width: min(320px, 100%); border-radius: 8px; opacity: .85; }
-.classroom-vendor-stage [hidden] { display: none !important; }
-.classroom-room-tools { display: grid; gap: 8px; margin: 0 0 12px; }
-.classroom-vendor-stage.tencent-lcic { display: block; }
-.classroom-lcic-frame { display: block; width: 100%; height: min(78vh, 760px); border: 0; border-radius: 12px; background: #f4f6fb; }
 .classroom-room-limits ul { margin: 8px 0 0; padding-left: 20px; }
 .classroom-room-limits li { margin: 4px 0; }
-/* 2026-11-12: icon controls, raised hands and in-class chat. Each control is an icon with a short word
-   under it; a microphone or camera that is off has a slash in the warning colour. Nothing is saved. */
-.classroom-room .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
-.classroom-room-iconbar { align-items: stretch; }
-.classroom-room-iconbutton { position: relative; flex-direction: column; gap: 4px; min-width: 84px; min-height: 64px; padding: 8px 12px; font-size: 13px; line-height: 1.25; text-align: center; }
+.classroom-room-tools { display: grid; gap: 8px; }
 .classroom-room-icon { width: 24px; height: 24px; flex: none; }
 .classroom-room-icon-off { stroke: var(--room-bad); }
+.classroom-room-iconbutton { position: relative; flex-direction: column; gap: 4px; line-height: 1.25; text-align: center; }
 .classroom-room-iconlabel { max-width: 12em; }
-.classroom-room-unread { position: absolute; top: 4px; right: 6px; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; background: var(--room-bad); color: #fff; font-size: 12px; line-height: 20px; font-weight: 800; }
+.classroom-room-unread { position: absolute; top: 2px; right: 8px; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; background: var(--room-bad); color: #fff; font-size: 12px; line-height: 20px; font-weight: 800; }
 .classroom-room-hands { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0; padding: 10px 14px; border-radius: 12px; background: var(--room-note-bg); color: var(--room-note); font-weight: 700; }
 .classroom-room-hands .classroom-room-secondary { min-height: 40px; padding: 8px 14px; }
-.classroom-room-chat { gap: 10px; }
-.classroom-room-chat-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-.classroom-room-chat-head .classroom-room-secondary { min-height: 40px; padding: 8px 14px; }
-.classroom-room-chat-lines { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; max-height: min(40vh, 320px); overflow-y: auto; }
+.classroom-room-chat-lines { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; align-content: start; overflow-y: auto; }
 .classroom-room-chat-lines li { display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; padding: 8px 12px; border-radius: 12px; background: #f1f4f9; }
 .classroom-room-chat-lines li.from-self { background: #e6edfb; }
 .classroom-room-chat-lines li.classroom-room-chat-empty { display: block; background: none; padding: 4px 0; color: var(--room-muted); }
@@ -104,9 +72,283 @@
 .classroom-room-chat-who { font-weight: 700; }
 .classroom-room-chat-time { justify-self: end; color: var(--room-muted); font-size: 13px; }
 .classroom-room-chat-form { display: flex; gap: 8px; }
-.classroom-room-chat-form input { flex: 1 1 auto; min-width: 0; min-height: 48px; padding: 10px 12px; border: 1px solid #80839a; border-radius: 12px; font: inherit; color: var(--room-ink); background: var(--bg-surface, #fff); }
+.classroom-room-chat-form .classroom-room-primary { flex: none; white-space: nowrap; padding: 10px 16px; }
+.classroom-room-chat-form input { flex: 1 1 auto; min-width: 0; min-height: 48px; padding: 10px 12px; border: 1px solid #80839a; border-radius: 12px; font: inherit; color: var(--room-ink); background: var(--room-surface); }
+.classroom-vendor-stage [hidden] { display: none !important; }
+
+/* ---------- Classroom 2.0: the frame ---------- */
+.classroom-room.room2 { max-width: none; padding: 0; display: block; background: var(--room-page); }
+.room2-shell { height: 100vh; height: 100dvh; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr) auto; grid-template-areas: "top" "alerts" "main" "bar"; padding: 10px 18px 0; }
+.room2 :focus-visible { outline: 3px solid var(--room-focus); outline-offset: 2px; }
+.room2-stage :focus-visible, .room2-videos :focus-visible { outline-color: #ffd28a; }
+
+/* The top bar: the room, the lesson, the states in words, the languages. */
+.room2-top { grid-area: top; display: flex; flex-wrap: wrap; align-items: center; align-content: flex-start; gap: 8px 14px; min-width: 0; }
+.room2-brand { display: flex; align-items: center; gap: 10px; flex: none; min-width: 0; }
+.room2-mark { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 12px; background: var(--room-orange-soft); color: var(--room-accent); flex: none; }
+.room2-mark .classroom-room-icon { width: 22px; height: 22px; }
+.room2-top h1 { margin: 0; font-family: var(--font-h, inherit); font-size: 20px; line-height: 1.1; color: var(--room-accent); white-space: nowrap; }
+.room2-lesson { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; padding-left: 14px; border-left: 1.5px solid var(--room-line); }
+.room2-chip { display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; border-radius: 999px; background: var(--room-surface); border: 1px solid var(--room-line); font-size: 13px; font-weight: 700; white-space: nowrap; color: var(--room-ink); }
+.room2-chip-room { color: var(--room-accent); }
+.room2-status { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-left: auto; }
+.room2-hands-chip { font: inherit; font-size: 13px; font-weight: 800; color: var(--room-note); background: var(--room-note-bg); border-color: transparent; cursor: pointer; }
+.room2-hands-chip .classroom-room-icon { width: 16px; height: 16px; }
+.room2-top .classroom-lang { padding: 5px 12px; font-size: 13px; }
+.room2-top-leave { display: none; }
+
+.room2-alerts { grid-area: alerts; display: grid; gap: 6px; margin-top: 8px; }
+.room2-alerts:empty { display: none; }
+.room2-alerts .classroom-room-note, .room2-alerts .classroom-room-problem { padding: 7px 12px; font-size: 14px; }
+.room2-alerts .classroom-room-note p { margin: 0 0 6px; }
+.room2-alerts .classroom-room-secondary { min-height: 38px; padding: 6px 14px; margin-right: 6px; }
+
+/* The main area. Nothing the video service drew moves between places: a layout is styling only. */
+.room2-main { grid-area: main; position: relative; min-height: 0; margin-top: 10px; display: grid; gap: 14px; align-content: start;
+  grid-template-columns: minmax(0, 1fr) clamp(280px, 26vw, 380px); grid-template-rows: minmax(0, 1fr); grid-template-areas: "main side"; }
+.room2-stage { grid-area: main; }
+.room2-videos, .room2-panel { grid-area: side; }
+/* Nobody shares: the people fill the stage; the stage stays laid out (hidden) so that a share or a
+   whiteboard starting in it gets its real size at once. */
+.room2[data-mode="people"] .room2-videos { grid-area: main; }
+.room2[data-mode="people"] .room2-stage { visibility: hidden; }
+.room2:is([data-mode="people"], [data-mode="embed"])[data-panel="none"] .room2-main { grid-template-columns: minmax(0, 1fr); grid-template-areas: "main"; }
+/* Something is shown and a panel is open: a row of people above the panel. */
+.room2:is([data-mode="share"], [data-mode="board"]):not([data-panel="none"]) .room2-main { grid-template-rows: auto minmax(0, 1fr); grid-template-areas: "main videos" "main panel"; }
+.room2:is([data-mode="share"], [data-mode="board"]):not([data-panel="none"]) .room2-videos { grid-area: videos; }
+.room2:is([data-mode="share"], [data-mode="board"]):not([data-panel="none"]) .room2-panel { grid-area: panel; }
+/* Focus mode: the content alone; the people small in its corner; notices stay. */
+.room2[data-focus="on"] .room2-main { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); grid-template-areas: "main"; }
+.room2[data-focus="on"] .room2-panel { display: none; }
+.room2[data-focus="on"]:not([data-mode="people"]) .room2-videos { grid-area: main; align-self: end; justify-self: end; width: min(320px, 42%); max-height: 46%; margin: 0 14px 14px 0; z-index: 3; }
+
+/* The stage: what is being taught, on a dark ground. */
+.room2-stage { position: relative; min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); padding: 12px; border-radius: 20px; color: #e8ecf6;
+  background: radial-gradient(120% 90% at 50% 0%, #22346a 0%, var(--room-stage) 62%); }
+.room2-stage-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 38px; margin-bottom: 10px; }
+.room2-stage-label { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; background: rgba(255, 255, 255, .95); color: var(--room-accent); font-size: 13px; font-weight: 800; }
+.room2-stage-label::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--room-orange); }
+.room2-stage-tools { display: flex; gap: 6px; }
+.room2-stage-tool { display: inline-flex; align-items: center; gap: 6px; min-height: 38px; padding: 6px 12px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, .28); background: rgba(255, 255, 255, .08); color: #fff; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
+.room2-stage-tool .classroom-room-icon { width: 18px; height: 18px; }
+.room2-stage-tool[aria-pressed="true"] { background: var(--room-orange); color: var(--room-accent-deep); border-color: transparent; }
+.room2 .classroom-vendor-stage { min-height: 0; display: grid; place-items: center; }
+.room2 .classroom-vendor-stage:empty { display: none; }
+.room2 .classroom-zoom-share { width: 100%; height: 100%; display: grid; place-items: center; }
+.room2 .classroom-zoom-share video-player { width: 100%; height: 100%; display: block; background: #0b1630; border-radius: 12px; }
+.room2 .classroom-zoom-whiteboard { width: 100%; height: 100%; min-height: 0; border-radius: 12px; overflow: hidden; background: #fff; }
+.room2 .classroom-zoom-own-share { display: grid; place-items: center; gap: 8px; }
+.room2 .classroom-zoom-own-share video, .room2 .classroom-zoom-own-share canvas { width: min(420px, 100%); border-radius: 10px; opacity: .9; }
+.room2 .classroom-lcic-frame { display: block; width: 100%; height: 100%; min-height: 60vh; border: 0; border-radius: 12px; background: #f4f6fb; }
+.room2-simulated { margin: 0; align-self: stretch; display: grid; place-items: center; padding: 24px; border-radius: 14px; border: 2px dashed var(--room-orange); background: #fffaf3; color: var(--room-accent); font-weight: 800; text-align: center; line-height: 1.6; }
+
+/* The people: one tile each, drawn by the video adapter; the page writes into them. */
+/* The site's stylesheet pads every <section> 84px (60px when narrow); the people's area sets its own. */
+.room2-videos { position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column; padding: 0; }
+.room2[data-mode="people"] .room2-videos { container-type: size; border-radius: 20px; background: radial-gradient(120% 90% at 50% 0%, #22346a 0%, var(--room-stage) 62%); padding: 12px; }
+.room2-strip { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; border-radius: 14px; }
+.room2-videos-host > * { display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr); grid-auto-rows: max-content; align-content: start; }
+.room2:not([data-mode="people"]) .room2-videos-host > :has(> .classroom-media-tile:nth-child(4)) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.room2[data-mode="people"] .room2-videos-host > * { min-height: 100cqh; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); align-content: center; }
+.room2[data-mode="people"]:is([data-count="1"], [data-count="2"]) .room2-videos-host > * { grid-template-columns: minmax(0, 1fr); justify-items: center; }
+.room2[data-mode="people"][data-count="1"] .classroom-media-tile, .room2[data-mode="people"][data-count="2"] .classroom-media-tile.remote { width: min(100%, calc((100cqh - 24px) * 16 / 9)); }
+.room2[data-mode="people"][data-count="2"] .classroom-media-tile.self { position: absolute; right: 22px; bottom: 22px; width: clamp(150px, 22%, 280px); z-index: 2; border: 2px solid rgba(255, 255, 255, .85); box-shadow: 0 12px 30px rgba(0, 0, 0, .35); }
+.room2[data-mode="people"][data-spot="on"] .room2-videos-host > * { grid-template-columns: repeat(auto-fill, minmax(min(100%, 180px), 1fr)); align-content: start; }
+.room2[data-mode="people"][data-spot="on"] .classroom-media-tile[data-spotlight] { grid-column: 1 / -1; width: min(100%, calc((100cqh - 150px) * 16 / 9)); justify-self: center; }
+.room2:not([data-mode="people"]) .classroom-media-tile[data-spotlight] { grid-column: 1 / -1; }
+/* Share or whiteboard with a panel open: the people in one row that scrolls sideways. */
+.room2:is([data-mode="share"], [data-mode="board"]):not([data-panel="none"]) .room2-videos-host > * { grid-auto-flow: column; grid-template-columns: none; grid-auto-columns: 164px; }
+.room2[data-focus="on"]:not([data-mode="people"]) .room2-videos-host > * { grid-auto-flow: column; grid-template-columns: none; grid-auto-columns: 150px; }
+
+.classroom-media-tile { position: relative; container-type: inline-size; aspect-ratio: 16 / 9; border-radius: 14px; overflow: hidden; background: linear-gradient(140deg, #34508f, #1d2c55); }
+.classroom-media-tile.self { background: linear-gradient(140deg, #3f8c8c, #24566a); order: 5; }
+.classroom-media-tile[data-host="true"]:not(.self) { order: -2; }
+.classroom-media-tile[data-spotlight] { order: -5; }
+.classroom-media-tile[data-speaking] { box-shadow: 0 0 0 3px var(--room-orange), 0 0 18px rgba(232, 150, 79, .45); }
+.classroom-media-tile[data-hand] { box-shadow: 0 0 0 3px #ffd28a; }
+.classroom-media-tile video-player { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+.classroom-media-tile:is([data-video="off"], [data-video="waiting"]) video-player { opacity: 0; }
+.room2-tile { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 10px 10px 46px; color: #fff; text-align: center; pointer-events: none; }
+.room2-avatar { width: clamp(34px, 22cqi, 76px); aspect-ratio: 1; flex: none; display: grid; place-items: center; border-radius: 50%; background: rgba(255, 255, 255, .16); border: 2px solid rgba(255, 255, 255, .5); font-size: clamp(11px, 7cqi, 24px); font-weight: 800; }
+.room2-tile-states p { margin: 0; font-size: clamp(11px, 4.6cqi, 14px); line-height: 1.35; }
+.classroom-room-tile-sub { color: #c9d3e6; }
+.room2-tile-wait { margin: 0; font-size: 12px; color: #c9d3e6; }
+.room2-tile-foot { position: absolute; left: 8px; bottom: 8px; right: 52px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.room2-tile-name { max-width: 100%; padding: 4px 10px; border-radius: 999px; background: rgba(10, 18, 40, .74); font-size: 12.5px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.room2-tile-icon { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: rgba(10, 18, 40, .74); }
+.room2-tile-icon .classroom-room-icon { width: 16px; height: 16px; }
+.room2-tile-icon .classroom-room-icon-off { stroke: #ff9a8f; }
+.room2-tile-hand { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border-radius: 999px; background: var(--room-orange); color: var(--room-accent-deep); font-size: 12px; font-weight: 800; }
+.room2-tile-hand .classroom-room-icon { width: 15px; height: 15px; }
+.room2-spot { position: absolute; right: 8px; bottom: 8px; width: 36px; height: 36px; display: grid; place-items: center; border: 0; border-radius: 10px; background: rgba(10, 18, 40, .62); color: #fff; cursor: pointer; pointer-events: auto; opacity: 0; transition: opacity .15s; }
+.room2-spot .classroom-room-icon { width: 18px; height: 18px; }
+.classroom-media-tile:hover .room2-spot, .room2-spot:focus-visible, .room2-spot[aria-pressed="true"] { opacity: 1; }
+@media (hover: none) { .room2-spot { opacity: .9; } }
+@container (max-width: 219px) {
+  .room2-tile { gap: 4px; padding: 6px 6px 30px; }
+  .room2-avatar { width: clamp(26px, 24cqi, 46px); font-size: clamp(10px, 8cqi, 15px); }
+  .room2-tile-states, .room2-tile-wait { display: none; }
+  .room2-tile-foot { left: 5px; right: 5px; bottom: 5px; gap: 4px; flex-wrap: nowrap; }
+  .room2-tile-name { font-size: 11px; padding: 3px 7px; }
+  .room2-tile-role:not(.is-key) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .room2-tile-icon { width: 22px; height: 22px; flex: none; }
+  .room2-tile-hand { font-size: 0; gap: 0; padding: 3px 6px; flex: none; }
+  .room2-spot { top: 5px; bottom: auto; right: 5px; width: 28px; height: 28px; }
+}
+.room2-waiting { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 3; width: max-content; max-width: calc(100% - 28px); margin: 0; padding: 8px 14px; border-radius: 12px; background: rgba(255, 255, 255, .94); color: var(--room-ink); font-size: 14px; font-weight: 700; text-align: center; }
+.room2-videos .classroom-room-stage-note { position: absolute; top: 18px; left: 18px; z-index: 3; margin: 0; padding: 3px 10px; border-radius: 999px; background: rgba(10, 18, 40, .6); color: #dfe6f3; font-size: 12px; }
+.room2:not([data-mode="people"]) .room2-videos .classroom-room-stage-note { position: static; justify-self: start; margin-top: 6px; background: transparent; color: var(--room-muted); padding: 0; }
+.room2-more-chip { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); z-index: 4; min-height: 38px; padding: 6px 14px; border: 0; border-radius: 999px; background: var(--room-accent); color: #fff; font: inherit; font-size: 13px; font-weight: 800; box-shadow: 0 6px 18px rgba(0, 0, 0, .25); cursor: pointer; }
+
+/* A raised hand, told for a few seconds on top of the stage; the counts keep it afterwards. */
+.room2-notices { position: absolute; top: 58px; left: 50%; transform: translateX(-50%); z-index: 6; display: grid; gap: 8px; width: min(560px, calc(100% - 24px)); pointer-events: none; }
+.room2-notice { pointer-events: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 10px 12px; border-radius: 14px; border-left: 6px solid var(--room-orange); background: var(--room-surface); color: var(--room-ink); box-shadow: 0 12px 34px rgba(27, 42, 87, .22); font-weight: 800; animation: room2-in .2s ease-out; }
+.room2-notice > .classroom-room-icon { color: #b65f12; }
+.room2-notice > span { flex: 1 1 auto; }
+.room2-notice .classroom-room-secondary { min-height: 38px; padding: 6px 12px; font-size: 14px; }
+@keyframes room2-in { from { opacity: 0; transform: translateY(-6px); } }
+
+/* The side panel: chat, the participants, the lesson's details. */
+.room2-panel { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); border: 1px solid var(--room-line); border-radius: 18px; background: var(--room-surface); box-shadow: 0 10px 30px rgba(27, 42, 87, .08); overflow: hidden; }
+.room2-panel[hidden], .room2-tabpanel[hidden] { display: none !important; }
+.room2-panel-head { display: flex; align-items: center; gap: 6px; padding: 8px; border-bottom: 1px solid var(--room-line); }
+.room2-tabs { flex: 1 1 auto; min-width: 0; display: flex; gap: 4px; padding: 4px; border-radius: 12px; background: var(--room-subtle); }
+.room2-tabs [role="tab"] { flex: 1 1 0; min-width: 0; min-height: 38px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 6px 8px; border: 0; border-radius: 9px; background: transparent; color: var(--room-muted); font: inherit; font-size: 14px; font-weight: 800; white-space: nowrap; cursor: pointer; }
+.room2-tabs [role="tab"][aria-selected="true"] { background: var(--room-surface); color: var(--room-accent); box-shadow: 0 1px 4px rgba(0, 0, 0, .08); }
+.room2-tab-count { min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; background: var(--room-orange); color: var(--room-accent-deep); font-size: 12px; line-height: 20px; }
+.room2-panel-close { flex: none; width: 42px; height: 42px; display: grid; place-items: center; border: 0; border-radius: 10px; background: transparent; color: var(--room-ink); cursor: pointer; }
+.room2-panel-close:hover { background: var(--room-subtle); }
+.room2-tabpanel { min-height: 0; overflow: auto; display: grid; gap: 10px; align-content: start; padding: 12px 14px; }
+.room2-tabpanel.classroom-room-chat { overflow: hidden; grid-template-rows: auto minmax(0, 1fr) auto auto; align-content: stretch; }
+.room2-people { list-style: none; margin: 0; padding: 0; display: grid; }
+.room2-people li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 9px 2px; border-bottom: 1px solid var(--room-line); }
+.room2-avatar-sm { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 50%; background: #3f8c8c; color: #fff; font-size: 12px; font-weight: 800; }
+.room2-people li[data-host="true"] .room2-avatar-sm { background: var(--room-accent); }
+.room2-person-name { font-weight: 700; overflow-wrap: anywhere; }
+.room2-person-state { display: inline-flex; align-items: center; gap: 6px; }
+.room2-state-icon { display: inline-grid; }
+.room2-state-icon .classroom-room-icon { width: 20px; height: 20px; color: var(--room-muted); }
+.room2-hand-tag { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 999px; background: var(--room-note-bg); color: var(--room-note); font-size: 12px; font-weight: 800; }
+.room2-hand-tag .classroom-room-icon { width: 16px; height: 16px; }
+.room2-info .classroom-room-facts { grid-template-columns: minmax(0, 1fr); }
+.room2-info .classroom-room-card { padding: 12px 14px; }
+.room2-info h3 { font-size: 16px; }
+
+/* The toolbar: one row of groups, always in sight at the bottom. */
+.room2-bar { grid-area: bar; position: sticky; bottom: 0; z-index: 8; width: fit-content; max-width: 100%; margin: 10px auto; display: flex; flex-wrap: nowrap; align-items: stretch; justify-content: center; gap: 6px; padding: 6px; border: 1px solid var(--room-line); border-radius: 20px; background: var(--room-surface); box-shadow: 0 12px 34px rgba(27, 42, 87, .14); }
+.room2-group { display: flex; align-items: stretch; gap: 4px; }
+.room2-group + .room2-group { padding-left: 6px; border-left: 1px solid var(--room-line); }
+.room2-more { position: relative; display: flex; }
+.room2-tool { min-width: 72px; min-height: 60px; padding: 6px 10px; border: 1px solid transparent; border-radius: 14px; background: transparent; color: var(--room-ink); font-size: 12px; font-weight: 800; }
+.room2-tool:hover:not(:disabled) { background: var(--room-subtle); }
+.room2-tool[aria-pressed="true"], .room2-tool[aria-expanded="true"] { background: var(--room-accent); color: #fff; border-color: var(--room-accent); }
+.room2-tool.is-hand[aria-pressed="true"] { background: var(--room-orange); color: var(--room-accent-deep); border-color: var(--room-orange); }
+.room2-tool[aria-pressed="true"] .classroom-room-icon-off { stroke: #ffb4aa; }
+.room2-tool.room2-leave { background: var(--room-bad); color: #fff; border-color: var(--room-bad); }
+.room2-tool.room2-leave:hover { background: #8a1f17; }
+.room2-hands-badge { background: var(--room-orange); color: var(--room-accent-deep); }
+.room2-tool[data-tip]::after { content: attr(data-tip) / ""; position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%); z-index: 10; padding: 5px 9px; border-radius: 8px; background: var(--room-accent-deep); color: #fff; font-size: 12px; font-weight: 700; white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity .12s; }
+.room2-tool:hover::after, .room2-tool:focus-visible::after { opacity: 1; }
+.room2-tool[aria-expanded="true"]::after { display: none; }
+.room2-menu { position: absolute; right: 0; bottom: calc(100% + 10px); z-index: 12; min-width: 230px; display: grid; gap: 2px; padding: 6px; border: 1px solid var(--room-line); border-radius: 14px; background: var(--room-surface); box-shadow: 0 18px 44px rgba(27, 42, 87, .22); }
+.room2-menu [role^="menuitem"] { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 8px 12px; border: 0; border-radius: 10px; background: transparent; color: var(--room-ink); font: inherit; font-weight: 700; text-align: left; cursor: pointer; white-space: nowrap; }
+.room2-menu [role^="menuitem"] .classroom-room-icon { width: 20px; height: 20px; }
+.room2-menu [role^="menuitem"]:hover:not(:disabled), .room2-menu [role^="menuitem"]:focus-visible { background: var(--room-subtle); }
+.room2-menu [aria-checked="true"] { color: var(--room-accent); }
+.room2-menu [role^="menuitem"]:disabled { opacity: .5; cursor: not-allowed; }
+
+/* The test classroom's simulation controls, below the room. */
+.room2 > .classroom-room-simulator { margin: 16px 18px 24px; }
+
+/* ---------- Tablets and narrow windows: the stage on top, the people in a row ---------- */
+@media (max-width: 1023px) {
+  .room2-shell { height: auto; min-height: 100vh; min-height: 100dvh; padding: 10px 14px calc(92px + env(safe-area-inset-bottom)); grid-template-rows: auto auto auto 1fr; }
+  .room2-main, .room2:is([data-mode="people"], [data-mode="embed"])[data-panel="none"] .room2-main, .room2:is([data-mode="share"], [data-mode="board"]):not([data-panel="none"]) .room2-main, .room2[data-focus="on"] .room2-main {
+    grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto; grid-template-areas: "main" "videos" "panel"; }
+  .room2 .room2-videos, .room2:is([data-mode="share"], [data-mode="board"]):not([data-panel="none"]) .room2-videos { grid-area: videos; }
+  .room2[data-mode="people"] .room2-videos, .room2[data-focus="on"]:not([data-mode="people"]) .room2-videos { grid-area: main; }
+  .room2 .room2-panel, .room2:is([data-mode="share"], [data-mode="board"]):not([data-panel="none"]) .room2-panel { position: fixed; left: 0; right: 0; bottom: calc(82px + env(safe-area-inset-bottom)); z-index: 7;
+    height: max(260px, min(520px, calc(100dvh - 82px - 150px - (100vw - 28px) * .5625))); border-radius: 22px 22px 0 0; box-shadow: 0 -14px 40px rgba(27, 42, 87, .2); }
+  .room2-bar { position: fixed; left: 0; right: 0; bottom: 0; width: auto; margin: 0; padding: 8px 12px calc(8px + env(safe-area-inset-bottom)); border-radius: 20px 20px 0 0; border-width: 1px 0 0; }
+  .room2-menu { position: fixed; right: 12px; left: auto; bottom: calc(92px + env(safe-area-inset-bottom)); }
+  .room2 > .classroom-room-simulator { margin-bottom: calc(100px + env(safe-area-inset-bottom)); }
+  .room2-stage { grid-template-rows: auto auto; }
+  .room2 .classroom-vendor-stage > :not([hidden]), .room2-simulated { width: 100%; aspect-ratio: 16 / 9; height: auto; }
+  .room2 .classroom-lcic-frame { min-height: 70vh; }
+  .room2[data-mode="people"] .room2-videos { container-type: inline-size; }
+  .room2[data-mode="people"] .room2-videos-host > * { min-height: 0; grid-template-columns: repeat(auto-fill, minmax(min(100%, 200px), 1fr)); }
+  .room2[data-mode="people"]:is([data-count="1"], [data-count="2"]) .room2-videos-host > * { grid-template-columns: minmax(0, 1fr); }
+  .room2[data-mode="people"][data-count="1"] .classroom-media-tile, .room2[data-mode="people"][data-count="2"] .classroom-media-tile.remote { width: 100%; }
+  .room2[data-mode="people"][data-count="2"] .classroom-media-tile.self { right: 20px; bottom: 20px; width: clamp(120px, 28%, 220px); }
+  .room2[data-mode="people"][data-spot="on"] .classroom-media-tile[data-spotlight] { width: 100%; }
+  /* The people in one row that scrolls sideways: as many as fit, the rest a swipe away ("N more"). */
+  .room2:not([data-mode="people"]) .room2-videos-host > *, .room2:not([data-mode="people"]) .room2-videos-host > :has(> .classroom-media-tile:nth-child(4)) { grid-auto-flow: column; grid-template-columns: none; grid-auto-columns: clamp(150px, 26vw, 220px); }
+  .room2[data-focus="on"]:not([data-mode="people"]) .room2-videos { position: static; width: auto; max-height: none; margin: 0; }
+  .room2-notices { top: 54px; }
+}
+
+/* ---------- Phones: the material first, a row of people, a sheet for the panel, a fixed toolbar ---------- */
 @media (max-width: 600px) {
-  /* Phones: the icon buttons share a row instead of one button per line. */
-  .classroom-room-controls.classroom-room-iconbar > * { flex: 1 1 64px; min-width: 64px; }
-  .classroom-room-iconbutton { padding: 8px 6px; }
+  .room2-shell { padding: 8px 10px calc(86px + env(safe-area-inset-bottom)); }
+  .room2-top { gap: 6px 8px; }
+  .room2-top::after { content: ""; order: 2; flex-basis: 100%; }
+  .room2-brand { order: 0; }
+  .room2-mark { width: 32px; height: 32px; border-radius: 10px; }
+  .room2-top h1 { font-size: 18px; }
+  .room2-top-leave { order: 1; margin-left: auto; display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 12px; border: 0; border-radius: 999px; background: var(--room-bad); color: #fff; font: inherit; font-size: 13px; font-weight: 800; cursor: pointer; }
+  .room2-top-leave .classroom-room-icon { width: 18px; height: 18px; }
+  .room2-status { order: 3; margin-left: 0; }
+  .room2-lesson { order: 4; padding-left: 0; border-left: 0; }
+  .room2-chip-lesson { display: none; }
+  .room2-top .classroom-langs { order: 5; margin-left: auto; gap: 6px; }
+  .room2-top .classroom-lang { padding: 4px 10px; font-size: 12.5px; }
+  .classroom-room-connection, .classroom-room-badge { padding: 4px 9px; font-size: 12.5px; }
+  .room2-alerts .classroom-room-note, .room2-alerts .classroom-room-problem { font-size: 13px; }
+  .room2-main { gap: 10px; }
+  .room2-stage { padding: 8px; border-radius: 16px; }
+  .room2-stage-bar { margin-bottom: 8px; min-height: 34px; }
+  .room2-stage-label { font-size: 12px; padding: 5px 10px; }
+  .room2-stage-tool { min-height: 36px; padding: 6px 9px; }
+  .room2-stage-tool > span { display: none; }
+  .room2[data-mode="people"] .room2-videos { padding: 8px; border-radius: 16px; }
+  .room2[data-mode="people"]:not([data-count="1"]):not([data-count="2"]) .room2-videos-host > * { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .room2[data-mode="people"][data-count="2"] .classroom-media-tile.remote { aspect-ratio: 4 / 3; }
+  .room2[data-mode="people"][data-count="2"] .classroom-media-tile.self { right: 16px; bottom: 16px; width: 32%; aspect-ratio: 3 / 4; }
+  .room2:not([data-mode="people"]) .room2-videos-host > *, .room2:not([data-mode="people"]) .room2-videos-host > :has(> .classroom-media-tile:nth-child(4)) { grid-auto-columns: clamp(104px, 30vw, 150px); gap: 8px; }
+  .room2:not([data-mode="people"]) .classroom-media-tile { aspect-ratio: 4 / 3; border-radius: 12px; }
+  .room2-tile { padding: 6px 6px 34px; }
+  .room2-tile-foot { left: 5px; bottom: 5px; right: 40px; gap: 4px; }
+  .room2-tile-name { font-size: 11px; padding: 3px 7px; }
+  .room2-spot { width: 30px; height: 30px; right: 5px; bottom: 5px; }
+  .room2-notices { position: fixed; top: 8px; z-index: 9; }
+  /* The panel is a sheet over the lower part of the screen; the material above it stays in sight. */
+  .room2 .room2-panel, .room2:is([data-mode="share"], [data-mode="board"]):not([data-panel="none"]) .room2-panel { bottom: calc(74px + env(safe-area-inset-bottom));
+    height: max(200px, min(500px, calc(100dvh - 74px - 190px - (100vw - 20px) * .5625))); }
+  .room2-tabs [role="tab"] { font-size: 13px; padding: 6px 4px; }
+  /* The toolbar fills the bottom edge; each button an equal share; leaving is in the top bar. */
+  .room2-bar { gap: 0; padding: 6px 4px calc(6px + env(safe-area-inset-bottom)); }
+  .room2-group { flex: 1 1 0; gap: 0; }
+  .room2-group:has(> :nth-child(2)) { flex-grow: 2; }
+  .room2-group:has(> :nth-child(3)) { flex-grow: 3; }
+  .room2-group.room2-group-end { flex-grow: 1; }
+  .room2-group + .room2-group { padding-left: 0; border-left: 0; }
+  .room2-group > *, .room2-more > .room2-tool { flex: 1 1 0; min-width: 0; }
+  .room2-tool { min-width: 0; min-height: 58px; padding: 4px 2px; font-size: 11px; }
+  .room2-tool[data-tip]::after { display: none; }
+  .room2-group-end > .room2-leave { display: none; }
+  .room2-menu { right: 8px; bottom: calc(80px + env(safe-area-inset-bottom)); }
+  .room2 > .classroom-room-simulator { margin: 12px 10px calc(96px + env(safe-area-inset-bottom)); }
+}
+@media (max-width: 360px) {
+  .room2-status, .room2-top .classroom-langs { gap: 4px; }
+  .room2-top .classroom-room-connection, .room2-top .classroom-room-badge, .room2-top .classroom-lang { padding: 4px 8px; font-size: 12px; }
+  .room2-top-leave { padding: 0 10px; }
+  .room2-top-leave-text { display: none; }
+  .room2-top h1 { font-size: 17px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .room2 *, .room2 *::before, .room2 *::after { animation: none !important; transition: none !important; }
+}
+@media (forced-colors: active) {
+  .room2-tool, .room2-stage-tool, .room2-chip, .room2-tabs [role="tab"] { border: 1px solid ButtonText; }
 }

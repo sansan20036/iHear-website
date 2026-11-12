@@ -84,6 +84,9 @@ try {
     await tutorPage.goto(`${origin}/classroom/${lessonId}`);
     await tutorPage.getByRole('button', { name: '進入教室' }).click();
     await expect(tutorPage.locator('.classroom-vendor-stage.zoom-video-sdk')).toBeAttached();
+    // Classroom 2.0: the device notes are in the "Lesson info" panel, opened from "More".
+    await tutorPage.getByRole('button', { name: '更多', exact: true }).click();
+    await tutorPage.getByRole('menuitem', { name: '課堂資訊' }).click();
     await tutorPage.locator('.classroom-room-limits summary').click();
     const sdkLine = tutorPage.locator('[data-sdk-version]');
     await expect(sdkLine).toHaveAttribute('data-sdk-version', '2.6.0');
@@ -91,6 +94,9 @@ try {
     // The room gives Zoom its own container elements for video and for a shared screen.
     await expect(tutorPage.locator('video-player-container.classroom-zoom-videos')).toHaveCount(1);
     await expect(tutorPage.locator('video-player-container.classroom-zoom-share')).toHaveCount(1);
+    // Classroom 2.0: placed once, the shared screen on the stage and the videos in the people's column.
+    await expect(tutorPage.locator('.room2-stage .classroom-vendor-stage > video-player-container.classroom-zoom-share')).toHaveCount(1);
+    await expect(tutorPage.locator('.room2-videos .room2-videos-host > video-player-container.classroom-zoom-videos')).toHaveCount(1);
   });
 
   await check('init loads Zoom\'s 2.6.0 media files under the classroom CSP; without a real key the join fails safely', async () => {
@@ -105,9 +111,10 @@ try {
   });
 
   await check('the tutor sees the materials and whiteboard buttons, held back until connected', async () => {
-    await expect(tutorPage.locator('[data-tool="share"]')).toHaveText('分享畫面（教材）');
+    // Classroom 2.0: a short word under each icon; the button's name keeps the whole words.
+    await expect(tutorPage.locator('[data-tool="share"]')).toHaveAccessibleName('分享畫面（教材）');
     await expect(tutorPage.locator('[data-tool="share"]')).toBeDisabled();
-    await expect(tutorPage.locator('[data-tool="whiteboard"]')).toHaveText('開啟白板');
+    await expect(tutorPage.locator('[data-tool="whiteboard"]')).toHaveAccessibleName('開啟白板');
     await expect(tutorPage.locator('[data-tool="whiteboard"]')).toBeDisabled();
     await expect(tutorPage.locator('.classroom-room-tools')).toContainText('先在這台電腦打開檔案');
     await tutorPage.screenshot({ path: path.join(directory, 'zoom-sdk-tutor-room.png'), fullPage: true });

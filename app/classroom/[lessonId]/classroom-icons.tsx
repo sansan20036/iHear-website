@@ -5,7 +5,9 @@ import type { ReactNode } from "react";
 // (a short label under the icon, the rest for screen readers), so no control is an icon alone.
 export type RoomIconName =
   | "microphone" | "microphone-off" | "camera" | "camera-off"
-  | "hand" | "chat" | "leave" | "share" | "whiteboard" | "download";
+  | "hand" | "chat" | "leave" | "share" | "whiteboard" | "download"
+  // Classroom 2.0 (2026-11-12)
+  | "people" | "more" | "focus" | "fullscreen" | "fullscreen-exit" | "enlarge" | "shrink" | "info" | "close" | "language";
 
 const MICROPHONE = (
   <>
@@ -55,6 +57,42 @@ const SHAPES: Record<RoomIconName, ReactNode> = {
     </>
   ),
   download: <path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 20h14" />,
+  people: (
+    <>
+      <circle cx="9" cy="8" r="3.2" />
+      <path d="M3.5 19a5.5 5.5 0 0 1 11 0M15.5 5.2a3 3 0 0 1 0 5.6M17 13.6a5 5 0 0 1 3.5 5.4" />
+    </>
+  ),
+  more: (
+    <>
+      <circle cx="6" cy="12" r="1" />
+      <circle cx="12" cy="12" r="1" />
+      <circle cx="18" cy="12" r="1" />
+    </>
+  ),
+  focus: (
+    <>
+      <path d="M4 9V5h4M20 9V5h-4M4 15v4h4M20 15v4h-4" />
+      <circle cx="12" cy="12" r="3" />
+    </>
+  ),
+  fullscreen: <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />,
+  "fullscreen-exit": <path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" />,
+  enlarge: <path d="M14 4h6v6M10 20H4v-6M20 4l-6 6M4 20l6-6" />,
+  shrink: <path d="M20 4l-6 6M14 5v5h5M4 20l6-6M10 19v-5H5" />,
+  info: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 11v5M12 7.5h.01" />
+    </>
+  ),
+  close: <path d="M6 6l12 12M18 6 6 18" />,
+  language: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" />
+    </>
+  ),
 };
 
 export function RoomIcon({ name }: { name: RoomIconName }) {

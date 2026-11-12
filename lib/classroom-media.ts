@@ -46,7 +46,17 @@ export type MediaEvent =
   // and never saved: the page shows it until the room is left.
   | { type: "chat"; line: ChatLine; at: number }
   // The hands raised in the room right now (this page's own among them, marked self).
-  | { type: "hands"; raised: RaisedHand[]; at: number };
+  | { type: "hands"; raised: RaisedHand[]; at: number }
+  // Classroom 2.0 (2026-11-12): everyone in the room (this page's person among them, marked self),
+  // for the names on the video tiles and the participants list; and who is talking right now
+  // (Zoom's active speakers, loudest first). Neither is reported to iHear or saved.
+  | { type: "people"; people: RoomPerson[]; at: number }
+  | { type: "speaking"; ids: string[]; at: number };
+
+// A person as the room shows them. The name is the participant code (the join passes the code as the
+// display name, so no student's name reaches the video service); the host is the tutor. `video`:
+// their video is drawn, waits for a free tile (P3-Multi), or is off.
+export type RoomPerson = { id: string; name: string; host: boolean; self: boolean; camera: boolean; microphone: boolean; video: "shown" | "waiting" | "off" };
 
 export type MediaCapabilities = {
   // True only for an adapter that really carries audio and video.
@@ -75,8 +85,10 @@ export interface ClassroomMediaAdapter {
   leave(): Promise<void>;
   setDevice(kind: DeviceKind, on: boolean): Promise<DeviceState>;
   subscribe(listener: (event: MediaEvent) => void): () => void;
-  // Where the vendor draws video or its classroom; the synthetic stand-in draws nothing.
-  mount?(element: HTMLElement): void;
+  // Where the vendor draws: its classroom, the shared screen and the whiteboard in `element`, and
+  // (Classroom 2.0) the people's tiles in `videos` when the page gives them a column of their own.
+  // The synthetic stand-in draws tiles without any picture, and only when given `videos`.
+  mount?(element: HTMLElement, videos?: HTMLElement): void;
   // What this browser supports, from the vendor's own check, before or after joining.
   systemCheck?(): Promise<MediaSystemCheck>;
   // The tutor's materials (sharing a screen, window or tab) and the whiteboard. True when started.
@@ -104,22 +116,76 @@ export type SyntheticScenario =
   | "remote-joins" | "remote-leaves" | "remote-camera-off" | "remote-camera-on"
   | "network-drop" | "network-restore" | "connection-failed"
   | "camera-denied" | "microphone-unavailable" | "devices-restored"
-  | "remote-chat" | "remote-raises-hand" | "remote-lowers-hand";
+  | "remote-chat" | "remote-raises-hand" | "remote-lowers-hand"
+  // Classroom 2.0 (2026-11-12): what the room's layout changes with, played without any picture.
+  | "remote-shares-screen" | "remote-stops-sharing" | "remote-opens-whiteboard" | "remote-closes-whiteboard"
+  | "remote-speaks" | "group-joins" | "group-leaves";
 
 export const SYNTHETIC_SCENARIOS: readonly SyntheticScenario[] = [
   "remote-joins", "remote-leaves", "remote-camera-off", "remote-camera-on",
   "network-drop", "network-restore", "connection-failed",
   "camera-denied", "microphone-unavailable", "devices-restored",
   "remote-chat", "remote-raises-hand", "remote-lowers-hand",
+  "remote-shares-screen", "remote-stops-sharing", "remote-opens-whiteboard", "remote-closes-whiteboard",
+  "remote-speaks", "group-joins", "group-leaves",
 ];
 // The other person's line in the synthetic room: no real person writes it.
 const SYNTHETIC_CHAT = "TEST: Hello / 你好 / 你好";
+// Five more students for a group room in the test classroom (P3-Multi rooms hold up to 10): test
+// codes only, some with the camera or microphone off, so the layout shows every kind of tile.
+const SYNTHETIC_GROUP = ["TEST-S02", "TEST-S03", "TEST-S04", "TEST-S05", "TEST-S06"] as const;
+// How long a ring stays around someone who stopped talking (Zoom reports talkers, not silence).
+const SPEAKING_MS = 2_000;
 
-type SyntheticOptions = { connectDelayMs?: number; now?: () => number };
+// Classroom 2.0 (2026-11-12): one tile per person inside the videos container, the way Zoom's own
+// documentation places a video (a video-player inside a tile inside the video-player-container).
+// The adapter keeps the tiles and puts each video into its person's tile; the page writes the name,
+// microphone, raised hand and the rest into them. Only plain facts go on a tile, never words.
+export class MediaTiles {
+  private readonly cells = new Map<string, HTMLElement>();
+  constructor(private readonly container: HTMLElement) {}
+
+  // A tile for each person now in the room, in the order they came; the tiles of people who left go.
+  sync(people: readonly RoomPerson[]) {
+    const here = new Set(people.map((person) => person.id));
+    for (const [id, cell] of this.cells) {
+      if (here.has(id)) continue;
+      cell.remove();
+      this.cells.delete(id);
+    }
+    for (const person of people) {
+      const cell = this.cellOf(person.id);
+      cell.className = `classroom-media-tile ${person.self ? "self" : "remote"}`;
+      cell.setAttribute("data-host", String(person.host));
+      cell.setAttribute("data-self", String(person.self));
+      cell.setAttribute("data-video", person.video);
+    }
+  }
+
+  cellOf(id: string) {
+    let cell = this.cells.get(id);
+    if (!cell) {
+      cell = this.container.ownerDocument.createElement("div");
+      cell.className = "classroom-media-tile";
+      cell.setAttribute("data-person", id);
+      this.cells.set(id, cell);
+      this.container.append(cell);
+    }
+    return cell;
+  }
+
+  clear() {
+    for (const cell of this.cells.values()) cell.remove();
+    this.cells.clear();
+  }
+}
+
+type SyntheticOptions = { connectDelayMs?: number; now?: () => number; speakingMs?: number };
 
 export class SyntheticMediaAdapter implements ClassroomMediaAdapter {
   readonly provider = "synthetic" as const;
-  readonly capabilities: MediaCapabilities = { realMedia: false, screenShare: false, whiteboard: false, observable: true, chat: true, raiseHand: true };
+  // Sharing and the whiteboard are played as states only (Classroom 2.0): the test room has no picture.
+  readonly capabilities: MediaCapabilities = { realMedia: false, screenShare: true, whiteboard: true, observable: true, chat: true, raiseHand: true };
   private readonly listeners = new Set<(event: MediaEvent) => void>();
   private connection: ConnectionState = "idle";
   private readonly devices: Record<DeviceKind, DeviceState> = { camera: "off", microphone: "off" };
@@ -131,10 +197,32 @@ export class SyntheticMediaAdapter implements ClassroomMediaAdapter {
   private lines = 0;
   private readonly connectDelayMs: number;
   private readonly now: () => number;
+  // Classroom 2.0: this page's code, the played share and whiteboard, a group of test students, the
+  // tiles (only when the page gave them a place) and who is talking.
+  private participantCode = "";
+  private sharing: "none" | "sending" | "receiving" = "none";
+  private board: "none" | "presenting" | "viewing" = "none";
+  private group = false;
+  private tiles: MediaTiles | null = null;
+  private peopleKey = "[]";
+  private speaking = "";
+  private speakingTimer: ReturnType<typeof setTimeout> | undefined;
+  private readonly speakingMs: number;
 
   constructor(options: SyntheticOptions = {}) {
     this.connectDelayMs = options.connectDelayMs ?? 300;
     this.now = options.now ?? Date.now;
+    this.speakingMs = options.speakingMs ?? SPEAKING_MS;
+  }
+
+  // The tiles go into the page's video column; with no column given, nothing is drawn (as before).
+  mount(_element: HTMLElement, videos?: HTMLElement) {
+    if (!videos) return;
+    const container = videos.ownerDocument.createElement("div");
+    container.className = "classroom-media-videos synthetic";
+    videos.replaceChildren(container);
+    this.tiles = new MediaTiles(container);
+    this.reportPeople();
   }
 
   get state() {
@@ -152,6 +240,7 @@ export class SyntheticMediaAdapter implements ClassroomMediaAdapter {
     if (!input.sessionToken) throw new Error("A session token from the join check is required");
     if (this.connection === "connected" || this.connection === "connecting") return;
     this.role = input.role;
+    this.participantCode = input.participantCode;
     this.setConnection("connecting");
     if (this.connectDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, this.connectDelayMs));
     // leave() or a simulated failure may have happened while connecting.
@@ -161,16 +250,40 @@ export class SyntheticMediaAdapter implements ClassroomMediaAdapter {
 
   async leave() {
     if (this.connection === "idle" || this.connection === "disconnected") return;
+    this.group = false;
     this.setRemote({ present: false, camera: false, microphone: false });
     this.clearHands();
+    this.endPlayed();
     this.setConnection("disconnected");
   }
 
   async setDevice(kind: DeviceKind, on: boolean) {
     const state: DeviceState = this.blocked[kind] ?? (on ? "on" : "off");
     this.devices[kind] = state;
+    this.reportPeople();
     this.emit({ type: "device", kind, state, at: this.now() });
     return state;
+  }
+
+  // The tutor's own share and whiteboard, played as states only: nothing is captured or sent.
+  async setScreenShare(on: boolean) {
+    if (this.connection !== "connected") return false;
+    if (!on) {
+      if (this.sharing === "sending") this.setShare("none");
+      return false;
+    }
+    this.setShare("sending");
+    return true;
+  }
+
+  async setWhiteboard(on: boolean) {
+    if (this.connection !== "connected" || this.role !== "tutor") return false;
+    if (!on) {
+      if (this.board === "presenting") this.setBoard("none");
+      return false;
+    }
+    this.setBoard("presenting");
+    return true;
   }
 
   // This page's own line, shown back to it; there is nobody real to send it to.
@@ -227,7 +340,9 @@ export class SyntheticMediaAdapter implements ClassroomMediaAdapter {
         break;
       case "connection-failed":
         if (this.connection !== "idle") {
+          this.group = false;
           this.setRemote({ present: false, camera: false, microphone: false });
+          this.endPlayed();
           this.setConnection("failed");
         }
         break;
@@ -242,6 +357,7 @@ export class SyntheticMediaAdapter implements ClassroomMediaAdapter {
           if (!this.blocked[kind]) continue;
           this.blocked[kind] = null;
           this.devices[kind] = "off";
+          this.reportPeople();
           this.emit({ type: "device", kind, state: "off", at: this.now() });
         }
         break;
@@ -258,12 +374,38 @@ export class SyntheticMediaAdapter implements ClassroomMediaAdapter {
       case "remote-lowers-hand":
         this.setHandOf({ id: "remote", name: "", self: false }, false);
         break;
+      // Classroom 2.0: the other side's share and whiteboard (states only), a voice, and a group.
+      case "remote-shares-screen":
+        if (this.connection === "connected" && this.sharing !== "sending") this.setShare("receiving");
+        break;
+      case "remote-stops-sharing":
+        if (this.sharing === "receiving") this.setShare("none");
+        break;
+      case "remote-opens-whiteboard":
+        if (this.connection === "connected" && this.board !== "presenting") this.setBoard("viewing");
+        break;
+      case "remote-closes-whiteboard":
+        if (this.board === "viewing") this.setBoard("none");
+        break;
+      case "remote-speaks":
+        if (this.remote.present) this.hearSpeakers(["remote"]);
+        break;
+      case "group-joins":
+      case "group-leaves": {
+        const joining = scenario === "group-joins";
+        if (joining === this.group || (joining && this.connection !== "connected")) break;
+        this.group = joining;
+        this.reportPeople();
+        this.emitRemote();
+        break;
+      }
     }
   }
 
   private block(kind: DeviceKind, state: DeviceState) {
     this.blocked[kind] = state;
     this.devices[kind] = state;
+    this.reportPeople();
     this.emit({ type: "device", kind, state, at: this.now() });
   }
 
@@ -271,13 +413,78 @@ export class SyntheticMediaAdapter implements ClassroomMediaAdapter {
     if (this.connection === state) return;
     this.connection = state;
     this.emit({ type: "connection", state, at: this.now() });
+    this.reportPeople();
   }
 
   private setRemote(next: { present: boolean; camera: boolean; microphone: boolean }) {
     if (next.present === this.remote.present && next.camera === this.remote.camera && next.microphone === this.remote.microphone) return;
     this.remote = next;
-    // The synthetic room has no real other person, so there is no user key to report.
-    this.emit({ type: "remote", ...next, userKey: null, at: this.now() });
+    if (!next.present) this.setSpeaking([]);
+    this.reportPeople();
+    this.emitRemote();
+  }
+
+  // The synthetic room has no real other person, so there is no user key to report. With the test
+  // group in, it says how many others there are, as a real room of several does (P3-Multi).
+  private emitRemote() {
+    const others = (this.remote.present ? 1 : 0) + SYNTHETIC_GROUP.length;
+    this.emit({ type: "remote", ...this.remote, userKey: null, at: this.now(), ...(this.group ? { others } : {}) });
+  }
+
+  // Everyone in the test room as the page shows them, and their tiles. The other person has no code
+  // here (the test room cannot see them); the group's students have test codes.
+  private reportPeople() {
+    const people: RoomPerson[] = [];
+    if (this.connection === "connected" || this.connection === "reconnecting") {
+      const tutor = this.role === "tutor";
+      if (this.remote.present) people.push({ id: "remote", name: "", host: !tutor, self: false, camera: this.remote.camera, microphone: this.remote.microphone, video: this.remote.camera ? "shown" : "off" });
+      if (this.group) {
+        SYNTHETIC_GROUP.forEach((code, index) => {
+          const camera = index % 3 !== 2;
+          people.push({ id: code, name: code, host: false, self: false, camera, microphone: index % 2 === 0, video: camera ? "shown" : "off" });
+        });
+      }
+      const camera = this.devices.camera === "on";
+      people.push({ id: "self", name: this.participantCode, host: tutor, self: true, camera, microphone: this.devices.microphone === "on", video: camera ? "shown" : "off" });
+    }
+    this.tiles?.sync(people);
+    const key = JSON.stringify(people);
+    if (key === this.peopleKey) return;
+    this.peopleKey = key;
+    this.emit({ type: "people", people, at: this.now() });
+  }
+
+  private setShare(state: "none" | "sending" | "receiving") {
+    if (this.sharing === state) return;
+    this.sharing = state;
+    this.emit({ type: "share", state, at: this.now() });
+  }
+
+  private setBoard(state: "none" | "presenting" | "viewing") {
+    if (this.board === state) return;
+    this.board = state;
+    this.emit({ type: "whiteboard", state, at: this.now() });
+  }
+
+  // Leaving or failing ends the played share, whiteboard and voices.
+  private endPlayed() {
+    this.setShare("none");
+    this.setBoard("none");
+    this.setSpeaking([]);
+  }
+
+  private hearSpeakers(ids: string[]) {
+    clearTimeout(this.speakingTimer);
+    this.setSpeaking(ids);
+    if (ids.length > 0) this.speakingTimer = setTimeout(() => this.setSpeaking([]), this.speakingMs);
+  }
+
+  private setSpeaking(ids: string[]) {
+    const key = ids.join(",");
+    if (key === this.speaking) return;
+    if (ids.length === 0) clearTimeout(this.speakingTimer);
+    this.speaking = key;
+    this.emit({ type: "speaking", ids, at: this.now() });
   }
 
   private emit(event: MediaEvent) {
@@ -428,10 +635,18 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
   // Presses made while Zoom is still finishing the join, waiting for its media stream.
   private readonly streamWaiters = new Set<() => void>();
   private readonly deviceStartMs: number;
+  // Classroom 2.0 (2026-11-12): one tile per person in the videos container, the people last told
+  // to the page, and who is talking (Zoom's "active-speaker"; the ring goes a moment after it stops).
+  private peopleTiles: MediaTiles | null = null;
+  private peopleKey = "[]";
+  private speaking = "";
+  private speakingTimer: ReturnType<typeof setTimeout> | undefined;
+  private readonly speakingMs: number;
 
-  constructor(private readonly load: () => Promise<ZoomVideoSdk> = loadZoomVideoSdkPackage, private readonly now: () => number = Date.now, options: { deviceStartMs?: number; maxVideos?: number } = {}) {
+  constructor(private readonly load: () => Promise<ZoomVideoSdk> = loadZoomVideoSdkPackage, private readonly now: () => number = Date.now, options: { deviceStartMs?: number; maxVideos?: number; speakingMs?: number } = {}) {
     this.deviceStartMs = options.deviceStartMs ?? DEVICE_START_MS;
     this.maxVideos = options.maxVideos ?? MAX_REMOTE_VIDEOS.desktop;
+    this.speakingMs = options.speakingMs ?? SPEAKING_MS;
   }
 
   subscribe(listener: (event: MediaEvent) => void) {
@@ -441,7 +656,9 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
 
   // Zoom draws each video into a <video-player-container> and a shared screen into another one
   // (its rule: the two are never mixed); the whiteboard and the tutor's own share get plain elements.
-  mount(element: HTMLElement) {
+  // Classroom 2.0: the videos container may go into a column of its own (`videos`). Either way every
+  // part is placed once, here, before anything is drawn, and never moved afterwards.
+  mount(element: HTMLElement, videos?: HTMLElement) {
     const part = (tag: string, name: string, hidden: boolean) => {
       const child = element.ownerDocument.createElement(tag);
       child.className = `classroom-zoom-${name}`;
@@ -452,7 +669,13 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
       share: part("video-player-container", "share", true), whiteboard: part("div", "whiteboard", true),
       videos: part("video-player-container", "videos", false), ownShare: part("div", "own-share", true),
     };
-    element.replaceChildren(this.stage.share, this.stage.whiteboard, this.stage.videos, this.stage.ownShare);
+    if (videos) {
+      element.replaceChildren(this.stage.share, this.stage.whiteboard, this.stage.ownShare);
+      videos.replaceChildren(this.stage.videos);
+    } else {
+      element.replaceChildren(this.stage.share, this.stage.whiteboard, this.stage.videos, this.stage.ownShare);
+    }
+    this.peopleTiles = new MediaTiles(this.stage.videos);
   }
 
   // Zoom's own check of this browser (audio, video, screen sharing), without joining anything.
@@ -534,6 +757,8 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
         this.reportRemote();
         this.dropHands(payload);
       });
+      // Who is talking, loudest first (Zoom's ActiveSpeaker list), for the ring around their tile.
+      listen("active-speaker", (payload) => this.hearSpeakers(payload));
       listen("chat-on-message", (payload) => this.receiveChat(payload as ZoomChatMessage));
       listen("command-channel-message", (payload) => this.receiveCommand(payload as { senderId?: number; text?: string }));
       listen("peer-video-state-change", (payload) => void this.peerVideo(payload as { action?: string; userId?: number }));
@@ -629,6 +854,10 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
       for (const part of Object.values(this.stage)) part.replaceChildren();
       this.stage.share.hidden = true; this.stage.whiteboard.hidden = true; this.stage.ownShare.hidden = true;
     }
+    // The tiles went with the videos container's children; the page hears that nobody is here.
+    this.peopleTiles?.clear();
+    this.reportPeople();
+    this.setSpeaking([]);
     this.setShare("none");
     this.setBoard("none");
     // Hands belong to the session that ended (Zoom gives new user ids on joining again). Chat lines
@@ -752,6 +981,7 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     // A repeated failure is told again, for the page's message.
     if (this.devices[kind] === state && state !== "failed") return;
     this.devices[kind] = state;
+    this.reportPeople();
     this.emit({ type: "device", kind, state, ...(state === "failed" ? { problem: problem ?? "error" } : {}), at: this.now() });
   }
 
@@ -927,7 +1157,47 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     return this.sdk.catch((error: unknown) => { this.sdk = null; throw error; });
   }
 
+  // Everyone in the session as the page shows them, and their tiles (Classroom 2.0). The page's own
+  // camera and microphone come from its own presses; everyone else's from Zoom's user list.
+  private reportPeople() {
+    const client = this.client;
+    const self = client?.getCurrentUserInfo()?.userId;
+    const people: RoomPerson[] = (client?.getAllUser() ?? []).map((user) => {
+      const own = user.userId === self;
+      const camera = own ? this.devices.camera === "on" : Boolean(user.bVideoOn);
+      return {
+        id: String(user.userId), name: chatNameOf(user.displayName), host: user.isHost === true, self: own, camera,
+        microphone: own ? this.devices.microphone === "on" : Boolean(user.audio && !user.muted),
+        video: camera && this.tiles.get(user.userId) ? "shown" : this.waitingVideos.has(user.userId) ? "waiting" : "off",
+      };
+    });
+    this.peopleTiles?.sync(people);
+    const key = JSON.stringify(people);
+    if (key === this.peopleKey) return;
+    this.peopleKey = key;
+    this.emit({ type: "people", people, at: this.now() });
+  }
+
+  private hearSpeakers(payload: unknown) {
+    const ids = (Array.isArray(payload) ? payload : [])
+      .map((item) => (item as { userId?: unknown } | null)?.userId)
+      .filter((id): id is number => typeof id === "number")
+      .map(String);
+    clearTimeout(this.speakingTimer);
+    this.setSpeaking(ids);
+    if (ids.length > 0) this.speakingTimer = setTimeout(() => this.setSpeaking([]), this.speakingMs);
+  }
+
+  private setSpeaking(ids: string[]) {
+    const key = ids.join(",");
+    if (key === this.speaking) return;
+    if (ids.length === 0) clearTimeout(this.speakingTimer);
+    this.speaking = key;
+    this.emit({ type: "speaking", ids, at: this.now() });
+  }
+
   private reportRemote() {
+    this.reportPeople();
     const self = this.client?.getCurrentUserInfo()?.userId;
     const others = this.client?.getAllUser().filter(user => user.userId !== self) ?? [];
     const other = others[0] ?? null;
@@ -945,7 +1215,11 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     else if (payload.action === "Stop") {
       if (this.waitingVideos.delete(payload.userId)) { this.reportRemote(); return; }
       await this.stream?.detachVideo(payload.userId);
+      const player = this.tiles.get(payload.userId);
       this.tiles.delete(payload.userId);
+      // As Zoom's documentation does after detachVideo: the empty video-player leaves the page. The
+      // person's tile stays (Classroom 2.0), now without video.
+      if (isNode(player) && typeof (player as ChildNode).remove === "function") (player as ChildNode).remove();
       // A tile came free: the longest-waiting video takes it.
       const next = this.waitingVideos.values().next();
       if (!next.done) { this.waitingVideos.delete(next.value); await this.attach(next.value); }
@@ -962,11 +1236,13 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     try {
       const element = await this.stream.attachVideo(userId, this.tiles.size > 3 ? VIDEO_360P : VIDEO_720P);
       this.tiles.set(userId, element);
-      if (isNode(element)) this.stage.videos.append(element);
+      // Into the person's own tile inside the videos container (Zoom's documented pattern).
+      if (isNode(element)) (this.peopleTiles?.cellOf(String(userId)) ?? this.stage.videos).append(element);
     } catch (error) {
       this.tiles.delete(userId);
       throw error;
     }
+    this.reportPeople();
   }
 
   // The other person's shared screen, shown while they share.

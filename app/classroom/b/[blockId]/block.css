@@ -14,3 +14,15 @@
 .block-manage-note { background: #f4f6f8; border-radius: 6px; padding: 8px; }
 .block-manage-alert { color: #9b1c1c; }
 .block-manage-scroll { overflow-x: auto; }
+/* Classroom 2.0 (2026-11-12): inside a block the room takes the whole width under one slim line with
+   the block's facts and its buttons; the room's toolbar stays at the bottom of the screen. */
+.classroom-room.block-entry:has(> .room2) { max-width: none; padding: 0; gap: 0; display: block; }
+.block-entry:has(> .room2) > .block-entry-head { max-width: none; margin: 0; padding: 10px 18px 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.block-entry:has(> .room2) > .block-entry-head .classroom-room-facts { display: flex; flex-wrap: wrap; gap: 6px; }
+.block-entry:has(> .room2) > .block-entry-head .classroom-room-facts div { display: flex; align-items: baseline; gap: 6px; padding: 4px 10px; border-radius: 999px; }
+.block-entry:has(> .room2) > .block-entry-head .classroom-room-facts dd { margin: 0; }
+.block-entry:has(> .room2) > .block-entry-head .classroom-room-actions { margin-top: 0; }
+.block-entry:has(> .room2) > .block-entry-head .classroom-room-actions .classroom-room-secondary { min-height: 40px; padding: 6px 14px; }
+@media (max-width: 600px) {
+  .block-entry:has(> .room2) > .block-entry-head { padding: 8px 10px 0; }
+}

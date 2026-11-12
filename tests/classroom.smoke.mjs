@@ -188,6 +188,10 @@ try {
     lesson.tutorKey = claimsOf(joined.body.session.token).user_key;
     lesson.tutorSession = joined.body.session;
     await expect(tutorPage.locator('.classroom-room-recording')).toContainText('未開始');
+    // Classroom 2.0: the details are in the "Lesson info" panel, opened from "More"; it stays open.
+    await tutorPage.getByRole('button', { name: '更多', exact: true }).click();
+    await tutorPage.getByRole('menuitem', { name: '課堂資訊' }).click();
+    await expect(tutorPage.getByRole('tab', { name: '課堂資訊' })).toBeFocused();
     await expect(tutorPage.getByText('這堂課可以錄影。')).toBeVisible();
   });
 
@@ -255,7 +259,8 @@ try {
     await expect(tiles.locator('.self')).toContainText('攝影機開啟（模擬：沒有真實畫面）');
     await expect(tiles.locator('.self')).toContainText('麥克風開啟');
     await tutorPage.getByText('模擬控制（只在測試教室）').click();
-    await expect(tiles.locator('.remote')).toContainText('等待對方進入教室。');
+    await expect(tiles.locator('.room2-waiting')).toContainText('等待對方進入教室。');
+    await expect(tiles.locator('.remote')).toHaveCount(0);
     await tutorPage.getByRole('button', { name: '對方進入', exact: true }).click();
     await expect(tiles.locator('.remote')).toContainText('攝影機開啟（模擬：沒有真實畫面）');
     await tutorPage.getByRole('button', { name: '攝影機被封鎖', exact: true }).click();
@@ -321,11 +326,22 @@ try {
     await expect(tutorPage.getByRole('button', { name: '舉手', exact: true })).toHaveCount(0);
     await openSimulation(tutorPage);
     await tutorPage.getByRole('button', { name: '學生舉手', exact: true }).click();
+    // Classroom 2.0: told on top of the stage for a few seconds (with the button to lower it), then
+    // kept by the top bar, the participants button and the list until the hand is lowered.
+    const notice = tutorPage.locator('.room2-notice');
+    await expect(notice).toContainText('學生 舉手了');
+    await expect(notice.getByRole('button', { name: '放下學生的手', exact: true })).toBeVisible();
+    await shot(tutorPage, '07c-tutor-raised-hand');
+    await expect(notice).toHaveCount(0, { timeout: 8000 });
+    const chip = tutorPage.locator('[data-hands-chip]');
+    await expect(chip).toContainText('1 位舉手');
+    await expect(tutorPage.getByRole('button', { name: /^參與者（\d+ 位，1 位舉手）$/ })).toBeVisible();
+    await chip.click();
     const raised = tutorPage.locator('.classroom-room-hands');
     await expect(raised).toContainText('舉手：學生');
-    await shot(tutorPage, '07c-tutor-raised-hand');
     await raised.getByRole('button', { name: '放下學生的手', exact: true }).click();
     await expect(raised).toHaveCount(0);
+    await expect(chip).toHaveCount(0);
   });
 
   // R-1 and R-2 (2026-11-06): "Connect again" used to rejoin with the token given on entry (Zoom's

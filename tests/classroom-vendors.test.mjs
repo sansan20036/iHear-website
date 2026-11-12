@@ -452,15 +452,17 @@ describe("Tencent LCIC, server side", () => {
 });
 
 describe("browser adapters", () => {
-  // A small stand-in for the page: elements remember their class, children and whether hidden.
+  // A small stand-in for the page: elements remember their class, attributes, parent, children and
+  // whether hidden; removing one takes it out of its parent (Classroom 2.0's tiles come and go).
   function fakeDom() {
     const doc = {
       createElement(tag) {
         const element = {
-          tag, className: "", hidden: false, children: [], nodeType: 1, ownerDocument: doc,
-          append(...nodes) { element.children.push(...nodes); },
-          replaceChildren(...nodes) { element.children = [...nodes]; },
-          remove() { element.removed = true; },
+          tag, className: "", hidden: false, children: [], attributes: {}, nodeType: 1, ownerDocument: doc, parentNode: null,
+          append(...nodes) { for (const node of nodes) { node.parentNode = element; element.children.push(node); } },
+          replaceChildren(...nodes) { for (const child of element.children) child.parentNode = null; element.children = []; element.append(...nodes); },
+          remove() { element.removed = true; if (element.parentNode) element.parentNode.children = element.parentNode.children.filter(child => child !== element); element.parentNode = null; },
+          setAttribute(name, value) { element.attributes[name] = String(value); },
         };
         return element;
       },
@@ -499,7 +501,12 @@ describe("browser adapters", () => {
       stopAudio: async () => calls.push("stopAudio"), muteAudio: async () => calls.push("muteAudio"), unmuteAudio: async () => calls.push("unmuteAudio"),
       startVideo: async () => { calls.push("startVideo"); if (videoError) throw videoError; if (hangs.video > 0) { hangs.video -= 1; await never(); } capturing = true; },
       stopVideo: async () => { calls.push("stopVideo"); capturing = false; }, isCapturingVideo: () => capturing,
-      attachVideo: async (userId, quality) => { calls.push(`attach:${userId}`); qualities.push([userId, quality]); return { nodeType: 1, tag: `video:${userId}` }; }, detachVideo: async (userId) => calls.push(`detach:${userId}`),
+      attachVideo: async (userId, quality) => {
+        calls.push(`attach:${userId}`); qualities.push([userId, quality]);
+        const video = { nodeType: 1, tag: `video:${userId}`, parentNode: null, remove() { if (video.parentNode) video.parentNode.children = video.parentNode.children.filter(child => child !== video); video.parentNode = null; } };
+        return video;
+      },
+      detachVideo: async (userId) => calls.push(`detach:${userId}`),
       isStartShareScreenWithVideoElement: () => true,
       startShareScreen: async (target) => { calls.push(`share:${target.tag}`); if (shareError) throw shareError; },
       stopShareScreen: async () => calls.push("stopShare"),
@@ -546,6 +553,8 @@ describe("browser adapters", () => {
   // Zoom calls its handlers without waiting; let their asynchronous work finish.
   const settle = () => new Promise(resolve => { setTimeout(resolve, 0); });
   const recorded = adapter => { const events = []; adapter.subscribe(event => events.push(event)); return events; };
+  // The videos drawn, tile by tile (Classroom 2.0: each video sits in its person's tile).
+  const drawn = videos => videos.children.flatMap(cell => cell.children.map(child => child.tag));
   const joined = async (options, adapterOptions) => {
     const zoom = fakeZoom(options), dom = fakeDom();
     const adapter = new ZoomVideoSdkMediaAdapter(async () => zoom.sdk, () => 1, adapterOptions);
@@ -576,6 +585,86 @@ describe("browser adapters", () => {
     expect(events.filter(event => event.type === "remote").at(-1)).toMatchObject({ videosWaiting: 0 });
   });
 
+  // Classroom 2.0 (2026-11-12): the videos container in a column of its own, one tile per person,
+  // the people told to the page, and who is talking. Checked against the stand-in, not real Zoom.
+  test("2.0 Zoom: the videos container can sit in a column of its own; every part is placed once, before anything is drawn", async () => {
+    const zoom = fakeZoom(), dom = fakeDom(), column = dom.doc.createElement("div");
+    const adapter = new ZoomVideoSdkMediaAdapter(async () => zoom.sdk, () => 1);
+    adapter.mount(dom.root, column);
+    expect(dom.root.children.map(child => child.className)).toEqual(["classroom-zoom-share", "classroom-zoom-whiteboard", "classroom-zoom-own-share"]);
+    expect(column.children.map(child => [child.tag, child.className])).toEqual([["video-player-container", "classroom-zoom-videos"]]);
+    await adapter.join(zoomJoin);
+    expect(await adapter.setDevice("camera", true)).toBe("on");
+    const [videos] = column.children;
+    expect(drawn(videos)).toEqual(["video:1"]);
+    expect(videos.children[0].parentNode).toBe(videos);
+  });
+
+  test("2.0 Zoom: one tile per person, each video inside its person's tile; names are the codes Zoom has; a camera that stops leaves the tile without video", async () => {
+    const { zoom, adapter, events, videos } = await joined();
+    Object.assign(zoom.users[0], { displayName: "TEST-T01", isHost: true });
+    zoom.users.push({ userId: 2, userIdentity: "P-TEST-S01", displayName: "TEST-S01\u0000", bVideoOn: true, audio: "computer", muted: true });
+    zoom.handlers.get("user-added")([{ userId: 2 }]);
+    zoom.handlers.get("peer-video-state-change")({ action: "Start", userId: 2 });
+    await settle();
+    const peopleOf = () => events.filter(event => event.type === "people").at(-1).people;
+    expect(peopleOf()).toEqual([
+      { id: "1", name: "TEST-T01", host: true, self: true, camera: false, microphone: false, video: "off" },
+      { id: "2", name: "TEST-S01", host: false, self: false, camera: true, microphone: false, video: "shown" },
+    ]);
+    const tiles = () => videos.children.map(cell => [cell.attributes["data-person"], cell.className, cell.attributes["data-host"], cell.attributes["data-video"], cell.children.map(child => child.tag)]);
+    expect(tiles()).toEqual([["1", "classroom-media-tile self", "true", "off", []], ["2", "classroom-media-tile remote", "false", "shown", ["video:2"]]]);
+    // The other camera stops: Zoom's player leaves the page (as Zoom's documentation does after detachVideo); the tile stays.
+    zoom.users[1].bVideoOn = false;
+    zoom.handlers.get("peer-video-state-change")({ action: "Stop", userId: 2 });
+    await settle();
+    expect(zoom.calls).toContain("detach:2");
+    expect(tiles()[1]).toEqual(["2", "classroom-media-tile remote", "false", "off", []]);
+    // Unmuted: the page hears it from Zoom's user list.
+    Object.assign(zoom.users[1], { muted: false });
+    zoom.handlers.get("user-updated")([{ userId: 2 }]);
+    expect(peopleOf()[1].microphone).toBe(true);
+    zoom.users.splice(1, 1);
+    zoom.handlers.get("user-removed")([{ userId: 2 }]);
+    expect(tiles().map(([id]) => id)).toEqual(["1"]);
+    await adapter.leave();
+    expect([videos.children, peopleOf()]).toEqual([[], []]);
+    for (const event of events.filter(item => item.type === "people" || item.type === "speaking")) expect(hostReportFor(event)).toBeNull();
+  });
+
+  test("2.0 Zoom: this page's own camera off marks its tile without video (Zoom's player stays, hidden); on again shows it, without drawing it twice", async () => {
+    const { zoom, adapter, videos } = await joined();
+    await adapter.setDevice("camera", true);
+    const self = () => videos.children.find(cell => cell.attributes["data-self"] === "true");
+    expect([self().attributes["data-video"], self().children.map(child => child.tag)]).toEqual(["shown", ["video:1"]]);
+    await adapter.setDevice("camera", false);
+    expect([self().attributes["data-video"], self().children.map(child => child.tag)]).toEqual(["off", ["video:1"]]);
+    await adapter.setDevice("camera", true);
+    expect([self().attributes["data-video"], self().children.map(child => child.tag)]).toEqual(["shown", ["video:1"]]);
+    expect(zoom.calls.filter(call => call === "attach:1")).toHaveLength(1);
+  });
+
+  test("2.0 Zoom: a video waiting for a free tile (P3-Multi) is marked so on its person's tile", async () => {
+    const { zoom, events } = await joined({}, { maxVideos: 1 });
+    for (const id of [2, 3]) zoom.users.push({ userId: id, displayName: `TEST-S0${id}`, bVideoOn: true });
+    zoom.handlers.get("user-added")([{ userId: 2 }, { userId: 3 }]);
+    for (const id of [2, 3]) { zoom.handlers.get("peer-video-state-change")({ action: "Start", userId: id }); await settle(); }
+    expect(events.filter(event => event.type === "people").at(-1).people.map(person => [person.id, person.video])).toEqual([["1", "off"], ["2", "shown"], ["3", "waiting"]]);
+  });
+
+  test("2.0 Zoom: who is talking (loudest first) is told once per change, and the ring goes a moment after Zoom's last report", async () => {
+    const { zoom, events } = await joined({}, { speakingMs: 30 });
+    const rings = () => events.filter(event => event.type === "speaking").map(event => event.ids);
+    zoom.handlers.get("active-speaker")([{ userId: 2, displayName: "TEST-S01" }, { userId: 1 }]);
+    zoom.handlers.get("active-speaker")([{ userId: 2 }, { userId: 1 }]);
+    expect(rings()).toEqual([["2", "1"]]);
+    await new Promise(resolve => { setTimeout(resolve, 60); });
+    expect(rings()).toEqual([["2", "1"], []]);
+    zoom.handlers.get("active-speaker")("not a list");
+    expect(rings()).toEqual([["2", "1"], []]);
+  });
+
+
   test("Zoom: joins the token's topic with the participant code as the name; the other person's key comes from Zoom", async () => {
     const { zoom, events, videos, adapter } = await joined();
     expect(zoom.calls.slice(0, 2)).toEqual(["init:en-US:Global", "join:ihear-l-test-v01:synthetic.jwt.token:TEST-T01"]);
@@ -586,7 +675,7 @@ describe("browser adapters", () => {
     zoom.handlers.get("connection-change")({ state: "Reconnecting" });
     expect(events.at(-1)).toMatchObject({ type: "connection", state: "reconnecting" });
     expect(await adapter.setDevice("camera", true)).toBe("on");
-    expect(videos.children.map(child => child.tag)).toEqual(["video:1"]);
+    expect(drawn(videos)).toEqual(["video:1"]);
   });
 
   test("Zoom: once joined, the page says which Zoom session it is in (getSessionInfo), and nothing when Zoom does not say", async () => {
@@ -725,7 +814,7 @@ describe("browser adapters", () => {
     ]);
     expect(await adapter.setDevice("camera", true)).toBe("on");
     expect(zoom.calls.filter(call => /Video|attach/.test(call))).toEqual(["startVideo", "stopVideo", "startVideo", "attach:1"]);
-    expect(videos.children.map(child => child.tag)).toEqual(["video:1"]);
+    expect(drawn(videos)).toEqual(["video:1"]);
   });
 
   test("Zoom devices: Zoom's own report settles a press whose call never answers; late reports count and draw one video", async () => {
@@ -734,15 +823,16 @@ describe("browser adapters", () => {
     await settle();
     waiting.zoom.handlers.get("video-capturing-change")({ state: "Started" });
     expect(await pressed).toBe("on");
-    expect(waiting.videos.children.map(child => child.tag)).toEqual(["video:1"]);
+    expect(drawn(waiting.videos)).toEqual(["video:1"]);
     // After the deadline: a report still turns the camera on, however many come, with one video.
     const late = await joined({ videoHangs: 1 }, { deviceStartMs: 20 });
     expect(await late.adapter.setDevice("camera", true)).toBe("failed");
     late.zoom.handlers.get("video-capturing-change")({ state: "Started" });
     late.zoom.handlers.get("video-capturing-change")({ state: "Started" });
     await settle();
-    expect(late.events.at(-1)).toMatchObject({ type: "device", kind: "camera", state: "on" });
-    expect(late.videos.children.map(child => child.tag)).toEqual(["video:1"]);
+    // The video is drawn after the device is on (Classroom 2.0 then tells who is shown): the last device event.
+    expect(late.events.filter(event => event.type === "device").at(-1)).toMatchObject({ type: "device", kind: "camera", state: "on" });
+    expect(drawn(late.videos)).toEqual(["video:1"]);
     late.zoom.handlers.get("video-capturing-change")({ state: "Stopped" });
     expect(late.events.at(-1)).toMatchObject({ type: "device", kind: "camera", state: "off" });
   });

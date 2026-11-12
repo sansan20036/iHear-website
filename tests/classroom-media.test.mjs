@@ -16,13 +16,33 @@ function recorded(adapter) {
   adapter.subscribe(event => events.push(event));
   return events;
 }
+// The connection's own events, without the people, devices and the rest told alongside.
+const connectionsOf = events => events.filter(event => event.type === "connection").map(event => event.state);
+
+// Classroom 2.0: a small stand-in for the page, enough for the tiles the adapter draws.
+function fakeDom() {
+  const doc = {
+    createElement(tag) {
+      const element = {
+        tag, className: "", hidden: false, children: [], attributes: {}, nodeType: 1, ownerDocument: doc, parentNode: null,
+        append(...nodes) { for (const node of nodes) { node.parentNode = element; element.children.push(node); } },
+        replaceChildren(...nodes) { for (const child of element.children) child.parentNode = null; element.children = []; element.append(...nodes); },
+        remove() { if (element.parentNode) element.parentNode.children = element.parentNode.children.filter(child => child !== element); element.parentNode = null; },
+        setAttribute(name, value) { element.attributes[name] = String(value); },
+      };
+      return element;
+    },
+  };
+  return { doc, root: doc.createElement("div"), column: doc.createElement("div") };
+}
 
 describe("the provider-neutral media adapter", () => {
   test("the synthetic stand-in never claims real media; the two candidates have adapters; others are unknown", () => {
     expect(MEDIA_PROVIDERS).toEqual(["synthetic", "zoom-video-sdk", "tencent-lcic"]);
     const synthetic = createMediaAdapter("synthetic", { connectDelayMs: 0 });
     expect(synthetic).toBeInstanceOf(SyntheticMediaAdapter);
-    expect(synthetic.capabilities).toEqual({ realMedia: false, screenShare: false, whiteboard: false, observable: true, chat: true, raiseHand: true });
+    // Sharing and the whiteboard are played as states only (Classroom 2.0): still no real media.
+    expect(synthetic.capabilities).toEqual({ realMedia: false, screenShare: true, whiteboard: true, observable: true, chat: true, raiseHand: true });
     expect(createMediaAdapter("zoom-video-sdk").provider).toBe("zoom-video-sdk");
     expect(createMediaAdapter("tencent-lcic").provider).toBe("tencent-lcic");
     for (const provider of ["tencent-rtc", "agora", ""]) expect(() => createMediaAdapter(provider)).toThrow(MediaAdapterUnavailableError);
@@ -37,7 +57,7 @@ describe("the provider-neutral media adapter", () => {
     await adapter.join(joinInput);
     await adapter.leave();
     await adapter.leave();
-    expect(events.map(event => event.state)).toEqual(["connecting", "connected", "disconnected"]);
+    expect(connectionsOf(events)).toEqual(["connecting", "connected", "disconnected"]);
   });
 
   test("leaving while still connecting never ends up connected", async () => {
@@ -77,7 +97,7 @@ describe("the provider-neutral media adapter", () => {
     adapter.simulate("network-drop");
     adapter.simulate("network-restore");
     adapter.simulate("connection-failed");
-    expect(events.map(event => (event.type === "connection" ? event.state : `remote:${event.present}:${event.camera}`))).toEqual([
+    expect(events.filter(event => event.type === "connection" || event.type === "remote").map(event => (event.type === "connection" ? event.state : `remote:${event.present}:${event.camera}`))).toEqual([
       "connecting", "connected", "remote:true:true", "remote:true:false", "reconnecting", "connected", "remote:false:false", "failed",
     ]);
     await adapter.join(joinInput);
@@ -131,6 +151,100 @@ describe("the provider-neutral media adapter", () => {
     expect(tutorEvents.filter(event => event.type === "hands").at(-1).raised).toEqual([]);
     tutor.simulate("remote-chat");
     expect(tutorEvents.filter(event => event.type === "chat").at(-1).line.from).toBe("student");
+  });
+
+  // Classroom 2.0 (2026-11-12): who is in the test room, their tiles, the played share and
+  // whiteboard, a group of test students and a voice. None of it is reported to iHear.
+  test("2.0: the test room tells the page who is here (its own code, the other person, a group of test students)", async () => {
+    const adapter = new SyntheticMediaAdapter({ connectDelayMs: 0, now: () => 7 });
+    const events = recorded(adapter);
+    const peopleOf = () => events.filter(event => event.type === "people").at(-1)?.people ?? [];
+    await adapter.join({ ...joinInput, role: "student", participantCode: "TEST-MS1" });
+    expect(peopleOf()).toEqual([{ id: "self", name: "TEST-MS1", host: false, self: true, camera: false, microphone: false, video: "off" }]);
+    adapter.simulate("remote-joins");
+    await adapter.setDevice("camera", true);
+    expect(peopleOf()).toEqual([
+      { id: "remote", name: "", host: true, self: false, camera: true, microphone: true, video: "shown" },
+      { id: "self", name: "TEST-MS1", host: false, self: true, camera: true, microphone: false, video: "shown" },
+    ]);
+    adapter.simulate("group-joins");
+    expect(peopleOf().map(person => person.id)).toEqual(["remote", "TEST-S02", "TEST-S03", "TEST-S04", "TEST-S05", "TEST-S06", "self"]);
+    expect(peopleOf().filter(person => !person.camera).map(person => person.name)).toEqual(["TEST-S04"]);
+    expect(events.filter(event => event.type === "remote").at(-1)).toMatchObject({ present: true, others: 6 });
+    adapter.simulate("group-leaves");
+    expect(peopleOf()).toHaveLength(2);
+    expect(events.filter(event => event.type === "remote").at(-1).others).toBeUndefined();
+    await adapter.leave();
+    expect(peopleOf()).toEqual([]);
+    for (const event of events.filter(item => item.type === "people" || item.type === "speaking")) expect(hostReportFor(event)).toBeNull();
+  });
+
+  test("2.0: given a column, the test room draws one tile per person (no picture), marked self or host, and takes them away as people leave", async () => {
+    const dom = fakeDom();
+    const adapter = new SyntheticMediaAdapter({ connectDelayMs: 0 });
+    adapter.mount(dom.root, dom.column);
+    expect(dom.root.children).toEqual([]);
+    const [container] = dom.column.children;
+    expect(container.className).toBe("classroom-media-videos synthetic");
+    await adapter.join(joinInput);
+    adapter.simulate("remote-joins");
+    const tiles = () => container.children.map(cell => [cell.attributes["data-person"], cell.className, cell.attributes["data-host"], cell.attributes["data-video"]]);
+    expect(tiles()).toEqual([["self", "classroom-media-tile self", "true", "off"], ["remote", "classroom-media-tile remote", "false", "shown"]]);
+    adapter.simulate("remote-camera-off");
+    expect(tiles()[1][3]).toBe("off");
+    adapter.simulate("remote-leaves");
+    expect(tiles().map(([id]) => id)).toEqual(["self"]);
+    await adapter.leave();
+    expect(container.children).toEqual([]);
+    // Without a column nothing is drawn, as before 2.0.
+    const lone = fakeDom();
+    new SyntheticMediaAdapter({ connectDelayMs: 0 }).mount(lone.root);
+    expect([lone.root.children, lone.column.children]).toEqual([[], []]);
+  });
+
+  test("2.0: the tutor's share and whiteboard, and the other side's, are played as states only; a failure or leaving ends them", async () => {
+    const shown = events => events.filter(event => event.type === "share" || event.type === "whiteboard").map(event => `${event.type}:${event.state}`);
+    const tutor = new SyntheticMediaAdapter({ connectDelayMs: 0 });
+    const tutorEvents = recorded(tutor);
+    expect(await tutor.setScreenShare(true)).toBe(false);
+    await tutor.join(joinInput);
+    expect(await tutor.setScreenShare(true)).toBe(true);
+    expect(await tutor.setWhiteboard(true)).toBe(true);
+    expect(await tutor.setScreenShare(false)).toBe(false);
+    tutor.simulate("connection-failed");
+    expect(shown(tutorEvents)).toEqual(["share:sending", "whiteboard:presenting", "share:none", "whiteboard:none"]);
+    const student = new SyntheticMediaAdapter({ connectDelayMs: 0 });
+    const studentEvents = recorded(student);
+    await student.join({ ...joinInput, role: "student", participantCode: "TEST-MS1" });
+    expect(await student.setWhiteboard(true)).toBe(false);
+    student.simulate("remote-shares-screen");
+    student.simulate("remote-opens-whiteboard");
+    student.simulate("remote-closes-whiteboard");
+    student.simulate("remote-opens-whiteboard");
+    await student.leave();
+    expect(shown(studentEvents)).toEqual(["share:receiving", "whiteboard:viewing", "whiteboard:none", "whiteboard:viewing", "share:none", "whiteboard:none"]);
+  });
+
+  test("2.0: a voice rings the other person's tile for a moment, and only while they are in the room", async () => {
+    vi.useFakeTimers();
+    try {
+      const adapter = new SyntheticMediaAdapter({ connectDelayMs: 0, speakingMs: 100 });
+      const events = recorded(adapter);
+      const rings = () => events.filter(event => event.type === "speaking").map(event => event.ids);
+      await adapter.join(joinInput);
+      adapter.simulate("remote-speaks");
+      expect(rings()).toEqual([]);
+      adapter.simulate("remote-joins");
+      adapter.simulate("remote-speaks");
+      expect(rings()).toEqual([["remote"]]);
+      vi.advanceTimersByTime(100);
+      expect(rings()).toEqual([["remote"], []]);
+      adapter.simulate("remote-speaks");
+      adapter.simulate("remote-leaves");
+      expect(rings()).toEqual([["remote"], [], ["remote"], []]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("the synthetic adapter never touches the network or the browser's devices", async () => {
