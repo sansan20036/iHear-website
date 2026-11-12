@@ -16,3 +16,37 @@
 .classroom-paste-row { display:flex; flex-wrap:wrap; gap:8px; }
 .classroom-paste-row input { flex:1 1 220px; min-width:0; min-height:48px; padding:10px 12px; border:1px solid var(--room-line); border-radius:12px; font:inherit; }
 .classroom-paste .classroom-room-muted { margin:0; }
+/* D3 refinement (2026-11-12): this page in the site's own look (its fonts, colours and soft cards),
+   the video icon of the home page's entry, and the two ways in, tutors and students with families,
+   as two cards with their own icons. Only .classroom-home: the lesson room keeps its own styles. */
+.classroom-home{ --room-accent:var(--navy,#263974); --room-line:var(--line,#E9E2D4); --room-field:#80839A; max-width:960px; padding-top:32px; gap:20px; font-family:var(--font-b); }
+.classroom-home .classroom-room-head{ flex-wrap:wrap; row-gap:14px; padding-bottom:18px; border-bottom:1.5px solid var(--room-line); }
+.classroom-home .classroom-room-head h1{ display:flex; align-items:center; gap:14px; flex:1 1 260px; color:var(--navy); font-family:var(--font-h); font-size:clamp(1.55rem,4.4vw,2.05rem); line-height:1.15; }
+.classroom-home .classroom-room-head h1::before{ content:""; flex:none; width:48px; height:48px; border-radius:14px; background:var(--orange-soft) var(--icon-classroom) center / 26px 26px no-repeat; }
+.classroom-home .classroom-langs{ margin-left:auto; }
+.classroom-home .classroom-lang{ min-height:44px; padding:8px 16px; border:1.5px solid var(--room-line); color:var(--navy); font-weight:700; transition:border-color var(--speed-1); }
+.classroom-home .classroom-lang:hover{ border-color:var(--navy); }
+.classroom-home .classroom-room-card{ gap:12px; padding:24px; border:1.5px solid var(--room-line); border-radius:var(--radius,20px); box-shadow:var(--shadow); }
+.classroom-home .classroom-paths{ gap:20px; padding:0; border:0; background:none; box-shadow:none; grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr)); }
+.classroom-home .classroom-paths > div{ display:grid; align-content:start; gap:12px; padding:24px; border:1.5px solid var(--room-line); border-radius:var(--radius,20px); background:var(--bg-surface,#fff); box-shadow:var(--shadow); }
+.classroom-home .classroom-student-path{ display:grid; gap:12px; }
+.classroom-home h2{ display:flex; align-items:center; gap:12px; margin:0; color:var(--navy); font-family:var(--font-h); font-size:1.3rem; line-height:1.2; }
+.classroom-home .classroom-paths > div > h2::before,.classroom-home .classroom-student-path > h2::before{ content:""; flex:none; width:40px; height:40px; border-radius:12px; background-color:var(--bg-subtle,#F0EAE1); background-position:center; background-size:22px 22px; background-repeat:no-repeat; }
+.classroom-home .classroom-paths > div:first-child > h2::before{ background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23263974' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='8' r='3.6'/%3E%3Cpath d='M4.8 19.5c1.3-3.5 4-5.2 7.2-5.2s5.9 1.7 7.2 5.2'/%3E%3C/svg%3E"); }
+.classroom-home .classroom-student-path > h2::before{ background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23263974' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10.2 13.8a4 4 0 0 0 5.6 0l3-3a4 4 0 0 0-5.6-5.6l-1.4 1.4'/%3E%3Cpath d='M13.8 10.2a4 4 0 0 0-5.6 0l-3 3a4 4 0 0 0 5.6 5.6l1.4-1.4'/%3E%3C/svg%3E"); }
+.classroom-home .classroom-paths p,.classroom-home .classroom-student-path p{ margin:0; color:var(--ink-soft); line-height:1.65; }
+.classroom-home .classroom-room-primary,.classroom-home .classroom-room-secondary{ border-radius:999px; padding:12px 24px; font-weight:800; transition:background var(--speed-1), border-color var(--speed-1), box-shadow var(--speed-1); }
+.classroom-home .classroom-room-primary:hover{ background:var(--navy-deep); border-color:var(--navy-deep); box-shadow:var(--shadow); }
+.classroom-home .classroom-room-secondary:hover{ border-color:var(--navy); }
+.classroom-home .classroom-paths > div > .classroom-room-primary{ justify-self:start; }
+.classroom-home .classroom-paste label{ color:var(--navy); }
+.classroom-home .classroom-paste-row input{ border:1.5px solid var(--room-field); border-radius:14px; padding:10px 16px; background:var(--bg-surface,#fff); }
+.classroom-home .classroom-paste-row input:focus-visible{ border-color:var(--navy); }
+.classroom-home .classroom-mine li{ border-bottom-color:var(--room-line); }
+.classroom-home .classroom-mine li.is-open .classroom-mine-state{ color:var(--room-ok); }
+@media (max-width:560px){
+  .classroom-home{ padding-top:24px; }
+  .classroom-home .classroom-langs{ margin-left:0; justify-content:flex-start; }
+  .classroom-home .classroom-room-card:not(.classroom-paths),.classroom-home .classroom-paths > div{ padding:20px; }
+}
+@media (prefers-reduced-motion:reduce){ .classroom-home *{ transition:none!important; } }
