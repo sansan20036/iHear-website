@@ -147,7 +147,7 @@ const forward = (port, request, response, pathname) => {
 const LESSON = '[A-Za-z0-9-]{1,60}';
 const PUBLIC_ROUTES = [
   { methods: ['GET', 'HEAD'], pattern: new RegExp(`^/classroom/${LESSON}$`) },
-  { methods: ['POST'], pattern: new RegExp(`^/api/classroom/${LESSON}/(join|status|host-events)$`) },
+  { methods: ['POST'], pattern: new RegExp(`^/api/classroom/${LESSON}/(join|status|host-events|preview)$`) },
   { methods: ['GET', 'HEAD'], pattern: /^\/_next\/static\/[A-Za-z0-9_./~-]+$/ },
   { methods: ['GET', 'HEAD'], pattern: /^\/favicon\.ico$/ },
   // The site's own static styles, scripts and images, and its theme start-up script (all public).

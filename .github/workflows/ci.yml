@@ -152,6 +152,9 @@ jobs:
       - name: Classroom in a browser (one-to-one)
         run: npm run test:classroom:browser
 
+      - name: Classroom lobby and pre-class screen in a browser (fake camera and microphone)
+        run: npm run test:classroom:lobby
+
       - name: Classroom controls (emergency stop, filing, room moves)
         run: npm run test:classroom:controls
 

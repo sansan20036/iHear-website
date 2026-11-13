@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 
 import ClassroomHome from "./classroom-home";
 import "./[lessonId]/classroom.css";
-import "./classroom-home.css";
+import "./classroom-lobby.css";
 
 // The entry to iHear's online classroom (2026-11-06). The home page links here only at the end of
 // the S3 acceptance. A tutor signs in and enters from "my lessons"; a student uses the personal

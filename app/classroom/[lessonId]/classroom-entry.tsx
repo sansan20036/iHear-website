@@ -14,6 +14,8 @@ import { browserClassroomLocale, CLASSROOM_LOCALES, htmlLangOf, intlLocaleOf, LO
 import { HAND_NOTICE_MS, initialsOf, newHands, orderPeople, personLabel, spotlightOf, stageModeOf } from "../../../lib/classroom-room";
 import { roomCopy as copy, vendorCopy } from "./classroom-copy";
 import { RoomIcon, type RoomIconName } from "./classroom-icons";
+import ClassroomPrejoin from "./classroom-prejoin";
+import { useLessonPreview } from "./use-lesson-preview";
 
 // The vendor-specific parts of the room (2026-10-30): Zoom draws its video in our page; LCIC is
 // Tencent's own classroom page in an iframe. Notes per device come from lib/classroom-capabilities
@@ -133,6 +135,10 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   const [locale, setLocale] = useState<Locale>("zhHant");
   const [joinKey, setJoinKey] = useState<string | null>(givenKey ?? null);
   const blockMode = givenKey !== undefined;
+  // Classroom 2.0 lobby (2026-11-13): the one-to-one lesson's pre-class screen looks at its lesson
+  // once the personal key has been taken from the address (never before, so it is not asked twice).
+  const [keyRead, setKeyRead] = useState(false);
+  const { view: preview, recheck: recheckPreview } = useLessonPreview(lessonId, joinKey, keyRead && !blockMode);
   const onEnded = useRef(onEntryEnded);
   onEnded.current = onEntryEnded;
   const [phase, setPhase] = useState<Phase>("ready");
@@ -212,6 +218,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
     if (blockMode) return;
     const key = takeJoinKey();
     if (key) setJoinKey(key);
+    setKeyRead(true);
     // A new link opened in a tab that already shows this room changes only the part after #,
     // which reloads nothing; its key is taken the same way.
     const onHash = () => {
@@ -718,6 +725,15 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   );
   // A room inside a block sits in the block's own page, which has the page's <main>.
   const Shell = blockMode ? "div" : "main";
+
+  if ((phase !== "joined" || !joined) && !blockMode) {
+    return (
+      <ClassroomPrejoin
+        locale={locale} onLocale={setLocale} phase={phase === "joined" ? "joining" : phase} reason={reason} synthetic={synthetic}
+        preview={preview} onRecheck={recheckPreview} onEnter={() => void enter()} showSignIn={showSignIn} signInUrl={signInUrl}
+      />
+    );
+  }
 
   if (phase !== "joined" || !joined) {
     return (

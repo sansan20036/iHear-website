@@ -1,0 +1,274 @@
+/* Classroom 2.0 lobby (2026-11-13): /classroom, the pre-class screen of /classroom/<id> and
+   /classroom/device-check. The room's colours (classroom.css) and the site's fonts, radius and
+   shadows. The site's own styles pad every <section> and colour every <footer>; these set their own. */
+.classroom-room.lobby {
+  --lobby-radius: var(--radius, 20px); --lobby-shadow: var(--shadow, 0 6px 24px rgba(38,57,116,.10)); --lobby-shadow-lg: var(--shadow-lg, 0 18px 48px rgba(38,57,116,.16));
+  --lobby-soft: var(--ink-soft, #55597A); --lobby-line: var(--line, #E9E2D4); --lobby-speed: var(--speed-1, 180ms);
+  max-width: 1120px; padding: 0 24px 64px; gap: 24px; align-content: start; font-family: var(--font-b, system-ui), system-ui, sans-serif; line-height: 1.6;
+}
+.lobby :focus-visible { outline: 3px solid var(--room-focus); outline-offset: 2px; }
+.lobby h1, .lobby h2, .lobby h3 { margin: 0; font-family: var(--font-h, inherit); color: var(--room-accent); line-height: 1.2; }
+.lobby p { margin: 0; }
+.lobby-icon { width: 22px; height: 22px; flex: none; }
+.lobby-muted { color: var(--lobby-soft); font-size: 15px; }
+.lobby-with-icon { display: flex; align-items: flex-start; gap: 8px; }
+.lobby-with-icon .lobby-icon { width: 18px; height: 18px; margin-top: 3px; color: var(--room-accent); }
+
+/* The top bar: iHear's logo, the classroom's name, a way back and the three languages. */
+.lobby-nav { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; padding: 18px 0 16px; border-bottom: 1.5px solid var(--lobby-line); }
+.lobby-logo { display: inline-flex; align-items: center; border-radius: 10px; flex: none; }
+.lobby-logo img { width: auto; height: 38px; }
+.lobby-brand { display: flex; align-items: center; gap: 10px; min-width: 0; padding-left: 16px; border-left: 1.5px solid var(--lobby-line); }
+.lobby-brand-name { font-family: var(--font-h, inherit); font-weight: 800; font-size: 19px; color: var(--room-accent); white-space: nowrap; }
+.lobby-brand-tag { padding: 3px 10px; border-radius: 999px; background: var(--room-orange-soft); color: var(--room-accent-deep); font-size: 12px; font-weight: 800; letter-spacing: .02em; white-space: nowrap; }
+.lobby-nav-end { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px 14px; }
+.lobby-nav-link { color: var(--room-accent); font-weight: 700; font-size: 15px; text-decoration: none; padding: 8px 4px; border-radius: 8px; }
+.lobby-nav-link:hover { text-decoration: underline; text-underline-offset: 4px; }
+.lobby-langs { display: inline-flex; gap: 2px; padding: 4px; border-radius: 999px; background: var(--room-surface); border: 1.5px solid var(--lobby-line); }
+.lobby-lang { min-height: 38px; padding: 6px 14px; border: 0; border-radius: 999px; background: transparent; color: var(--room-accent); font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; transition: background var(--lobby-speed), color var(--lobby-speed); }
+.lobby-lang:hover { background: var(--room-subtle); }
+.lobby-lang[aria-pressed="true"] { background: var(--room-accent); color: #fff; }
+.lobby-lang-short, .prejoin-note-short, .lobby-phone-link { display: none; }
+
+/* Cards, tags, pills and buttons. */
+.lobby-card { display: grid; align-content: start; gap: 14px; padding: 24px; background: var(--room-surface); border: 1.5px solid var(--lobby-line); border-radius: var(--lobby-radius); box-shadow: var(--lobby-shadow); }
+.lobby-card-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; }
+.lobby-card-head h1, .lobby-card-head h2 { font-size: 1.3rem; }
+.lobby-tag { padding: 3px 10px; border-radius: 999px; background: var(--room-subtle); color: var(--lobby-soft); font-size: 13px; font-weight: 700; }
+.lobby-eyebrow { justify-self: start; width: fit-content; padding: 4px 12px; border-radius: 999px; background: var(--room-orange-soft); color: var(--room-accent-deep); font-size: 13px; font-weight: 800; letter-spacing: .03em; }
+.lobby-pill { display: inline-flex; align-items: center; gap: 8px; width: fit-content; padding: 5px 12px 5px 10px; border-radius: 999px; font-size: 14px; font-weight: 800; color: var(--room-muted); background: var(--room-subtle); }
+.lobby-pill::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: currentColor; flex: none; }
+.lobby-pill.is-open { color: var(--room-ok); background: var(--room-ok-bg); }
+.lobby-pill.is-open::before { animation: lobby-pulse 1.8s ease-out infinite; }
+.lobby-pill.is-before { color: var(--room-note); background: var(--room-note-bg); }
+@keyframes lobby-pulse { 0% { box-shadow: 0 0 0 0 rgba(31,107,58,.45); } 80%, 100% { box-shadow: 0 0 0 8px rgba(31,107,58,0); } }
+.lobby-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 9px 18px; border-radius: 999px; border: 1.5px solid var(--room-accent); background: var(--room-surface); color: var(--room-accent); font: inherit; font-size: 15px; font-weight: 800; text-decoration: none; cursor: pointer; transition: background var(--lobby-speed), color var(--lobby-speed), box-shadow var(--lobby-speed), transform var(--lobby-speed); }
+.lobby-button:hover:not(:disabled) { background: var(--room-accent); color: #fff; box-shadow: var(--lobby-shadow); }
+.lobby-button:disabled { opacity: .55; cursor: progress; }
+.lobby-button.is-quiet { border-color: var(--lobby-line); color: var(--room-ink); }
+.lobby-button.is-quiet:hover:not(:disabled) { border-color: var(--room-accent); background: var(--room-surface); color: var(--room-accent); }
+.lobby-button.is-small { min-height: 38px; padding: 6px 14px; font-size: 14px; }
+.lobby-button .lobby-icon { width: 18px; height: 18px; }
+.lobby .classroom-room-primary, .lobby .classroom-room-secondary { gap: 8px; border-radius: 999px; padding: 12px 24px; font-weight: 800; transition: background var(--lobby-speed), border-color var(--lobby-speed), box-shadow var(--lobby-speed), transform var(--lobby-speed); }
+.lobby .classroom-room-primary:hover:not(:disabled) { background: var(--room-accent-deep); border-color: var(--room-accent-deep); box-shadow: var(--lobby-shadow-lg); transform: translateY(-1px); }
+.lobby .classroom-room-primary:disabled { cursor: not-allowed; opacity: .5; transform: none; box-shadow: none; }
+.lobby .classroom-room-secondary:hover { border-color: var(--room-accent); }
+.lobby .classroom-room-primary .lobby-icon { width: 20px; height: 20px; }
+.lobby-spinner { width: 16px; height: 16px; flex: none; border-radius: 50%; border: 2.5px solid var(--lobby-line); border-top-color: var(--room-accent); animation: lobby-spin .8s linear infinite; }
+@keyframes lobby-spin { to { transform: rotate(360deg); } }
+.lobby-loading, .prejoin-checking { display: flex; align-items: center; gap: 10px; color: var(--lobby-soft); }
+.lobby .classroom-room-problem { line-height: 1.6; }
+.lobby .classroom-room-note { border-radius: 14px; }
+
+/* /classroom: the welcome. */
+.lobby-hero { position: relative; overflow: hidden; display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(220px, 1fr); align-items: center; gap: 24px; padding: 40px clamp(22px, 4vw, 48px); border-radius: 28px; color: #fff;
+  background: radial-gradient(circle at 95% 0%, rgba(232,150,79,.38), transparent 46%), radial-gradient(circle at 0% 100%, rgba(255,255,255,.08), transparent 42%), linear-gradient(135deg, var(--room-accent) 0%, var(--room-accent-deep) 100%); box-shadow: var(--lobby-shadow-lg); }
+.lobby-hero-copy { display: grid; gap: 14px; }
+.lobby-hero h1 { color: #fff; font-size: clamp(1.75rem, 4.4vw, 2.7rem); line-height: 1.15; }
+.lobby-hero p { max-width: 40em; color: rgba(255,255,255,.88); font-size: 1.04rem; line-height: 1.75; }
+.lobby-eyebrow.is-light { background: rgba(255,255,255,.14); color: #fff; border: 1px solid rgba(255,255,255,.22); }
+/* A drawing of the classroom: two people, the board and the toolbar (decoration only). */
+.lobby-hero-art { display: grid; grid-template-columns: 1.4fr 1fr; grid-template-rows: 1fr 1fr auto; gap: 10px; padding: 14px; border-radius: 22px; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.16); transform: rotate(-2deg); }
+.lobby-hero-tile { display: grid; place-items: center; min-height: 64px; border-radius: 14px; background: rgba(255,255,255,.12); color: rgba(255,255,255,.75); }
+.lobby-hero-tile .lobby-icon { width: 34px; height: 34px; }
+.lobby-hero-tile.is-main { grid-row: span 2; background: rgba(255,255,255,.18); }
+.lobby-hero-tile.is-main .lobby-icon { width: 54px; height: 54px; }
+.lobby-hero-tile.is-board { background: repeating-linear-gradient(-45deg, rgba(255,255,255,.12) 0 6px, rgba(255,255,255,.06) 6px 12px); }
+.lobby-hero-bar { grid-column: 1 / -1; display: flex; justify-content: center; gap: 10px; padding: 8px; border-radius: 999px; background: rgba(0,0,0,.18); }
+.lobby-hero-bar i { width: 26px; height: 26px; border-radius: 50%; background: rgba(255,255,255,.75); }
+.lobby-hero-bar i.is-leave { background: var(--room-orange); }
+
+/* The two ways in, the steps, the device check card. */
+.lobby-paths { display: grid; gap: 20px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); align-items: stretch; }
+.lobby-path { gap: 14px; transition: box-shadow var(--lobby-speed), border-color var(--lobby-speed), transform var(--lobby-speed); }
+.lobby-path:hover { border-color: color-mix(in srgb, var(--room-accent) 22%, var(--lobby-line)); box-shadow: var(--lobby-shadow-lg); }
+.lobby-path-head { display: flex; align-items: center; gap: 12px; }
+.lobby-path-head h2 { font-size: 1.3rem; }
+.lobby-path-icon { display: grid; place-items: center; width: 44px; height: 44px; flex: none; border-radius: 14px; background: var(--room-orange-soft); color: var(--room-accent); }
+.lobby-path > p { color: var(--lobby-soft); line-height: 1.7; }
+.lobby-signin, .lobby-check-link { justify-self: start; }
+/* For a visitor the device check is one wide band: what it is on the left, the way in on the right. */
+@media (min-width: 761px) {
+  .lobby-check-wide .lobby-check-card { grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 28px; }
+  .lobby-check-wide .lobby-check-card .lobby-path-head, .lobby-check-wide .lobby-check-card > p { grid-column: 1; }
+  .lobby-check-wide .lobby-check-card .lobby-check-link { grid-column: 2; grid-row: 1 / span 2; justify-self: end; }
+}
+.classroom-paste { display: grid; gap: 8px; }
+.classroom-paste label { font-weight: 800; color: var(--room-accent); }
+.classroom-paste-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.classroom-paste-row input { flex: 1 1 220px; min-width: 0; min-height: 50px; padding: 10px 16px; border: 1.5px solid var(--room-field, #80839A); border-radius: 14px; background: var(--room-surface); color: var(--room-ink); font: inherit; transition: border-color var(--lobby-speed), box-shadow var(--lobby-speed); }
+.classroom-paste-row input::placeholder { color: #8a8fa6; }
+.classroom-paste-row input:focus-visible { border-color: var(--room-accent); box-shadow: 0 0 0 4px rgba(38,57,116,.12); }
+.lobby .classroom-paste .lobby-muted { font-size: 14px; }
+.lobby-steps-wrap { display: grid; gap: 14px; padding: 0; }
+.lobby-section-title { font-size: 1.3rem; }
+.lobby-steps { list-style: none; display: grid; gap: 16px; grid-template-columns: repeat(3, minmax(0, 1fr)); counter-reset: lobby-step; }
+.lobby-steps li { position: relative; display: grid; align-content: start; gap: 8px; padding: 22px 20px 20px; border-radius: var(--lobby-radius); background: var(--room-surface); border: 1.5px solid var(--lobby-line); counter-increment: lobby-step; }
+.lobby-steps li::after { content: counter(lobby-step); position: absolute; top: 16px; right: 18px; font-family: var(--font-h, inherit); font-size: 2.2rem; font-weight: 800; line-height: 1; color: var(--room-subtle); }
+.lobby-step-icon { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 13px; background: var(--room-accent); color: #fff; }
+.lobby-steps h3 { font-size: 1.08rem; }
+.lobby-steps p { color: var(--lobby-soft); font-size: 15px; line-height: 1.65; }
+.lobby-closed { justify-items: start; }
+.classroom-preview-banner { margin: 0; padding: 10px 14px; border-radius: 12px; border: 1.5px dashed var(--lobby-line); background: var(--room-surface); font-weight: 700; }
+
+/* /classroom for a signed-in tutor: their lessons, the next one marked. */
+.classroom-mine ul { list-style: none; display: grid; gap: 10px; }
+.classroom-mine li { display: grid; grid-template-columns: minmax(150px, 210px) minmax(0, 1fr) auto auto; align-items: center; gap: 8px 18px; padding: 14px 16px; border-radius: 16px; border: 1.5px solid var(--lobby-line); background: var(--room-page); }
+.classroom-mine li.is-next { border-color: var(--room-accent); background: var(--room-surface); box-shadow: var(--lobby-shadow); }
+.classroom-mine li.is-ended, .classroom-mine li.is-cancelled { color: var(--room-muted); background: transparent; }
+.mine-when { display: grid; gap: 1px; }
+.mine-date { font-size: 14px; color: var(--lobby-soft); }
+.mine-time { font-weight: 800; font-size: 1.05rem; }
+.mine-time small { font-size: 12px; font-weight: 700; color: var(--lobby-soft); }
+.mine-taipei { font-size: 13px; color: var(--lobby-soft); }
+.mine-what { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-width: 0; }
+.mine-what strong { font-size: 1.05rem; overflow-wrap: anywhere; }
+.mine-what span:not(.mine-next) { color: var(--lobby-soft); font-size: 15px; }
+.mine-next { padding: 2px 9px; border-radius: 999px; background: var(--room-accent); color: #fff; font-size: 12px; font-weight: 800; }
+.classroom-mine .classroom-mine-state { justify-self: start; }
+.classroom-mine .mine-enter { padding: 10px 20px; min-height: 44px; }
+
+/* Help, and the way home. */
+.lobby-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 20px; margin-top: 8px; padding: 18px 4px 0; border-top: 1.5px solid var(--lobby-line); background: none; color: var(--lobby-soft); font-size: 15px; }
+.lobby-foot-link { color: var(--room-accent); font-weight: 700; }
+
+/* The pre-class screen (/classroom/<id>): the lesson and its door, the way in, the device check. */
+.prejoin-grid { display: grid; gap: 22px; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); grid-template-areas: "lesson device" "join device"; align-items: start; }
+.prejoin-lesson { grid-area: lesson; gap: 18px; }
+.prejoin-join { grid-area: join; }
+.prejoin-grid > .device-check { grid-area: device; }
+.prejoin-head { display: grid; gap: 10px; }
+.prejoin-head h1 { font-size: clamp(1.6rem, 3.4vw, 2.2rem); }
+.prejoin-door { display: grid; gap: 10px; padding: 16px 18px; border-radius: 16px; background: var(--room-page); border: 1.5px solid var(--lobby-line); }
+.prejoin-door.is-open { background: color-mix(in srgb, var(--room-ok-bg) 55%, var(--room-surface)); border-color: color-mix(in srgb, var(--room-ok) 25%, var(--lobby-line)); }
+.prejoin-door.is-before { background: color-mix(in srgb, var(--room-note-bg) 60%, var(--room-surface)); border-color: color-mix(in srgb, var(--room-note) 22%, var(--lobby-line)); }
+.prejoin-door p { line-height: 1.65; }
+.prejoin-facts { margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.prejoin-facts div { padding: 12px 14px; border-radius: 14px; background: var(--room-page); border: 1px solid var(--lobby-line); min-width: 0; }
+.prejoin-facts .is-wide { grid-column: 1 / -1; }
+.prejoin-facts .is-second { background: transparent; }
+.prejoin-facts dt { color: var(--lobby-soft); font-size: 13px; font-weight: 700; }
+.prejoin-facts dd { margin: 3px 0 0; font-weight: 800; font-size: 1.05rem; overflow-wrap: anywhere; }
+.prejoin-facts .prejoin-date { display: block; font-weight: 700; font-size: 15px; color: var(--room-ink); }
+.prejoin-facts .prejoin-range { display: block; font-size: 1.3rem; letter-spacing: .01em; }
+.prejoin-zone { font-size: 13px; font-weight: 700; color: var(--lobby-soft); }
+.prejoin-refusal, .prejoin-unknown { display: grid; gap: 10px; justify-items: start; }
+.prejoin-join { gap: 12px; }
+.prejoin-join-row { display: flex; flex-wrap: wrap; gap: 10px; }
+.lobby .prejoin-enter { flex: 1 1 260px; min-height: 56px; font-size: 1.08rem; }
+.prejoin-left { font-weight: 700; }
+.prejoin-recording { font-size: 14px; }
+
+/* The device check. */
+.device-check { gap: 14px; }
+.device-preview { position: relative; display: grid; place-items: center; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 16px; background: var(--room-stage); color: rgba(255,255,255,.78); }
+.device-preview video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+.device-preview-idle { display: grid; justify-items: center; gap: 8px; max-width: 26em; padding: 16px; text-align: center; font-size: 14px; }
+.device-preview-idle .lobby-icon { width: 36px; height: 36px; opacity: .8; }
+.device-rows { list-style: none; display: grid; gap: 4px; }
+.device-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 6px 14px; padding: 12px 0; border-bottom: 1px solid var(--lobby-line); }
+.device-row:last-child { border-bottom: 0; padding-bottom: 0; }
+.device-row-icon { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; background: var(--room-subtle); color: var(--room-accent); }
+.device-row[data-state="ok"] .device-row-icon { background: var(--room-ok-bg); color: var(--room-ok); }
+.device-row[data-state="problem"] .device-row-icon { background: var(--room-bad-bg); color: var(--room-bad); }
+.device-row-main { display: grid; gap: 4px; min-width: 0; }
+.device-row-name { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-weight: 800; }
+.device-row-detail { color: var(--lobby-soft); font-size: 14px; line-height: 1.55; overflow-wrap: anywhere; }
+.device-row-detail:empty { display: none; }
+.device-row .lobby-button { justify-self: end; }
+.lobby-status { padding: 1px 9px; border-radius: 999px; font-size: 12px; font-weight: 800; background: var(--room-subtle); color: var(--lobby-soft); }
+.lobby-status.is-ok { background: var(--room-ok-bg); color: var(--room-ok); }
+.lobby-status.is-problem { background: var(--room-bad-bg); color: var(--room-bad); }
+.lobby-status.is-checking { background: var(--room-note-bg); color: var(--room-note); }
+.device-meter { height: 10px; border-radius: 999px; background: var(--room-subtle); overflow: hidden; }
+.device-meter span { display: block; height: 100%; width: 100%; transform-origin: left center; border-radius: inherit; background: linear-gradient(90deg, var(--room-ok), #3fa767); transition: transform 90ms linear; }
+.device-ask { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; color: var(--room-ink); font-weight: 700; }
+.device-kind { display: block; margin-top: 2px; }
+
+/* /classroom/device-check */
+.lobby-check-intro { display: grid; gap: 10px; max-width: 46em; }
+.lobby-check-intro h1 { font-size: clamp(1.6rem, 3.6vw, 2.3rem); }
+.lobby-check-page .device-check { max-width: 960px; }
+.lobby-back { display: inline-flex; align-items: center; gap: 8px; width: fit-content; color: var(--room-accent); font-weight: 700; }
+.lobby-back .lobby-icon { transform: scaleX(-1); width: 18px; height: 18px; }
+
+/* Tablets and narrower: one column. */
+@media (max-width: 960px) {
+  .prejoin-grid { grid-template-columns: minmax(0, 1fr); grid-template-areas: "lesson" "join" "device"; }
+  .lobby-hero { grid-template-columns: minmax(0, 1fr); }
+  .lobby-hero-art { display: none; }
+}
+/* A wide card (a tablet's one column, the device check's own page): the picture beside the checks. */
+@media (min-width: 641px) and (max-width: 960px) {
+  .prejoin-grid > .device-check { grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); column-gap: 22px; }
+}
+@media (min-width: 700px) {
+  .lobby-check-page .device-check { grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); column-gap: 22px; }
+}
+@media (min-width: 641px) {
+  .prejoin-grid > .device-check > :is(.lobby-card-head, .lobby-muted), .lobby-check-page .device-check > :is(.lobby-card-head, .lobby-muted) { grid-column: 1 / -1; }
+  .device-check .device-preview { align-self: start; }
+}
+@media (min-width: 961px) {
+  .prejoin-grid > .device-check { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 760px) {
+  .lobby-steps { grid-template-columns: minmax(0, 1fr); }
+  .lobby-steps li { grid-template-columns: auto minmax(0, 1fr); column-gap: 14px; }
+  .lobby-steps li .lobby-step-icon { grid-row: span 2; }
+  .lobby-steps li::after { top: 14px; font-size: 1.6rem; }
+  .classroom-mine li { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .classroom-mine li .mine-enter { justify-self: stretch; }
+}
+/* Phones: one row of top bar, the lesson in one compact panel, and the way in at the bottom of the
+   screen, whatever is scrolled (the page ends the bar's own height lower, so nothing stays under it). */
+@media (max-width: 640px) {
+  .classroom-room.lobby { padding: 0 16px 40px; gap: 16px; }
+  .lobby-nav { flex-wrap: wrap; gap: 8px 10px; padding: 10px 0; }
+  .lobby-logo img { height: 26px; }
+  .lobby-brand { padding-left: 10px; gap: 8px; }
+  .lobby-brand-name { font-size: 15px; }
+  .lobby-brand-tag, .lobby-nav-link { display: none; }
+  .lobby-nav-end { margin-left: auto; }
+  .lobby-langs { padding: 3px; }
+  .lobby-lang { min-height: 36px; padding: 4px 11px; font-size: 14px; }
+  .lobby-lang-full { display: none; }
+  .lobby-lang-short { display: inline; }
+  .lobby-card { padding: 18px; border-radius: 18px; }
+  .lobby-hero { padding: 22px 18px; gap: 10px; border-radius: 20px; }
+  .lobby-hero-copy { gap: 10px; }
+  .lobby-hero h1 { font-size: 1.6rem; }
+  .lobby-hero p { font-size: .95rem; line-height: 1.6; }
+  /* The way in is fixed to the screen, so its row in the grid goes. */
+  .prejoin-grid { grid-template-areas: "lesson" "device"; }
+  .prejoin-join { grid-area: auto; }
+  .prejoin-head .lobby-eyebrow, .prejoin-head > .lobby-muted { display: none; }
+  .prejoin-head h1 { font-size: 1.45rem; }
+  .prejoin-lesson { gap: 12px; }
+  .prejoin-door { padding: 12px 14px; gap: 6px; }
+  .prejoin-facts { grid-template-columns: minmax(0, 1fr); gap: 0; border: 1px solid var(--lobby-line); border-radius: 14px; background: var(--room-page); overflow: hidden; }
+  .prejoin-facts div, .prejoin-facts .is-second { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 9px 14px; border: 0; border-bottom: 1px solid var(--lobby-line); border-radius: 0; background: transparent; }
+  .prejoin-facts div:last-child { border-bottom: 0; }
+  .prejoin-facts dt { flex: none; }
+  .prejoin-facts dd { margin: 0; text-align: right; font-size: 1rem; }
+  .prejoin-facts .prejoin-date { font-size: 13px; }
+  .prejoin-facts .prejoin-range { font-size: 1.05rem; }
+  .classroom-room.prejoin[data-bar="on"] { padding-bottom: calc(var(--prejoin-bar, 120px) + 16px); }
+  .prejoin-join { position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; gap: 6px; padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); border-radius: 20px 20px 0 0; border: 0; border-top: 1.5px solid var(--lobby-line); box-shadow: 0 -12px 32px rgba(27,42,87,.14); }
+  .lobby .prejoin-enter { min-height: 52px; }
+  .prejoin-join .lobby-muted { font-size: 13px; }
+  .prejoin-note-full, .prejoin-recording { display: none; }
+  .prejoin-note-short { display: inline; }
+  .lobby-phone-link { display: inline-flex; width: fit-content; color: var(--room-accent); font-weight: 700; }
+  .device-row { grid-template-columns: auto minmax(0, 1fr); }
+  .device-row .lobby-button { grid-column: 1 / -1; justify-self: stretch; }
+}
+@media (pointer: coarse) { .lobby-lang { min-height: 42px; } }
+@media (prefers-reduced-motion: reduce) {
+  .lobby *, .lobby *::before, .lobby *::after { animation: none !important; transition: none !important; }
+  .lobby .classroom-room-primary:hover:not(:disabled) { transform: none; }
+}
+@media (forced-colors: active) {
+  .lobby-card, .lobby-steps li, .classroom-mine li, .prejoin-door, .prejoin-facts div { border: 1px solid CanvasText; }
+  .lobby-lang[aria-pressed="true"] { outline: 2px solid Highlight; }
+}

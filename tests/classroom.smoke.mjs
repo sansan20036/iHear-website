@@ -156,10 +156,18 @@ try {
     const anonymousContext = await context({ locale: 'zh-TW' });
     const anonymous = watch(await anonymousContext.newPage());
     await anonymous.goto(`${origin}/classroom/${lesson.id}`);
-    const refused = await enter(anonymous);
-    expect(refused).toMatchObject({ status: 403, body: { code: 'NOT_ON_ROSTER' } });
+    // The pre-class screen (2026-11-13) asks first: told at once, without a press, and no way in is
+    // offered; nothing about the lesson is shown.
     await expect(anonymous.locator('.classroom-room-problem')).toContainText('學生請使用 iHear 提供的個人專屬連結');
     await expect(anonymous.getByRole('link', { name: '小老師登入' })).toBeVisible();
+    await expect(anonymous.getByRole('button', { name: '進入教室' })).toHaveCount(0);
+    expect(await anonymous.content()).not.toContain(lesson.code);
+    // The door itself still refuses, as before.
+    const refused = await anonymous.evaluate(async id => {
+      const response = await fetch(`/api/classroom/${id}/join`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+      return { status: response.status, body: await response.json() };
+    }, lesson.id);
+    expect(refused).toMatchObject({ status: 403, body: { code: 'NOT_ON_ROSTER' } });
     expect(refused.body.session).toBeUndefined();
     await anonymousContext.close();
   });
@@ -498,7 +506,14 @@ try {
     const oldContext = await context({ locale: 'zh-TW' });
     const old = watch(await oldContext.newPage());
     await old.goto(linkLesson.link);
-    expect(await enterAgain(old)).toMatchObject({ status: 403, body: { code: 'NOT_ON_ROSTER' } });
+    // The pre-class screen says the old link no longer opens the lesson and offers no way in; the
+    // door refuses the old key too.
+    await expect(old.locator('.classroom-room-problem')).toContainText('這個連結無法進入這堂課');
+    await expect(old.getByRole('button', { name: '進入教室' })).toHaveCount(0);
+    expect(await old.evaluate(async ({ id, key }) => {
+      const response = await fetch(`/api/classroom/${id}/join`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key }) });
+      return { status: response.status, body: await response.json() };
+    }, { id: linkLesson.id, key: linkLesson.key })).toMatchObject({ status: 403, body: { code: 'NOT_ON_ROSTER' } });
     await oldContext.close();
     // Opened in the tab that still shows the room: only the part after # changes, so the page is
     // not reloaded; it must still take the new key (and out of the address bar).
@@ -586,7 +601,8 @@ try {
     const answer = await mine.evaluate(async () => JSON.stringify(await (await fetch('/api/classroom/my-lessons')).json()));
     for (const value of [lesson.key, linkLesson.key, linkLesson.newKey, tutor, 'token', 'sessionName']) expect(answer).not.toContain(value);
     await shot(mine, '11-classroom-my-lessons');
-    await open.getByRole('link', { name: '進入教室' }).click();
+    // The list leads to the pre-class screen (2026-11-13), where the classroom is entered.
+    await open.getByRole('link', { name: '準備上課' }).click();
     await expect(mine).toHaveURL(`${origin}/classroom/${lesson.id}`);
     await expect(mine.getByRole('button', { name: '進入教室' })).toBeVisible();
     await mine.close();

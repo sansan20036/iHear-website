@@ -352,3 +352,7 @@
 @media (forced-colors: active) {
   .room2-tool, .room2-stage-tool, .room2-chip, .room2-tabs [role="tab"] { border: 1px solid ButtonText; }
 }
+
+/* The site's admin tools (theme, layout, inline editing, back to top) float over every page for
+   administrators; the classroom has nothing they edit, and they cover its controls (2026-11-13). */
+body:has(.classroom-room) > :is(.site-theme-trigger, .ihear-layout-trigger, .ihear-inline-edit-button, .ihear-layout-quick, .back-to-top) { display: none !important; }

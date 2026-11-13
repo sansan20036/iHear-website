@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { LESSON_ID_PATTERN } from "../../../lib/classroom-link";
 import ClassroomEntry from "./classroom-entry";
 import "./classroom.css";
+import "../classroom-lobby.css";
 
 export const dynamic = "force-dynamic";
 

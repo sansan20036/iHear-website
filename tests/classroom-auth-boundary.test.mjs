@@ -68,7 +68,7 @@ const clientFiles = [...files(path.join(root, "app")), ...files(path.join(root, 
 describe("the browser never gets the classroom secrets", () => {
   test("the classroom's browser pages are among the files checked", () => {
     const names = clientFiles.map(relative);
-    for (const page of ["app/classroom/[lessonId]/classroom-entry.tsx", "app/classroom/classroom-home.tsx", "app/admin/classrooms/page.tsx"]) {
+    for (const page of ["app/classroom/[lessonId]/classroom-entry.tsx", "app/classroom/[lessonId]/classroom-prejoin.tsx", "app/classroom/classroom-home.tsx", "app/classroom/classroom-lobby-parts.tsx", "app/classroom/device-check/device-check-page.tsx", "app/admin/classrooms/page.tsx"]) {
       expect(names).toContain(page);
     }
   });

@@ -1,6 +1,7 @@
 import type { ClassroomLocale } from "../../lib/classroom-locale";
 
-// The words on /classroom, in English, Traditional and Simplified Chinese (D2, 2026-11-07).
+// The words on /classroom, in English, Traditional and Simplified Chinese (D2, 2026-11-07; the
+// Classroom 2.0 lobby, 2026-11-13: the welcome, the three steps, the device check and help).
 const en = {
   title: "iHear Online Classroom", language: "Language", loading: "Loading…",
   closed: "The online classroom is not open yet.", unavailable: "Your lessons could not be loaded. Please try again later.",
@@ -14,6 +15,22 @@ const en = {
   mine: "My lessons", empty: "You have no lessons right now.", student: "Student", enter: "Enter the classroom", admin: "Manage all lessons",
   state: { before: "Not open yet", open: "Open now", ended: "Ended", cancelled: "Cancelled" },
   opensAt: "Opens",
+  // The Classroom 2.0 lobby (2026-11-13)
+  eyebrow: "Pre-class lobby",
+  welcome: "Welcome to the iHear Online Classroom",
+  welcomeIntro: "Lessons take place right here in your browser, with nothing to install. Students enter with the personal link from iHear; tutors sign in with Google.",
+  welcomeBack: "Welcome back",
+  mineIntro: "Your lessons in the next two weeks. The classroom opens 15 minutes before each lesson.",
+  next: "Next", retry: "Try again", prepare: "Get ready",
+  stepsTitle: "Three steps to class",
+  step1Title: "Open your personal link", step1Text: "Use the link iHear sent you: it leads straight to your lesson.",
+  step2Title: "Check your devices", step2Text: "Try your camera, microphone and sound before class (optional).",
+  step3Title: "Enter the classroom", step3Text: "The classroom opens 15 minutes before the lesson; press “Enter the classroom”.",
+  checkCardTitle: "Check your devices before class",
+  checkCardText: "Make sure your camera, microphone and sound work. Nothing is recorded or sent.",
+  checkCardLink: "Start the device check",
+  help: "Lost your link, or cannot get in? Ask iHear to send your personal link again.",
+  backHome: "Back to the iHear home page",
 };
 
 type HomeCopy = typeof en;
@@ -31,6 +48,21 @@ const zhHant: HomeCopy = {
   mine: "我的課程", empty: "目前沒有你的課程。", student: "學生", enter: "進入教室", admin: "管理全部課程",
   state: { before: "尚未開放", open: "可以進入", ended: "已結束", cancelled: "已取消" },
   opensAt: "開放時間",
+  eyebrow: "課前大廳",
+  welcome: "歡迎來到 iHear 線上教室",
+  welcomeIntro: "在瀏覽器裡就能上課，不需要安裝任何軟體。學生用 iHear 寄來的個人連結進入；小老師用 Google 帳號登入。",
+  welcomeBack: "歡迎回來",
+  mineIntro: "以下是你未來兩週的課程。教室在每堂課開始前 15 分鐘開放。",
+  next: "下一堂", retry: "再試一次", prepare: "準備上課",
+  stepsTitle: "上課三步驟",
+  step1Title: "打開個人連結", step1Text: "使用 iHear 寄給你的連結，會直接帶你到自己的課程。",
+  step2Title: "檢查裝置", step2Text: "上課前先試試攝影機、麥克風和聲音（可略過）。",
+  step3Title: "進入教室", step3Text: "教室在上課前 15 分鐘開放，按下「進入教室」就可以開始。",
+  checkCardTitle: "上課前先檢查裝置",
+  checkCardText: "確認攝影機、麥克風和聲音都正常。檢查不會錄影，也不會傳送任何資料。",
+  checkCardLink: "開始裝置檢查",
+  help: "連結遺失或無法進入？請聯絡 iHear 重新寄送你的個人連結。",
+  backHome: "回到 iHear 首頁",
 };
 
 const zhHans: HomeCopy = {
@@ -46,6 +78,21 @@ const zhHans: HomeCopy = {
   mine: "我的课程", empty: "目前没有你的课程。", student: "学生", enter: "进入教室", admin: "管理全部课程",
   state: { before: "尚未开放", open: "可以进入", ended: "已结束", cancelled: "已取消" },
   opensAt: "开放时间",
+  eyebrow: "课前大厅",
+  welcome: "欢迎来到 iHear 线上教室",
+  welcomeIntro: "在浏览器里就能上课，不需要安装任何软件。学生用 iHear 发来的个人链接进入；小老师用 Google 账号登录。",
+  welcomeBack: "欢迎回来",
+  mineIntro: "以下是你未来两周的课程。教室在每堂课开始前 15 分钟开放。",
+  next: "下一堂", retry: "再试一次", prepare: "准备上课",
+  stepsTitle: "上课三步骤",
+  step1Title: "打开个人链接", step1Text: "使用 iHear 发给你的链接，会直接带你到自己的课程。",
+  step2Title: "检查设备", step2Text: "上课前先试试摄像头、麦克风和声音（可跳过）。",
+  step3Title: "进入教室", step3Text: "教室在上课前 15 分钟开放，按下“进入教室”就可以开始。",
+  checkCardTitle: "上课前先检查设备",
+  checkCardText: "确认摄像头、麦克风和声音都正常。检查不会录像，也不会发送任何数据。",
+  checkCardLink: "开始设备检查",
+  help: "链接遗失或无法进入？请联系 iHear 重新发送你的个人链接。",
+  backHome: "回到 iHear 首页",
 };
 
 export const homeCopy: Record<ClassroomLocale, HomeCopy> = { en, zhHant, zhHans };

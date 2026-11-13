@@ -7,6 +7,7 @@ import { classroomEntryAccess } from "../lib/classroom-entry";
 import { JOIN_KEY_PATTERN, LESSON_ID_PATTERN, parseStudentLink, studentRoomPath } from "../lib/classroom-link";
 import { classroomLocaleOf, htmlLangOf, LOCALE_NAMES } from "../lib/classroom-locale";
 import { homeCopy } from "../app/classroom/classroom-home-copy";
+import { lobbyCopy } from "../app/classroom/classroom-lobby-copy";
 import { roomCopy, vendorCopy } from "../app/classroom/[lessonId]/classroom-copy";
 
 // The home page's way into the online classroom (D2, 2026-11-07), offline: the one release switch
@@ -175,13 +176,13 @@ describe("the classroom pages in English, Traditional and Simplified Chinese", (
   const strings = value => typeof value === "string" ? [value] : typeof value === "function" ? strings(value(sampleCheck)) : value && typeof value === "object" ? Object.values(value).flatMap(strings) : [];
   const shape = value => typeof value === "function" ? "function" : value && typeof value === "object" ? Object.fromEntries(Object.keys(value).sort().map(key => [key, shape(value[key])])) : typeof value;
 
-  test.each([["the entry page", homeCopy], ["the room", roomCopy], ["the room's video tools", vendorCopy]])("%s has the same wording keys in all three languages", (_name, copy) => {
+  test.each([["the entry page", homeCopy], ["the lobby and the device check", lobbyCopy], ["the room", roomCopy], ["the room's video tools", vendorCopy]])("%s has the same wording keys in all three languages", (_name, copy) => {
     expect(Object.keys(copy).sort()).toEqual(["en", "zhHans", "zhHant"]);
     expect(shape(copy.zhHant)).toEqual(shape(copy.en));
     expect(shape(copy.zhHans)).toEqual(shape(copy.en));
   });
 
-  test.each([["the entry page", homeCopy], ["the room", roomCopy], ["the room's video tools", vendorCopy]])("%s keeps each Chinese script to its own characters", (_name, copy) => {
+  test.each([["the entry page", homeCopy], ["the lobby and the device check", lobbyCopy], ["the room", roomCopy], ["the room's video tools", vendorCopy]])("%s keeps each Chinese script to its own characters", (_name, copy) => {
     const hans = strings(copy.zhHans).join("");
     const hant = strings(copy.zhHant).join("");
     expect([...hans].filter(char => TRADITIONAL_ONLY.includes(char))).toEqual([]);
