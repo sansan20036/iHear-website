@@ -5,12 +5,13 @@ import { useEffect, useId, useRef, useState, type MutableRefObject, type ReactNo
 import { classroomDeviceOf, type ClassroomDevice } from "../../lib/classroom-capabilities";
 import { browserReadiness, deviceProblemOf, levelOf, type DeviceCheckProblem } from "../../lib/classroom-lobby";
 import { CLASSROOM_LOCALES, htmlLangOf, LOCALE_NAMES, type ClassroomLocale } from "../../lib/classroom-locale";
+import { CLASSROOM_RELEASE } from "../../lib/classroom-release";
 
 // The languages' short names, shown on phones where the whole names do not fit beside the logo.
 const SHORT_NAMES: Record<ClassroomLocale, string> = { en: "EN", zhHant: "繁", zhHans: "简" };
 import type { LobbyCopy } from "./classroom-lobby-copy";
 
-// The Classroom 2.0 lobby's shared parts (2026-11-13): the top bar of /classroom, the pre-class
+// The Classroom 2.1 lobby's shared parts (2026-11-13): the top bar of /classroom, the pre-class
 // screen and the device check page, and the device check itself.
 
 export type LobbyIconName = "camera" | "microphone" | "speaker" | "browser" | "link" | "tutor" | "check" | "clock" | "arrow" | "shield" | "help" | "enter";
@@ -39,10 +40,11 @@ export function LobbyIcon({ name }: { name: LobbyIconName }) {
 }
 
 // The top bar: iHear's logo (back to the site), the classroom's name, and the three languages with
-// the one in use pressed. Anything else (a way back to the entrance) comes in as children.
+// the one in use pressed. Anything else (a way back to the entrance) comes in as children. It carries
+// the release's version (data-classroom-release), and nothing else about the page or the person.
 export function LobbyNav({ locale, onLocale, text, children }: { locale: ClassroomLocale; onLocale: (locale: ClassroomLocale) => void; text: LobbyCopy; children?: ReactNode }) {
   return (
-    <header className="lobby-nav">
+    <header className="lobby-nav" data-classroom-release={CLASSROOM_RELEASE.version}>
       <a className="lobby-logo" href="/">
         <img src="/assets/logo.png" alt={text.home} width={109} height={40} />
       </a>

@@ -1,13 +1,15 @@
 import type { ClassroomDevice } from "../../lib/classroom-capabilities";
 import type { DeviceCheckProblem } from "../../lib/classroom-lobby";
 import type { ClassroomLocale } from "../../lib/classroom-locale";
+import { CLASSROOM_RELEASE } from "../../lib/classroom-release";
 
-// The words of the Classroom 2.0 lobby (2026-11-13): the top bar, the pre-class screen of a lesson
+// The words of the Classroom 2.1 lobby (2026-11-13): the top bar, the pre-class screen of a lesson
 // and the device check, in English, Traditional and Simplified Chinese. A function's argument is
-// text the page has already formatted (a time, a wait, a device's name).
+// text the page has already formatted (a time, a wait, a device's name). The release's label is the
+// same in every language and comes from lib/classroom-release.ts.
 
 const en = {
-  brand: "iHear Online Classroom", tag: "Classroom 2.0", home: "iHear home page", language: "Language", toLobby: "Classroom entrance",
+  brand: "iHear Online Classroom", tag: CLASSROOM_RELEASE.label, home: "iHear home page", language: "Language", toLobby: "Classroom entrance",
   // The pre-class screen
   eyebrow: "Before class", title: "Get ready for class",
   intro: "Check your lesson, test your camera and microphone if you like, then enter when you are ready.",
@@ -62,7 +64,7 @@ const en = {
 type LobbyCopy = typeof en;
 
 const zhHant: LobbyCopy = {
-  brand: "iHear 線上教室", tag: "Classroom 2.0", home: "iHear 首頁", language: "語言", toLobby: "線上教室入口",
+  brand: "iHear 線上教室", tag: CLASSROOM_RELEASE.label, home: "iHear 首頁", language: "語言", toLobby: "線上教室入口",
   eyebrow: "課前準備", title: "準備上課",
   intro: "先確認課程資訊，需要的話測試一下攝影機和麥克風，準備好就可以進入教室。",
   checking: "正在確認課程…",
@@ -112,7 +114,7 @@ const zhHant: LobbyCopy = {
 };
 
 const zhHans: LobbyCopy = {
-  brand: "iHear 线上教室", tag: "Classroom 2.0", home: "iHear 首页", language: "语言", toLobby: "线上教室入口",
+  brand: "iHear 线上教室", tag: CLASSROOM_RELEASE.label, home: "iHear 首页", language: "语言", toLobby: "线上教室入口",
   eyebrow: "课前准备", title: "准备上课",
   intro: "先确认课程信息，需要的话测试一下摄像头和麦克风，准备好就可以进入教室。",
   checking: "正在确认课程…",

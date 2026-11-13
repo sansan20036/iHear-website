@@ -1,4 +1,4 @@
-// The pre-class screen's look at one lesson (Classroom 2.0 lobby, 2026-11-13): before anyone
+// The pre-class screen's look at one lesson (Classroom 2.1 lobby, 2026-11-13): before anyone
 // enters, the person who opened the room page sees which lesson it is, when, as whom, and whether
 // the classroom is open yet. It answers only the person the room would let in anyway (a student by
 // the personal link, the lesson's tutor by sign-in) and only what entering would tell them: the

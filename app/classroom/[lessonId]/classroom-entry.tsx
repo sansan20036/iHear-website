@@ -135,7 +135,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   const [locale, setLocale] = useState<Locale>("zhHant");
   const [joinKey, setJoinKey] = useState<string | null>(givenKey ?? null);
   const blockMode = givenKey !== undefined;
-  // Classroom 2.0 lobby (2026-11-13): the one-to-one lesson's pre-class screen looks at its lesson
+  // Classroom 2.1 lobby (2026-11-13): the one-to-one lesson's pre-class screen looks at its lesson
   // once the personal key has been taken from the address (never before, so it is not asked twice).
   const [keyRead, setKeyRead] = useState(false);
   const { view: preview, recheck: recheckPreview } = useLessonPreview(lessonId, joinKey, keyRead && !blockMode);

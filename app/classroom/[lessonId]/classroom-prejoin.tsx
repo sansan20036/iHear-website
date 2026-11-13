@@ -8,7 +8,7 @@ import { lobbyCopy } from "../classroom-lobby-copy";
 import { DeviceCheck, LobbyIcon, LobbyNav } from "../classroom-lobby-parts";
 import { roomCopy } from "./classroom-copy";
 
-// The pre-class screen of a one-to-one lesson (Classroom 2.0 lobby, 2026-11-13): what the personal
+// The pre-class screen of a one-to-one lesson (Classroom 2.1 lobby, 2026-11-13): what the personal
 // link (or a tutor's "Enter the classroom" from My lessons) opens. It says which lesson this is,
 // when (in the visitor's time and Taipei's), as whom, and whether the door is open; it offers a
 // device check, and enters only when the person presses the button. Nothing here starts the

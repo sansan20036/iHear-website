@@ -16,7 +16,7 @@ import { LobbyIcon, LobbyNav } from "./classroom-lobby-parts";
 // entering a room still goes through the room's own entry check. A student either opens the
 // personal link from iHear or pastes it here: it is read in this page and never followed.
 //
-// Classroom 2.0 lobby (2026-11-13): the same answers, laid out as a welcome, the two ways in
+// Classroom 2.1 lobby (2026-11-13): the same answers, laid out as a welcome, the two ways in
 // (students with their link, tutors with Google), the three steps to class, a device check (its own
 // page: this one may not use the camera or microphone) and where to get help. A signed-in tutor
 // sees their lessons first, the next one marked, each in their own time and Taipei's.

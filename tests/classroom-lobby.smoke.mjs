@@ -1,14 +1,17 @@
-// The Classroom 2.0 lobby in a browser (2026-11-13): /classroom, the pre-class screen a personal
+// The Classroom 2.1 lobby in a browser (2026-11-13): /classroom, the pre-class screen a personal
 // link opens and the device check, against the built application behind the checked-in hosting
 // headers, with the synthetic provider, disposable local storage, test-only sessions and the
 // browser's own fake camera and microphone. Nothing reaches Zoom, Google or production; passing
 // proves our pages, not real devices or real Zoom.
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { chromium, expect } from '@playwright/test';
 import { localContext, noHorizontalOverflow, startAcademyServer } from './helpers/academy-smoke.mjs';
 
+// The release's name, read from its one source (lib/classroom-release.ts), as the pages must show it.
+const releaseSource = await readFile('lib/classroom-release.ts', 'utf8');
+const release = { version: /version: "([^"]+)"/.exec(releaseSource)[1], label: /label: "([^"]+)"/.exec(releaseSource)[1] };
 const secret = 'classroom-lobby-browser-acceptance-only';
 const owner = 'lobby-owner@example.test', tutor = 'lobby-tutor@example.test';
 Object.assign(process.env, {
@@ -274,6 +277,49 @@ try {
     await expect(page.getByRole('heading', { level: 1, name: 'Welcome to the iHear Online Classroom' })).toBeVisible();
     await expect(page.locator('html')).toHaveAttribute('lang', 'en');
     await page.context().close();
+  });
+
+  await check(`the release: every lobby page says ${release.label} on computers (the same in three languages) and carries data-classroom-release="${release.version}" and nothing else; phones keep the compact bar`, async () => {
+    const pages = [`${origin}/classroom`, open.link, `${origin}/classroom/device-check`];
+    // In the page as the server sends it, before any script runs.
+    for (const address of [`${origin}/classroom`, `${origin}/classroom/${open.id}`, `${origin}/classroom/device-check`]) {
+      const html = await (await fetch(address)).text();
+      expect([address, html.match(/data-classroom-release="[^"]*"/g)]).toEqual([address, [`data-classroom-release="${release.version}"`]]);
+    }
+    // /classroom asks the server who is visiting (10 a minute per address); this check is about the
+    // top bar only, so it answers as for a visitor and leaves the allowance to the other checks.
+    const visitorAnswers = async browserContext => {
+      await browserContext.route('**/api/classroom/entry', route => route.fulfill({ status: 200, json: { released: true, preview: false, signedIn: false } }));
+      await browserContext.route('**/api/classroom/my-lessons', route => route.fulfill({ status: 401, json: { code: 'SIGN_IN_REQUIRED' } }));
+    };
+    const deskContext = await context({ locale: 'zh-TW', viewport: { width: 1440, height: 900 } });
+    await visitorAnswers(deskContext);
+    const desk = watch(await deskContext.newPage());
+    for (const address of pages) {
+      await desk.goto(address);
+      const bar = desk.locator('header.lobby-nav');
+      await expect(bar).toHaveAttribute('data-classroom-release', release.version);
+      expect((await bar.evaluate(element => element.getAttributeNames())).sort()).toEqual(['class', 'data-classroom-release']);
+      await expect(desk.locator('[data-classroom-release]')).toHaveCount(1);
+      // The same label in every language, switched in place.
+      for (const [language, lang] of [['English', 'en'], ['简体中文', 'zh-Hans'], ['繁體中文', 'zh-Hant']]) {
+        await desk.getByRole('button', { name: language }).click();
+        await expect(desk.locator('html')).toHaveAttribute('lang', lang);
+        await expect(desk.locator('.lobby-brand-tag')).toBeVisible();
+        await expect(desk.locator('.lobby-brand-tag')).toHaveText(release.label);
+      }
+    }
+    await deskContext.close();
+    const phoneContext = await context({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+    await visitorAnswers(phoneContext);
+    const phone = watch(await phoneContext.newPage());
+    for (const address of pages) {
+      await phone.goto(address);
+      await expect(phone.locator('header.lobby-nav')).toHaveAttribute('data-classroom-release', release.version);
+      await expect(phone.locator('.lobby-brand-tag')).toBeHidden();
+      expect((await phone.locator('.lobby-nav').boundingBox()).height).toBeLessThanOrEqual(76);
+    }
+    await phoneContext.close();
   });
 
   await check('keyboard: the way in is reached in order, every control shows where the focus is, and each page has one main heading', async () => {

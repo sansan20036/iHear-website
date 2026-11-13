@@ -1,7 +1,7 @@
 import type { ClassroomLocale } from "../../lib/classroom-locale";
 
 // The words on /classroom, in English, Traditional and Simplified Chinese (D2, 2026-11-07; the
-// Classroom 2.0 lobby, 2026-11-13: the welcome, the three steps, the device check and help).
+// Classroom 2.1 lobby, 2026-11-13: the welcome, the three steps, the device check and help).
 const en = {
   title: "iHear Online Classroom", language: "Language", loading: "Loading…",
   closed: "The online classroom is not open yet.", unavailable: "Your lessons could not be loaded. Please try again later.",
@@ -15,7 +15,7 @@ const en = {
   mine: "My lessons", empty: "You have no lessons right now.", student: "Student", enter: "Enter the classroom", admin: "Manage all lessons",
   state: { before: "Not open yet", open: "Open now", ended: "Ended", cancelled: "Cancelled" },
   opensAt: "Opens",
-  // The Classroom 2.0 lobby (2026-11-13)
+  // The Classroom 2.1 lobby (2026-11-13)
   eyebrow: "Pre-class lobby",
   welcome: "Welcome to the iHear Online Classroom",
   welcomeIntro: "Lessons take place right here in your browser, with nothing to install. Students enter with the personal link from iHear; tutors sign in with Google.",

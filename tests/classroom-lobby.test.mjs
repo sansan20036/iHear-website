@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, test, vi } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -14,8 +14,12 @@ import {
   browserReadiness, deviceProblemOf, doorAt, levelOf, nextLessonOf, previewViewOf, sameWallClock, waitParts, zonedTimes,
 } from "../lib/classroom-lobby";
 import { classroomPreview, lessonDoorOf } from "../lib/classroom-preview";
+import { CLASSROOM_RELEASE, CLASSROOM_RELEASE_FULL_NAME } from "../lib/classroom-release";
+import { homeCopy } from "../app/classroom/classroom-home-copy";
+import { lobbyCopy } from "../app/classroom/classroom-lobby-copy";
+import { roomCopy, vendorCopy } from "../app/classroom/[lessonId]/classroom-copy";
 
-// The Classroom 2.0 lobby (2026-11-13): the pre-class screen's look at a lesson (POST
+// The Classroom 2.1 lobby (2026-11-13): the pre-class screen's look at a lesson (POST
 // /api/classroom/<id>/preview) and the rules the lobby pages follow. Synthetic data only: TEST-
 // codes, example.test addresses, test-only secrets and the synthetic provider; nothing reaches Zoom.
 const directory = await mkdtemp(path.join(os.tmpdir(), "ihear-classroom-lobby-"));
@@ -270,5 +274,46 @@ describe("the lobby's rules", () => {
     const soft = Uint8Array.from({ length: 512 }, (_, index) => (index % 2 ? 136 : 120));
     expect(levelOf(soft)).toBeGreaterThan(0.1);
     expect(levelOf(soft)).toBeLessThan(1);
+  });
+});
+
+// Classroom 2.1 (2026-11-14): the release's name is written in one place, lib/classroom-release.ts.
+// The lobby shows its label the same in every language and its pages carry the version; nothing else
+// names a release, so two pages can never disagree.
+describe("the release's name, from one place", () => {
+  test("Classroom 2.1 — Pre-Class Experience Update, version 2.1, and nothing can change it at run time", () => {
+    expect(CLASSROOM_RELEASE).toEqual({ version: "2.1", label: "Classroom 2.1", name: "Pre-Class Experience Update" });
+    expect(CLASSROOM_RELEASE_FULL_NAME).toBe("Classroom 2.1 — Pre-Class Experience Update");
+    expect(CLASSROOM_RELEASE.label).toBe(`Classroom ${CLASSROOM_RELEASE.version}`);
+    expect(CLASSROOM_RELEASE.version).toMatch(/^\d+\.\d+$/);
+    expect(Object.isFrozen(CLASSROOM_RELEASE)).toBe(true);
+  });
+
+  test("every language shows the same label, and no page's words carry a release name of their own", () => {
+    for (const locale of ["en", "zhHant", "zhHans"]) expect(lobbyCopy[locale].tag).toBe(CLASSROOM_RELEASE.label);
+    const strings = value => typeof value === "string" ? [value] : typeof value === "function" ? strings(value("x", "x", "x"))
+      : value && typeof value === "object" ? Object.values(value).flatMap(strings) : [];
+    const named = [homeCopy, lobbyCopy, roomCopy, vendorCopy].flatMap(strings).filter(text => /Classroom\s*\d/i.test(text));
+    expect([...new Set(named)]).toEqual([CLASSROOM_RELEASE.label]);
+  });
+
+  test("the code writes a release name only in lib/classroom-release.ts (comments aside)", async () => {
+    const root = process.cwd();
+    const files = [];
+    const walk = async folder => {
+      for (const entry of await readdir(folder, { withFileTypes: true })) {
+        const full = path.join(folder, entry.name);
+        if (entry.isDirectory()) await walk(full);
+        else if (/\.(ts|tsx|mjs|js)$/.test(entry.name)) files.push(full);
+      }
+    };
+    await walk(path.join(root, "app"));
+    await walk(path.join(root, "lib"));
+    const writers = [];
+    for (const file of files) {
+      const code = (await readFile(file, "utf8")).split(/\r?\n/).filter(line => !/^\s*(\/\/|\*|\/\*)/.test(line));
+      if (code.some(line => /["'`][^"'`]*Classroom ?\d\.\d/.test(line))) writers.push(path.relative(root, file).replaceAll("\\", "/"));
+    }
+    expect(writers).toEqual(["lib/classroom-release.ts"]);
   });
 });

@@ -1,4 +1,4 @@
-// The Classroom 2.0 lobby's rules (2026-11-13): how the pre-class screen and /classroom describe a
+// The Classroom 2.1 lobby's rules (2026-11-13): how the pre-class screen and /classroom describe a
 // lesson's door as time passes, the lesson's time in the visitor's own time zone and in Taipei's,
 // which of a tutor's lessons comes next, and what a refused device check means. No network, no
 // storage: the server stays the one that decides at the door (POST /api/classroom/<id>/join).
