@@ -20,10 +20,10 @@
 .lobby-logo img { width: auto; height: 38px; }
 .lobby-brand { display: flex; align-items: center; gap: 10px; min-width: 0; padding-left: 16px; border-left: 1.5px solid var(--lobby-line); }
 .lobby-brand-name { font-family: var(--font-h, inherit); font-weight: 800; font-size: 19px; color: var(--room-accent); white-space: nowrap; }
-.lobby-brand-tag { padding: 3px 10px; border-radius: 999px; background: var(--room-orange-soft); color: var(--room-accent-deep); font-size: 12px; font-weight: 800; letter-spacing: .02em; white-space: nowrap; }
 .lobby-nav-end { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px 14px; }
-.lobby-nav-link { color: var(--room-accent); font-weight: 700; font-size: 15px; text-decoration: none; padding: 8px 4px; border-radius: 8px; }
-.lobby-nav-link:hover { text-decoration: underline; text-underline-offset: 4px; }
+.lobby-nav-link { display: inline-flex; align-items: center; gap: 8px; min-height: 46px; padding: 8px 18px 8px 14px; border: 1.5px solid var(--room-accent); border-radius: 999px; background: var(--room-surface); color: var(--room-accent); font-weight: 800; font-size: 15px; text-decoration: none; white-space: nowrap; box-shadow: 0 2px 10px rgba(38,57,116,.08); transition: background var(--lobby-speed), color var(--lobby-speed), box-shadow var(--lobby-speed); }
+.lobby-nav-link .lobby-icon { width: 18px; height: 18px; transform: scaleX(-1); }
+.lobby-nav-link:hover { background: var(--room-accent); color: #fff; box-shadow: var(--lobby-shadow); }
 .lobby-langs { display: inline-flex; gap: 2px; padding: 4px; border-radius: 999px; background: var(--room-surface); border: 1.5px solid var(--lobby-line); }
 .lobby-lang { min-height: 38px; padding: 6px 14px; border: 0; border-radius: 999px; background: transparent; color: var(--room-accent); font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; transition: background var(--lobby-speed), color var(--lobby-speed); }
 .lobby-lang:hover { background: var(--room-subtle); }
@@ -228,7 +228,7 @@
   .lobby-logo img { height: 26px; }
   .lobby-brand { padding-left: 10px; gap: 8px; }
   .lobby-brand-name { font-size: 15px; }
-  .lobby-brand-tag, .lobby-nav-link { display: none; }
+  .lobby-nav-link { display: none; }
   .lobby-nav-end { margin-left: auto; }
   .lobby-langs { padding: 3px; }
   .lobby-lang { min-height: 36px; padding: 4px 11px; font-size: 14px; }

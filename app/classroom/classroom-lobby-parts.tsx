@@ -41,7 +41,8 @@ export function LobbyIcon({ name }: { name: LobbyIconName }) {
 
 // The top bar: iHear's logo (back to the site), the classroom's name, and the three languages with
 // the one in use pressed. Anything else (a way back to the entrance) comes in as children. It carries
-// the release's version (data-classroom-release), and nothing else about the page or the person.
+// the release's version (data-classroom-release, not shown on screen), and nothing else about the page
+// or the person.
 export function LobbyNav({ locale, onLocale, text, children }: { locale: ClassroomLocale; onLocale: (locale: ClassroomLocale) => void; text: LobbyCopy; children?: ReactNode }) {
   return (
     <header className="lobby-nav" data-classroom-release={CLASSROOM_RELEASE.version}>
@@ -50,7 +51,6 @@ export function LobbyNav({ locale, onLocale, text, children }: { locale: Classro
       </a>
       <span className="lobby-brand">
         <span className="lobby-brand-name">{text.brand}</span>
-        <span className="lobby-brand-tag">{text.tag}</span>
       </span>
       <div className="lobby-nav-end">
         {children}

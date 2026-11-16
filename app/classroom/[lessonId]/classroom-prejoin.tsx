@@ -88,7 +88,7 @@ export default function ClassroomPrejoin({ locale, onLocale, phase, reason, synt
   return (
     <main ref={page} className="classroom-room lobby prejoin" data-door={door?.state ?? preview.kind} data-phase={phase} data-bar={showJoin ? "on" : "off"}>
       <LobbyNav locale={locale} onLocale={onLocale} text={words}>
-        <a className="lobby-nav-link" href="/classroom">{words.toLobby}</a>
+        <a className="lobby-nav-link" href="/classroom"><LobbyIcon name="arrow" />{words.toLobby}</a>
       </LobbyNav>
       {synthetic && <p className="classroom-room-note" role="note">{text.synthetic}</p>}
       <div className="prejoin-grid">

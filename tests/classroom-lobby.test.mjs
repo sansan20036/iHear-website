@@ -289,12 +289,12 @@ describe("the release's name, from one place", () => {
     expect(Object.isFrozen(CLASSROOM_RELEASE)).toBe(true);
   });
 
-  test("every language shows the same label, and no page's words carry a release name of their own", () => {
-    for (const locale of ["en", "zhHant", "zhHans"]) expect(lobbyCopy[locale].tag).toBe(CLASSROOM_RELEASE.label);
+  test("no page's words, in any language, show a release name (the version is only in data-classroom-release)", () => {
+    for (const locale of ["en", "zhHant", "zhHans"]) expect("tag" in lobbyCopy[locale]).toBe(false);
     const strings = value => typeof value === "string" ? [value] : typeof value === "function" ? strings(value("x", "x", "x"))
       : value && typeof value === "object" ? Object.values(value).flatMap(strings) : [];
     const named = [homeCopy, lobbyCopy, roomCopy, vendorCopy].flatMap(strings).filter(text => /Classroom\s*\d/i.test(text));
-    expect([...new Set(named)]).toEqual([CLASSROOM_RELEASE.label]);
+    expect(named).toEqual([]);
   });
 
   test("the code writes a release name only in lib/classroom-release.ts (comments aside)", async () => {

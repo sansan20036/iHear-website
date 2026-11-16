@@ -20,7 +20,7 @@ export default function DeviceCheckPage() {
   return (
     <main className="classroom-room lobby lobby-check-page">
       <LobbyNav locale={locale} onLocale={setLocale} text={words}>
-        <a className="lobby-nav-link" href="/classroom">{words.toLobby}</a>
+        <a className="lobby-nav-link" href="/classroom"><LobbyIcon name="arrow" />{words.toLobby}</a>
       </LobbyNav>
       <div className="lobby-check-intro">
         <span className="lobby-eyebrow">{words.eyebrow}</span>

@@ -279,7 +279,7 @@ try {
     await page.context().close();
   });
 
-  await check(`the release: every lobby page says ${release.label} on computers (the same in three languages) and carries data-classroom-release="${release.version}" and nothing else; phones keep the compact bar`, async () => {
+  await check(`the release: every lobby page carries data-classroom-release="${release.version}" and nothing else, shows no release name in any language, and on computers offers the way back to the entrance as a button; phones keep the compact bar`, async () => {
     const pages = [`${origin}/classroom`, open.link, `${origin}/classroom/device-check`];
     // In the page as the server sends it, before any script runs.
     for (const address of [`${origin}/classroom`, `${origin}/classroom/${open.id}`, `${origin}/classroom/device-check`]) {
@@ -301,12 +301,24 @@ try {
       await expect(bar).toHaveAttribute('data-classroom-release', release.version);
       expect((await bar.evaluate(element => element.getAttributeNames())).sort()).toEqual(['class', 'data-classroom-release']);
       await expect(desk.locator('[data-classroom-release]')).toHaveCount(1);
-      // The same label in every language, switched in place.
+      // No release name on screen, in any language, switched in place.
       for (const [language, lang] of [['English', 'en'], ['简体中文', 'zh-Hans'], ['繁體中文', 'zh-Hant']]) {
         await desk.getByRole('button', { name: language }).click();
         await expect(desk.locator('html')).toHaveAttribute('lang', lang);
-        await expect(desk.locator('.lobby-brand-tag')).toBeVisible();
-        await expect(desk.locator('.lobby-brand-tag')).toHaveText(release.label);
+        await expect(desk.locator('body')).not.toContainText(release.label);
+      }
+      // The pre-class screen and the device check offer the way back as an outlined button with an
+      // arrow, as tall as the language switch (the entrance itself has none).
+      const back = desk.locator('a.lobby-nav-link');
+      if (address.endsWith('/classroom')) await expect(back).toHaveCount(0);
+      else {
+        await expect(back).toBeVisible();
+        await expect(back).toHaveAttribute('href', '/classroom');
+        await expect(back.locator('svg.lobby-icon')).toHaveCount(1);
+        const look = await back.evaluate(element => { const style = getComputedStyle(element); return { border: parseFloat(style.borderTopWidth), radius: parseFloat(style.borderTopLeftRadius), height: element.getBoundingClientRect().height }; });
+        expect(look.border).toBeGreaterThanOrEqual(1);
+        expect(look.radius).toBeGreaterThan(20);
+        expect(look.height).toBeGreaterThanOrEqual(44);
       }
     }
     await deskContext.close();
@@ -316,7 +328,8 @@ try {
     for (const address of pages) {
       await phone.goto(address);
       await expect(phone.locator('header.lobby-nav')).toHaveAttribute('data-classroom-release', release.version);
-      await expect(phone.locator('.lobby-brand-tag')).toBeHidden();
+      await expect(phone.locator('body')).not.toContainText(release.label);
+      await expect(phone.locator('a.lobby-nav-link')).toBeHidden();
       expect((await phone.locator('.lobby-nav').boundingBox()).height).toBeLessThanOrEqual(76);
     }
     await phoneContext.close();
