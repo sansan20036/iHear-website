@@ -35,22 +35,23 @@ export async function GET(request: Request) {
   }
 }
 
-// Adds a one-to-one lesson. The student's personal link is in this answer only.
+// Adds a one-to-one lesson. The student's personal link is in this answer only. The date and time
+// are in the request's timeZone (IANA); without one they are Taipei time, as before 2026-11-17.
 export async function POST(request: Request) {
   const access = await authorizeAdminRequest(request, { owner: true, mutation: true });
   if ("response" in access) return access.response;
   const respond = (body: unknown, status: number) => withRateLimitHeaders(NextResponse.json(body, { status, headers: NO_STORE_HEADERS }), access.decision!);
   try {
     const input = await request.json().catch(() => ({}));
-    const { lesson, studentLink } = await createClassroomLesson({ store: classroomStore(), input, actor: access.principal.email, now: Date.now() });
+    const { lesson, studentLink, schedule, warnings } = await createClassroomLesson({ store: classroomStore(), input, actor: access.principal.email, now: Date.now() });
     await appendAdminActivity({
       actorEmail: access.principal.email, actorRole: access.principal.role,
       action: "classroom.lesson_created", entityType: "classroom", entityId: lesson.id,
       changedFields: ["code", "startsAt", "endsAt", "participants"], entityStatus: "scheduled", entityVersion: null,
     });
-    return respond({ ok: true, lesson: { lessonId: lesson.id, code: lesson.code, startsAt: lesson.startsAt, endsAt: lesson.endsAt }, studentLink }, 201);
+    return respond({ ok: true, lesson: { lessonId: lesson.id, code: lesson.code, startsAt: lesson.startsAt, endsAt: lesson.endsAt, ...schedule }, studentLink, warnings }, 201);
   } catch (error) {
-    if (error instanceof ClassroomInputError) return respond({ error: error.message, issues: error.issues }, 400);
+    if (error instanceof ClassroomInputError) return respond({ error: error.message, issues: error.issues, codes: error.codes }, 400);
     if (error instanceof ClassroomLessonConflictError) return respond({ error: error.message }, 409);
     return respond({ error: "Could not add the lesson" }, 500);
   }

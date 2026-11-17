@@ -10,11 +10,13 @@ export async function adminFetch<T>(url: string, init?: RequestInit): Promise<T>
     const error = new Error(data.error || `Request failed (${response.status})`) as Error & {
       status?: number;
       issues?: Record<string, string>;
+      codes?: Record<string, string>;
       code?: string;
       retryAfter?: number;
     };
     error.status = response.status;
     error.issues = data.issues;
+    error.codes = data.codes;
     error.code = data.code;
     const retryAfter = Number(data.retryAfter || response.headers.get("Retry-After"));
     if (Number.isFinite(retryAfter) && retryAfter > 0) error.retryAfter = Math.ceil(retryAfter);

@@ -6,7 +6,7 @@ import { copyFile, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } 
 import os from 'node:os';
 import path from 'node:path';
 import postgres from 'postgres';
-import { changeLessonAccess, joinClassroom, myClassroomLessons, stopRecordingForCancelledLesson } from '../lib/classroom-service';
+import { changeLessonAccess, createClassroomLesson, joinClassroom, myClassroomLessons, stopRecordingForCancelledLesson } from '../lib/classroom-service';
 import { roomNameOf } from '../tools/recording-pathway/classroom/eligibility.mjs';
 import { knownSessions } from '../lib/classroom-provider';
 import { createPostgresClassroomStore } from '../lib/classroom-store';
@@ -819,5 +819,27 @@ describe('backups, the restore check, the monthly drill and the audit with the c
     const planted = createHash('sha256').update(plantedKey).digest('hex');
     const found = docker(['exec', container, 'sh', '-c', `pg_restore -f - /tmp/classroom_restore_h8.dump | grep -c -e TEST-BA -e L-backup-a -e ${planted} || true`]);
     expect(found).toBe('0');
+  });
+});
+
+describe('a lesson\'s time zone on PostgreSQL (2026-11-17)', () => {
+  test('the lesson, its people and its scheduling record are written in one transaction; a duplicate code writes none of them', async () => {
+    const NOW = Date.parse('2026-11-20T07:55:00Z');
+    const input = { code: 'TEST-PG-TZ1', date: '2026-11-27', time: '18:00', minutes: 60, tutorCode: 'TEST-PG-TZT', tutorEmail: 'pg-tz-tutor@example.test', studentCode: 'TEST-PG-TZS', timeZone: 'America/New_York' };
+    const made = await createClassroomLesson({ store, actor: 'pg-owner@example.test', now: NOW, input });
+    const [row] = await sql`SELECT lesson_date::text AS lesson_date, starts_at, ends_at FROM public.classroom_lessons WHERE id = ${made.lesson.id}`;
+    // 18:00 EST is 23:00Z; lesson_date stays the Taipei date of the start, as for every older lesson.
+    expect(row.lesson_date).toBe('2026-11-28');
+    expect(new Date(row.starts_at).toISOString()).toBe('2026-11-27T23:00:00.000Z');
+    expect(new Date(row.ends_at).toISOString()).toBe('2026-11-28T00:00:00.000Z');
+    const people = await sql`SELECT count(*)::int AS n FROM public.classroom_participants WHERE lesson_id = ${made.lesson.id}`;
+    expect(people[0].n).toBe(2);
+    const events = await sql`SELECT key, type, source, data FROM public.classroom_events WHERE lesson_id = ${made.lesson.id}`;
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ key: `server.lesson_scheduled:${made.lesson.id}`, type: 'server.lesson_scheduled', source: 'server' });
+    expect(events[0].data).toMatchObject({ timeZone: 'America/New_York', localDate: '2026-11-27', localTime: '18:00', minutes: 60, zoneGiven: true });
+    await expect(createClassroomLesson({ store, actor: 'pg-owner@example.test', now: NOW, input: { ...input, date: '2026-11-28', timeZone: 'Asia/Tokyo' } })).rejects.toThrow(/already exists/);
+    const [counts] = await sql`SELECT (SELECT count(*)::int FROM public.classroom_lessons WHERE code = 'TEST-PG-TZ1') AS lessons, (SELECT count(*)::int FROM public.classroom_events WHERE type = 'server.lesson_scheduled' AND data->>'timeZone' = 'Asia/Tokyo') AS tokyo`;
+    expect(counts).toEqual({ lessons: 1, tokyo: 0 });
   });
 });

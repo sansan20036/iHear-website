@@ -36,7 +36,41 @@
 .classroom-handled.is-earlier { color:#5d6877; }
 .classroom-unhandled { margin-top:4px; font-size:12px; font-weight:800; color:var(--classroom-bad); }
 .classroom-panel { margin-top:18px; }
-.classroom-form { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:10px; margin-bottom:10px; }
+.classroom-form { display:grid; gap:14px; margin-bottom:12px; }
+/* Adding a lesson (2026-11-17): when (zone, date, start, length), then who, then the check. */
+.classroom-form-group { display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:10px; align-items:start; }
+.classroom-form-group > div { min-width:0; }
+.classroom-time-pick { display:flex; align-items:center; gap:6px; }
+.classroom-time-pick select { flex:1 1 0; width:auto; min-width:0; }
+.classroom-field-hint { margin:6px 0 0; font-size:13px; font-weight:400; line-height:1.5; color:#5d6877; }
+.classroom-zone-search { margin-top:8px; }
+.classroom-zone-search .admin-search { width:100%; }
+.classroom-preview { border:1px solid #e3e8ef; border-radius:12px; padding:12px 14px; background:#f8fafc; display:grid; gap:10px; }
+.classroom-preview h3 { margin:0; font-size:15px; }
+.classroom-preview p { margin:0; }
+.classroom-preview dl { margin:0; display:grid; gap:8px; }
+.classroom-preview dl div { display:grid; grid-template-columns:minmax(120px,190px) minmax(0,1fr); gap:4px 12px; align-items:baseline; }
+.classroom-preview dt { color:#5d6877; font-size:13px; font-weight:700; }
+.classroom-preview dd { margin:0; font-size:15px; overflow-wrap:anywhere; }
+.classroom-preview .is-entered dd { font-weight:800; }
+.classroom-zone-tag { display:inline-block; margin-left:8px; color:#5d6877; font-size:12px; font-weight:400; }
+.classroom-preview dt .classroom-zone-tag { display:block; margin:2px 0 0; color:#1f2a44; font-size:13px; font-weight:700; }
+.classroom-check { border-radius:10px; padding:9px 12px; font-size:14px; line-height:1.5; }
+.classroom-check.is-warning { background:var(--classroom-warn-bg); color:var(--classroom-warn); font-weight:700; }
+.classroom-check.is-error { background:var(--classroom-bad-bg); color:var(--classroom-bad); font-weight:700; }
+.classroom-confirm { display:flex; align-items:flex-start; gap:10px; font-size:14px; font-weight:700; line-height:1.5; cursor:pointer; }
+.classroom-confirm input { flex:none; width:20px; height:20px; margin:1px 0 0; }
+.classroom-zone-choice { border:2px solid var(--classroom-warn); border-radius:12px; padding:12px 14px; background:var(--classroom-warn-bg); display:grid; gap:8px; }
+.classroom-zone-choice > p:first-child { margin:0; font-weight:800; color:var(--classroom-warn); }
+.classroom-zone-choice .admin-button { display:grid; justify-content:stretch; justify-items:start; gap:2px; text-align:left; white-space:normal; overflow-wrap:anywhere; }
+.classroom-zone-choice .admin-button span { font-weight:400; font-size:14px; }
+.classroom-preview > p.admin-muted { font-size:14px; }
+.classroom-created { margin:12px 0 0; font-weight:700; color:#157047; overflow-wrap:anywhere; }
+.classroom-lesson-time div { white-space:nowrap; }
+.classroom-lessons td:not(.classroom-lesson-actions):not(.classroom-lesson-time) { white-space:nowrap; }
+/* Wide screens: the time zone's name and offset fit without being cut off. */
+@media (min-width:1100px) { .classroom-form-group .classroom-zone-field { grid-column:span 2; } }
+.classroom-zone-label { display:inline-block; min-width:4.5em; font-size:12px; font-weight:700; color:#5d6877; }
 .classroom-link { margin-top:12px; padding:10px 14px; border-radius:12px; background:var(--classroom-warn-bg); display:grid; gap:8px; }
 .classroom-link p { margin:0; font-weight:700; color:var(--classroom-warn); }
 .classroom-link code { overflow-wrap:anywhere; font-size:13px; }
@@ -50,5 +84,7 @@
   .classroom-panel .admin-table, .classroom-panel .admin-table tbody, .classroom-panel .admin-table tr, .classroom-panel .admin-table td { display:block; width:100%; }
   .classroom-panel .admin-table tr { border-bottom:1px solid #e3e8ef; padding:8px 0; }
   .classroom-panel .admin-table td { border-bottom:0; padding:4px 12px; }
+  .classroom-preview dl div { grid-template-columns:1fr; }
+  .classroom-lesson-time div, .classroom-lessons td:not(.classroom-lesson-actions):not(.classroom-lesson-time) { white-space:normal; }
 }
 @media (max-width:390px) { .classroom-cards { grid-template-columns:1fr; } }

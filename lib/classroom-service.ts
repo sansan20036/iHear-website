@@ -15,6 +15,7 @@ import type { ClassroomDrive } from "./classroom-drive";
 import type { ClassroomProvider } from "./classroom-provider";
 import type { ClassroomBlock, ClassroomBlockMember, ClassroomEvent, ClassroomLesson, ClassroomStore, OperationState, RecordingFile } from "./classroom-store";
 import { sessionReportsEnabled, vendorDeletionEnabled } from "./classroom-switches";
+import { HOUSE_TIME_ZONE, LEGACY_LESSON_TIME_ZONE, parseClock, parseIsoDate, validTimeZone, wallIn, zonedInstant } from "./zoned-time";
 
 const RECORDING_LABELS: Record<string, string> = LABELS.recording;
 const ANOMALY_LABELS: Record<string, string> = LABELS.anomaly;
@@ -32,8 +33,10 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 // the next day. Older lessons are still looked after by the cron tick until their files settle.
 export const OVERVIEW_WINDOW_MS = DAY_MS;
 
+// issues: field → an English sentence. codes (optional): field → a stable code the admin page
+// turns into its own language (TIME_DOES_NOT_EXIST, TIME_IS_AMBIGUOUS, ENTRY_WINDOW_PASSED, …).
 export class ClassroomInputError extends Error {
-  constructor(message: string, readonly issues: Record<string, string>) {
+  constructor(message: string, readonly issues: Record<string, string>, readonly codes: Record<string, string> = {}) {
     super(message);
   }
 }
@@ -48,11 +51,35 @@ export function consentPolicy(): { consentVersion: string; staffNoticeVersion: s
 const hashKey = (key: string) => createHash("sha256").update(key).digest("hex");
 const shortId = (prefix: string) => `${prefix}-${randomUUID().replace(/-/g, "")}`;
 
-export type LessonInput = { code?: unknown; date?: unknown; time?: unknown; minutes?: unknown; tutorCode?: unknown; tutorEmail?: unknown; studentCode?: unknown };
+export type LessonInput = { code?: unknown; date?: unknown; time?: unknown; minutes?: unknown; tutorCode?: unknown; tutorEmail?: unknown; studentCode?: unknown; timeZone?: unknown };
 
-// One tutor and one student: the MVP is one-to-one lessons. Times are Taipei time (UTC+8).
+// What the overview tells the admin form about scheduling: the house time zone, and the entry
+// window the server enforces (from eligibility.mjs, so the form never keeps its own copy).
+export const LESSON_SCHEDULING = {
+  houseTimeZone: HOUSE_TIME_ZONE,
+  legacyTimeZone: LEGACY_LESSON_TIME_ZONE,
+  joinWindowBeforeMs: JOIN_WINDOW_BEFORE_MS as number,
+  joinWindowAfterMs: JOIN_WINDOW_AFTER_MS as number,
+};
+
+// One tutor and one student: the MVP is one-to-one lessons.
+//
+// Times (2026-11-17): the date and the start are a wall-clock time in the lesson's time zone, an
+// IANA zone such as America/New_York (the admin form's default) or Asia/Taipei. They are turned
+// here, once, into the instants every rule uses: the entry window, tokens, the tick and the
+// overview all work from startsAt/endsAt in UTC, exactly as before. The zone's own rules give the
+// offset, so US daylight saving time is followed; a time the zone skips or has twice on that day
+// is refused, never guessed. A request without a time zone is read as Taipei time: that is what
+// every caller before this change meant (an admin page still open from before, scripts, tests),
+// so nothing is read differently from before. lesson_date stays the Taipei date of the start, as
+// for every lesson made before and for blocks. The time zone and the wall-clock time as entered
+// are kept in a server.lesson_scheduled event, in the same transaction, for later checks.
+//
+// A lesson nobody could still enter (its door closed 15 minutes after the end) is refused; one
+// that has started but can still be entered is made, with a START_PASSED warning.
 export async function createClassroomLesson({ store, input, actor, now }: { store: ClassroomStore; input: LessonInput; actor: string; now: number }) {
   const issues: Record<string, string> = {};
+  const codes: Record<string, string> = {};
   const code = String(input.code ?? "").trim();
   const date = String(input.date ?? "").trim();
   const time = String(input.time ?? "").trim();
@@ -60,21 +87,44 @@ export async function createClassroomLesson({ store, input, actor, now }: { stor
   const tutorCode = String(input.tutorCode ?? "").trim();
   const tutorEmail = String(input.tutorEmail ?? "").trim().toLowerCase();
   const studentCode = String(input.studentCode ?? "").trim();
+  const zoneGiven = input.timeZone !== undefined && input.timeZone !== null;
+  const timeZone = zoneGiven ? String(input.timeZone).trim() : LEGACY_LESSON_TIME_ZONE;
+  const day = parseIsoDate(date);
+  const clock = parseClock(time);
   if (!LESSON_CODE.test(code)) issues.code = "Use 1–40 letters, digits or hyphens";
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00+08:00`))) issues.date = "Use YYYY-MM-DD";
-  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) issues.time = "Use HH:MM";
+  if (!validTimeZone(timeZone)) {
+    issues.timeZone = "Choose an IANA time zone such as America/New_York";
+    codes.timeZone = "TIME_ZONE_INVALID";
+  }
+  if (!day) issues.date = "Use YYYY-MM-DD";
+  if (!clock) issues.time = "Use HH:MM (24-hour)";
   if (!Number.isInteger(minutes) || minutes < 15 || minutes > 240) issues.minutes = "Use 15–240 minutes";
   if (!PERSON_CODE.test(tutorCode)) issues.tutorCode = "Use 1–20 letters, digits or hyphens";
   if (!EMAIL.test(tutorEmail) || tutorEmail.length > 320) issues.tutorEmail = "Enter the tutor's sign-in email";
   if (!PERSON_CODE.test(studentCode)) issues.studentCode = "Use 1–20 letters, digits or hyphens";
   if (tutorCode && tutorCode === studentCode) issues.studentCode = "The student code must differ from the tutor code";
-  if (Object.keys(issues).length) throw new ClassroomInputError("The lesson is not valid", issues);
-  const startsAt = Date.parse(`${date}T${time}:00+08:00`);
+  let startsAt: number | null = null;
+  if (day && clock && !issues.timeZone) {
+    const at = zonedInstant(day, clock, timeZone);
+    if (at.ok) startsAt = at.instant;
+    else if (at.reason === "NONEXISTENT") {
+      issues.time = `${date} ${time} does not exist in ${timeZone}: the clocks skip it when daylight saving time starts. Choose another time.`;
+      codes.time = "TIME_DOES_NOT_EXIST";
+    } else {
+      issues.time = `${date} ${time} happens twice in ${timeZone}: the clocks go back when daylight saving time ends, so it is not clear which is meant. Choose another time.`;
+      codes.time = "TIME_IS_AMBIGUOUS";
+    }
+  }
+  if (startsAt != null && !issues.minutes && startsAt + minutes * 60_000 + JOIN_WINDOW_AFTER_MS <= now) {
+    issues.time = "This lesson's whole entry time has already passed (the classroom closes 15 minutes after the end). Check the date, the time and the time zone.";
+    codes.time = "ENTRY_WINDOW_PASSED";
+  }
+  if (Object.keys(issues).length || startsAt == null) throw new ClassroomInputError("The lesson is not valid", issues, codes);
   const joinKey = randomBytes(32).toString("base64url");
   const lesson: ClassroomLesson = {
     id: shortId("L"),
     code,
-    date,
+    date: wallIn(startsAt, LEGACY_LESSON_TIME_ZONE).date,
     startsAt: new Date(startsAt).toISOString(),
     endsAt: new Date(startsAt + minutes * 60_000).toISOString(),
     cancelled: false,
@@ -85,9 +135,14 @@ export async function createClassroomLesson({ store, input, actor, now }: { stor
       { id: shortId("P"), code: studentCode, role: "student", staffEmail: null, joinKeyHash: hashKey(joinKey) },
     ],
   };
-  await store.createLesson(lesson);
+  const schedule = { timeZone, localDate: date, localTime: time, zoneGiven };
+  const scheduled: ClassroomEvent = {
+    source: "server", type: "server.lesson_scheduled", key: `server.lesson_scheduled:${lesson.id}`, lessonId: lesson.id,
+    occurredAt: now, receivedAt: now, ...schedule, minutes,
+  };
+  await store.createLesson(lesson, [scheduled]);
   // The student's personal link is shown once; only its hash is kept.
-  return { lesson, studentLink: studentLinkOf(lesson.id, joinKey) };
+  return { lesson, studentLink: studentLinkOf(lesson.id, joinKey), schedule, warnings: startsAt < now ? ["START_PASSED"] : [] };
 }
 
 // The key goes behind #: browsers never send that part, so it reaches no server, log or other
@@ -1017,7 +1072,12 @@ export async function classroomOverview({ store, now }: { store: ClassroomStore;
   const [events, anomalies] = await Promise.all([store.eventsFor(ids), store.listAnomalies(ids)]);
   const codeOf = new Map(lessons.map((lesson) => [lesson.id, lesson.code]));
   const iso = (ms: number | null) => (ms == null ? null : new Date(ms).toISOString());
+  // The time zone each lesson was entered in (null: made before 2026-11-17, entered as Taipei time).
+  const enteredIn = new Map(events
+    .filter((event) => event.type === "server.lesson_scheduled" && typeof event.timeZone === "string")
+    .map((event) => [String(event.lessonId), String(event.timeZone)]));
   return {
+    scheduling: LESSON_SCHEDULING,
     dashboard: withDriveLinks(buildDashboard({ lessons: lessons.map((lesson) => forRules(lesson)), events, now })),
     anomalies: anomalies.map((item) => ({
       lessonCode: codeOf.get(item.lessonId) ?? null,
@@ -1040,6 +1100,7 @@ export async function classroomOverview({ store, now }: { store: ClassroomStore;
       code: lesson.code,
       startsAt: lesson.startsAt,
       endsAt: lesson.endsAt,
+      timeZone: enteredIn.get(lesson.id) ?? null,
       cancelled: lesson.cancelled,
       tutorCode: lesson.participants.find((entry) => entry.role === "tutor")?.code ?? null,
       studentCodes: lesson.participants.filter((entry) => entry.role === "student").map((entry) => entry.code),

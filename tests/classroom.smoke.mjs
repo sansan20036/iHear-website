@@ -26,6 +26,22 @@ const report = { startedAt: new Date().toISOString(), origin, synthetic: true, z
 const consoleProblems = [];
 let browser, failure;
 
+
+// The add-a-lesson form (2026-11-17): the time zone first (US Eastern by default; these lessons are
+// Taipei time), the start on a 24-hour clock, then the confirmation the button waits for.
+async function fillLesson(page, { code, date, time, tutorCode, studentCode, email }) {
+  await page.getByLabel('時區', { exact: true }).selectOption('Asia/Taipei');
+  await page.getByLabel('日期', { exact: true }).fill(date);
+  await page.getByLabel('開始時間：時').selectOption(time.slice(0, 2));
+  await page.getByLabel('開始時間：分').selectOption(time.slice(3, 5));
+  await page.getByLabel('時長（分鐘）').fill('60');
+  await page.getByLabel('課程代碼').fill(code);
+  await page.getByLabel('小老師代碼').fill(tutorCode);
+  await page.getByLabel('小老師登入 Email').fill(email);
+  await page.getByLabel('學生代碼').fill(studentCode);
+  await page.getByRole('checkbox', { name: /我已確認日期、時區和開始時間/ }).check();
+  await page.getByRole('button', { name: '新增一對一課程' }).click();
+}
 async function check(name, action) {
   try { await action(); report.checks.push({ name, status: 'passed' }); console.log(`PASS ${name}`); }
   catch (error) { report.checks.push({ name, status: 'failed', error: error.message }); throw error; }
@@ -107,14 +123,7 @@ try {
   });
 
   await check('an owner adds a one-to-one lesson; the personal link is shown once', async () => {
-    await admin.getByLabel('課程代碼').fill(lesson.code);
-    await admin.getByLabel('日期').fill(lesson.date);
-    await admin.getByLabel('開始時間（台北）').fill(lesson.time);
-    await admin.getByLabel('分鐘').fill('60');
-    await admin.getByLabel('小老師代碼').fill(lesson.tutorCode);
-    await admin.getByLabel('小老師登入 Email').fill(tutor);
-    await admin.getByLabel('學生代碼').fill(lesson.studentCode);
-    await admin.getByRole('button', { name: '新增一對一課程' }).click();
+    await fillLesson(admin, { ...lesson, email: tutor });
     const link = admin.locator('.classroom-link code');
     await expect(link).toBeVisible();
     lesson.link = await link.textContent();
@@ -429,14 +438,7 @@ try {
   await check('a personal link is given behind #; the page reads the key and takes it out of the address bar (the older ?k= form too)', async () => {
     await admin.setViewportSize({ width: 1280, height: 900 });
     await refresh();
-    await admin.getByLabel('課程代碼').fill(linkLesson.code);
-    await admin.getByLabel('日期').fill(lesson.date);
-    await admin.getByLabel('開始時間（台北）').fill(lesson.time);
-    await admin.getByLabel('分鐘').fill('60');
-    await admin.getByLabel('小老師代碼').fill(linkLesson.tutorCode);
-    await admin.getByLabel('小老師登入 Email').fill(tutor);
-    await admin.getByLabel('學生代碼').fill(linkLesson.studentCode);
-    await admin.getByRole('button', { name: '新增一對一課程' }).click();
+    await fillLesson(admin, { ...linkLesson, date: lesson.date, time: lesson.time, email: tutor });
     const box = admin.locator('.classroom-link code');
     await expect(box).toBeVisible();
     linkLesson.link = await box.textContent();

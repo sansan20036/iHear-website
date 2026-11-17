@@ -212,7 +212,8 @@ export type ClassroomStore = {
   eventsFor(lessonIds: string[]): Promise<ClassroomEvent[]>;
   // Lessons with a recording still on its way to Drive (pending, running or blocked).
   listOpenFilingLessonIds(): Promise<string[]>;
-  createLesson(lesson: ClassroomLesson): Promise<void>;
+  // Lesson, participants and any events (server.lesson_scheduled) in one transaction.
+  createLesson(lesson: ClassroomLesson, events?: ClassroomEvent[]): Promise<void>;
   listLessons(window: { from: number; to: number }): Promise<ClassroomLesson[]>;
   // The lessons whose tutor signs in with this (lower-case) email, overlapping the window.
   listLessonsForStaff(email: string, window: { from: number; to: number }): Promise<ClassroomLesson[]>;
@@ -584,9 +585,10 @@ export function createFileClassroomStore(filePath: string): ClassroomStore {
     listOpenFilingLessonIds: () => run((state) => [...new Set(Object.values(state.jobs)
       .filter((job) => job.type === "file_recording" && (job.status === "pending" || job.status === "running") && job.lessonId)
       .map((job) => String(job.lessonId)))].sort(), false),
-    createLesson: (lesson) => run((state) => {
+    createLesson: (lesson, events = []) => run((state) => {
       if (state.lessons.some((item) => item.id === lesson.id || item.code === lesson.code)) throw new ClassroomLessonConflictError("A lesson with this code already exists");
       state.lessons.push(clone(lesson));
+      for (const event of events) state.events[event.key] ??= clone(event);
     }),
     listLessons: ({ from, to }) => run((state) => clone(state.lessons
       .filter((lesson) => Date.parse(lesson.startsAt) < to && Date.parse(lesson.endsAt) > from)
@@ -1225,7 +1227,7 @@ export function createPostgresClassroomStore(sql: postgres.Sql): ClassroomStore 
       `;
       return rows.map((row) => String(row.lesson_id));
     },
-    async createLesson(lesson) {
+    async createLesson(lesson, events = []) {
       try {
         await sql.begin(async (tx) => {
           await tx`
@@ -1238,6 +1240,7 @@ export function createPostgresClassroomStore(sql: postgres.Sql): ClassroomStore 
               VALUES (${lesson.id}, ${participant.id}, ${participant.code}, ${participant.role}, ${participant.staffEmail ?? null}, ${participant.joinKeyHash ?? null})
             `;
           }
+          await insertEvents(tx, events);
         });
       } catch (error) {
         if ((error as { code?: string }).code === "23505") throw new ClassroomLessonConflictError("A lesson with this code already exists");

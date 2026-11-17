@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { ClassroomInputError } from "./classroom-service";
+import { validTimeZone } from "./zoned-time";
 import type { ClassroomCourse, ClassroomProgram, ClassroomStore } from "./classroom-store";
 
 // P3-Multi (draft 030, 2026-11-09): the smallest course level above the blocks. A program (iHear
@@ -15,16 +16,8 @@ const CODE = /^[A-Za-z0-9-]{1,30}$/;
 const shortId = (prefix: string) => `${prefix}-${randomUUID().replace(/-/g, "")}`;
 const nameOf = (value: unknown) => String(value ?? "").trim().replace(/\s+/g, " ");
 
-/** A real IANA time zone with a region (America/New_York), not an offset or an abbreviation. */
-export function validTimeZone(value: unknown): value is string {
-  if (typeof value !== "string" || !/^[A-Za-z]+(\/[A-Za-z0-9_+-]+){1,2}$/.test(value)) return false;
-  try {
-    new Intl.DateTimeFormat("en-US", { timeZone: value }).format(0);
-    return true;
-  } catch {
-    return false;
-  }
-}
+// validTimeZone lives in ./zoned-time (2026-11-17), shared with the one-to-one lesson form.
+export { validTimeZone };
 
 export async function listClassroomPrograms({ store, now }: { store: ClassroomStore; now: number }) {
   const { programs, courses } = await store.listPrograms();

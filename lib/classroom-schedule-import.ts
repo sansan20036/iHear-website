@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { FILE_NAME_SAFE } from "../tools/recording-pathway/classroom/block-naming.mjs";
 import { MAX_MEMBERS, MAX_ROOMS, ROOM_CAPACITY } from "./classroom-block-rules";
 import { createClassroomBlock } from "./classroom-blocks";
-import { validTimeZone } from "./classroom-programs";
+import { validTimeZone, wallIn, zonedInstant } from "./zoned-time";
 import { PERSON_CODE } from "./classroom-service";
 import type { BlockRole, ClassroomBlock, ClassroomStore } from "./classroom-store";
 
@@ -169,31 +169,9 @@ function parseTime(value: string) {
 }
 
 const two = (value: number) => String(value).padStart(2, "0");
-function offsetMinutes(instant: number, timeZone: string) {
-  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", {
-    timeZone, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit",
-  }).formatToParts(instant).map((part) => [part.type, part.value]));
-  const asUtc = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), Number(parts.hour), Number(parts.minute), Number(parts.second));
-  return Math.round((asUtc - instant) / 60_000);
-}
-
-/** A wall-clock time in a time zone as one instant; refused when the zone skips it or has it twice. */
-export function zonedInstant(date: { y: number; m: number; d: number }, time: { h: number; min: number }, timeZone: string):
-  { ok: true; instant: number } | { ok: false; reason: "NONEXISTENT" | "AMBIGUOUS" } {
-  const wall = Date.UTC(date.y, date.m - 1, date.d, time.h, time.min);
-  const offsets = new Set([-12, 0, 12].map((hours) => offsetMinutes(wall + hours * 3_600_000, timeZone)));
-  const matches = [...new Set([...offsets].map((offset) => wall - offset * 60_000))].filter((instant) => offsetMinutes(instant, timeZone) === (wall - instant) / 60_000);
-  if (!matches.length) return { ok: false, reason: "NONEXISTENT" };
-  if (matches.length > 1) return { ok: false, reason: "AMBIGUOUS" };
-  return { ok: true, instant: matches[0] };
-}
-
-function wallIn(instant: number, timeZone: string) {
-  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", {
-    timeZone, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
-  }).formatToParts(instant).map((part) => [part.type, part.value]));
-  return { date: `${parts.year}-${parts.month}-${parts.day}`, time: `${parts.hour}:${parts.minute}` };
-}
+// The zone arithmetic lives in ./zoned-time (2026-11-17), shared with the one-to-one lesson form;
+// zonedInstant is exported from here as before.
+export { zonedInstant };
 
 // ---- The directory ---------------------------------------------------------------------------
 

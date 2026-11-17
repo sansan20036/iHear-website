@@ -3,6 +3,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAdmin } from "../admin-context";
 import { adminFetch, displayError } from "../admin-api";
+import { HOUSE_TIME_ZONE, wallIn } from "../../../lib/zoned-time";
+import { LessonForm, lessonErrorText, type LessonRequest, type Scheduling } from "./lesson-form";
+import { shortStamp, zoneMark, zoneName } from "./time-zone-names";
 import "./classrooms.css";
 
 // The live classroom overview for owners. It polls every 15 seconds while the tab is visible:
@@ -19,8 +22,8 @@ const copy = {
     check: "Check now", checking: "Checking…",
     anomalies: "Problem records", anomaliesIntro: "Every problem the overview found stays here, with who handled it and how. Write codes and actions, never names.",
     noAnomalies: "No problems recorded.", open: "Open", resolved: "Cleared", handled: "Handled", unhandled: "Needs handling", earlier: "Handled before it came back", note: "What was done", save: "Record handling", firstSeen: "First seen", lastSeen: "Last seen",
-    lessons: "Lessons", add: "Add a one-to-one lesson", code: "Lesson code", date: "Date", time: "Start (Taipei)", minutes: "Minutes", tutorCode: "Tutor code", tutorEmail: "Tutor sign-in email", studentCode: "Student code",
-    adding: "Adding…", linkOnce: "Student's personal link (shown only now; send it to the family):", copyLink: "Copy link", copied: "Copied",
+    lessons: "Lessons", houseTimes: "Times on this page are US Eastern (New York) unless marked otherwise.", house: "US Eastern", taipei: "Taiwan", enteredIn: "Entered as",
+    linkOnce: "Student's personal link (shown only now; send it to the family):", copyLink: "Copy link", copied: "Copied",
     revokeLink: "Revoke student link", reissueLink: "Reissue student link", cancelLesson: "Cancel lesson", cancelledMark: "Cancelled",
     confirmRevoke: "Revoke the student's link? It can no longer be used to enter, and no new link is made. Someone already in the room is not disconnected at once: the classroom page normally leaves within about 15 seconds, but this cannot be guaranteed.",
     confirmReissue: "Make a new student link? The current link can no longer be used to enter. Someone already in the room with it is not disconnected at once: the classroom page normally leaves within about 15 seconds, but this cannot be guaranteed.",
@@ -47,8 +50,8 @@ const copy = {
     check: "重新核對", checking: "核對中…",
     anomalies: "異常紀錄", anomaliesIntro: "總覽發現的每個問題都會留在這裡，並記下誰處理、怎麼處理。請寫代碼與處置，不要寫姓名。",
     noAnomalies: "目前沒有異常紀錄。", open: "未解除", resolved: "已解除", handled: "已處置", unhandled: "待處置", earlier: "先前處置（之後又再發生）", note: "處置說明", save: "記錄處置", firstSeen: "首次發現", lastSeen: "最後出現",
-    lessons: "課程", add: "新增一對一課程", code: "課程代碼", date: "日期", time: "開始時間（台北）", minutes: "分鐘", tutorCode: "小老師代碼", tutorEmail: "小老師登入 Email", studentCode: "學生代碼",
-    adding: "新增中…", linkOnce: "學生專屬連結（只顯示這一次，請交給家長）：", copyLink: "複製連結", copied: "已複製",
+    lessons: "課程", houseTimes: "本頁時間除另有標示外，皆為美東時間（紐約）。", house: "美東", taipei: "台灣", enteredIn: "建立時輸入",
+    linkOnce: "學生專屬連結（只顯示這一次，請交給家長）：", copyLink: "複製連結", copied: "已複製",
     revokeLink: "撤銷學生連結", reissueLink: "重發學生連結", cancelLesson: "取消課程", cancelledMark: "已取消",
     confirmRevoke: "確定撤銷學生連結？目前的連結會立即無法再用來進入，也不會產生新連結。已在教室裡的人不會立即斷線：教室頁面通常會在約 15 秒內自行離開，但無法保證。",
     confirmReissue: "確定重發學生連結？目前的連結會立即無法再用來進入。已用舊連結在教室裡的人不會立即斷線：教室頁面通常會在約 15 秒內自行離開，但無法保證。",
@@ -64,6 +67,34 @@ const copy = {
     resumeRecording: "授權在新教室錄影", resuming: "確認中…",
     resumeConfirm: "確定授權在新教室錄影？伺服器會先重新確認課程、名單和每一份同意；全部通過、兩人都在新教室、而且舊教室的錄影已確認停止，才會開始錄影。撤回同意、緊急停止或取消課程之後，無法用這個方式恢復錄影。",
     resumeNotice: "已授權。伺服器重新確認通過後才會開始錄影（請看課程卡片）。",
+    fileRoom: "教室第",
+  },
+  zhHans: {
+    title: "教室总览", intro: "今天各堂一对一课程的实时状态。录像与归档要有视频服务或 P1 的确认才算完成。",
+    synthetic: "合成模式：只有测试数据，没有连接到视频服务或 Google Drive。", ownerOnly: "需要所有者权限。",
+    refreshed: "更新时间", tickFailed: "上一次更新时，服务器的定时作业没有执行，总览可能滞后。",
+    groups: { ANOMALY: "异常", LIVE: "进行中", WAITING: "等待开始", ENDED: "已结束" } as Record<string, string>,
+    empty: "今天没有课程。", tutor: "小老师", student: "学生", recording: "录像", filing: "归档", data: "数据", scheduled: "预定", started: "实际",
+    check: "重新核对", checking: "核对中…",
+    anomalies: "异常记录", anomaliesIntro: "总览发现的每个问题都会留在这里，并记下谁处理、怎么处理。请写代码与处置，不要写姓名。",
+    noAnomalies: "目前没有异常记录。", open: "未解除", resolved: "已解除", handled: "已处置", unhandled: "待处置", earlier: "先前处置（之后又再发生）", note: "处置说明", save: "记录处置", firstSeen: "首次发现", lastSeen: "最后出现",
+    lessons: "课程", houseTimes: "本页时间除另有标示外，均为美东时间（纽约）。", house: "美东", taipei: "台湾", enteredIn: "建立时输入",
+    linkOnce: "学生专属链接（只显示这一次，请交给家长）：", copyLink: "复制链接", copied: "已复制",
+    revokeLink: "撤销学生链接", reissueLink: "重发学生链接", cancelLesson: "取消课程", cancelledMark: "已取消",
+    confirmRevoke: "确定撤销学生链接？目前的链接会立即无法再用来进入，也不会产生新链接。已在教室里的人不会立即断线：教室页面通常会在约 15 秒内自行离开，但无法保证。",
+    confirmReissue: "确定重发学生链接？目前的链接会立即无法再用来进入。已用旧链接在教室里的人不会立即断线：教室页面通常会在约 15 秒内自行离开，但无法保证。",
+    confirmCancel: "确定取消这堂课？学生链接和小老师都将无法再进入。已在教室里的人不会立即断线：教室页面通常会在约 30 秒内自行离开，但无法保证。",
+    revokedNotice: "学生链接已撤销，旧链接已无法进入；仍在教室里的人不会立即断线。", cancelledNotice: "课程已取消；仍在教室里的人不会立即断线。",
+    consent: "合成同意数据（仅限本机测试）", consentIntro: "录像同意政策尚待确认；这里的记录都是合成数据。",
+    trialConsentIntro: "厂商试用：只能为 TEST- 代码（成人测试者）设置测试同意，真实学生无法录像。", personCode: "人员代码", role: "角色", status: "状态",
+    granted: "已同意", withdrawn: "已撤回", staffNotice: "小老师已确认告知", setConsent: "保存",
+    files: "录像文件", openFile: "在 Google 云端硬盘打开",
+    emergencyStop: "紧急停止录像", stopping: "停止中…",
+    emergencyConfirm: "确定要立即停止这堂课的录像吗？停止后这堂课不会再录像；已经录到的内容会先隔离，不放进一般文件夹，等所有者确认。",
+    emergencyPressed: "已按下紧急停止",
+    resumeRecording: "授权在新教室录像", resuming: "确认中…",
+    resumeConfirm: "确定授权在新教室录像？服务器会先重新确认课程、名单和每一份同意；全部通过、两人都在新教室、而且旧教室的录像已确认停止，才会开始录像。撤回同意、紧急停止或取消课程之后，无法用这个方式恢复录像。",
+    resumeNotice: "已授权。服务器重新确认通过后才会开始录像（请看课程卡片）。",
     fileRoom: "教室第",
   },
 };
@@ -86,20 +117,23 @@ type Card = {
   dataState: { value: string; label: string; lastConfirmedAt: string | null; ageSeconds: number | null };
 };
 type Anomaly = { lessonId: string; lessonCode: string | null; code: string; label: string; severity: string; firstSeenAt: string | null; openedAt: string | null; lastSeenAt: string | null; resolvedAt: string | null; handled: boolean; acknowledgedBy: string | null; acknowledgedAt: string | null; note: string | null };
-type Lesson = { lessonId: string; code: string; startsAt: string; endsAt: string; cancelled: boolean; tutorCode: string | null; studentCodes: string[] };
+type Lesson = { lessonId: string; code: string; startsAt: string; endsAt: string; timeZone?: string | null; cancelled: boolean; tutorCode: string | null; studentCodes: string[] };
 type AccessAction = "cancel" | "revoke_link" | "reissue_link";
-type Overview = { mode: string | null; trialConsent?: boolean; dashboard: { generatedAt: string; groups: Record<string, Card[]>; counts: Record<string, number> }; anomalies: Anomaly[]; lessons: Lesson[] };
+type Overview = { mode: string | null; trialConsent?: boolean; scheduling?: Scheduling; dashboard: { generatedAt: string; groups: Record<string, Card[]>; counts: Record<string, number> }; anomalies: Anomaly[]; lessons: Lesson[] };
 
 const GROUPS = ["ANOMALY", "LIVE", "WAITING", "ENDED"];
-const taipei = (iso: string | null) => (iso ? new Date(new Date(iso).getTime() + 8 * 3600_000).toISOString().slice(5, 16).replace("T", " ") : "—");
+// Times are shown in US Eastern (the house zone) with their abbreviation (2026-11-17); before,
+// they were Taipei times without a label.
+const HOUSE = HOUSE_TIME_ZONE;
+const TAIPEI = "Asia/Taipei";
 // Where a confirmation came from. The source names inside the events still say zoom (the
 // synthetic provider plays Zoom-shaped events); the page names no vendor while none is chosen.
 const SOURCE = { zoom_webhook: "視訊服務", host_sdk: "小老師端", zoom_api: "視訊服務查詢", zoom: "視訊服務" } as Record<string, string>;
-const emptyLesson = { code: "", date: "", time: "", minutes: "60", tutorCode: "", tutorEmail: "", studentCode: "" };
 
 export default function ClassroomsPage() {
   const { locale, principal, setSubmitting } = useAdmin();
-  const text = locale === "en" ? copy.en : copy.zhHant;
+  const text = copy[locale];
+  const stamp = (iso: string | null) => (iso ? `${shortStamp(Date.parse(iso), HOUSE, locale)} ${zoneMark(Date.parse(iso), HOUSE)}` : "—");
   const [overview, setOverview] = useState<Overview | null>(null);
   const [error, setError] = useState("");
   const [tickFailed, setTickFailed] = useState(false);
@@ -108,7 +142,6 @@ export default function ClassroomsPage() {
   const [stopping, setStopping] = useState("");
   const [resuming, setResuming] = useState("");
   const [notes, setNotes] = useState<Record<string, string>>({});
-  const [lesson, setLesson] = useState(emptyLesson);
   const [busy, setBusy] = useState(false);
   const [studentLink, setStudentLink] = useState("");
   const [copied, setCopied] = useState(false);
@@ -193,14 +226,23 @@ export default function ClassroomsPage() {
     setNotes((current) => ({ ...current, [id]: "" }));
     await refresh();
   });
-  const addLesson = () => mutate(async () => {
-    const data = await adminFetch<{ studentLink: string }>("/api/admin/classrooms", { method: "POST", body: JSON.stringify({ ...lesson, minutes: Number(lesson.minutes) }) });
-    setStudentLink(`${window.location.origin}${data.studentLink}`);
-    setCopied(false);
-    setNotice("");
-    setLesson(emptyLesson);
-    await refresh();
-  });
+  const addLesson = async (request: LessonRequest) => {
+    let added = false;
+    await mutate(async () => {
+      try {
+        const data = await adminFetch<{ studentLink: string }>("/api/admin/classrooms", { method: "POST", body: JSON.stringify(request) });
+        setStudentLink(`${window.location.origin}${data.studentLink}`);
+        setCopied(false);
+        setNotice("");
+        added = true;
+      } catch (failure) {
+        const message = lessonErrorText(failure, locale, request, overview?.scheduling ?? null);
+        throw message ? Object.assign(new Error(message), { status: 400 }) : failure;
+      }
+      await refresh();
+    });
+    return added;
+  };
   // Revoke or reissue the student's link, or cancel the lesson; each asks first. A reissued link
   // is shown once, in the same box as a new lesson's.
   const changeAccess = (item: Lesson, action: AccessAction) => {
@@ -230,7 +272,7 @@ export default function ClassroomsPage() {
     <section className="admin-page classroom-overview">
       <header className="admin-page-head">
         <div><h1>{text.title}</h1><p>{text.intro}</p></div>
-        <p className="admin-muted">{text.refreshed}: {refreshedAt ? taipei(refreshedAt) : "—"}</p>
+        <p className="admin-muted">{text.refreshed}: {refreshedAt ? stamp(refreshedAt) : "—"}<br />{text.houseTimes}</p>
       </header>
       {overview?.mode === "synthetic" && <p className="classroom-synthetic" role="note">{text.synthetic}</p>}
       {tickFailed && <p className="admin-alert" role="status">{text.tickFailed}</p>}
@@ -252,7 +294,7 @@ export default function ClassroomsPage() {
                   <span className={`classroom-data ${card.dataState.value}`}>{card.dataState.label}</span>
                 </div>
                 <dl>
-                  <div><dt>{text.scheduled}</dt><dd>{taipei(card.scheduledStart)}　{text.started} {taipei(card.actualStart)}　{card.phase.label}</dd></div>
+                  <div><dt>{text.scheduled}</dt><dd>{stamp(card.scheduledStart)}　{text.started} {stamp(card.actualStart)}　{card.phase.label}</dd></div>
                   {card.tutor && <div><dt>{text.tutor}</dt><dd>{card.tutor.code}　{card.tutor.label}</dd></div>}
                   {card.students.map((student) => <div key={student.code}><dt>{text.student}</dt><dd>{student.code}　{student.label}</dd></div>)}
                   <div><dt>{text.recording}</dt><dd>{card.recording.label}{card.recording.basis === "confirmed" && card.recording.source ? <span className="classroom-basis">（{SOURCE[card.recording.source] ?? card.recording.source}確認）</span> : null}</dd></div>
@@ -273,11 +315,11 @@ export default function ClassroomsPage() {
                       </ul>
                     </dd></div>
                   )}
-                  <div><dt>{text.data}</dt><dd>{card.dataState.lastConfirmedAt ? taipei(card.dataState.lastConfirmedAt) : "—"}</dd></div>
+                  <div><dt>{text.data}</dt><dd>{card.dataState.lastConfirmedAt ? stamp(card.dataState.lastConfirmedAt) : "—"}</dd></div>
                 </dl>
                 {card.anomalies.length > 0 && <ul className="classroom-alerts">{card.anomalies.map((item) => <li key={item.code} className={item.severity}>{item.label}</li>)}</ul>}
                 {card.emergency?.pressedAt && (
-                  <p className={`classroom-emergency${card.emergency.stopState === "CONFIRMED" ? " is-confirmed" : ""}`} role="status">{text.emergencyPressed}（{taipei(card.emergency.pressedAt)}）：{card.emergency.stopLabel}</p>
+                  <p className={`classroom-emergency${card.emergency.stopState === "CONFIRMED" ? " is-confirmed" : ""}`} role="status">{text.emergencyPressed}（{stamp(card.emergency.pressedAt)}）：{card.emergency.stopLabel}</p>
                 )}
                 {card.roomRecording && <p className="classroom-room-recording" role="status">{card.roomRecording.label}</p>}
                 <div className="admin-card-actions">
@@ -312,9 +354,9 @@ export default function ClassroomsPage() {
                         <span className={`classroom-severity ${item.severity}`}>{item.severity}</span>
                         {!item.resolvedAt && !item.handled && <div className="classroom-unhandled">{text.unhandled}</div>}
                       </td>
-                      <td className="admin-muted">{text.firstSeen} {taipei(item.firstSeenAt)}<br />{text.lastSeen} {taipei(item.resolvedAt ?? item.lastSeenAt)}</td>
+                      <td className="admin-muted">{text.firstSeen} {stamp(item.firstSeenAt)}<br />{text.lastSeen} {stamp(item.resolvedAt ?? item.lastSeenAt)}</td>
                       <td>
-                        {item.acknowledgedBy && <p className={`classroom-handled${item.handled ? "" : " is-earlier"}`}>{item.handled ? text.handled : text.earlier}：{item.note}（{item.acknowledgedBy}，{taipei(item.acknowledgedAt)}）</p>}
+                        {item.acknowledgedBy && <p className={`classroom-handled${item.handled ? "" : " is-earlier"}`}>{item.handled ? text.handled : text.earlier}：{item.note}（{item.acknowledgedBy}，{stamp(item.acknowledgedAt)}）</p>}
                         <div className="admin-toolbar">
                           <input className="admin-search" value={notes[id] ?? ""} maxLength={500} placeholder={text.note} onChange={(event) => setNotes((current) => ({ ...current, [id]: event.target.value }))} />
                           <button type="button" className="admin-button secondary" disabled={busy || !(notes[id] ?? "").trim()} onClick={() => handle(item)}>{text.save}</button>
@@ -329,22 +371,8 @@ export default function ClassroomsPage() {
         ) : <p className="admin-muted">{text.noAnomalies}</p>}
       </div>
 
-      <div className="admin-panel classroom-panel">
-        <h2>{text.add}</h2>
-        <div className="classroom-form">
-          {(["code", "date", "time", "minutes", "tutorCode", "tutorEmail", "studentCode"] as const).map((field) => (
-            <label key={field} className="admin-field">
-              <span>{text[field]}</span>
-              <input
-                className="admin-search"
-                type={field === "date" ? "date" : field === "time" ? "time" : field === "minutes" ? "number" : field === "tutorEmail" ? "email" : "text"}
-                value={lesson[field]}
-                onChange={(event) => setLesson((current) => ({ ...current, [field]: event.target.value }))}
-              />
-            </label>
-          ))}
-        </div>
-        <button type="button" className="admin-button primary" disabled={busy} onClick={addLesson}>{busy ? text.adding : text.add}</button>
+      <div className="admin-panel classroom-panel classroom-add-panel">
+        <LessonForm locale={locale} busy={busy} scheduling={overview?.scheduling ?? null} onSubmit={addLesson} />
         {studentLink && (
           <div className="classroom-link" role="status">
             <p>{text.linkOnce}</p>
@@ -360,7 +388,13 @@ export default function ClassroomsPage() {
                 {overview.lessons.map((item) => (
                   <tr key={item.lessonId} className={item.cancelled ? "is-cancelled" : undefined}>
                     <td><strong>{item.code}</strong>{item.cancelled && <span className="classroom-cancelled">{text.cancelledMark}</span>}</td>
-                    <td>{taipei(item.startsAt)}–{taipei(item.endsAt).slice(-5)}</td>
+                    <td className="classroom-lesson-time">
+                      <div><span className="classroom-zone-label">{text.house}</span> {shortStamp(Date.parse(item.startsAt), HOUSE, locale)}–{wallIn(Date.parse(item.endsAt), HOUSE).time} {zoneMark(Date.parse(item.startsAt), HOUSE)}</div>
+                      <div className="admin-muted"><span className="classroom-zone-label">{text.taipei}</span> {shortStamp(Date.parse(item.startsAt), TAIPEI, locale)}–{wallIn(Date.parse(item.endsAt), TAIPEI).time}</div>
+                      {item.timeZone && item.timeZone !== HOUSE && item.timeZone !== TAIPEI && (
+                        <div className="admin-muted">{text.enteredIn} {zoneName(item.timeZone, locale)} {shortStamp(Date.parse(item.startsAt), item.timeZone, locale)}</div>
+                      )}
+                    </td>
                     <td>{text.tutor} {item.tutorCode}</td>
                     <td>{text.student} {item.studentCodes.join("、")}</td>
                     <td className="classroom-lesson-actions">

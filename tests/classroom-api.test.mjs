@@ -1302,3 +1302,38 @@ describe("the vendor's session id without webhooks", () => {
     expect(events.some(event => event.type === "api.snapshot")).toBe(false);
   });
 });
+
+describe("a lesson's time zone (2026-11-17)", () => {
+  // 2026-11-17: the form sends the time zone it was filled in; a request without one is Taipei time
+  // as before. Refusals carry codes the admin page turns into its own language.
+  test("a lesson's time zone: US Eastern from the form, Taipei without one; DST gaps, bad zones and passed lessons are refused with codes", async () => {
+    at("2027-01-10T07:00:00Z");
+    signedIn(OWNER);
+    const make = async fields => read(await lessons.POST(post("/api/admin/classrooms", { minutes: 60, tutorEmail: TUTOR, ...fields })));
+    const eastern = await make({ code: "TEST-TZ1", date: "2027-01-10", time: "18:00", tutorCode: "TEST-TZT1", studentCode: "TEST-TZS1", timeZone: "America/New_York" });
+    expect(eastern.status).toBe(201);
+    expect(eastern.body.lesson).toMatchObject({ startsAt: "2027-01-10T23:00:00.000Z", endsAt: "2027-01-11T00:00:00.000Z", timeZone: "America/New_York", localDate: "2027-01-10", localTime: "18:00", zoneGiven: true });
+    expect(eastern.body.warnings).toEqual([]);
+    expect(eastern.body.studentLink).toMatch(/^\/classroom\/L-[0-9a-f]{32}#k=[A-Za-z0-9_-]{43}$/);
+    const legacy = await make({ code: "TEST-TZ2", date: "2027-01-11", time: "07:00", tutorCode: "TEST-TZT2", studentCode: "TEST-TZS2" });
+    expect(legacy.body.lesson).toMatchObject({ startsAt: "2027-01-10T23:00:00.000Z", timeZone: "Asia/Taipei", localDate: "2027-01-11", localTime: "07:00", zoneGiven: false });
+    expect(await make({ code: "TEST-TZ3", date: "2027-03-14", time: "02:30", tutorCode: "TEST-TZT3", studentCode: "TEST-TZS3", timeZone: "America/New_York" }))
+      .toMatchObject({ status: 400, body: { codes: { time: "TIME_DOES_NOT_EXIST" } } });
+    expect(await make({ code: "TEST-TZ4", date: "2027-11-07", time: "01:30", tutorCode: "TEST-TZT4", studentCode: "TEST-TZS4", timeZone: "America/New_York" }))
+      .toMatchObject({ status: 400, body: { codes: { time: "TIME_IS_AMBIGUOUS" } } });
+    // 2027-01-09 18:00 EST ends 2027-01-10T00:00Z; the door closed at 00:15Z, long before 07:00Z.
+    expect(await make({ code: "TEST-TZ5", date: "2027-01-09", time: "18:00", tutorCode: "TEST-TZT5", studentCode: "TEST-TZS5", timeZone: "America/New_York" }))
+      .toMatchObject({ status: 400, body: { codes: { time: "ENTRY_WINDOW_PASSED" } } });
+    for (const timeZone of ["+08:00", "EST", "", "Mars/Olympus"]) {
+      expect(await make({ code: "TEST-TZ6", date: "2027-01-11", time: "07:00", tutorCode: "TEST-TZT6", studentCode: "TEST-TZS6", timeZone }))
+        .toMatchObject({ status: 400, body: { codes: { timeZone: "TIME_ZONE_INVALID" } } });
+    }
+    // Started 30 minutes ago but still open: made, with a warning.
+    const started = await make({ code: "TEST-TZ7", date: "2027-01-10", time: "01:30", tutorCode: "TEST-TZT7", studentCode: "TEST-TZS7", timeZone: "America/New_York" });
+    expect(started).toMatchObject({ status: 201, body: { warnings: ["START_PASSED"], lesson: { startsAt: "2027-01-10T06:30:00.000Z" } } });
+    const view = await overview();
+    expect(view.scheduling).toEqual({ houseTimeZone: "America/New_York", legacyTimeZone: "Asia/Taipei", joinWindowBeforeMs: 900_000, joinWindowAfterMs: 900_000 });
+    expect(view.lessons.find(item => item.code === "TEST-TZ1")?.timeZone).toBe("America/New_York");
+    expect(view.lessons.find(item => item.code === "TEST-TZ2")?.timeZone).toBe("Asia/Taipei");
+  });
+});
