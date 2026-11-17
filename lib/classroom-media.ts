@@ -812,6 +812,7 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
       this.reportRemote();
       const sharing = this.stream.getActiveShareUserId();
       if (sharing) await this.remoteShare({ state: "Active", userId: sharing });
+      await this.drawVideosAlreadyOn();
     } catch (error) {
       if (attempt === this.attempt) {
         this.client = null;
@@ -1250,6 +1251,23 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
       userKey: other ? (other.userKey ?? other.userIdentity ?? null) : null, at: this.now(),
       others: others.length, videosShown: [...this.tiles.keys()].length, videosWaiting: this.waitingVideos.size,
     });
+  }
+
+  // Cameras that were already on when this page joined, or joined again. Zoom's report that a camera
+  // started does not reliably reach a page that comes in afterwards (real Zoom, 2026-11-18: the
+  // student who came in second, or came back, saw no picture until the tutor turned the camera off
+  // and on), so after joining, everyone whose camera Zoom's user list shows as on (bVideoOn) is drawn.
+  // attach() claims each tile first, so a late report of the same camera never draws it twice, and
+  // the device's tile limit (P3-Multi) still decides who waits.
+  private async drawVideosAlreadyOn() {
+    const self = this.client?.getCurrentUserInfo()?.userId;
+    const before = this.tiles.size + this.waitingVideos.size;
+    for (const user of this.client?.getAllUser() ?? []) {
+      if (user.userId === self || !user.bVideoOn) continue;
+      await this.attach(user.userId).catch(() => undefined);
+    }
+    // Told only when a camera was drawn (or is waiting), so a room with none on hears what it did before.
+    if (this.tiles.size + this.waitingVideos.size !== before) this.reportRemote();
   }
 
   private async peerVideo(payload: { action?: string; userId?: number }) {

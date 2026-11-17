@@ -469,7 +469,7 @@ describe("browser adapters", () => {
     };
     return { doc, root: doc.createElement("div") };
   }
-  function fakeZoom({ joinError = null, videoError = null, shareError = null, canBoard = true, boardError = null, sharingAtJoin = 0, videoHangs = 0, slowVideo = 0, audioHangs = 0, slowJoin = false, failedJoins = 0, sessionId = "", chatAnswer = null, commandAnswer = null } = {}) {
+  function fakeZoom({ joinError = null, videoError = null, shareError = null, canBoard = true, boardError = null, sharingAtJoin = 0, videoHangs = 0, slowVideo = 0, audioHangs = 0, slowJoin = false, failedJoins = 0, sessionId = "", chatAnswer = null, commandAnswer = null, others = [] } = {}) {
     const calls = [];
     // In-class chat and the command channel (2026-11-12), recorded apart from `calls` so the older
     // checks of the call order stay as they were. A *Answer option stands for Zoom's failure answer.
@@ -483,7 +483,8 @@ describe("browser adapters", () => {
     // Every listener registered and not yet removed, per event: a second one for the same event
     // means the page would hear Zoom twice.
     const live = new Map();
-    const users = [{ userId: 1, userIdentity: "P-TEST-T01" }];
+    // `others`: people already in the session when this page joins (2026-11-18), e.g. with a camera on.
+    const users = [{ userId: 1, userIdentity: "P-TEST-T01" }, ...others.map(user => ({ ...user }))];
     // A join() that finishes only when the test says so, as Zoom's can after it reports "Connected".
     let releaseJoin = () => {};
     const joinGate = slowJoin ? new Promise(resolve => { releaseJoin = resolve; }) : null;
@@ -660,6 +661,49 @@ describe("browser adapters", () => {
     zoom.handlers.get("user-added")([{ userId: 2 }, { userId: 3 }]);
     for (const id of [2, 3]) { zoom.handlers.get("peer-video-state-change")({ action: "Start", userId: id }); await settle(); }
     expect(events.filter(event => event.type === "people").at(-1).people.map(person => [person.id, person.video])).toEqual([["1", "off"], ["2", "shown"], ["3", "waiting"]]);
+  });
+
+  // Real Zoom (2026-11-18): Zoom's report that a camera started did not reach a page that came in
+  // afterwards, so the student who came in second (or came back) saw no picture of the tutor's
+  // camera until the tutor turned it off and on. A camera Zoom lists as on is drawn on joining.
+  const cameraOn = { userId: 2, userIdentity: "P-OTHER", displayName: "TEST-O01", bVideoOn: true, audio: "computer", muted: false };
+  test.each(["tutor", "student"])("2.0 Zoom: a camera already on when this page joins (as the %s) is drawn at once; Zoom's late report does not draw it twice", async (role) => {
+    const zoom = fakeZoom({ others: [cameraOn, { userId: 3, displayName: "TEST-O02", bVideoOn: false }] }), dom = fakeDom();
+    const adapter = new ZoomVideoSdkMediaAdapter(async () => zoom.sdk, () => 1);
+    const events = recorded(adapter);
+    adapter.mount(dom.root);
+    await adapter.join({ ...zoomJoin, role });
+    const videos = dom.root.children[2];
+    expect(drawn(videos)).toEqual(["video:2"]);
+    expect(events.filter(event => event.type === "people").at(-1).people.map(person => [person.id, person.video])).toEqual([["1", "off"], ["2", "shown"], ["3", "off"]]);
+    zoom.handlers.get("peer-video-state-change")({ action: "Start", userId: 2 });
+    await settle();
+    expect(zoom.calls.filter(call => call === "attach:2")).toHaveLength(1);
+    expect(drawn(videos)).toEqual(["video:2"]);
+  });
+
+  test("2.0 Zoom: joining again draws the other person's camera that stayed on, with no new report from Zoom", async () => {
+    const zoom = fakeZoom({ others: [cameraOn] }), dom = fakeDom();
+    const adapter = new ZoomVideoSdkMediaAdapter(async () => zoom.sdk, () => 1);
+    adapter.mount(dom.root);
+    await adapter.join(zoomJoin);
+    const videos = dom.root.children[2];
+    expect(drawn(videos)).toEqual(["video:2"]);
+    await adapter.leave();
+    expect(drawn(videos)).toEqual([]);
+    await adapter.join({ ...zoomJoin, sessionToken: "fresh.jwt.token" });
+    expect(drawn(videos)).toEqual(["video:2"]);
+    expect(zoom.calls.filter(call => call === "attach:2")).toHaveLength(2);
+  });
+
+  test("2.0 Zoom: cameras already on when this page joins still keep to the device's tile limit (the rest wait)", async () => {
+    const zoom = fakeZoom({ others: [2, 3].map(id => ({ userId: id, displayName: `TEST-S0${id}`, bVideoOn: true })) }), dom = fakeDom();
+    const adapter = new ZoomVideoSdkMediaAdapter(async () => zoom.sdk, () => 1, { maxVideos: 1 });
+    const events = recorded(adapter);
+    adapter.mount(dom.root);
+    await adapter.join(zoomJoin);
+    expect(events.filter(event => event.type === "people").at(-1).people.map(person => [person.id, person.video])).toEqual([["1", "off"], ["2", "shown"], ["3", "waiting"]]);
+    expect(zoom.calls.filter(call => typeof call === "string" && call.startsWith("attach:"))).toEqual(["attach:2"]);
   });
 
   test("2.0 Zoom: who is talking (loudest first) is told once per change, and the ring goes a moment after Zoom's last report", async () => {
