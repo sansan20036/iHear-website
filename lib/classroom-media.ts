@@ -567,9 +567,10 @@ const VIDEO_360P = 2;
 // Remote videos drawn at once: Zoom's web rendering limit less this page's own (a computer 25, a
 // phone or tablet 9); the others wait for a free tile.
 export const MAX_REMOTE_VIDEOS = { desktop: 24, mobile: 8 } as const;
-// How long a press of the camera or microphone may wait for Zoom before the page offers to try
-// again; starting normally takes a second or two.
-const DEVICE_START_MS = 10_000;
+// How long a press of the camera or microphone may wait for Zoom before the page says it is taking
+// long and offers to try again. Starting normally takes a second or two; on a slow computer Zoom
+// took more than 10 seconds (real Zoom, 2026-11-18), and its answer still counts when it comes later.
+const DEVICE_START_MS = 20_000;
 type DeviceAnswer = { state: DeviceState; problem?: DeviceProblem };
 // A refused start: blocked by the person or the browser, or worth another try (and why).
 function deviceAnswerOf(error: unknown): DeviceAnswer {
@@ -630,8 +631,13 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
   private sessionName: string | null = null;
   // This page's camera and microphone, the latest press of each, and the press now waiting for Zoom.
   private readonly devices: Record<DeviceKind, DeviceState> = { camera: "off", microphone: "off" };
+  // Why each device's last press failed, while it is "failed".
+  private readonly problems: Partial<Record<DeviceKind, DeviceProblem>> = {};
   private readonly presses: Record<DeviceKind, number> = { camera: 0, microphone: 0 };
   private readonly waiting: Partial<Record<DeviceKind, (answer: DeviceAnswer) => void>> = {};
+  // Zoom's start call for each device while it is still on its way: Zoom may answer it after the
+  // deadline, and "Try again" gives it one more deadline instead of stopping it.
+  private readonly calls: Partial<Record<DeviceKind, Promise<void>>> = {};
   // Presses made while Zoom is still finishing the join, waiting for its media stream.
   private readonly streamWaiters = new Set<() => void>();
   private readonly deviceStartMs: number;
@@ -843,6 +849,7 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
       this.presses[kind] += 1;
       const pending = this.waiting[kind];
       delete this.waiting[kind];
+      delete this.calls[kind];
       pending?.({ state: "off" });
       this.setDeviceState(kind, "off");
     }
@@ -885,8 +892,10 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
   // ends as "failed", which the page offers to try again.
   async setDevice(kind: DeviceKind, on: boolean) {
     const press = ++this.presses[kind];
-    // After a press that did not start, Zoom's half-started camera or audio is cleared first.
+    // After a press that did not start, Zoom's half-started camera or audio is cleared first; but a
+    // start that only ran past the deadline and is still on its way first gets one more (start()).
     const retry = this.devices[kind] === "failed";
+    const overdue = retry && this.problems[kind] === "timeout" ? this.calls[kind] : undefined;
     let stream = this.stream;
     if (!stream && on && this.client) {
       // Pressed while Zoom is still finishing the join: wait for its media stream, never drop it.
@@ -910,10 +919,18 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
       return this.devices[kind];
     }
     this.setDeviceState(kind, "starting");
-    const answer = await this.start(kind, stream, retry);
+    const { answer: pending, call } = this.start(kind, stream, retry, overdue);
+    const answer = await pending;
     // A later press, or leaving, took over: its own answer stands.
     if (press !== this.presses[kind] || stream !== this.stream) return this.devices[kind];
     await this.settle(kind, answer);
+    // Zoom answering after the deadline (a slow computer, 2026-11-18): the device is on after all,
+    // unless the person pressed again or left meanwhile. Zoom's own report usually says so as well.
+    if (answer.problem === "timeout") {
+      call.then(() => {
+        if (press === this.presses[kind] && stream === this.stream && this.devices[kind] === "failed") void this.settle(kind, { state: "on" });
+      }, () => undefined);
+    }
     return answer.state;
   }
 
@@ -930,21 +947,42 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     });
   }
 
-  // Zoom's call, Zoom's own report or the deadline, whichever comes first.
-  private start(kind: DeviceKind, stream: ZoomStream, retry: boolean) {
-    return new Promise<DeviceAnswer>((resolve) => {
-      const deadline = setTimeout(() => done({ state: "failed", problem: "timeout" }), this.deviceStartMs);
-      const done = (answer: DeviceAnswer) => {
+  // Zoom's call, Zoom's own report or the deadline, whichever comes first; and the call itself, which
+  // Zoom may still answer later. A "Try again" after a start that ran past the deadline (`earlier`,
+  // still on its way) waits one more deadline for it before starting over, so its own is twice as long.
+  private start(kind: DeviceKind, stream: ZoomStream, retry: boolean, earlier?: Promise<void>) {
+    let call!: Promise<void>;
+    const answer = new Promise<DeviceAnswer>((resolve) => {
+      const deadline = setTimeout(() => done({ state: "failed", problem: "timeout" }), earlier ? 2 * this.deviceStartMs : this.deviceStartMs);
+      const done = (result: DeviceAnswer) => {
         clearTimeout(deadline);
         if (this.waiting[kind] === done) delete this.waiting[kind];
-        resolve(answer);
+        resolve(result);
       };
       this.waiting[kind] = done;
-      this.callStart(kind, stream, retry).then(() => done({ state: "on" }), (error: unknown) => done(deviceAnswerOf(error)));
+      call = this.callStart(kind, stream, retry, earlier);
+      call.then(() => done({ state: "on" }), (error: unknown) => done(deviceAnswerOf(error)));
+    });
+    this.calls[kind] = call;
+    const forget = () => { if (this.calls[kind] === call) delete this.calls[kind]; };
+    call.then(forget, forget);
+    return { answer, call };
+  }
+
+  // Whether a call answers (and succeeds) within `ms`.
+  private answersWithin(call: Promise<void>, ms: number) {
+    return new Promise<boolean>((resolve) => {
+      const deadline = setTimeout(() => resolve(false), ms);
+      call.then(() => { clearTimeout(deadline); resolve(true); }, () => { clearTimeout(deadline); resolve(false); });
     });
   }
 
-  private async callStart(kind: DeviceKind, stream: ZoomStream, retry: boolean) {
+  private async callStart(kind: DeviceKind, stream: ZoomStream, retry: boolean, earlier?: Promise<void>) {
+    // "Try again" while Zoom is still working on the earlier start (real Zoom on a slow computer,
+    // 2026-11-18): stopping that start made each new one fail at once, while the earlier one came on
+    // by itself a little later. So it gets one more deadline; only one that still has not answered,
+    // or that failed, is cleared and started again (a start that never answers, seen on 2026-10-30).
+    if (earlier && await this.answersWithin(earlier, this.deviceStartMs)) return;
     if (kind === "camera") {
       // Already capturing: an earlier press started after all.
       if (stream.isCapturingVideo()) return;
@@ -981,6 +1019,7 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     // A repeated failure is told again, for the page's message.
     if (this.devices[kind] === state && state !== "failed") return;
     this.devices[kind] = state;
+    this.problems[kind] = state === "failed" ? problem ?? "error" : undefined;
     this.reportPeople();
     this.emit({ type: "device", kind, state, ...(state === "failed" ? { problem: problem ?? "error" } : {}), at: this.now() });
   }
@@ -1022,6 +1061,10 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     try {
       await board.startWhiteboardScreen(stage.whiteboard);
     } catch {
+      // Zoom may have opened the board for the others although this page could not show it (real
+      // Zoom, 2026-11-18: the student saw a board the tutor could neither see nor close). It is closed
+      // for everyone too, so both pages agree and the tutor can simply press again.
+      await board.stopWhiteboardScreen().catch(() => undefined);
       this.hideBoard();
       return false;
     }

@@ -469,7 +469,7 @@ describe("browser adapters", () => {
     };
     return { doc, root: doc.createElement("div") };
   }
-  function fakeZoom({ joinError = null, videoError = null, shareError = null, canBoard = true, sharingAtJoin = 0, videoHangs = 0, audioHangs = 0, slowJoin = false, failedJoins = 0, sessionId = "", chatAnswer = null, commandAnswer = null } = {}) {
+  function fakeZoom({ joinError = null, videoError = null, shareError = null, canBoard = true, boardError = null, sharingAtJoin = 0, videoHangs = 0, slowVideo = 0, audioHangs = 0, slowJoin = false, failedJoins = 0, sessionId = "", chatAnswer = null, commandAnswer = null } = {}) {
     const calls = [];
     // In-class chat and the command channel (2026-11-12), recorded apart from `calls` so the older
     // checks of the call order stay as they were. A *Answer option stands for Zoom's failure answer.
@@ -494,12 +494,21 @@ describe("browser adapters", () => {
     // The first N starts never answer, as Zoom's did when a device was pressed the moment both had joined.
     const hangs = { video: videoHangs, audio: audioHangs };
     const never = () => new Promise(() => {});
+    // The first N video starts answer only when the test says so (releaseVideo), as Zoom's did on a
+    // slow computer (real Zoom, 2026-11-18): after the page's deadline, but they did answer.
+    let slowVideos = slowVideo, releaseVideo = () => {};
     let capturing = false;
     const qualities = [];
     const stream = {
       startAudio: async () => { calls.push("startAudio"); if (hangs.audio > 0) { hangs.audio -= 1; await never(); } },
       stopAudio: async () => calls.push("stopAudio"), muteAudio: async () => calls.push("muteAudio"), unmuteAudio: async () => calls.push("unmuteAudio"),
-      startVideo: async () => { calls.push("startVideo"); if (videoError) throw videoError; if (hangs.video > 0) { hangs.video -= 1; await never(); } capturing = true; },
+      startVideo: async () => {
+        calls.push("startVideo");
+        if (videoError) throw videoError;
+        if (hangs.video > 0) { hangs.video -= 1; await never(); }
+        if (slowVideos > 0) { slowVideos -= 1; await new Promise(resolve => { releaseVideo = resolve; }); }
+        capturing = true;
+      },
       stopVideo: async () => { calls.push("stopVideo"); capturing = false; }, isCapturingVideo: () => capturing,
       attachVideo: async (userId, quality) => {
         calls.push(`attach:${userId}`); qualities.push([userId, quality]);
@@ -516,7 +525,8 @@ describe("browser adapters", () => {
     };
     const whiteboard = {
       isWhiteboardEnabled: () => true, canStartWhiteboard: () => canBoard,
-      startWhiteboardScreen: async (element) => calls.push(`board:${element.className}`), stopWhiteboardScreen: async () => calls.push("boardOff"),
+      startWhiteboardScreen: async (element) => { calls.push(`board:${element.className}`); if (boardError) throw boardError; },
+      stopWhiteboardScreen: async () => calls.push("boardOff"),
       startWhiteboardView: async (element, userId) => calls.push(`boardView:${userId}`), stopWhiteboardView: async () => calls.push("boardViewOff"),
       exportWhiteboard: async (format, name) => calls.push(`export:${format}:${name}`),
     };
@@ -547,7 +557,7 @@ describe("browser adapters", () => {
     };
     const listening = () => Object.fromEntries([...live].filter(([, set]) => set.size > 0).map(([name, set]) => [name, set.size]));
     const holdNextJoin = () => { let release; heldJoin = new Promise(resolve => { release = resolve; }); return () => release(); };
-    return { calls, handlers, users, sdk, created, listening, holdNextJoin, releaseJoin: () => releaseJoin(), qualities, chatSent, privileges, commandsSent };
+    return { calls, handlers, users, sdk, created, listening, holdNextJoin, releaseJoin: () => releaseJoin(), releaseVideo: () => releaseVideo(), qualities, chatSent, privileges, commandsSent };
   }
   const zoomJoin = { sessionToken: "synthetic.jwt.token", sessionName: "ihear-l-test-v01", lessonCode: "TEST-V01", participantCode: "TEST-T01", role: "tutor" };
   // Zoom calls its handlers without waiting; let their asynchronous work finish.
@@ -805,7 +815,7 @@ describe("browser adapters", () => {
     expect(zoom.handlers.size).toBe(0);
   });
 
-  test("Zoom devices: a start Zoom never answers ends 'failed' after the deadline; pressing again clears it and starts", async () => {
+  test("Zoom devices: a start Zoom never answers ends 'failed' after the deadline; pressing again gives it one more deadline, then clears it and starts", async () => {
     const { zoom, adapter, events, videos } = await joined({ videoHangs: 1 }, { deviceStartMs: 20 });
     expect(await adapter.setDevice("camera", true)).toBe("failed");
     expect(events.filter(event => event.type === "device")).toEqual([
@@ -837,6 +847,39 @@ describe("browser adapters", () => {
     expect(late.events.at(-1)).toMatchObject({ type: "device", kind: "camera", state: "off" });
   });
 
+  // Real Zoom on a slow computer (2026-11-18): the tutor's camera answered after the deadline, and
+  // each "Try again" stopped that start and failed at once, although the camera came on later.
+  test("Zoom devices: a start Zoom answers after the deadline turns the camera on by itself, without starting it again", async () => {
+    const { zoom, adapter, events, videos } = await joined({ slowVideo: 1 }, { deviceStartMs: 20 });
+    expect(await adapter.setDevice("camera", true)).toBe("failed");
+    expect(events.filter(event => event.type === "device").at(-1)).toMatchObject({ kind: "camera", state: "failed", problem: "timeout" });
+    zoom.releaseVideo();
+    await settle(); await settle();
+    expect(events.filter(event => event.type === "device").at(-1)).toMatchObject({ kind: "camera", state: "on" });
+    expect(zoom.calls.filter(call => /Video|attach/.test(call))).toEqual(["startVideo", "attach:1"]);
+    expect(drawn(videos)).toEqual(["video:1"]);
+  });
+
+  test("Zoom devices: “Try again” while Zoom is still starting waits for that start instead of stopping it", async () => {
+    const { zoom, adapter, events, videos } = await joined({ slowVideo: 1 }, { deviceStartMs: 50 });
+    expect(await adapter.setDevice("camera", true)).toBe("failed");
+    const again = adapter.setDevice("camera", true);
+    await settle();
+    expect(events.filter(event => event.type === "device").at(-1)).toMatchObject({ kind: "camera", state: "starting" });
+    zoom.releaseVideo();
+    expect(await again).toBe("on");
+    expect(zoom.calls.filter(call => /Video|attach/.test(call))).toEqual(["startVideo", "attach:1"]);
+    expect(drawn(videos)).toEqual(["video:1"]);
+    // Pressed again or left meanwhile: a late answer to an older press changes nothing.
+    const left = await joined({ slowVideo: 1 }, { deviceStartMs: 20 });
+    expect(await left.adapter.setDevice("camera", true)).toBe("failed");
+    await left.adapter.leave();
+    left.zoom.releaseVideo();
+    await settle(); await settle();
+    expect(left.events.filter(event => event.type === "device").at(-1)).toMatchObject({ kind: "camera", state: "off" });
+    expect(left.zoom.calls.filter(call => /attach/.test(call))).toEqual([]);
+  });
+
   test("Zoom devices: a capture failure, paused sound, a blocked permission and a busy camera each end the press as they should", async () => {
     const capture = await joined({ videoHangs: 1 }, { deviceStartMs: 5_000 });
     const pressed = capture.adapter.setDevice("camera", true);
@@ -851,7 +894,10 @@ describe("browser adapters", () => {
     sound.zoom.handlers.get("auto-play-audio-failed")();
     expect(await speaking).toBe("failed");
     expect(sound.events.at(-1)).toMatchObject({ type: "device", kind: "microphone", state: "failed", problem: "autoplay" });
+    // At once: only a start that ran past the deadline gets one more deadline before starting over.
+    const pressedAgain = Date.now();
     expect(await sound.adapter.setDevice("microphone", true)).toBe("on");
+    expect(Date.now() - pressedAgain).toBeLessThan(1_000);
     expect(sound.zoom.calls.filter(call => /Audio/.test(call))).toEqual(["startAudio", "stopAudio", "startAudio"]);
     const blocked = await joined({ videoHangs: 1 }, { deviceStartMs: 5_000 });
     const asking = blocked.adapter.setDevice("camera", true);
@@ -1074,6 +1120,16 @@ describe("browser adapters", () => {
     expect([viewer.zoom.calls.at(-1), viewer.whiteboard.hidden, viewer.events.at(-1).state]).toEqual(["boardView:1", false, "viewing"]);
     viewer.zoom.handlers.get("peer-whiteboard-state-change")({ action: "Stop", userId: 1 }); await settle();
     expect([viewer.zoom.calls.at(-1), viewer.whiteboard.hidden, viewer.events.at(-1).state]).toEqual(["boardViewOff", true, "none"]);
+  });
+
+  // Real Zoom (2026-11-18): the tutor's page could not start the board, yet the student saw it, a board
+  // the tutor could neither see nor close. A start that fails here is closed for everyone too.
+  test("Zoom whiteboard: a board this page could not open is closed for everyone, so the tutor can press again", async () => {
+    const { zoom, adapter, events, whiteboard } = await joined({ boardError: new Error("whiteboard failed") });
+    expect(await adapter.setWhiteboard(true)).toBe(false);
+    expect(zoom.calls.slice(-2)).toEqual(["board:classroom-zoom-whiteboard", "boardOff"]);
+    expect([whiteboard.hidden, whiteboard.children]).toEqual([true, []]);
+    expect(events.filter(event => event.type === "whiteboard").map(event => event.state)).not.toContain("presenting");
   });
 
   test("Zoom: leaving ends the share and the whiteboard on this page too", async () => {

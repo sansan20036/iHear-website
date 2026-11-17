@@ -117,8 +117,8 @@ export const roomCopy = {
     } as Record<DeviceKind, Partial<Record<DeviceState, string>>>,
     // A press that did not start, by what went wrong ("error" for the rest); "Try again" sits beside it.
     deviceFailed: {
-      camera: { error: "The camera did not start. Press “Try again”. If it still does not start, reload this page.", missing: "No camera was found. Check that it is connected, then press “Try again”.", busy: "Another app may be using the camera (another video app, for example). Close it, then press “Try again”." },
-      microphone: { error: "The microphone did not start. Press “Try again”. If it still does not start, reload this page.", autoplay: "The browser paused this page's sound. Press “Try again” to start it.", missing: "No microphone was found. Check that it is connected, then press “Try again”.", busy: "Another app may be using the microphone. Close it, then press “Try again”." },
+      camera: { error: "The camera did not start. Press “Try again”. If it still does not start, reload this page.", timeout: "The camera is taking longer than usual to start. Wait a moment: it may still come on by itself. If it does not, press “Try again”.", missing: "No camera was found. Check that it is connected, then press “Try again”.", busy: "Another app may be using the camera (another video app, for example). Close it, then press “Try again”." },
+      microphone: { error: "The microphone did not start. Press “Try again”. If it still does not start, reload this page.", timeout: "The microphone is taking longer than usual to start. Wait a moment: it may still come on by itself. If it does not, press “Try again”.", autoplay: "The browser paused this page's sound. Press “Try again” to start it.", missing: "No microphone was found. Check that it is connected, then press “Try again”.", busy: "Another app may be using the microphone. Close it, then press “Try again”." },
     } as Record<DeviceKind, Partial<Record<DeviceProblem, string>>>,
     recording: "Recording", recordingNote: "Recording starts and stops on its own; you do not need to do anything.",
     allowed: "This lesson may be recorded.", notAllowed: "This lesson is not recorded.", waiting: "Waiting for the first report…",
@@ -205,8 +205,8 @@ export const roomCopy = {
       microphone: { denied: "麥克風被封鎖。請在瀏覽器的網站設定允許使用麥克風，再試一次。", unavailable: "找不到麥克風。請確認麥克風已接上，而且沒有被其他程式使用。" },
     } as Record<DeviceKind, Partial<Record<DeviceState, string>>>,
     deviceFailed: {
-      camera: { error: "攝影機沒有成功開啟。請按「再試一次」；如果還是不行，請重新整理這個頁面。", missing: "找不到攝影機。請確認攝影機已接上，再按「再試一次」。", busy: "攝影機可能正被其他程式使用（例如另一個視訊軟體）。請關閉那個程式，再按「再試一次」。" },
-      microphone: { error: "麥克風沒有成功開啟。請按「再試一次」；如果還是不行，請重新整理這個頁面。", autoplay: "瀏覽器暫停了這個頁面的聲音。請按「再試一次」讓聲音開始。", missing: "找不到麥克風。請確認麥克風已接上，再按「再試一次」。", busy: "麥克風可能正被其他程式使用。請關閉那個程式，再按「再試一次」。" },
+      camera: { error: "攝影機沒有成功開啟。請按「再試一次」；如果還是不行，請重新整理這個頁面。", timeout: "攝影機開啟得比平常久。請稍等一下，它可能會自己開好；如果一直沒有開好，再按「再試一次」。", missing: "找不到攝影機。請確認攝影機已接上，再按「再試一次」。", busy: "攝影機可能正被其他程式使用（例如另一個視訊軟體）。請關閉那個程式，再按「再試一次」。" },
+      microphone: { error: "麥克風沒有成功開啟。請按「再試一次」；如果還是不行，請重新整理這個頁面。", timeout: "麥克風開啟得比平常久。請稍等一下，它可能會自己開好；如果一直沒有開好，再按「再試一次」。", autoplay: "瀏覽器暫停了這個頁面的聲音。請按「再試一次」讓聲音開始。", missing: "找不到麥克風。請確認麥克風已接上，再按「再試一次」。", busy: "麥克風可能正被其他程式使用。請關閉那個程式，再按「再試一次」。" },
     } as Record<DeviceKind, Partial<Record<DeviceProblem, string>>>,
     recording: "錄影", recordingNote: "錄影會自動開始和停止，你不需要操作。",
     allowed: "這堂課可以錄影。", notAllowed: "這堂課不錄影。", waiting: "等待第一次回報…",
@@ -293,8 +293,8 @@ export const roomCopy = {
       microphone: { denied: "麦克风被阻止。请在浏览器的网站设置中允许使用麦克风，再试一次。", unavailable: "找不到麦克风。请确认麦克风已接上，而且没有被其他程序使用。" },
     } as Record<DeviceKind, Partial<Record<DeviceState, string>>>,
     deviceFailed: {
-      camera: { error: "摄像头没有成功开启。请按“再试一次”；如果还是不行，请刷新这个页面。", missing: "找不到摄像头。请确认摄像头已接上，再按“再试一次”。", busy: "摄像头可能正被其他程序使用（例如另一个视频软件）。请关闭那个程序，再按“再试一次”。" },
-      microphone: { error: "麦克风没有成功开启。请按“再试一次”；如果还是不行，请刷新这个页面。", autoplay: "浏览器暂停了这个页面的声音。请按“再试一次”让声音开始。", missing: "找不到麦克风。请确认麦克风已接上，再按“再试一次”。", busy: "麦克风可能正被其他程序使用。请关闭那个程序，再按“再试一次”。" },
+      camera: { error: "摄像头没有成功开启。请按“再试一次”；如果还是不行，请刷新这个页面。", timeout: "摄像头开启得比平常久。请稍等一下，它可能会自己开好；如果一直没有开好，再按“再试一次”。", missing: "找不到摄像头。请确认摄像头已接上，再按“再试一次”。", busy: "摄像头可能正被其他程序使用（例如另一个视频软件）。请关闭那个程序，再按“再试一次”。" },
+      microphone: { error: "麦克风没有成功开启。请按“再试一次”；如果还是不行，请刷新这个页面。", timeout: "麦克风开启得比平常久。请稍等一下，它可能会自己开好；如果一直没有开好，再按“再试一次”。", autoplay: "浏览器暂停了这个页面的声音。请按“再试一次”让声音开始。", missing: "找不到麦克风。请确认麦克风已接上，再按“再试一次”。", busy: "麦克风可能正被其他程序使用。请关闭那个程序，再按“再试一次”。" },
     } as Record<DeviceKind, Partial<Record<DeviceProblem, string>>>,
     recording: "录像", recordingNote: "录像会自动开始和停止，你不需要操作。",
     allowed: "这堂课可以录像。", notAllowed: "这堂课不录像。", waiting: "等待第一次报告…",
