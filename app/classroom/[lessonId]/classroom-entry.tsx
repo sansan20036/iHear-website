@@ -151,7 +151,8 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   const [simulator, setSimulator] = useState<SyntheticMediaAdapter | null>(null);
   // The vendor's own check of this browser, and a problem starting the materials or whiteboard.
   const [sdkCheck, setSdkCheck] = useState<MediaSystemCheck | null>(null);
-  const [toolProblem, setToolProblem] = useState<"" | "share" | "board">("");
+  // "boardView": the other person opened a whiteboard this page could not show (2026-11-18).
+  const [toolProblem, setToolProblem] = useState<"" | "share" | "board" | "boardView">("");
   // In-class chat and raised hands (2026-11-12): on this page only and never saved (the owner's
   // decision); leaving the room clears them. The unread count shows on the chat button while the
   // chat is closed: a sign to see, not a sound.
@@ -328,6 +329,10 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
         setMedia((state) => ({ ...state, share: event.state }));
       } else if (event.type === "whiteboard") {
         setMedia((state) => ({ ...state, whiteboard: event.state }));
+        // A board the other person opened but this page could not show is said, never hidden; a
+        // board shown later (opened again) clears that message.
+        if (event.problem === "view") setToolProblem("boardView");
+        else if (event.state !== "none") setToolProblem((problem) => (problem === "boardView" ? "" : problem));
       } else if (event.type === "chat") {
         setChat((lines) => appendChat(lines, event.line));
         if (event.line.from !== "self" && !chatOpenNow.current) setUnread((count) => count + 1);
@@ -902,7 +907,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
             const help = text.deviceHelp[kind][media.devices[kind]];
             return help ? <p key={kind} className="classroom-room-problem" role="alert">{help}</p> : null;
           })}
-          {toolProblem && <p className="classroom-room-problem" role="alert">{toolProblem === "share" ? v.shareFailed : v.boardFailed}</p>}
+          {toolProblem && <p className="classroom-room-problem" role="alert">{toolProblem === "share" ? v.shareFailed : toolProblem === "boardView" ? v.boardViewFailed : v.boardFailed}</p>}
           {handProblem && <p className="classroom-room-problem" role="alert">{text.handFailed}</p>}
           {isTutor && recording?.status === "FAILED" && <p className="classroom-room-problem" role="alert">{text.failedRecording}</p>}
           {isTutor && hostProblem === "unstable" && <p className="classroom-room-problem" role="status">{text.unstable}</p>}

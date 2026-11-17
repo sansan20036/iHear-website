@@ -23,7 +23,8 @@ export const vendorCopy = {
     shareHint: "教材（PDF、PPT）：先在這台電腦打開檔案，再按「分享畫面」，選擇那個視窗或瀏覽器分頁。",
     noShareHere: "這台裝置不能分享畫面；要展示教材請改用電腦。",
     shareFailed: "畫面沒有開始分享（可能取消了選擇）。",
-    boardFailed: "白板無法開啟：這個帳號可能沒有開啟白板，或這台裝置不支援。",
+    boardFailed: "白板無法開啟：Zoom 的白板服務可能暫時有問題，或這台裝置不支援。可以先改用「分享畫面」展示教材。",
+    boardViewFailed: "小老師開了白板，但這台裝置沒有成功顯示。請告訴小老師，改用「分享畫面」展示。",
     sdkCheck: (check: MediaSystemCheck) => `Zoom 視訊 ${check.sdkVersion}：音訊${check.audio ? "可用" : "不可用"}、視訊${check.video ? "可用" : "不可用"}、分享畫面${check.screenShare ? "可用" : "不可用"}`,
   },
   en: {
@@ -44,7 +45,8 @@ export const vendorCopy = {
     shareHint: "Materials (PDF, PPT): open the file on this computer first, then choose Share screen and pick that window or browser tab.",
     noShareHere: "This device cannot share its screen; use a computer to show materials.",
     shareFailed: "The screen was not shared (the choice may have been cancelled).",
-    boardFailed: "The whiteboard could not open: it may be off for this account, or this device does not support it.",
+    boardFailed: "The whiteboard could not open: Zoom’s whiteboard service may be having problems, or this device does not support it. You can share your screen to show materials instead.",
+    boardViewFailed: "The tutor opened the whiteboard, but this device could not show it. Tell the tutor, who can share the screen instead.",
     sdkCheck: (check: MediaSystemCheck) => `Zoom video ${check.sdkVersion}: audio ${check.audio ? "supported" : "not supported"}, video ${check.video ? "supported" : "not supported"}, screen sharing ${check.screenShare ? "supported" : "not supported"}`,
   },
   zhHans: {
@@ -65,7 +67,8 @@ export const vendorCopy = {
     shareHint: "教材（PDF、PPT）：先在这台电脑打开文件，再按“共享屏幕”，选择那个窗口或浏览器标签页。",
     noShareHere: "这台设备不能共享屏幕；要展示教材请改用电脑。",
     shareFailed: "屏幕没有开始共享（可能取消了选择）。",
-    boardFailed: "白板无法打开：这个账号可能没有开启白板，或这台设备不支持。",
+    boardFailed: "白板无法打开：Zoom 的白板服务可能暂时有问题，或这台设备不支持。可以先改用“共享屏幕”展示教材。",
+    boardViewFailed: "小老师打开了白板，但这台设备没有成功显示。请告诉小老师，改用“共享屏幕”展示。",
     sdkCheck: (check: MediaSystemCheck) => `Zoom 视频 ${check.sdkVersion}：音频${check.audio ? "可用" : "不可用"}、视频${check.video ? "可用" : "不可用"}、共享屏幕${check.screenShare ? "可用" : "不可用"}`,
   },
 };

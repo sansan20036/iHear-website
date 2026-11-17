@@ -469,7 +469,7 @@ describe("browser adapters", () => {
     };
     return { doc, root: doc.createElement("div") };
   }
-  function fakeZoom({ joinError = null, videoError = null, shareError = null, canBoard = true, boardError = null, sharingAtJoin = 0, videoHangs = 0, slowVideo = 0, audioHangs = 0, slowJoin = false, failedJoins = 0, sessionId = "", chatAnswer = null, commandAnswer = null, others = [] } = {}) {
+  function fakeZoom({ joinError = null, videoError = null, shareError = null, canBoard = true, boardError = null, boardViewError = null, presenter = null, sharingAtJoin = 0, videoHangs = 0, slowVideo = 0, audioHangs = 0, slowJoin = false, failedJoins = 0, sessionId = "", chatAnswer = null, commandAnswer = null, others = [] } = {}) {
     const calls = [];
     // In-class chat and the command channel (2026-11-12), recorded apart from `calls` so the older
     // checks of the call order stay as they were. A *Answer option stands for Zoom's failure answer.
@@ -528,8 +528,12 @@ describe("browser adapters", () => {
       isWhiteboardEnabled: () => true, canStartWhiteboard: () => canBoard,
       startWhiteboardScreen: async (element) => { calls.push(`board:${element.className}`); if (boardError) throw boardError; },
       stopWhiteboardScreen: async () => calls.push("boardOff"),
-      startWhiteboardView: async (element, userId) => calls.push(`boardView:${userId}`), stopWhiteboardView: async () => calls.push("boardViewOff"),
+      startWhiteboardView: async (element, userId) => { calls.push(`boardView:${userId}`); if (boardViewError) throw boardViewError; },
+      stopWhiteboardView: async () => calls.push("boardViewOff"),
       exportWhiteboard: async (format, name) => calls.push(`export:${format}:${name}`),
+      // `presenter`: who presents a whiteboard when this page joins (2026-11-18); "throws" for a Zoom
+      // that throws on the question.
+      getWhiteboardPresenter: () => { if (presenter === "throws") throw new Error("whiteboard not ready"); return presenter; },
     };
     const client = {
       init: async (...args) => calls.push(["init", ...args.slice(0, 2)].join(":")),
@@ -1174,6 +1178,41 @@ describe("browser adapters", () => {
     expect(zoom.calls.slice(-2)).toEqual(["board:classroom-zoom-whiteboard", "boardOff"]);
     expect([whiteboard.hidden, whiteboard.children]).toEqual([true, []]);
     expect(events.filter(event => event.type === "whiteboard").map(event => event.state)).not.toContain("presenting");
+  });
+
+  // Zoom's whiteboard guide (2026-11-18): a page that comes in later may miss the report that a board
+  // started, so on joining it asks who presents. Real Zoom showed the same gap for cameras.
+  test("Zoom whiteboard: a board already open when this page joins, or joins again, is viewed at once", async () => {
+    const { zoom, adapter, events, whiteboard } = await joined({ presenter: { userId: 2, displayName: "TEST-T01" } });
+    expect(zoom.calls.filter(call => call === "boardView:2")).toHaveLength(1);
+    expect([whiteboard.hidden, events.filter(event => event.type === "whiteboard").at(-1).state]).toEqual([false, "viewing"]);
+    // Zoom's own late report of the same board does not view it twice; its Stop closes it.
+    zoom.handlers.get("peer-whiteboard-state-change")({ action: "Start", userId: 2 }); await settle();
+    expect(zoom.calls.filter(call => call === "boardView:2")).toHaveLength(1);
+    zoom.handlers.get("peer-whiteboard-state-change")({ action: "Stop", userId: 2 }); await settle();
+    expect(whiteboard.hidden).toBe(true);
+    // Opened again: viewed again.
+    zoom.handlers.get("peer-whiteboard-state-change")({ action: "Start", userId: 2 }); await settle();
+    expect(zoom.calls.filter(call => call === "boardView:2")).toHaveLength(2);
+    await adapter.leave();
+    await adapter.join({ ...zoomJoin, sessionToken: "fresh.jwt.token" });
+    expect(zoom.calls.filter(call => call === "boardView:2")).toHaveLength(3);
+    expect(events.filter(event => event.type === "whiteboard").at(-1).state).toBe("viewing");
+  });
+
+  test("Zoom whiteboard: nothing to view when nobody presents or this page presents; a failing question never stops the entry", async () => {
+    for (const presenter of [null, { userId: 1 }, "throws"]) {
+      const { zoom, events } = await joined({ presenter });
+      expect(zoom.calls.some(call => typeof call === "string" && call.startsWith("boardView:"))).toBe(false);
+      expect(events.filter(event => event.type === "connection").at(-1).state).toBe("connected");
+    }
+  });
+
+  test("Zoom whiteboard: a board the other person opened but this page cannot show is said, not swallowed", async () => {
+    const { zoom, events, whiteboard } = await joined({ boardViewError: new Error("view failed") });
+    zoom.handlers.get("peer-whiteboard-state-change")({ action: "Start", userId: 2 }); await settle();
+    expect(events.filter(event => event.type === "whiteboard").at(-1)).toMatchObject({ state: "none", problem: "view" });
+    expect([whiteboard.hidden, whiteboard.children]).toEqual([true, []]);
   });
 
   test("Zoom: leaving ends the share and the whiteboard on this page too", async () => {

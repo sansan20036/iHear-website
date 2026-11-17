@@ -38,7 +38,9 @@ export type MediaEvent =
   | { type: "remote"; present: boolean; camera: boolean; microphone: boolean; userKey: string | null; at: number; others?: number; videosShown?: number; videosWaiting?: number }
   // Materials and the whiteboard: what this page is showing or sending right now.
   | { type: "share"; state: "none" | "sending" | "receiving"; at: number }
-  | { type: "whiteboard"; state: "none" | "presenting" | "viewing"; at: number }
+  // `problem: "view"`: the other person opened a whiteboard that this page could not show (told,
+  // never swallowed, so the student can say so and the tutor can share the screen instead).
+  | { type: "whiteboard"; state: "none" | "presenting" | "viewing"; problem?: "view"; at: number }
   // The vendor's id for the session this page joined. Nothing on the page shows it; the tutor's
   // page reports it where the server confirms such ids with the vendor.
   | { type: "session"; sessionId: string; at: number }
@@ -522,6 +524,8 @@ export type ZoomWhiteboard = {
   startWhiteboardView(element: HTMLElement, presenterId: number): Promise<unknown>;
   stopWhiteboardView(): Promise<unknown>;
   exportWhiteboard(format: "pdf", name?: string): Promise<unknown>;
+  // Who presents a whiteboard now, or null (Zoom 2.3.5+).
+  getWhiteboardPresenter?(): { userId?: number } | null;
 };
 export type ZoomClient = {
   init(language: string, dependentAssets: string, options?: { patchJsMedia?: boolean; leaveOnPageUnload?: boolean }): Promise<unknown>;
@@ -616,6 +620,8 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
   private sharing: "none" | "sending" | "receiving" = "none";
   private sharer: number | null = null;
   private board: "none" | "presenting" | "viewing" = "none";
+  // Whose whiteboard this page views, or is starting to view (2026-11-18).
+  private viewedPresenter: number | null = null;
   private readonly tiles = new Map<number, unknown>();
   // Remote videos that are on but wait for a free tile (P3-Multi), in the order they started.
   private readonly waitingVideos = new Set<number>();
@@ -813,6 +819,7 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
       const sharing = this.stream.getActiveShareUserId();
       if (sharing) await this.remoteShare({ state: "Active", userId: sharing });
       await this.drawVideosAlreadyOn();
+      await this.showBoardAlreadyOpen();
     } catch (error) {
       if (attempt === this.attempt) {
         this.client = null;
@@ -867,6 +874,7 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     this.reportPeople();
     this.setSpeaking([]);
     this.setShare("none");
+    this.viewedPresenter = null;
     this.setBoard("none");
     // Hands belong to the session that ended (Zoom gives new user ids on joining again). Chat lines
     // already on the page stay there; only the ids Zoom gave this session are forgotten.
@@ -1270,6 +1278,18 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     if (this.tiles.size + this.waitingVideos.size !== before) this.reportRemote();
   }
 
+  // A whiteboard already open when this page joins, or joins again. Zoom's whiteboard guide: a page
+  // that comes in later may miss "peer-whiteboard-state-change", so it asks who presents
+  // (getWhiteboardPresenter, Zoom 2.3.5+) and views that board, as the Start report would have.
+  private async showBoardAlreadyOpen() {
+    let presenter: { userId?: number } | null | undefined;
+    // A question about the whiteboard never stops anyone entering the room.
+    try { presenter = this.client?.getWhiteboardClient().getWhiteboardPresenter?.(); } catch { return; }
+    const self = this.client?.getCurrentUserInfo()?.userId;
+    if (presenter?.userId == null || presenter.userId === self || this.board !== "none") return;
+    await this.remoteBoard({ action: "Start", userId: presenter.userId });
+  }
+
   private async peerVideo(payload: { action?: string; userId?: number }) {
     if (payload.userId == null) return;
     if (payload.action === "Start") await this.attach(payload.userId);
@@ -1330,8 +1350,20 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     const board = this.client?.getWhiteboardClient(), stage = this.stage;
     if (!board || !stage || payload.userId == null) return;
     if (payload.action === "Start") {
+      // Claimed before the wait: the question on joining and Zoom's own (late) report of the same
+      // board never start viewing it twice.
+      if (this.viewedPresenter === payload.userId) return;
+      this.viewedPresenter = payload.userId;
       stage.whiteboard.hidden = false;
-      await board.startWhiteboardView(stage.whiteboard, payload.userId).then(() => this.setBoard("viewing"), () => this.hideBoard());
+      try {
+        await board.startWhiteboardView(stage.whiteboard, payload.userId);
+      } catch {
+        // Before 2026-11-18 this was silent: the student saw nothing and nobody knew why.
+        this.hideBoard();
+        this.emit({ type: "whiteboard", state: "none", problem: "view", at: this.now() });
+        return;
+      }
+      this.setBoard("viewing");
     } else if (payload.action === "Stop") {
       await board.stopWhiteboardView().catch(() => undefined);
       this.hideBoard();
@@ -1345,6 +1377,7 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
 
   private hideBoard() {
     if (this.stage) { this.stage.whiteboard.replaceChildren(); this.stage.whiteboard.hidden = true; }
+    this.viewedPresenter = null;
     this.setBoard("none");
   }
 
