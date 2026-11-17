@@ -145,6 +145,13 @@ try {
       await page.setViewportSize({ width: size[0], height: size[1] });
       await layout(page, `student-${size[0]}-share`, { material: true });
     }
+    // Stopped, then shared again (2026-11-18): the people take the stage back, then the material.
+    await simulate(page, '對方停止分享');
+    await expect(page.locator('.room2')).toHaveAttribute('data-mode', 'people');
+    await expect(page.locator('.room2-stage-label')).toHaveText('視訊');
+    await simulate(page, '對方分享畫面');
+    await expect(page.locator('.room2')).toHaveAttribute('data-mode', 'share');
+    await expect(page.locator('.room2-stage-label')).toHaveText('分享的畫面');
     await page.getByRole('button', { name: /^聊天/ }).click();
     await expect(page.getByRole('tab', { name: '聊天' })).toBeFocused();
     await page.getByLabel('訊息').fill('TEST: 老師好');

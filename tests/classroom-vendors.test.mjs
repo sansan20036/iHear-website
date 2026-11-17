@@ -1153,6 +1153,39 @@ describe("browser adapters", () => {
     expect([running.share.hidden, running.events.at(-1)]).toEqual([false, { type: "share", state: "receiving", at: 1 }]);
   });
 
+  // A real lesson (2026-11-18): the tutor shows one material, stops, then shows the next, with the
+  // camera and microphone on all along; a student who comes back during a share sees it again.
+  test("Zoom materials: sharing again after a stop works, and the camera and microphone stay as they were", async () => {
+    const { zoom, adapter, events, ownShare } = await joined();
+    expect(await adapter.setDevice("camera", true)).toBe("on");
+    expect(await adapter.setDevice("microphone", true)).toBe("on");
+    const devices = () => events.filter(event => event.type === "device").map(event => `${event.kind}:${event.state}`);
+    const before = devices();
+    for (let round = 1; round <= 2; round += 1) {
+      expect(await adapter.setScreenShare(true)).toBe(true);
+      expect([ownShare.hidden, events.at(-1)]).toEqual([false, { type: "share", state: "sending", at: 1 }]);
+      expect(await adapter.setScreenShare(false)).toBe(false);
+      expect([ownShare.hidden, events.at(-1).state]).toEqual([true, "none"]);
+    }
+    expect(zoom.calls.filter(call => call === "share:video")).toHaveLength(2);
+    expect(devices()).toEqual(before);
+  });
+
+  test("Zoom materials: the student sees the next share after a stop, and a running share again after coming back", async () => {
+    const { zoom, adapter, events, share } = await joined({ sharingAtJoin: 2 });
+    const shareState = () => events.filter(event => event.type === "share").at(-1).state;
+    expect(shareState()).toBe("receiving");
+    zoom.handlers.get("active-share-change")({ state: "Inactive", userId: 2 }); await settle();
+    expect([share.hidden, shareState()]).toEqual([true, "none"]);
+    zoom.handlers.get("active-share-change")({ state: "Active", userId: 2 }); await settle();
+    expect([share.hidden, share.children.map(child => child.tag), shareState()]).toEqual([false, ["shared:2"], "receiving"]);
+    await adapter.leave();
+    expect(share.hidden).toBe(true);
+    await adapter.join({ ...zoomJoin, sessionToken: "fresh.jwt.token" });
+    expect([share.hidden, shareState()]).toEqual([false, "receiving"]);
+    expect(zoom.calls.filter(call => call === "shareView:2")).toHaveLength(3);
+  });
+
   test("Zoom whiteboard: the tutor presents and can export a PDF; refused when Zoom says it cannot start; the student views it", async () => {
     const refused = await joined({ canBoard: false });
     expect([await refused.adapter.setWhiteboard(true), refused.whiteboard.hidden]).toEqual([false, true]);
