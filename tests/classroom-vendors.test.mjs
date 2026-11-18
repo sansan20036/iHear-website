@@ -524,11 +524,20 @@ describe("browser adapters", () => {
       attachShareView: async (userId) => { calls.push(`shareView:${userId}`); return { nodeType: 1, tag: `shared:${userId}` }; },
       detachShareView: async (userId) => calls.push(`shareViewOff:${userId}`),
     };
+    // Changed after joining by the reconnect tests (2026-11-18): setPresenter, setSharer, failViews, holdNextView.
+    let viewFailures = 0, failingView = null, heldView = null;
     const whiteboard = {
       isWhiteboardEnabled: () => boardEnabled, canStartWhiteboard: () => canBoard,
       startWhiteboardScreen: async (element) => { calls.push(`board:${element.className}`); if (boardError) throw boardError; },
       stopWhiteboardScreen: async () => calls.push("boardOff"),
-      startWhiteboardView: async (element, userId) => { calls.push(`boardView:${userId}`); if (boardViewError) throw boardViewError; },
+      startWhiteboardView: async (element, userId) => {
+        calls.push(`boardView:${userId}`);
+        const held = heldView;
+        heldView = null;
+        if (held) await held;
+        if (viewFailures > 0) { viewFailures -= 1; throw failingView; }
+        if (boardViewError) throw boardViewError;
+      },
       stopWhiteboardView: async () => calls.push("boardViewOff"),
       exportWhiteboard: async (format, name) => calls.push(`export:${format}:${name}`),
       // `presenter`: who presents a whiteboard when this page joins (2026-11-18); "throws" for a Zoom
@@ -562,7 +571,11 @@ describe("browser adapters", () => {
     };
     const listening = () => Object.fromEntries([...live].filter(([, set]) => set.size > 0).map(([name, set]) => [name, set.size]));
     const holdNextJoin = () => { let release; heldJoin = new Promise(resolve => { release = resolve; }); return () => release(); };
-    return { calls, handlers, users, sdk, created, listening, holdNextJoin, releaseJoin: () => releaseJoin(), releaseVideo: () => releaseVideo(), qualities, chatSent, privileges, commandsSent };
+    const holdNextView = () => { let release; heldView = new Promise(resolve => { release = resolve; }); return () => release(); };
+    const setPresenter = value => { presenter = value; };
+    const setSharer = userId => { sharingAtJoin = userId; };
+    const failViews = (error, times) => { failingView = error; viewFailures = times; };
+    return { calls, handlers, users, sdk, created, listening, holdNextJoin, holdNextView, setPresenter, setSharer, failViews, releaseJoin: () => releaseJoin(), releaseVideo: () => releaseVideo(), qualities, chatSent, privileges, commandsSent };
   }
   const zoomJoin = { sessionToken: "synthetic.jwt.token", sessionName: "ihear-l-test-v01", lessonCode: "TEST-V01", participantCode: "TEST-T01", role: "tutor" };
   // Zoom calls its handlers without waiting; let their asynchronous work finish.
@@ -1326,6 +1339,251 @@ describe("browser adapters", () => {
     await presenting.adapter.leave();
     expect(presenting.events.slice(-2).map(event => [event.type, event.state])).toEqual([["whiteboard", "none"], ["connection", "disconnected"]]);
     expect(presenting.whiteboard.hidden).toBe(true);
+  });
+
+  // Zoom reconnecting by itself (2026-11-18, real Zoom W6): after 30 s offline the student was back in
+  // 4 s, but 6 s later the whiteboard area was blank while the page still showed the board (whether it
+  // came back later is unknown). After Zoom's Reconnecting → Connected the page asks Zoom again what it
+  // missed. The check runs on its own; `reconnect` lets it finish (the adapters here wait 0 ms before
+  // asking Zoom a second time, unless a test says otherwise).
+  const fast = { resyncRetryMs: 0 };
+  const reconnect = async (zoom, { finish = true } = {}) => {
+    zoom.handlers.get("connection-change")({ state: "Reconnecting" });
+    zoom.handlers.get("connection-change")({ state: "Connected" });
+    if (finish) for (let round = 0; round < 20; round += 1) await settle();
+  };
+  const callsSince = (zoom, from) => zoom.calls.slice(from).filter(call => typeof call === "string");
+  const boardCalls = (zoom, from) => callsSince(zoom, from).filter(call => /^board/.test(call));
+  const boardStates = events => events.filter(event => event.type === "whiteboard").map(event => event.state);
+  const quietInfo = () => vi.spyOn(console, "info").mockImplementation(() => {});
+  const wait = ms => new Promise(resolve => { setTimeout(resolve, ms); });
+
+  test("RS-1 Zoom reconnect: a whiteboard still open is viewed again in the same place, once, and the page never leaves the board", async () => {
+    const info = quietInfo();
+    try {
+      const { zoom, events, whiteboard } = await joined({ presenter: { userId: 2 } }, fast);
+      expect(boardStates(events)).toEqual(["viewing"]);
+      const from = zoom.calls.length;
+      await reconnect(zoom);
+      // The old view goes first, then the same presenter's board is viewed again: never two at once.
+      expect(boardCalls(zoom, from)).toEqual(["boardViewOff", "boardView:2"]);
+      // No "none" in between: the page's layout and buttons do not flicker.
+      expect([whiteboard.hidden, boardStates(events)]).toEqual([false, ["viewing"]]);
+      expect(connections(events).slice(-2)).toEqual(["reconnecting", "connected"]);
+      expect(info.mock.calls.map(args => args.join(" "))).toEqual(["[classroom] after reconnect: whiteboard viewing, share none, videos 0"]);
+      // Zoom's own late Start of the same board does not view it a third time.
+      zoom.handlers.get("peer-whiteboard-state-change")({ action: "Start", userId: 2 }); await settle();
+      expect(zoom.calls.filter(call => call === "boardView:2")).toHaveLength(2);
+    } finally {
+      info.mockRestore();
+    }
+  });
+
+  test("RS-2 Zoom reconnect: a board opened during the outage is viewed; one closed during it is closed, only when Zoom says so twice", async () => {
+    const info = quietInfo();
+    try {
+      const missed = await joined({}, fast);
+      missed.zoom.setPresenter({ userId: 2 });
+      await reconnect(missed.zoom);
+      expect([missed.zoom.calls.filter(call => call === "boardView:2").length, missed.whiteboard.hidden, boardStates(missed.events)]).toEqual([1, false, ["viewing"]]);
+      const closed = await joined({ presenter: { userId: 2 } }, fast);
+      closed.zoom.setPresenter(null);
+      const from = closed.zoom.calls.length;
+      await reconnect(closed.zoom);
+      expect(boardCalls(closed.zoom, from)).toEqual(["boardViewOff"]);
+      expect([closed.whiteboard.hidden, closed.whiteboard.children, boardStates(closed.events)]).toEqual([true, [], ["viewing", "none"]]);
+      // Zoom's list a moment behind its "Connected": "nobody" first, the presenter again a moment
+      // later. The board is never closed; it is viewed again once.
+      const lagging = await joined({ presenter: { userId: 2 } }, { resyncRetryMs: 40 });
+      lagging.zoom.setPresenter(null);
+      const lagFrom = lagging.zoom.calls.length;
+      await reconnect(lagging.zoom, { finish: false });
+      await settle();
+      lagging.zoom.setPresenter({ userId: 2 });
+      await wait(80);
+      for (let round = 0; round < 10; round += 1) await settle();
+      expect(boardCalls(lagging.zoom, lagFrom)).toEqual(["boardViewOff", "boardView:2"]);
+      expect([lagging.whiteboard.hidden, boardStates(lagging.events)]).toEqual([false, ["viewing"]]);
+    } finally {
+      info.mockRestore();
+    }
+  });
+
+  test("RS-3 Zoom reconnect: cameras on are drawn, those still drawn are not drawn again, and this page's own camera and microphone are left exactly as they were", async () => {
+    const info = quietInfo();
+    try {
+      const { zoom, adapter, events, videos } = await joined({ others: [{ userId: 2, userIdentity: "P-TEST-S01", bVideoOn: true }] }, fast);
+      expect(drawn(videos)).toEqual(["video:2"]);
+      // The person turned both their own devices on and then off again before the outage.
+      expect(await adapter.setDevice("camera", true)).toBe("on");
+      expect(await adapter.setDevice("camera", false)).toBe("off");
+      expect(await adapter.setDevice("microphone", true)).toBe("on");
+      expect(await adapter.setDevice("microphone", false)).toBe("off");
+      // Someone else turned a camera on while this page was away; Zoom's Start never reached it.
+      zoom.users.push({ userId: 3, userIdentity: "P-TEST-S02", bVideoOn: true });
+      const from = zoom.calls.length, eventsFrom = events.length;
+      await reconnect(zoom);
+      const after = callsSince(zoom, from);
+      expect(after.filter(call => call.startsWith("attach:"))).toEqual(["attach:3"]);
+      expect(after.filter(call => /Video|Audio|detach/.test(call))).toEqual([]);
+      expect(events.slice(eventsFrom).filter(event => event.type === "device")).toEqual([]);
+      // This page's own tile (video:1) stays as it was; the others are drawn once each.
+      expect(drawn(videos).filter(tag => tag !== "video:1").sort()).toEqual(["video:2", "video:3"]);
+      const people = events.filter(event => event.type === "people").at(-1).people;
+      expect(people.find(person => person.self)).toMatchObject({ camera: false, microphone: false });
+      expect(people.filter(person => !person.self).map(person => [person.id, person.video])).toEqual([["2", "shown"], ["3", "shown"]]);
+      // A second reconnect draws nobody twice.
+      const again = zoom.calls.length;
+      await reconnect(zoom);
+      expect(callsSince(zoom, again).filter(call => /attach|Video|Audio/.test(call))).toEqual([]);
+    } finally {
+      info.mockRestore();
+    }
+  });
+
+  test("RS-4 Zoom reconnect: a screen share that started or ended during the outage is shown or closed; this page's own share is left alone", async () => {
+    const info = quietInfo();
+    const shares = events => events.filter(event => event.type === "share").map(event => event.state);
+    try {
+      const { zoom, adapter, events, share } = await joined({}, fast);
+      zoom.setSharer(2);
+      await reconnect(zoom);
+      expect([zoom.calls.filter(call => call === "shareView:2").length, share.hidden, shares(events)]).toEqual([1, false, ["receiving"]]);
+      zoom.setSharer(0);
+      await reconnect(zoom);
+      expect([zoom.calls.includes("shareViewOff:2"), share.hidden, shares(events)]).toEqual([true, true, ["receiving", "none"]]);
+      // A share closed here no longer keeps the whiteboard from starting (Zoom's 8002).
+      expect(await adapter.setWhiteboard(true)).toBe(true);
+      const own = await joined({}, fast);
+      expect(await own.adapter.setScreenShare(true)).toBe(true);
+      const from = own.zoom.calls.length;
+      await reconnect(own.zoom);
+      expect(callsSince(own.zoom, from).filter(call => /share/i.test(call))).toEqual([]);
+      expect([own.ownShare.hidden, shares(own.events).at(-1)]).toEqual([false, "sending"]);
+    } finally {
+      info.mockRestore();
+    }
+  });
+
+  test("RS-5 Zoom reconnect: the tutor's own whiteboard is never restarted (that would close it, strokes and all, for everyone)", async () => {
+    const info = quietInfo();
+    try {
+      const { zoom, adapter, events, whiteboard } = await joined({}, fast);
+      expect(await adapter.setWhiteboard(true)).toBe(true);
+      zoom.setPresenter({ userId: 1 });
+      const from = zoom.calls.length;
+      await reconnect(zoom);
+      expect(boardCalls(zoom, from)).toEqual([]);
+      expect([whiteboard.hidden, boardStates(events).at(-1)]).toEqual([false, "presenting"]);
+      // Zoom says nobody presents any more (twice): the board is closed on this page; the tutor can open it again.
+      zoom.setPresenter(null);
+      await reconnect(zoom);
+      expect([boardCalls(zoom, from), whiteboard.hidden, boardStates(events).at(-1)]).toEqual([[], true, "none"]);
+      expect(await adapter.setWhiteboard(true)).toBe(true);
+    } finally {
+      info.mockRestore();
+    }
+  });
+
+  test("RS-6 Zoom reconnect errors: a view that fails is tried once more, then said with Zoom's code; a question Zoom cannot answer changes nothing; leaving stops the check", async () => {
+    const info = quietInfo();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const failing = await joined({ presenter: { userId: 2 } }, fast);
+      failing.zoom.failViews({ type: "INVALID_OPERATION", reason: "see https://zoom.example/?token=secret", errorCode: 8003 }, 2);
+      const from = failing.zoom.calls.length;
+      await reconnect(failing.zoom);
+      expect(boardCalls(failing.zoom, from).filter(call => call === "boardView:2")).toHaveLength(2);
+      expect(failing.events.filter(event => event.type === "whiteboard").at(-1)).toEqual({ type: "whiteboard", state: "none", problem: "view", code: 8003, at: 1 });
+      expect([failing.whiteboard.hidden, failing.whiteboard.children]).toEqual([true, []]);
+      expect(warn.mock.calls.map(args => args.join(" "))).toEqual(["[classroom] whiteboard view failed: Zoom error 8003"]);
+      expect(JSON.stringify([failing.events, warn.mock.calls, info.mock.calls])).not.toMatch(/token|https|zoom\.example|INVALID_OPERATION/);
+      // Zoom's own Start afterwards views it as usual.
+      failing.zoom.handlers.get("peer-whiteboard-state-change")({ action: "Start", userId: 2 }); await settle();
+      expect(boardStates(failing.events).at(-1)).toBe("viewing");
+      // Fails once, works the second time: shown, nothing said, never "none".
+      warn.mockClear();
+      const flaky = await joined({ presenter: { userId: 2 } }, fast);
+      flaky.zoom.failViews(new Error("not ready"), 1);
+      await reconnect(flaky.zoom);
+      expect([flaky.whiteboard.hidden, boardStates(flaky.events), warn.mock.calls]).toEqual([false, ["viewing"], []]);
+      // Fails once, and Zoom's own Start comes before the second try: viewed by that Start, not a third time.
+      const overtaken = await joined({ presenter: { userId: 2 } }, { resyncRetryMs: 40 });
+      overtaken.zoom.failViews(new Error("not ready"), 1);
+      const overtakenFrom = overtaken.zoom.calls.length;
+      await reconnect(overtaken.zoom, { finish: false });
+      await settle();
+      overtaken.zoom.handlers.get("peer-whiteboard-state-change")({ action: "Start", userId: 2 }); await settle();
+      await wait(80);
+      for (let round = 0; round < 10; round += 1) await settle();
+      expect(boardCalls(overtaken.zoom, overtakenFrom).filter(call => call === "boardView:2")).toHaveLength(2);
+      expect([overtaken.whiteboard.hidden, boardStates(overtaken.events), warn.mock.calls]).toEqual([false, ["viewing"], []]);
+      // Zoom cannot say who presents: the board stays as it is.
+      const unsure = await joined({ presenter: { userId: 2 } }, fast);
+      unsure.zoom.setPresenter("throws");
+      const unsureFrom = unsure.zoom.calls.length;
+      await reconnect(unsure.zoom);
+      expect([boardCalls(unsure.zoom, unsureFrom), unsure.whiteboard.hidden, boardStates(unsure.events)]).toEqual([[], false, ["viewing"]]);
+      // The room is left while the check waits to ask Zoom again: it stops, and nothing is viewed or said.
+      const leaving = await joined({ presenter: { userId: 2 } }, { resyncRetryMs: 40 });
+      leaving.zoom.setPresenter(null);
+      info.mockClear();
+      await reconnect(leaving.zoom, { finish: false });
+      await settle();
+      await leaving.adapter.leave();
+      const leftAt = leaving.zoom.calls.length, leftEvents = leaving.events.length;
+      await wait(80);
+      expect([callsSince(leaving.zoom, leftAt), info.mock.calls, leaving.events.slice(leftEvents)]).toEqual([[], [], []]);
+      expect(connections(leaving.events).at(-1)).toBe("disconnected");
+    } finally {
+      warn.mockRestore();
+      info.mockRestore();
+    }
+  });
+
+  test("RS-7 Zoom reconnect: one check at a time, none without a Reconnecting before it, and a board closed while Zoom is opening it is not shown", async () => {
+    const info = quietInfo();
+    try {
+      const { zoom, events } = await joined({ presenter: { userId: 2 } }, fast);
+      // "Connected" again without a reconnect: nothing is asked or redrawn.
+      const quiet = zoom.calls.length;
+      zoom.handlers.get("connection-change")({ state: "Connected" });
+      for (let round = 0; round < 10; round += 1) await settle();
+      expect([callsSince(zoom, quiet), info.mock.calls]).toEqual([[], []]);
+      // A second reconnect while the first check is still viewing the board: no second view on top;
+      // one more check follows when the first one is done.
+      const release = zoom.holdNextView();
+      const from = zoom.calls.length;
+      await reconnect(zoom);
+      expect(boardCalls(zoom, from)).toEqual(["boardViewOff", "boardView:2"]);
+      await reconnect(zoom);
+      expect(boardCalls(zoom, from)).toEqual(["boardViewOff", "boardView:2"]);
+      release();
+      for (let round = 0; round < 20; round += 1) await settle();
+      expect(boardCalls(zoom, from)).toEqual(["boardViewOff", "boardView:2", "boardViewOff", "boardView:2"]);
+      expect(boardStates(events)).toEqual(["viewing"]);
+      // Zoom's Stop while its view is still opening: the board is not shown after all.
+      const viewer = await joined({}, fast);
+      const releaseView = viewer.zoom.holdNextView();
+      viewer.zoom.handlers.get("peer-whiteboard-state-change")({ action: "Start", userId: 2 }); await settle();
+      viewer.zoom.handlers.get("peer-whiteboard-state-change")({ action: "Stop", userId: 2 }); await settle();
+      releaseView();
+      for (let round = 0; round < 5; round += 1) await settle();
+      expect([boardStates(viewer.events), viewer.whiteboard.hidden, viewer.zoom.calls.at(-1)]).toEqual([[], true, "boardViewOff"]);
+      // Zoom's own Start still opening when the reconnect comes: the check leaves it to finish.
+      const opening = await joined({}, { resyncRetryMs: 10 });
+      const releaseOpening = opening.zoom.holdNextView();
+      opening.zoom.setPresenter({ userId: 2 });
+      opening.zoom.handlers.get("peer-whiteboard-state-change")({ action: "Start", userId: 2 }); await settle();
+      await reconnect(opening.zoom, { finish: false });
+      await wait(40);
+      for (let round = 0; round < 10; round += 1) await settle();
+      releaseOpening();
+      for (let round = 0; round < 10; round += 1) await settle();
+      expect([opening.zoom.calls.filter(call => call === "boardView:2").length, boardStates(opening.events), opening.whiteboard.hidden]).toEqual([1, ["viewing"], false]);
+    } finally {
+      info.mockRestore();
+    }
   });
 
   test("LCIC: only Tencent's classroom page is placed in the room, with camera and microphone allowed", async () => {

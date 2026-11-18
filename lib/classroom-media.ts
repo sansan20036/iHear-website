@@ -139,6 +139,9 @@ const SYNTHETIC_CHAT = "TEST: Hello / 你好 / 你好";
 const SYNTHETIC_GROUP = ["TEST-S02", "TEST-S03", "TEST-S04", "TEST-S05", "TEST-S06"] as const;
 // How long a ring stays around someone who stopped talking (Zoom reports talkers, not silence).
 const SPEAKING_MS = 2_000;
+// After Zoom's own reconnect: how long to wait before asking Zoom a second time, when its first answer
+// would close something on this page or it could not answer yet (2026-11-18).
+const RESYNC_RETRY_MS = 2_000;
 
 // Classroom 2.0 (2026-11-12): one tile per person inside the videos container, the way Zoom's own
 // documentation places a video (a video-player inside a tile inside the video-player-container).
@@ -670,11 +673,20 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
   private speaking = "";
   private speakingTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly speakingMs: number;
+  // The check after Zoom's own reconnect (2026-11-18): one at a time (a reconnect during it asks for
+  // one more afterwards), how many whiteboard views have been shown so far and how many are still
+  // opening, and the moment waited before Zoom is asked again.
+  private resyncing: Promise<void> | null = null;
+  private resyncAgain = false;
+  private boardViews = 0;
+  private boardStarting = 0;
+  private readonly resyncRetryMs: number;
 
-  constructor(private readonly load: () => Promise<ZoomVideoSdk> = loadZoomVideoSdkPackage, private readonly now: () => number = Date.now, options: { deviceStartMs?: number; maxVideos?: number; speakingMs?: number } = {}) {
+  constructor(private readonly load: () => Promise<ZoomVideoSdk> = loadZoomVideoSdkPackage, private readonly now: () => number = Date.now, options: { deviceStartMs?: number; maxVideos?: number; speakingMs?: number; resyncRetryMs?: number } = {}) {
     this.deviceStartMs = options.deviceStartMs ?? DEVICE_START_MS;
     this.maxVideos = options.maxVideos ?? MAX_REMOTE_VIDEOS.desktop;
     this.speakingMs = options.speakingMs ?? SPEAKING_MS;
+    this.resyncRetryMs = options.resyncRetryMs ?? RESYNC_RETRY_MS;
   }
 
   subscribe(listener: (event: MediaEvent) => void) {
@@ -772,7 +784,11 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
         // buttons work, only once join() has given the media stream (seen in the real trial: a
         // camera pressed in between did nothing).
         if (state === "connected" && !this.stream) return;
-        if (state) this.setConnection(state);
+        if (!state) return;
+        // Back after Zoom reconnected by itself: what changed meanwhile is asked again (resyncAfterReconnect).
+        const back = state === "connected" && this.connection === "reconnecting";
+        this.setConnection(state);
+        if (back) void this.resyncAfterReconnect();
       });
       // Someone new hears this page's raised hand again (Zoom keeps no hands of its own); someone who
       // leaves takes theirs along.
@@ -1309,6 +1325,137 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     await this.remoteBoard({ action: "Start", userId: presenter.userId });
   }
 
+  // Zoom's startWhiteboardView, counted while it runs (so the check after a reconnect never starts a
+  // second view on top of one still opening). Zoom's code when it fails (null without one), nothing
+  // when the board is shown.
+  private async startBoardView(board: ZoomWhiteboard, element: HTMLElement, presenter: number): Promise<number | null | undefined> {
+    this.boardStarting += 1;
+    try {
+      await board.startWhiteboardView(element, presenter);
+      return undefined;
+    } catch (error) {
+      return zoomErrorCodeOf(error);
+    } finally {
+      this.boardStarting -= 1;
+    }
+  }
+
+  // After Zoom's own reconnect (its connection-change Reconnecting → Connected), this page asks Zoom
+  // again what it may have missed meanwhile: who shares a screen, whose camera is on, who presents a
+  // whiteboard. Real Zoom (2026-11-18, W6): after 30 s offline the student was back in 4 s, yet 6 s
+  // later the whiteboard area was blank, while the page still showed the board (whether Zoom would
+  // have restored it later is unknown). Only other people's media are drawn again; this page's own
+  // camera and microphone are never started, stopped, muted or unmuted here. What is already shown
+  // and still right is left alone (no camera is drawn twice; a board this page presents is never
+  // restarted, as that would close it, strokes and all, for everyone).
+  private resyncAfterReconnect() {
+    if (this.resyncing) { this.resyncAgain = true; return this.resyncing; }
+    const attempt = this.attempt;
+    const running: Promise<void> = (async () => {
+      do {
+        this.resyncAgain = false;
+        await this.resyncOnce(attempt);
+      } while (this.resyncAgain && this.stillBack(attempt));
+    })()
+      .catch(() => undefined)
+      .finally(() => { if (this.resyncing === running) this.resyncing = null; });
+    this.resyncing = running;
+    return running;
+  }
+
+  // Still in the same room, connected, with Zoom's media stream: otherwise the check stops (the room
+  // was left, or Zoom is reconnecting again and will say Connected once more).
+  private stillBack(attempt: number) {
+    return attempt === this.attempt && this.connection === "connected" && this.stream !== null;
+  }
+
+  // A first look right away; a second one a moment later only when the first would close something
+  // (Zoom's lists may lag a moment behind its "Connected") or Zoom could not answer yet.
+  private async resyncOnce(attempt: number) {
+    const views = this.boardViews;
+    for (const final of [false, true]) {
+      if (final) await new Promise((resolve) => { setTimeout(resolve, this.resyncRetryMs); });
+      if (!this.stillBack(attempt)) return;
+      this.reportRemote();
+      const shareSettled = await this.resyncShare(final);
+      if (!this.stillBack(attempt)) return;
+      await this.drawVideosAlreadyOn();
+      if (!this.stillBack(attempt)) return;
+      const boardSettled = await this.resyncBoard(final, views);
+      if (shareSettled && boardSettled) break;
+    }
+    // For support: what the page shows after the check, as states and a count, nothing else.
+    if (this.stillBack(attempt)) console.info(`[classroom] after reconnect: whiteboard ${this.board}, share ${this.sharing}, videos ${this.tiles.size}`);
+  }
+
+  // The other person's screen share after a reconnect: one that started meanwhile is shown, one that
+  // ended is closed (only when Zoom says so twice), and one still shown is left as it is. This page's
+  // own share is never touched. A stale "receiving" would also keep the whiteboard from starting (8002).
+  private async resyncShare(final: boolean) {
+    if (!this.stream || this.sharing === "sending") return true;
+    let sharer: number | null;
+    try { sharer = this.stream.getActiveShareUserId() || null; } catch { return final; }
+    if (sharer === this.sharer) return true;
+    if (sharer === null && !final) return false;
+    if (this.sharer !== null) await this.remoteShare({ state: "Inactive", userId: this.sharer });
+    if (sharer !== null) await this.remoteShare({ state: "Active", userId: sharer });
+    return true;
+  }
+
+  // The whiteboard after a reconnect, by Zoom's answer to who presents (getWhiteboardPresenter):
+  // - someone else: their board is viewed again here, in the same place (Zoom may have emptied the
+  //   view meanwhile); the old view goes first, so it is never shown twice, and the page's state
+  //   stays "viewing", so nothing on the page flickers. A board already viewed again since the
+  //   reconnect (Zoom's own Start came first) is left alone;
+  // - this page: left as it is;
+  // - nobody: a board shown here is closed, as Zoom's Stop would have done, but only when Zoom says
+  //   so twice.
+  // A view that fails twice is said, with Zoom's code, like any board that cannot be shown.
+  private async resyncBoard(final: boolean, views: number) {
+    const client = this.client, stage = this.stage;
+    const board = client?.getWhiteboardClient();
+    // An SDK without the question (before 2.3.5) leaves the board to Zoom's own reports.
+    if (!board || !stage || typeof board.getWhiteboardPresenter !== "function") return true;
+    // A view still opening finishes first (its own result decides); asked again in a moment.
+    if (this.boardStarting > 0) return final;
+    let presenter: number | null;
+    try { presenter = board.getWhiteboardPresenter()?.userId ?? null; } catch { return final; }
+    const self = client?.getCurrentUserInfo()?.userId;
+    if (presenter !== null && presenter === self) return true;
+    if (presenter === null) {
+      if (this.board === "none") return true;
+      if (!final) return false;
+      if (this.board === "viewing") await board.stopWhiteboardView().catch(() => undefined);
+      this.hideBoard();
+      return true;
+    }
+    if (this.board === "viewing" && this.viewedPresenter === presenter && this.boardViews !== views) return true;
+    // This page's own board went (Zoom now says someone else presents): it is closed here first.
+    if (this.board === "presenting") this.hideBoard();
+    if (this.board === "viewing") await board.stopWhiteboardView().catch(() => undefined);
+    stage.whiteboard.replaceChildren();
+    this.viewedPresenter = presenter;
+    stage.whiteboard.hidden = false;
+    const code = await this.startBoardView(board, stage.whiteboard, presenter);
+    if (code === undefined) {
+      if (this.viewedPresenter !== presenter) {
+        if (this.viewedPresenter === null) await board.stopWhiteboardView().catch(() => undefined);
+        return true;
+      }
+      this.boardViews += 1;
+      this.setBoard("viewing");
+      return true;
+    }
+    // Free for Zoom's own Start meanwhile; said only after the second try. A board this page was not
+    // showing yet stays out of sight until then.
+    if (this.viewedPresenter === presenter) this.viewedPresenter = null;
+    if (this.board === "none") { stage.whiteboard.replaceChildren(); stage.whiteboard.hidden = true; }
+    if (!final) return false;
+    this.hideBoard();
+    this.boardRefused("view", code);
+    return true;
+  }
+
   private async peerVideo(payload: { action?: string; userId?: number }) {
     if (payload.userId == null) return;
     if (payload.action === "Start") await this.attach(payload.userId);
@@ -1374,14 +1521,20 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
       if (this.viewedPresenter === payload.userId) return;
       this.viewedPresenter = payload.userId;
       stage.whiteboard.hidden = false;
-      try {
-        await board.startWhiteboardView(stage.whiteboard, payload.userId);
-      } catch (error) {
+      const code = await this.startBoardView(board, stage.whiteboard, payload.userId);
+      if (code !== undefined) {
         // Before 2026-11-18 this was silent: the student saw nothing and nobody knew why.
         this.hideBoard();
-        this.boardRefused("view", zoomErrorCodeOf(error));
+        this.boardRefused("view", code);
         return;
       }
+      // Closed while Zoom was opening it (Zoom's Stop, or the room was left): not shown after all. A
+      // newer board claimed meanwhile is that board's own start to finish.
+      if (this.viewedPresenter !== payload.userId) {
+        if (this.viewedPresenter === null) await board.stopWhiteboardView().catch(() => undefined);
+        return;
+      }
+      this.boardViews += 1;
       this.setBoard("viewing");
     } else if (payload.action === "Stop") {
       await board.stopWhiteboardView().catch(() => undefined);
