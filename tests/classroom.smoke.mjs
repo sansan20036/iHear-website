@@ -46,7 +46,7 @@ async function check(name, action) {
   try { await action(); report.checks.push({ name, status: 'passed' }); console.log(`PASS ${name}`); }
   catch (error) { report.checks.push({ name, status: 'failed', error: error.message }); throw error; }
 }
-const shot = (page, name) => page.screenshot({ path: path.join(directory, `${name}.png`), fullPage: true });
+const shot = (page, name) => page.screenshot({ path: path.join(directory, `${name}.png`), fullPage: true, mask: [page.locator('.classroom-link code')] });
 // The pages are checked in Traditional Chinese unless a check asks for another language (a CI runner's
 // browser defaults to English).
 const context = options => localContext(browser, origin, { external: report.externalRequests, secret, locale: 'zh-TW', ...options });
@@ -634,6 +634,131 @@ try {
     await expect(page.locator('html')).toHaveAttribute('lang', 'zh-Hant');
     await shot(page, '12-classroom-room-languages');
     await hansContext.close();
+  });
+
+  // Adding a lesson (2026-11-19). On production an add with "ihear" was refused: a cancelled lesson
+  // already had that code. The page said nothing near the button (its message was at the top, out of
+  // sight, gone at the next automatic refresh) and kept an earlier lesson's link under the form. The
+  // same steps in a US Eastern and a Taiwan browser, on a laptop-sized window. The link's key is
+  // only compared in the browser, never printed or saved; screenshots mask the link.
+  await check('adding a lesson: the button says why it waits; a refusal is said next to it, marks and focuses the field and stays through the automatic refresh; a used code (a cancelled lesson\'s too) is said as used; an earlier link is hidden once the form changes or an add is refused; US Eastern and Taiwan browsers alike', async () => {
+    const sent = {};
+    // Three hours from now in US Eastern: inside the list's 24 hours at any time of day.
+    const soon = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+      .formatToParts(Date.now() + 3 * 3600_000).map(part => [part.type, part.value]));
+    for (const [label, timezoneId, letter] of [['us-eastern', 'America/New_York', 'E'], ['taiwan', 'Asia/Taipei', 'T']]) {
+      const formContext = await context({ email: owner, timezoneId, viewport: { width: 1366, height: 768 } });
+      const page = await formContext.newPage();
+      const unexpected = [], statuses = [];
+      page.on('console', message => { if (message.type() === 'error' && !/Failed to load resource: the server responded with a status of 409/.test(message.text())) unexpected.push(message.text().replace(/#k=[A-Za-z0-9_-]+/g, '#k=[hidden]')); });
+      page.on('pageerror', error => unexpected.push(error.message));
+      page.on('response', item => { if (new URL(item.url()).pathname === '/api/admin/classrooms') statuses.push(`${item.request().method()} ${item.status()}`); });
+      page.on('dialog', dialog => dialog.accept());
+      await page.goto(`${origin}/admin/classrooms`);
+      const panel = page.locator('.classroom-add-panel');
+      const add = panel.locator('[data-add-lesson]');
+      const field = name => panel.locator(`[data-field="${name}"] input`);
+      const inWindow = async locator => { const box = await locator.boundingBox(); return Boolean(box && box.y >= 0 && box.y + box.height <= 768); };
+      const posts = () => statuses.filter(item => item.startsWith('POST')).length;
+      const fill = async code => {
+        await panel.getByLabel('時區', { exact: true }).selectOption('America/New_York');
+        await field('date').fill(`${soon.year}-${soon.month}-${soon.day}`);
+        await panel.getByLabel('開始時間：時').selectOption(soon.hour);
+        await panel.getByLabel('開始時間：分').selectOption(soon.minute);
+        await field('minutes').fill('60');
+        await field('code').fill(code);
+        await field('tutorCode').fill(`TEST-FT${letter}`);
+        await field('tutorEmail').fill(tutor);
+        await field('studentCode').fill(`TEST-FS${letter}`);
+      };
+      await fill(linkLesson.code);
+      // Not ticked: the button waits and says why, right under it.
+      await expect(add).toBeDisabled();
+      await expect(panel.locator('[data-add-blocked="confirm"]')).toHaveText('請先勾選上方的「我已確認日期、時區和開始時間」，才能新增課程。');
+      // Looking at the button (as the person does when pressing it), its reason is in the window with it.
+      await add.scrollIntoViewIfNeeded();
+      expect(await inWindow(add) && await inWindow(panel.locator('[data-add-blocked="confirm"]'))).toBe(true);
+      // Ticked, with the code of the lesson cancelled above: said as a used code, next to the button.
+      await panel.getByRole('checkbox', { name: /我已確認日期、時區和開始時間/ }).check();
+      await expect(panel.locator('[data-add-blocked]')).toHaveCount(0);
+      await add.click();
+      const problem = panel.locator('[data-add-problem="codeTaken"]');
+      await expect(problem).toHaveText(`課程沒有建立。課程代碼「${linkLesson.code}」已被其他課程使用（包括已取消、以及不在清單上的課程），請換一個新的代碼。`);
+      await expect(field('code')).toHaveAttribute('aria-invalid', 'true');
+      await expect(field('code')).toBeFocused();
+      await expect(panel.locator('[data-field="code"] .classroom-field-error')).toContainText('已被其他課程使用');
+      expect(await inWindow(problem)).toBe(true);
+      await expect(page.locator('.admin-alert')).toHaveCount(0);
+      expect(await page.content()).not.toContain('其他管理員已更改此資料');
+      if (letter === 'E') {
+        // The overview refreshes itself every 15 seconds; the refusal stays.
+        const before = statuses.filter(item => item === 'GET 200').length;
+        await page.waitForTimeout(17_000);
+        expect(statuses.filter(item => item === 'GET 200').length).toBeGreaterThan(before);
+        await expect(problem).toBeVisible();
+      }
+      // A code this page can already tell is wrong: said and marked, and nothing is sent.
+      const sentBefore = posts();
+      await field('code').fill('has space');
+      await expect(problem).toHaveCount(0);
+      await add.click();
+      await expect(panel.locator('[data-add-problem="fields"]')).toHaveText('課程沒有建立。請修正標示的欄位：課程代碼。');
+      await expect(panel.locator('[data-field="code"] .classroom-field-error')).toHaveText('只能用英文字母、數字和「-」，1 到 40 個字元，不能有空格。');
+      expect(posts()).toBe(sentBefore);
+      // A new code: added, with the lesson's own code on the result and on its link.
+      const code = `TEST-F${letter}1`;
+      await field('code').fill(code);
+      const [answer] = await Promise.all([page.waitForResponse(item => new URL(item.url()).pathname === '/api/admin/classrooms' && item.request().method() === 'POST'), add.click()]);
+      expect(answer.status()).toBe(201);
+      const body = JSON.parse(answer.request().postData());
+      sent[label] = { date: body.date, time: body.time, timeZone: body.timeZone };
+      await expect(panel.locator(`[data-created="${code}"]`)).toContainText(`已建立 ${code}`);
+      const box = page.locator(`.classroom-link[data-link-code="${code}"][data-link-kind="created"]`);
+      await expect(box).toContainText(`已建立課程 ${code}。這堂課的學生專屬連結`);
+      await expect(box.getByRole('button', { name: '複製連結' })).toBeVisible();
+      const key = await box.locator('code').evaluate(node => new URL(node.textContent).hash.slice(3));
+      expect(key).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      await expect(panel.locator('[data-add-problem]')).toHaveCount(0);
+      // The form changes for the next lesson: the link and its copy button are gone, and the page says whose.
+      await field('code').fill('TEST-NEXT');
+      await expect(page.locator('.classroom-link')).toHaveCount(0);
+      await expect(page.getByRole('button', { name: '複製連結' })).toHaveCount(0);
+      await expect(page.locator(`[data-link-hidden="${code}"]`)).toContainText(`課程 ${code} 的學生連結已隱藏`);
+      expect((await page.content()).includes(key), 'the hidden link is no longer in the page').toBe(false);
+      // A reissued link (an existing lesson's own feature) is shown as before, under its code; a
+      // refused add right after it hides it as well.
+      await fill(linkLesson.code);
+      await panel.getByRole('checkbox', { name: /我已確認日期、時區和開始時間/ }).check();
+      await page.locator('.classroom-lessons tr', { hasText: code }).getByRole('button', { name: '重發學生連結', exact: true }).click();
+      const reissued = page.locator(`.classroom-link[data-link-code="${code}"][data-link-kind="reissued"]`);
+      await expect(reissued).toContainText(`課程 ${code} 的新學生連結`);
+      const newKey = await reissued.locator('code').evaluate(node => new URL(node.textContent).hash.slice(3));
+      expect(newKey === key).toBe(false);
+      await add.click();
+      await expect(panel.locator('[data-add-problem="codeTaken"]')).toBeVisible();
+      await expect(page.locator('.classroom-link')).toHaveCount(0);
+      expect((await page.content()).includes(newKey), 'the refused add hid the reissued link').toBe(false);
+      // The list says what it shows, in each language.
+      await expect(page.locator('[data-list-window]')).toHaveText('這份清單只列出前後 24 小時內的課程。新的課程代碼不能和以前建立過的任何課程相同，包括沒有列在這裡和已取消的課程。');
+      if (letter === 'T') {
+        await page.getByRole('button', { name: 'EN', exact: true }).click();
+        await expect(page.locator('[data-list-window]')).toContainText('This list shows only lessons from 24 hours ago to 24 hours ahead.');
+        // The line under the button follows the language too.
+        await expect(panel.locator('[data-add-problem="codeTaken"]')).toHaveText(`The lesson was not added. The lesson code "${linkLesson.code}" is already used by another lesson (cancelled lessons and lessons not in the list count too). Choose a new code.`);
+        await page.getByRole('button', { name: '简', exact: true }).click();
+        await expect(page.locator('[data-list-window]')).toContainText('这份列表只列出前后 24 小时内的课程。');
+        await expect(panel.locator('[data-add-problem="codeTaken"]')).toContainText(`课程代码「${linkLesson.code}」已被其他课程使用`);
+        await page.getByRole('button', { name: '繁', exact: true }).click();
+      }
+      await page.screenshot({ path: path.join(directory, `10-add-lesson-${label}.png`), mask: [page.locator('.classroom-link code')] });
+      expect(unexpected).toEqual([]);
+      expect(statuses.filter(item => item.endsWith(' 429'))).toEqual([]);
+      expect(statuses.filter(item => item === 'POST 409')).toHaveLength(2);
+      await formContext.close();
+    }
+    // The browser's own time zone changes nothing in what is sent.
+    expect(sent['us-eastern']).toEqual(sent.taiwan);
+    expect(sent.taiwan).toEqual({ date: `${soon.year}-${soon.month}-${soon.day}`, time: `${soon.hour}:${soon.minute}`, timeZone: 'America/New_York' });
   });
 
   await check('codes only, nothing sent to another site, no unexpected browser errors', async () => {
