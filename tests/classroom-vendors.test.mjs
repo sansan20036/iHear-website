@@ -1586,6 +1586,104 @@ describe("browser adapters", () => {
     }
   });
 
+  // Cameras after both people are in (2026-11-19, production, iHear's teacher and student): the tutor
+  // turned the camera on and saw it, the student heard the tutor but saw no picture. Zoom's record
+  // of that session showed the tutor in the room up to three times at once. The page now also looks
+  // at Zoom's list of people a moment after it changes, and says when its person is in twice.
+  const quick = { videoCheckMs: 0 };
+  const peopleChanged = async (zoom, event = "user-updated") => {
+    zoom.handlers.get(event)([{ userId: 2 }]);
+    for (let round = 0; round < 6; round += 1) await settle();
+  };
+  const attaches = zoom => zoom.calls.filter(call => typeof call === "string" && call.startsWith("attach:"));
+
+  test("AV-1 a camera turned on after both are in is drawn even when Zoom's 'video started' report never comes, and only once", async () => {
+    const { zoom, videos } = await joined({ others: [{ userId: 2, userIdentity: "P-TEST-S01", bVideoOn: false }] }, quick);
+    expect(drawn(videos)).toEqual([]);
+    // The other person turns the camera on: Zoom's list says so (user-updated), its Start is missed.
+    zoom.users[1].bVideoOn = true;
+    await peopleChanged(zoom);
+    expect([attaches(zoom), drawn(videos)]).toEqual([["attach:2"], ["video:2"]]);
+    // Zoom's own late Start of the same camera does not draw it twice.
+    zoom.handlers.get("peer-video-state-change")({ action: "Start", userId: 2 }); await settle();
+    await peopleChanged(zoom);
+    expect(attaches(zoom)).toEqual(["attach:2"]);
+  });
+
+  test("AV-1b the usual path is unchanged: Zoom's Start draws the camera at once, the list check adds nothing", async () => {
+    const { zoom, videos } = await joined({ others: [{ userId: 2, userIdentity: "P-TEST-S01" }] }, quick);
+    zoom.users[1].bVideoOn = true;
+    zoom.handlers.get("peer-video-state-change")({ action: "Start", userId: 2 }); await settle();
+    expect(drawn(videos)).toEqual(["video:2"]);
+    await peopleChanged(zoom);
+    expect(attaches(zoom)).toEqual(["attach:2"]);
+    // Off again: Zoom's Stop takes the video away.
+    zoom.users[1].bVideoOn = false;
+    zoom.handlers.get("peer-video-state-change")({ action: "Stop", userId: 2 }); await settle();
+    expect(drawn(videos)).toEqual([]);
+  });
+
+  test("AV-2 someone who leaves lets go of their video at once (no Stop needed), and a waiting video takes the tile", async () => {
+    const { zoom, videos } = await joined({ others: [{ userId: 2, userIdentity: "P-TEST-S01", bVideoOn: true }, { userId: 3, userIdentity: "P-TEST-S02", bVideoOn: true }] }, { ...quick, maxVideos: 1 });
+    expect(drawn(videos)).toEqual(["video:2"]);
+    // Person 2 leaves without Zoom saying their video stopped.
+    zoom.users.splice(1, 1);
+    await peopleChanged(zoom, "user-removed");
+    expect(zoom.calls).toContain("detach:2");
+    expect(drawn(videos)).toEqual(["video:3"]);
+  });
+
+  test("AV-3 the page says when its person is in the room from another page or device too, and when that ends", async () => {
+    const { zoom, adapter, events } = await joined({ others: [{ userId: 2, userIdentity: "P-TEST-S01" }] }, quick);
+    const duplicates = () => events.filter(event => event.type === "duplicate").map(event => event.count);
+    expect(duplicates()).toEqual([]);
+    // The same participant id (Zoom keeps it as the user key) joins again from another tab.
+    zoom.users.push({ userId: 7, userIdentity: "P-TEST-T01" });
+    zoom.handlers.get("user-added")([{ userId: 7 }]); await settle();
+    expect(duplicates()).toEqual([1]);
+    // Someone else changing something does not tell it again.
+    zoom.handlers.get("user-updated")([{ userId: 2 }]); await settle();
+    expect(duplicates()).toEqual([1]);
+    zoom.users.pop();
+    zoom.handlers.get("user-removed")([{ userId: 7 }]); await settle();
+    expect(duplicates()).toEqual([1, 0]);
+    // Leaving while it was 0 says nothing more.
+    await adapter.leave();
+    expect(duplicates()).toEqual([1, 0]);
+  });
+
+  test("AV-4 looking at the cameras never touches this page's own camera or microphone, and draws nobody's own video twice", async () => {
+    const { zoom, adapter, events } = await joined({ others: [{ userId: 2, userIdentity: "P-TEST-S01", bVideoOn: true }] }, quick);
+    expect(await adapter.setDevice("camera", true)).toBe("on");
+    expect(await adapter.setDevice("camera", false)).toBe("off");
+    const from = zoom.calls.length, eventsFrom = events.length;
+    // Even when Zoom's list says this page's own camera is on, the look never draws it (only a press does).
+    zoom.users[0].bVideoOn = true;
+    await peopleChanged(zoom);
+    await peopleChanged(zoom, "user-added");
+    expect(zoom.calls.slice(from).filter(call => /Video|Audio|attach:1/.test(String(call)))).toEqual([]);
+    expect(events.slice(eventsFrom).filter(event => event.type === "device")).toEqual([]);
+    // A page that never turned its camera on: Zoom's list saying it is on draws nothing of its own.
+    const fresh = await joined({ others: [{ userId: 2, userIdentity: "P-TEST-S01" }] }, quick);
+    fresh.zoom.users[0].bVideoOn = true;
+    await peopleChanged(fresh.zoom);
+    expect(fresh.zoom.calls.filter(call => /^attach:1$|startVideo/.test(String(call)))).toEqual([]);
+  });
+
+  test("AV-5 the camera look reports to the page (and the tutor's iHear report) only when it changed something", async () => {
+    const { zoom, events } = await joined({ others: [{ userId: 2, userIdentity: "P-TEST-S01" }] }, quick);
+    const remotes = () => events.filter(event => event.type === "remote").length;
+    zoom.handlers.get("user-updated")([{ userId: 2 }]);
+    const afterEvent = remotes();
+    for (let round = 0; round < 6; round += 1) await settle();
+    expect(remotes()).toBe(afterEvent);
+    zoom.users[1].bVideoOn = true;
+    zoom.handlers.get("user-updated")([{ userId: 2 }]);
+    const beforeDraw = remotes();
+    for (let round = 0; round < 6; round += 1) await settle();
+    expect(remotes()).toBeGreaterThan(beforeDraw);
+  });
+
   test("LCIC: only Tencent's classroom page is placed in the room, with camera and microphone allowed", async () => {
     const created = [];
     const doc = { createElement: (tag) => { const element = { tag, remove: () => { element.removed = true; } }; created.push(element); return element; } };

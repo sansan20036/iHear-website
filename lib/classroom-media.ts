@@ -42,6 +42,10 @@ export type MediaEvent =
   // page could not show ("view"): told, never swallowed, with Zoom's numeric error code when there is
   // one (8000–8006 for the whiteboard). Nothing else of Zoom's answer is kept (2026-11-18).
   | { type: "whiteboard"; state: "none" | "presenting" | "viewing"; problem?: "start" | "view"; code?: number | null; at: number }
+  // This page's person is in the room from `count` other pages or devices as well (2026-11-19: on
+  // the production site the tutor was in one lesson up to three times at once, and the student saw
+  // and heard a different one than the tutor was using). Told when the count changes; 0 when gone.
+  | { type: "duplicate"; count: number; at: number }
   // The vendor's id for the session this page joined. Nothing on the page shows it; the tutor's
   // page reports it where the server confirms such ids with the vendor.
   | { type: "session"; sessionId: string; at: number }
@@ -122,7 +126,9 @@ export type SyntheticScenario =
   | "remote-chat" | "remote-raises-hand" | "remote-lowers-hand"
   // Classroom 2.0 (2026-11-12): what the room's layout changes with, played without any picture.
   | "remote-shares-screen" | "remote-stops-sharing" | "remote-opens-whiteboard" | "remote-closes-whiteboard"
-  | "remote-speaks" | "group-joins" | "group-leaves";
+  | "remote-speaks" | "group-joins" | "group-leaves"
+  // 2026-11-19: this page's person in the room from another page or device too, and that ending.
+  | "self-elsewhere" | "self-elsewhere-ends";
 
 export const SYNTHETIC_SCENARIOS: readonly SyntheticScenario[] = [
   "remote-joins", "remote-leaves", "remote-camera-off", "remote-camera-on",
@@ -131,6 +137,7 @@ export const SYNTHETIC_SCENARIOS: readonly SyntheticScenario[] = [
   "remote-chat", "remote-raises-hand", "remote-lowers-hand",
   "remote-shares-screen", "remote-stops-sharing", "remote-opens-whiteboard", "remote-closes-whiteboard",
   "remote-speaks", "group-joins", "group-leaves",
+  "self-elsewhere", "self-elsewhere-ends",
 ];
 // The other person's line in the synthetic room: no real person writes it.
 const SYNTHETIC_CHAT = "TEST: Hello / 你好 / 你好";
@@ -139,6 +146,8 @@ const SYNTHETIC_CHAT = "TEST: Hello / 你好 / 你好";
 const SYNTHETIC_GROUP = ["TEST-S02", "TEST-S03", "TEST-S04", "TEST-S05", "TEST-S06"] as const;
 // How long a ring stays around someone who stopped talking (Zoom reports talkers, not silence).
 const SPEAKING_MS = 2_000;
+// How long after Zoom's list of people changes the page looks at whose camera is on (2026-11-19).
+const VIDEO_CHECK_MS = 1_000;
 // After Zoom's own reconnect: how long to wait before asking Zoom a second time, when its first answer
 // would close something on this page or it could not answer yet (2026-11-18).
 const RESYNC_RETRY_MS = 2_000;
@@ -383,6 +392,12 @@ export class SyntheticMediaAdapter implements ClassroomMediaAdapter {
       // Classroom 2.0: the other side's share and whiteboard (states only), a voice, and a group.
       case "remote-shares-screen":
         if (this.connection === "connected" && this.sharing !== "sending") this.setShare("receiving");
+        break;
+      case "self-elsewhere":
+        if (this.connection === "connected") this.emit({ type: "duplicate", count: 1, at: this.now() });
+        break;
+      case "self-elsewhere-ends":
+        this.emit({ type: "duplicate", count: 0, at: this.now() });
         break;
       case "remote-stops-sharing":
         if (this.sharing === "receiving") this.setShare("none");
@@ -681,12 +696,18 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
   private boardViews = 0;
   private boardStarting = 0;
   private readonly resyncRetryMs: number;
+  // The look at whose camera is on, a moment after Zoom's list of people changed (checkVideos), and
+  // how many other pages or devices this page's person is in the room from as well.
+  private videosTimer: ReturnType<typeof setTimeout> | undefined;
+  private readonly videoCheckMs: number;
+  private elsewhere = 0;
 
-  constructor(private readonly load: () => Promise<ZoomVideoSdk> = loadZoomVideoSdkPackage, private readonly now: () => number = Date.now, options: { deviceStartMs?: number; maxVideos?: number; speakingMs?: number; resyncRetryMs?: number } = {}) {
+  constructor(private readonly load: () => Promise<ZoomVideoSdk> = loadZoomVideoSdkPackage, private readonly now: () => number = Date.now, options: { deviceStartMs?: number; maxVideos?: number; speakingMs?: number; resyncRetryMs?: number; videoCheckMs?: number } = {}) {
     this.deviceStartMs = options.deviceStartMs ?? DEVICE_START_MS;
     this.maxVideos = options.maxVideos ?? MAX_REMOTE_VIDEOS.desktop;
     this.speakingMs = options.speakingMs ?? SPEAKING_MS;
     this.resyncRetryMs = options.resyncRetryMs ?? RESYNC_RETRY_MS;
+    this.videoCheckMs = options.videoCheckMs ?? VIDEO_CHECK_MS;
   }
 
   subscribe(listener: (event: MediaEvent) => void) {
@@ -794,12 +815,17 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
       // leaves takes theirs along.
       listen("user-added", () => {
         this.reportRemote();
+        this.scheduleVideoCheck();
         if (this.handUp) void this.sendCommand(handCommand(true));
       });
-      listen("user-updated", () => this.reportRemote());
+      listen("user-updated", () => {
+        this.reportRemote();
+        this.scheduleVideoCheck();
+      });
       listen("user-removed", (payload) => {
         this.reportRemote();
         this.dropHands(payload);
+        this.scheduleVideoCheck();
       });
       // Who is talking, loudest first (Zoom's ActiveSpeaker list), for the ring around their tile.
       listen("active-speaker", (payload) => this.hearSpeakers(payload));
@@ -882,6 +908,9 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
   private async teardown() {
     const client = this.client, handlers = this.handlers.splice(0);
     this.client = null; this.stream = null; this.audioStarted = false; this.tiles.clear(); this.sharer = null;
+    clearTimeout(this.videosTimer);
+    this.waitingVideos.clear();
+    if (this.elsewhere) { this.elsewhere = 0; this.emit({ type: "duplicate", count: 0, at: this.now() }); }
     for (const ready of [...this.streamWaiters]) ready();
     // A press still waiting ends with the room; the next join starts with both devices off, and the
     // page is told so (after a reconnect it must not still show a device as on).
@@ -1286,7 +1315,16 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
   private reportRemote() {
     this.reportPeople();
     const self = this.client?.getCurrentUserInfo()?.userId;
-    const others = this.client?.getAllUser().filter(user => user.userId !== self) ?? [];
+    const all = this.client?.getAllUser() ?? [];
+    // The same person (the same participant id, which Zoom keeps as the user key) on another page.
+    const keyOf = (user: ZoomParticipant | undefined) => user?.userKey ?? user?.userIdentity ?? null;
+    const selfKey = keyOf(all.find(user => user.userId === self));
+    const elsewhere = selfKey ? all.filter(user => user.userId !== self && keyOf(user) === selfKey).length : 0;
+    if (elsewhere !== this.elsewhere) {
+      this.elsewhere = elsewhere;
+      this.emit({ type: "duplicate", count: elsewhere, at: this.now() });
+    }
+    const others = all.filter(user => user.userId !== self);
     const other = others[0] ?? null;
     // The user key is our participant id from the join token; Zoom reports it on each person.
     this.emit({
@@ -1311,6 +1349,44 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     }
     // Told only when a camera was drawn (or is waiting), so a room with none on hears what it did before.
     if (this.tiles.size + this.waitingVideos.size !== before) this.reportRemote();
+  }
+
+  // Zoom's report that a camera started is the usual way a video is drawn. When it is missed (real
+  // Zoom: for a page that joined later, 2026-11-18; with the tutor in the room twice, 2026-11-19, the
+  // student heard the tutor but saw no picture), Zoom's list of people still says whose camera is
+  // on. A moment after the list changes (someone joined, left, or turned a camera on or off), the
+  // page draws every camera on that it does not show yet and lets go of the videos of people who
+  // left, so their tiles never stay taken. A video already drawn is never drawn again.
+  private scheduleVideoCheck() {
+    clearTimeout(this.videosTimer);
+    this.videosTimer = setTimeout(() => { void this.checkVideos().catch(() => undefined); }, this.videoCheckMs);
+  }
+
+  private async checkVideos() {
+    if (!this.stream || this.connection !== "connected") return;
+    const self = this.client?.getCurrentUserInfo()?.userId;
+    const present = new Set((this.client?.getAllUser() ?? []).map(user => user.userId));
+    const before = `${[...this.tiles.keys()]}|${[...this.waitingVideos]}`;
+    for (const userId of [...this.waitingVideos]) if (!present.has(userId)) this.waitingVideos.delete(userId);
+    for (const userId of [...this.tiles.keys()]) if (userId !== self && !present.has(userId)) await this.releaseVideo(userId);
+    await this.drawVideosAlreadyOn();
+    // Told only when something changed (on the tutor's page each report also goes to iHear).
+    if (`${[...this.tiles.keys()]}|${[...this.waitingVideos]}` !== before) this.reportRemote();
+  }
+
+  // One remote video off the page (Zoom said it stopped, or its person left); the longest-waiting
+  // video takes the tile that came free.
+  private async releaseVideo(userId: number) {
+    if (this.waitingVideos.delete(userId)) return;
+    if (!this.tiles.has(userId)) return;
+    await this.stream?.detachVideo(userId).catch(() => undefined);
+    const player = this.tiles.get(userId);
+    this.tiles.delete(userId);
+    // As Zoom's documentation does after detachVideo: the empty video-player leaves the page. The
+    // person's tile stays (Classroom 2.0), now without video.
+    if (isNode(player) && typeof (player as ChildNode).remove === "function") (player as ChildNode).remove();
+    const next = this.waitingVideos.values().next();
+    if (!next.done) { this.waitingVideos.delete(next.value); await this.attach(next.value).catch(() => undefined); }
   }
 
   // A whiteboard already open when this page joins, or joins again. Zoom's whiteboard guide: a page
@@ -1459,18 +1535,7 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
   private async peerVideo(payload: { action?: string; userId?: number }) {
     if (payload.userId == null) return;
     if (payload.action === "Start") await this.attach(payload.userId);
-    else if (payload.action === "Stop") {
-      if (this.waitingVideos.delete(payload.userId)) { this.reportRemote(); return; }
-      await this.stream?.detachVideo(payload.userId);
-      const player = this.tiles.get(payload.userId);
-      this.tiles.delete(payload.userId);
-      // As Zoom's documentation does after detachVideo: the empty video-player leaves the page. The
-      // person's tile stays (Classroom 2.0), now without video.
-      if (isNode(player) && typeof (player as ChildNode).remove === "function") (player as ChildNode).remove();
-      // A tile came free: the longest-waiting video takes it.
-      const next = this.waitingVideos.values().next();
-      if (!next.done) { this.waitingVideos.delete(next.value); await this.attach(next.value); }
-    }
+    else if (payload.action === "Stop") await this.releaseVideo(payload.userId);
     this.reportRemote();
   }
 
