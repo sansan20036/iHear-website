@@ -469,7 +469,7 @@ describe("browser adapters", () => {
     };
     return { doc, root: doc.createElement("div") };
   }
-  function fakeZoom({ joinError = null, videoError = null, shareError = null, canBoard = true, boardError = null, boardViewError = null, presenter = null, sharingAtJoin = 0, videoHangs = 0, slowVideo = 0, audioHangs = 0, slowJoin = false, failedJoins = 0, sessionId = "", chatAnswer = null, commandAnswer = null, others = [] } = {}) {
+  function fakeZoom({ joinError = null, videoError = null, shareError = null, canBoard = true, boardEnabled = true, boardError = null, boardViewError = null, presenter = null, sharingAtJoin = 0, videoHangs = 0, slowVideo = 0, audioHangs = 0, slowJoin = false, failedJoins = 0, sessionId = "", chatAnswer = null, commandAnswer = null, others = [] } = {}) {
     const calls = [];
     // In-class chat and the command channel (2026-11-12), recorded apart from `calls` so the older
     // checks of the call order stay as they were. A *Answer option stands for Zoom's failure answer.
@@ -525,7 +525,7 @@ describe("browser adapters", () => {
       detachShareView: async (userId) => calls.push(`shareViewOff:${userId}`),
     };
     const whiteboard = {
-      isWhiteboardEnabled: () => true, canStartWhiteboard: () => canBoard,
+      isWhiteboardEnabled: () => boardEnabled, canStartWhiteboard: () => canBoard,
       startWhiteboardScreen: async (element) => { calls.push(`board:${element.className}`); if (boardError) throw boardError; },
       stopWhiteboardScreen: async () => calls.push("boardOff"),
       startWhiteboardView: async (element, userId) => { calls.push(`boardView:${userId}`); if (boardViewError) throw boardViewError; },
@@ -1241,19 +1241,91 @@ describe("browser adapters", () => {
     }
   });
 
-  test("Zoom whiteboard: a board the other person opened but this page cannot show is said, not swallowed", async () => {
-    const { zoom, events, whiteboard } = await joined({ boardViewError: new Error("view failed") });
-    zoom.handlers.get("peer-whiteboard-state-change")({ action: "Start", userId: 2 }); await settle();
-    expect(events.filter(event => event.type === "whiteboard").at(-1)).toMatchObject({ state: "none", problem: "view" });
-    expect([whiteboard.hidden, whiteboard.children]).toEqual([true, []]);
+  test("Zoom whiteboard: a board the other person opened but this page cannot show is said, not swallowed, with Zoom's code", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const { zoom, events, whiteboard } = await joined({ boardViewError: new Error("view failed") });
+      zoom.handlers.get("peer-whiteboard-state-change")({ action: "Start", userId: 2 }); await settle();
+      expect(events.filter(event => event.type === "whiteboard").at(-1)).toMatchObject({ state: "none", problem: "view", code: null });
+      expect([whiteboard.hidden, whiteboard.children]).toEqual([true, []]);
+      const coded = await joined({ boardViewError: { type: "INVALID_PARAMETERS", reason: "presenter https://zoom.example/?token=secret", errorCode: 8005 } });
+      warn.mockClear();
+      coded.zoom.handlers.get("peer-whiteboard-state-change")({ action: "Start", userId: 2 }); await settle();
+      expect(coded.events.filter(event => event.type === "whiteboard").at(-1)).toEqual({ type: "whiteboard", state: "none", problem: "view", code: 8005, at: 1 });
+      expect(warn.mock.calls.map(args => args.join(" "))).toEqual(["[classroom] whiteboard view failed: Zoom error 8005"]);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
+  // Zoom's whiteboard error codes (2026-11-18): kept as numbers, so a failure is never a guess, and
+  // nothing else of Zoom's answer (its words, a link, a token) reaches the page or the console.
+  test("Zoom whiteboard: a start Zoom refuses keeps only Zoom's code (8000–8006), never Zoom's words, links or tokens", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const secret = "aaaaaaaaaa.bbbbbbbbbb.cccccccccc";
+      for (const code of [8000, 8001, 8002, 8003, 8004, 8005, 8006]) {
+        const { adapter, events } = await joined({ boardError: { type: "INVALID_OPERATION", reason: `see https://zoom.example/x?token=${secret}`, errorCode: code } });
+        warn.mockClear();
+        expect(await adapter.setWhiteboard(true)).toBe(false);
+        const boards = events.filter(event => event.type === "whiteboard");
+        expect(boards.at(-1)).toEqual({ type: "whiteboard", state: "none", problem: "start", code, at: 1 });
+        expect(warn.mock.calls.map(args => args.join(" "))).toEqual([`[classroom] whiteboard start failed: Zoom error ${code}`]);
+        expect(JSON.stringify([boards, warn.mock.calls])).not.toMatch(/token|https|zoom\.example|INVALID_OPERATION|aaaaaaaaaa/);
+      }
+      // Not Zoom's shape (an Error, a string): no code, and none of its words either.
+      for (const boardError of [new Error("boom at https://x.example/?token=t"), "plain failure"]) {
+        const { adapter, events } = await joined({ boardError });
+        warn.mockClear();
+        expect(await adapter.setWhiteboard(true)).toBe(false);
+        expect(events.filter(event => event.type === "whiteboard").at(-1)).toEqual({ type: "whiteboard", state: "none", problem: "start", code: null, at: 1 });
+        expect(warn.mock.calls.map(args => args.join(" "))).toEqual(["[classroom] whiteboard start failed"]);
+      }
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("Zoom whiteboard: not tried during a screen share, sent or received (Zoom's 8002), nor when the account has none (8000) or Zoom says this page cannot start one", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const started = zoom => zoom.calls.some(call => typeof call === "string" && call.startsWith("board:"));
+    try {
+      const sending = await joined();
+      expect(await sending.adapter.setScreenShare(true)).toBe(true);
+      expect(await sending.adapter.setWhiteboard(true)).toBe(false);
+      expect([started(sending.zoom), sending.whiteboard.hidden]).toEqual([false, true]);
+      expect(sending.events.at(-1)).toEqual({ type: "whiteboard", state: "none", problem: "start", code: 8002, at: 1 });
+      // The share goes on.
+      expect([sending.ownShare.hidden, sending.events.filter(event => event.type === "share").at(-1).state]).toEqual([false, "sending"]);
+      const receiving = await joined({ sharingAtJoin: 2 });
+      expect(await receiving.adapter.setWhiteboard(true)).toBe(false);
+      expect([started(receiving.zoom), receiving.events.filter(event => event.type === "whiteboard").at(-1).code]).toEqual([false, 8002]);
+      const off = await joined({ boardEnabled: false });
+      expect(await off.adapter.setWhiteboard(true)).toBe(false);
+      expect([started(off.zoom), off.events.filter(event => event.type === "whiteboard").at(-1).code]).toEqual([false, 8000]);
+      const cannot = await joined({ canBoard: false });
+      expect(await cannot.adapter.setWhiteboard(true)).toBe(false);
+      expect([started(cannot.zoom), cannot.events.filter(event => event.type === "whiteboard").at(-1)]).toEqual([false, { type: "whiteboard", state: "none", problem: "start", code: null, at: 1 }]);
+      // After the share stops, the whiteboard starts as before.
+      expect(await sending.adapter.setScreenShare(false)).toBe(false);
+      expect(await sending.adapter.setWhiteboard(true)).toBe(true);
+      expect(sending.events.at(-1)).toMatchObject({ type: "whiteboard", state: "presenting" });
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  // Zoom opens no whiteboard during a screen share (its 8002), so the two are left apart (2026-11-18).
   test("Zoom: leaving ends the share and the whiteboard on this page too", async () => {
-    const { adapter, events, share, whiteboard } = await joined({ sharingAtJoin: 2 });
-    await adapter.setWhiteboard(true);
-    await adapter.leave();
-    expect(events.slice(-3).map(event => [event.type, event.state])).toEqual([["share", "none"], ["whiteboard", "none"], ["connection", "disconnected"]]);
-    expect([share.hidden, whiteboard.hidden, share.children]).toEqual([true, true, []]);
+    const sharing = await joined({ sharingAtJoin: 2 });
+    await sharing.adapter.leave();
+    expect(sharing.events.slice(-2).map(event => [event.type, event.state])).toEqual([["share", "none"], ["connection", "disconnected"]]);
+    expect([sharing.share.hidden, sharing.share.children]).toEqual([true, []]);
+    const presenting = await joined();
+    expect(await presenting.adapter.setWhiteboard(true)).toBe(true);
+    await presenting.adapter.leave();
+    expect(presenting.events.slice(-2).map(event => [event.type, event.state])).toEqual([["whiteboard", "none"], ["connection", "disconnected"]]);
+    expect(presenting.whiteboard.hidden).toBe(true);
   });
 
   test("LCIC: only Tencent's classroom page is placed in the room, with camera and microphone allowed", async () => {

@@ -38,9 +38,10 @@ export type MediaEvent =
   | { type: "remote"; present: boolean; camera: boolean; microphone: boolean; userKey: string | null; at: number; others?: number; videosShown?: number; videosWaiting?: number }
   // Materials and the whiteboard: what this page is showing or sending right now.
   | { type: "share"; state: "none" | "sending" | "receiving"; at: number }
-  // `problem: "view"`: the other person opened a whiteboard that this page could not show (told,
-  // never swallowed, so the student can say so and the tutor can share the screen instead).
-  | { type: "whiteboard"; state: "none" | "presenting" | "viewing"; problem?: "view"; at: number }
+  // A whiteboard that did not start on this page ("start"), or that the other person opened and this
+  // page could not show ("view"): told, never swallowed, with Zoom's numeric error code when there is
+  // one (8000–8006 for the whiteboard). Nothing else of Zoom's answer is kept (2026-11-18).
+  | { type: "whiteboard"; state: "none" | "presenting" | "viewing"; problem?: "start" | "view"; code?: number | null; at: number }
   // The vendor's id for the session this page joined. Nothing on the page shows it; the tutor's
   // page reports it where the server confirms such ids with the vendor.
   | { type: "session"; sessionId: string; at: number }
@@ -575,6 +576,21 @@ export const MAX_REMOTE_VIDEOS = { desktop: 24, mobile: 8 } as const;
 // long and offers to try again. Starting normally takes a second or two; on a slow computer Zoom
 // took more than 10 seconds (real Zoom, 2026-11-18), and its answer still counts when it comes later.
 const DEVICE_START_MS = 20_000;
+// Zoom's whiteboard error codes (SDK 2.6.0 exception codes) the room words on its own: the account
+// has no whiteboard (8000); this platform has none, phones for example (8001); a screen is being
+// shared, and Zoom does not open its whiteboard then (8002); only the host may (8004). Any other
+// code (8003, 8005, 8006, or one Zoom adds later) is shown as a number with the general words.
+export const ZOOM_WHITEBOARD_ACCOUNT_DISABLE = 8000;
+export const ZOOM_WHITEBOARD_UNSUPPORTED = 8001;
+export const ZOOM_WHITEBOARD_SCREEN_SHARE_CONFLICT = 8002;
+export const ZOOM_WHITEBOARD_HOST_PRIVILEGE_REQUIRED = 8004;
+// Zoom's answer to a refused call: only its numeric code is kept. Zoom's words, addresses and
+// anything else are dropped, so nothing private (a token, a link) reaches the page, its console or
+// a report.
+function zoomErrorCodeOf(error: unknown): number | null {
+  const code = error && typeof error === "object" ? (error as { errorCode?: unknown }).errorCode : undefined;
+  return typeof code === "number" && Number.isInteger(code) && code >= 0 && code < 100_000 ? code : null;
+}
 type DeviceAnswer = { state: DeviceState; problem?: DeviceProblem };
 // A refused start: blocked by the person or the browser, or worth another try (and why).
 function deviceAnswerOf(error: unknown): DeviceAnswer {
@@ -1065,17 +1081,20 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
       if (this.board === "presenting") { await board.stopWhiteboardScreen().catch(() => undefined); this.hideBoard(); }
       return false;
     }
-    if (!board.isWhiteboardEnabled() || !board.canStartWhiteboard()) return false;
+    // Not tried during a screen share (sent or received): Zoom refuses its whiteboard then (8002).
+    if (this.sharing !== "none") return this.boardRefused("start", ZOOM_WHITEBOARD_SCREEN_SHARE_CONFLICT);
+    if (!board.isWhiteboardEnabled()) return this.boardRefused("start", ZOOM_WHITEBOARD_ACCOUNT_DISABLE);
+    if (!board.canStartWhiteboard()) return this.boardRefused("start", null);
     stage.whiteboard.hidden = false;
     try {
       await board.startWhiteboardScreen(stage.whiteboard);
-    } catch {
+    } catch (error) {
       // Zoom may have opened the board for the others although this page could not show it (real
       // Zoom, 2026-11-18: the student saw a board the tutor could neither see nor close). It is closed
       // for everyone too, so both pages agree and the tutor can simply press again.
       await board.stopWhiteboardScreen().catch(() => undefined);
       this.hideBoard();
-      return false;
+      return this.boardRefused("start", zoomErrorCodeOf(error));
     }
     this.setBoard("presenting");
     return true;
@@ -1357,10 +1376,10 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
       stage.whiteboard.hidden = false;
       try {
         await board.startWhiteboardView(stage.whiteboard, payload.userId);
-      } catch {
+      } catch (error) {
         // Before 2026-11-18 this was silent: the student saw nothing and nobody knew why.
         this.hideBoard();
-        this.emit({ type: "whiteboard", state: "none", problem: "view", at: this.now() });
+        this.boardRefused("view", zoomErrorCodeOf(error));
         return;
       }
       this.setBoard("viewing");
@@ -1379,6 +1398,15 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     if (this.stage) { this.stage.whiteboard.replaceChildren(); this.stage.whiteboard.hidden = true; }
     this.viewedPresenter = null;
     this.setBoard("none");
+  }
+
+  // A whiteboard that did not start ("start") or could not be shown ("view"): the page is told, with
+  // Zoom's code when there is one, and the browser's console keeps the same number for support.
+  // Only the number: never Zoom's words, an address or a token.
+  private boardRefused(problem: "start" | "view", code: number | null) {
+    this.emit({ type: "whiteboard", state: this.board, problem, code, at: this.now() });
+    console.warn(`[classroom] whiteboard ${problem} failed${code == null ? "" : `: Zoom error ${code}`}`);
+    return false;
   }
 
   private setShare(state: "none" | "sending" | "receiving") {

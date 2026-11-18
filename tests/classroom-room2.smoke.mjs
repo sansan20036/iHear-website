@@ -193,12 +193,21 @@ try {
     await expect(share).toHaveAccessibleName('停止分享畫面');
     await expect(page.locator('.room2-stage-label')).toHaveText('你正在分享畫面');
     await layout(page, 'tutor-1440-share', { material: true });
-    await share.click();
+    // Zoom opens no whiteboard during a screen share (its error 8002): the room says so at once,
+    // without trying, and the share goes on (2026-11-18).
     const board = page.locator('[data-tool="whiteboard"]');
+    const shareConflict = page.getByRole('alert').filter({ hasText: '分享畫面時不能開啟白板，請先停止分享。' });
+    await board.click();
+    await expect(shareConflict).toBeVisible();
+    await expect(shareConflict).toHaveAttribute('data-board-code', '8002');
+    await expect(page.locator('.room2')).toHaveAttribute('data-mode', 'share');
+    await expect(share).toHaveAttribute('aria-pressed', 'true');
+    await share.click();
     await expect(board).toHaveAccessibleName('開啟白板');
     await board.click();
     await expect(page.locator('.room2')).toHaveAttribute('data-mode', 'board');
     await expect(board).toHaveAccessibleName('關閉白板');
+    await expect(shareConflict).toHaveCount(0);
     await layout(page, 'tutor-1440-whiteboard', { material: true });
     // Focus mode from the stage, and Escape leaves it.
     await page.locator('.room2-stage-tool', { hasText: '專注模式' }).click();

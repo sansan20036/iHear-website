@@ -6,6 +6,7 @@ import { createPortal } from "react-dom";
 import { appendChat, CHAT_MAX_LENGTH, chatTextOf, type ChatLine, type RaisedHand } from "../../../lib/classroom-chat";
 import {
   createMediaAdapter, hostReportFor, MAX_REMOTE_VIDEOS, MediaAdapterUnavailableError, SYNTHETIC_SCENARIOS, SyntheticMediaAdapter,
+  ZOOM_WHITEBOARD_ACCOUNT_DISABLE, ZOOM_WHITEBOARD_HOST_PRIVILEGE_REQUIRED, ZOOM_WHITEBOARD_SCREEN_SHARE_CONFLICT, ZOOM_WHITEBOARD_UNSUPPORTED,
   type ClassroomMediaAdapter, type ConnectionState, type DeviceKind, type DeviceProblem, type DeviceState, type MediaEvent, type MediaSystemCheck, type RoomPerson, type SyntheticScenario,
 } from "../../../lib/classroom-media";
 import { classroomDeviceOf, deviceLimits, type CapabilityName, type ClassroomDevice } from "../../../lib/classroom-capabilities";
@@ -40,6 +41,20 @@ const VENDOR_PROVIDERS = new Set(["zoom-video-sdk", "tencent-lcic"]);
 
 type Locale = ClassroomLocale;
 
+
+// What the room says when Zoom's whiteboard did not start ("board") or could not be shown here
+// ("boardView"), by Zoom's code (2026-11-18). The code is added for support, except where the words
+// already say everything (a screen share in progress, 8002).
+function boardProblemText(v: (typeof vendorCopy)[keyof typeof vendorCopy], problem: "board" | "boardView", code: number | null) {
+  const number = code == null ? "" : v.zoomCode(code);
+  if (problem === "boardView") return `${v.boardViewFailed}${number}`;
+  if (code === ZOOM_WHITEBOARD_SCREEN_SHARE_CONFLICT) return v.boardShareConflict;
+  const words = code === ZOOM_WHITEBOARD_ACCOUNT_DISABLE ? v.boardDisabled
+    : code === ZOOM_WHITEBOARD_UNSUPPORTED ? v.boardUnsupported
+      : code === ZOOM_WHITEBOARD_HOST_PRIVILEGE_REQUIRED ? v.boardHostOnly
+        : v.boardFailed;
+  return `${words}${number}`;
+}
 
 const HEARTBEAT_MS = 30_000;
 const RECORDING_HEARTBEAT_MS = 10_000;
@@ -153,6 +168,8 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   const [sdkCheck, setSdkCheck] = useState<MediaSystemCheck | null>(null);
   // "boardView": the other person opened a whiteboard this page could not show (2026-11-18).
   const [toolProblem, setToolProblem] = useState<"" | "share" | "board" | "boardView">("");
+  // Zoom's numeric error code for the whiteboard problem now shown, if Zoom gave one (2026-11-18).
+  const [boardCode, setBoardCode] = useState<number | null>(null);
   // In-class chat and raised hands (2026-11-12): on this page only and never saved (the owner's
   // decision); leaving the room clears them. The unread count shows on the chat button while the
   // chat is closed: a sign to see, not a sound.
@@ -329,10 +346,12 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
         setMedia((state) => ({ ...state, share: event.state }));
       } else if (event.type === "whiteboard") {
         setMedia((state) => ({ ...state, whiteboard: event.state }));
-        // A board the other person opened but this page could not show is said, never hidden; a
-        // board shown later (opened again) clears that message.
-        if (event.problem === "view") setToolProblem("boardView");
-        else if (event.state !== "none") setToolProblem((problem) => (problem === "boardView" ? "" : problem));
+        // A board that did not start, or that the other person opened and this page could not show,
+        // is said with Zoom's code, never hidden; a board shown later (opened again) clears it.
+        if (event.problem) {
+          setBoardCode(event.code ?? null);
+          setToolProblem(event.problem === "view" ? "boardView" : "board");
+        } else if (event.state !== "none") setToolProblem((problem) => (problem === "boardView" || problem === "board" ? "" : problem));
       } else if (event.type === "chat") {
         setChat((lines) => appendChat(lines, event.line));
         if (event.line.from !== "self" && !chatOpenNow.current) setUnread((count) => count + 1);
@@ -613,7 +632,14 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
     const current = adapter.current;
     if (!current?.setWhiteboard) return;
     setToolProblem("");
+    setBoardCode(null);
     const on = media.whiteboard !== "presenting";
+    // Zoom does not open its whiteboard during a screen share (its error 8002): said at once, not tried.
+    if (on && media.share !== "none") {
+      setBoardCode(ZOOM_WHITEBOARD_SCREEN_SHARE_CONFLICT);
+      setToolProblem("board");
+      return;
+    }
     const started = await current.setWhiteboard(on).catch(() => false);
     if (on && !started) setToolProblem("board");
   }
@@ -907,7 +933,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
             const help = text.deviceHelp[kind][media.devices[kind]];
             return help ? <p key={kind} className="classroom-room-problem" role="alert">{help}</p> : null;
           })}
-          {toolProblem && <p className="classroom-room-problem" role="alert">{toolProblem === "share" ? v.shareFailed : toolProblem === "boardView" ? v.boardViewFailed : v.boardFailed}</p>}
+          {toolProblem && <p className="classroom-room-problem" role="alert" data-board-code={toolProblem === "share" ? undefined : boardCode ?? undefined}>{toolProblem === "share" ? v.shareFailed : boardProblemText(v, toolProblem, boardCode)}</p>}
           {handProblem && <p className="classroom-room-problem" role="alert">{text.handFailed}</p>}
           {isTutor && recording?.status === "FAILED" && <p className="classroom-room-problem" role="alert">{text.failedRecording}</p>}
           {isTutor && hostProblem === "unstable" && <p className="classroom-room-problem" role="status">{text.unstable}</p>}
