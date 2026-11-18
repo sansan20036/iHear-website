@@ -17,9 +17,11 @@ import { roomCopy } from "./classroom-copy";
 
 type Phase = "ready" | "joining" | "blocked" | "left";
 
-export default function ClassroomPrejoin({ locale, onLocale, phase, reason, synthetic, preview, onRecheck, onEnter, showSignIn, signInUrl }: {
+export default function ClassroomPrejoin({ locale, onLocale, phase, reason, synthetic, preview, onRecheck, onEnter, showSignIn, signInUrl, enterLabel }: {
   locale: ClassroomLocale; onLocale: (locale: ClassroomLocale) => void; phase: Phase; reason: string; synthetic: boolean;
   preview: PreviewView; onRecheck: () => void; onEnter: () => void; showSignIn: boolean; signInUrl: string;
+  // The button's word when the way back is not "try again" (2026-11-19: "Continue in this tab").
+  enterLabel?: string;
 }) {
   const text = roomCopy[locale];
   const words = lobbyCopy[locale];
@@ -54,7 +56,7 @@ export default function ClassroomPrejoin({ locale, onLocale, phase, reason, synt
   const waiting = firstTry && door?.state === "before";
   // Not pressed before the screen knows the door (a moment; an answer that never comes counts as unknown).
   const checking = firstTry && preview.kind === "loading";
-  const label = phase === "joining" ? text.entering : phase === "blocked" ? text.retry : phase === "left" ? text.rejoin : text.enter;
+  const label = phase === "joining" ? text.entering : enterLabel ?? (phase === "blocked" ? text.retry : phase === "left" ? text.rejoin : text.enter);
 
   const clock = (iso: string) => new Intl.DateTimeFormat("en-GB", { timeZone: zone, hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(iso));
   const local = data ? zonedTimes(intlLocaleOf(locale), zone, data.lesson.startsAt, data.lesson.endsAt) : null;

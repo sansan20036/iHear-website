@@ -145,12 +145,48 @@ try {
       await page.setViewportSize({ width: size[0], height: size[1] });
       await layout(page, `student-${size[0]}-share`, { material: true });
     }
-    // Stopped, then shared again (2026-11-18): the people take the stage back, then the material.
+    // Reading the material (2026-11-19: on a laptop the student could not read the tutor's slides):
+    // the people go to a narrow column, the material can be enlarged and scrolled, and shown alone
+    // full screen.
+    await page.setViewportSize({ width: 1366, height: 768 });
+    const room = page.locator('.room2');
+    await expect(room).toHaveAttribute('data-reading', 'on');
+    const widths = await page.evaluate(() => ({ stage: document.querySelector('.room2-stage').getBoundingClientRect().width, videos: document.querySelector('.room2-videos').getBoundingClientRect().width, view: window.innerWidth }));
+    expect(widths.videos).toBeLessThanOrEqual(200);
+    expect(widths.stage / widths.view).toBeGreaterThan(0.75);
+    const zoom = page.locator('.room2-zoom');
+    await expect(zoom).toHaveAttribute('data-share-zoom-level', '100');
+    await expect(zoom.getByRole('button', { name: '符合畫面' })).toHaveAttribute('aria-pressed', 'true');
+    await zoom.getByRole('button', { name: '放大' }).click();
+    await zoom.getByRole('button', { name: '放大' }).click();
+    await expect(zoom).toHaveAttribute('data-share-zoom-level', '150');
+    await expect(room).toHaveAttribute('data-share-zoom', 'zoomed');
+    await layout(page, 'student-1366-share-zoomed', { material: true });
+    await zoom.getByRole('button', { name: '縮小' }).click();
+    await expect(zoom).toHaveAttribute('data-share-zoom-level', '125');
+    await zoom.getByRole('button', { name: '125%' }).click();
+    await expect(zoom).toHaveAttribute('data-share-zoom-level', '100');
+    await expect(room).toHaveAttribute('data-share-zoom', 'fit');
+    const stageFull = page.locator('[data-stage-fullscreen]');
+    await expect(stageFull).toHaveAccessibleName('全螢幕檢視教材');
+    await stageFull.click();
+    await expect(stageFull).toHaveAttribute('aria-pressed', 'true');
+    expect(await page.evaluate(() => document.fullscreenElement?.classList.contains('room2-stage'))).toBe(true);
+    await page.keyboard.press('Escape');
+    await page.evaluate(() => document.fullscreenElement && document.exitFullscreen());
+    await expect(stageFull).toHaveAttribute('aria-pressed', 'false');
+    await zoom.getByRole('button', { name: '放大' }).click();
+    await expect(zoom).toHaveAttribute('data-share-zoom-level', '125');
+    // Stopped, then shared again (2026-11-18): the people take the stage back, then the material,
+    // at "fit to screen" again (2026-11-19).
     await simulate(page, '對方停止分享');
     await expect(page.locator('.room2')).toHaveAttribute('data-mode', 'people');
+    await expect(page.locator('.room2')).toHaveAttribute('data-reading', 'off');
+    await expect(page.locator('.room2-zoom')).toHaveCount(0);
     await expect(page.locator('.room2-stage-label')).toHaveText('視訊');
     await simulate(page, '對方分享畫面');
     await expect(page.locator('.room2')).toHaveAttribute('data-mode', 'share');
+    await expect(page.locator('.room2-zoom')).toHaveAttribute('data-share-zoom-level', '100');
     await expect(page.locator('.room2-stage-label')).toHaveText('分享的畫面');
     await page.getByRole('button', { name: /^聊天/ }).click();
     await expect(page.getByRole('tab', { name: '聊天' })).toBeFocused();
@@ -177,6 +213,41 @@ try {
     await page.context().close();
   });
 
+  // One page per person and lesson (2026-11-19): on production the tutor was in one lesson up to
+  // three times at once. A second tab with the same link waits and says so; "Continue in this tab"
+  // takes the lesson over and the first tab leaves the room; the first can take it back.
+  await check('one page per person: a second tab waits and says so; continuing there makes the first tab leave; the same person elsewhere is said', async () => {
+    const shared = await context(DEVICES.computer, [1280, 800]);
+    const first = watch(await shared.newPage(), 'student-tab-1');
+    await enter(first, lesson.link);
+    const second = watch(await shared.newPage(), 'student-tab-2');
+    await second.goto(lesson.link);
+    await second.getByRole('button', { name: '進入教室' }).click();
+    const otherTab = second.getByRole('alert').filter({ hasText: '這堂課已在本瀏覽器的另一個分頁開啟' });
+    await expect(otherTab).toBeVisible();
+    await expect(first.locator('.room2-top .classroom-room-connection')).toHaveText('已連線');
+    await second.getByRole('button', { name: '在這個分頁繼續' }).click();
+    await expect(second.locator('.room2-top .classroom-room-connection')).toHaveText('已連線');
+    await expect(first.getByRole('alert').filter({ hasText: '你已改在另一個分頁上課，這個分頁已離開教室。' })).toBeVisible();
+    await expect(first.locator('.room2')).toHaveCount(0);
+    // The first takes it back the same way; the second leaves.
+    await first.getByRole('button', { name: '在這個分頁繼續' }).click();
+    await expect(first.locator('.room2-top .classroom-room-connection')).toHaveText('已連線');
+    await expect(second.getByRole('alert').filter({ hasText: '你已改在另一個分頁上課' })).toBeVisible();
+    // Leaving lets another tab in without taking over.
+    await first.getByRole('button', { name: '離開教室' }).first().click();
+    await second.getByRole('button', { name: '在這個分頁繼續' }).click();
+    await expect(second.locator('.room2-top .classroom-room-connection')).toHaveText('已連線');
+    // The same person in the room from another device: said in the room, and gone when that ends.
+    await simulate(second, '你也在另一處進入');
+    const elsewhere = second.locator('[data-elsewhere]');
+    await expect(elsewhere).toHaveText('你也在另一個裝置或視窗進入了這堂課。請關閉那裡的教室，只保留這一個，否則對方可能看不到你的畫面或聽不到你的聲音。');
+    await layout(second, 'student-1280-elsewhere');
+    await simulate(second, '另一處已離開');
+    await expect(elsewhere).toHaveCount(0);
+    await shared.close();
+  });
+
   // ---------- A tutor on a computer ----------
   let tutorPage;
   await check('tutor, computer: share and whiteboard take the stage; focus mode; the More menu and panels by keyboard', async () => {
@@ -193,21 +264,18 @@ try {
     await expect(share).toHaveAccessibleName('停止分享畫面');
     await expect(page.locator('.room2-stage-label')).toHaveText('你正在分享畫面');
     await layout(page, 'tutor-1440-share', { material: true });
-    // Zoom opens no whiteboard during a screen share (its error 8002): the room says so at once,
-    // without trying, and the share goes on (2026-11-18).
+    // Zoom opens no whiteboard during a screen share (its error 8002). The tutor's own share is
+    // stopped first, so one press opens the board (2026-11-19; before, the press was refused).
     const board = page.locator('[data-tool="whiteboard"]');
     const shareConflict = page.getByRole('alert').filter({ hasText: '分享畫面時不能開啟白板，請先停止分享。' });
-    await board.click();
-    await expect(shareConflict).toBeVisible();
-    await expect(shareConflict).toHaveAttribute('data-board-code', '8002');
-    await expect(page.locator('.room2')).toHaveAttribute('data-mode', 'share');
-    await expect(share).toHaveAttribute('aria-pressed', 'true');
-    await share.click();
     await expect(board).toHaveAccessibleName('開啟白板');
     await board.click();
     await expect(page.locator('.room2')).toHaveAttribute('data-mode', 'board');
     await expect(board).toHaveAccessibleName('關閉白板');
+    await expect(share).toHaveAttribute('aria-pressed', 'false');
     await expect(shareConflict).toHaveCount(0);
+    // The material alone, full screen, works for the whiteboard too.
+    await expect(page.locator('[data-stage-fullscreen]')).toBeVisible();
     await layout(page, 'tutor-1440-whiteboard', { material: true });
     // Focus mode from the stage, and Escape leaves it.
     await page.locator('.room2-stage-tool', { hasText: '專注模式' }).click();

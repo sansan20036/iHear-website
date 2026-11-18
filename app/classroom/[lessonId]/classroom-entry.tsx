@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode, type Ref } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode, type Ref, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 
 import { appendChat, CHAT_MAX_LENGTH, chatTextOf, type ChatLine, type RaisedHand } from "../../../lib/classroom-chat";
@@ -13,6 +13,7 @@ import { classroomDeviceOf, deviceLimits, type CapabilityName, type ClassroomDev
 import { entryEndedBy, rejoinRoom, requestJoin, type JoinedSession } from "../../../lib/classroom-join-client";
 import { browserClassroomLocale, CLASSROOM_LOCALES, htmlLangOf, intlLocaleOf, LOCALE_NAMES, type ClassroomLocale } from "../../../lib/classroom-locale";
 import { HAND_NOTICE_MS, initialsOf, newHands, orderPeople, personLabel, spotlightOf, stageModeOf } from "../../../lib/classroom-room";
+import { claimLessonTab, lessonTabName, type TabClaim } from "../../../lib/classroom-tab";
 import { roomCopy as copy, vendorCopy } from "./classroom-copy";
 import { RoomIcon, type RoomIconName } from "./classroom-icons";
 import ClassroomPrejoin from "./classroom-prejoin";
@@ -143,6 +144,14 @@ type BlockRoomProps = {
   onDevicesChange?: (devices: { camera: boolean; microphone: boolean }) => void;
 };
 
+// The zoom steps for a shared screen (1 is "fit to screen").
+const SHARE_ZOOMS = [1, 1.25, 1.5, 2, 3];
+const stepZoom = (value: number, step: 1 | -1) => {
+  const index = SHARE_ZOOMS.findIndex((zoom) => zoom >= value);
+  const at = index < 0 ? SHARE_ZOOMS.length - 1 : index;
+  return SHARE_ZOOMS[Math.max(0, Math.min(SHARE_ZOOMS.length - 1, at + step))];
+};
+
 export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey, autoEnter = false, roomLabel = null, signInPath, onEntered, onEntryEnded, restoreDevices = null, onDevicesChange }: { lessonId: string; synthetic: boolean } & BlockRoomProps) {
   const devicesChanged = useRef(onDevicesChange);
   devicesChanged.current = onDevicesChange;
@@ -199,6 +208,14 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   const [hiddenInStrip, setHiddenInStrip] = useState(0);
   const [fullscreen, setFullscreen] = useState(false);
   const [canFullscreen, setCanFullscreen] = useState(false);
+  // 2026-11-19: this tab's hold on the lesson (one page per person, lib/classroom-tab.ts); how many
+  // other pages or devices this person is in the room from as well; reading a shared screen: its
+  // zoom and the stage alone full screen.
+  const tabClaim = useRef<TabClaim | null>(null);
+  const [elsewhere, setElsewhere] = useState(0);
+  const [shareZoom, setShareZoom] = useState(1);
+  const stageBox = useRef<HTMLElement | null>(null);
+  const [stageFull, setStageFull] = useState(false);
   const videosHost = useRef<HTMLDivElement | null>(null);
   const strip = useRef<HTMLDivElement | null>(null);
   const moreButton = useRef<HTMLButtonElement | null>(null);
@@ -250,10 +267,26 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
     document.documentElement.lang = htmlLangOf(locale);
   }, [locale]);
 
-  async function enter() {
+  async function enter(takeOver = false) {
     setPhase("joining");
     setReason("");
     setRejoinProblem("");
+    if (!blockMode) {
+      const claim = await claimLessonTab(lessonTabName(lessonId, joinKey), { steal: takeOver });
+      if (!claim) {
+        setReason("OTHER_TAB");
+        setPhase("blocked");
+        return;
+      }
+      tabClaim.current?.release();
+      tabClaim.current = claim;
+      // Another tab continued the lesson: this one leaves the room and says so.
+      void claim.lost.then(() => {
+        if (tabClaim.current !== claim) return;
+        tabClaim.current = null;
+        void leaveFor("TAKEN_OVER");
+      });
+    }
     const answer = await requestJoin(lessonId, joinKey);
     if (answer.ok) {
       session.current = answer.session;
@@ -268,6 +301,13 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
     setPhase("blocked");
     onEnded.current?.(answer.code);
   }
+  // Out of the room (left, refused, taken over): the lesson's lock goes too, so another tab may enter.
+  useEffect(() => {
+    if (phase === "joining" || phase === "joined") return;
+    tabClaim.current?.release();
+    tabClaim.current = null;
+  }, [phase]);
+  useEffect(() => () => { tabClaim.current?.release(); }, []);
   // In a block, after the person entered once, the next room is entered without another press.
   const enterNow = useRef(enter);
   enterNow.current = enter;
@@ -361,6 +401,8 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
         setPeople(event.people);
       } else if (event.type === "speaking") {
         setSpeaking(event.ids);
+      } else if (event.type === "duplicate") {
+        setElsewhere(event.count);
       }
       // A session id changes nothing on screen; it is reported only when the join answer asked.
       if (joined.role === "tutor") {
@@ -403,8 +445,17 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
       setSpotlight(null);
       setHandNotices([]);
       handsBefore.current = [];
+      setElsewhere(0);
     };
   }, [phase, joined, report]);
+
+  // A share that ended: the next one starts at "fit", and the stage leaves full screen.
+  const readingNow = phase === "joined" && media.share === "receiving";
+  useEffect(() => {
+    if (readingNow) return;
+    setShareZoom(1);
+    if (document.fullscreenElement && document.fullscreenElement === stageBox.current && media.whiteboard === "none") void document.exitFullscreen().catch(() => undefined);
+  }, [readingNow, media.whiteboard]);
 
   // The newest line stays in view.
   useEffect(() => {
@@ -483,7 +534,10 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   // Full screen where the browser allows it (not on iPhones), for the whole room.
   useEffect(() => {
     setCanFullscreen(document.fullscreenEnabled === true);
-    const onChange = () => setFullscreen(Boolean(document.fullscreenElement));
+    const onChange = () => {
+      setFullscreen(Boolean(document.fullscreenElement) && document.fullscreenElement !== stageBox.current);
+      setStageFull(Boolean(stageBox.current) && document.fullscreenElement === stageBox.current);
+    };
     document.addEventListener("fullscreenchange", onChange);
     return () => document.removeEventListener("fullscreenchange", onChange);
   }, []);
@@ -634,8 +688,11 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
     setToolProblem("");
     setBoardCode(null);
     const on = media.whiteboard !== "presenting";
-    // Zoom does not open its whiteboard during a screen share (its error 8002): said at once, not tried.
-    if (on && media.share !== "none") {
+    // Zoom does not open its whiteboard during a screen share (its error 8002). This page's own share
+    // is stopped first, so one press opens the board (2026-11-19); someone else's share is said at
+    // once, and nothing is tried.
+    if (on && media.share === "sending" && current.setScreenShare) await current.setScreenShare(false).catch(() => false);
+    else if (on && media.share !== "none") {
       setBoardCode(ZOOM_WHITEBOARD_SCREEN_SHARE_CONFLICT);
       setToolProblem("board");
       return;
@@ -664,6 +721,17 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
     const next = !focus;
     setFocus(next);
     if (next) setPanel("none");
+  }
+
+  // The shared screen or the whiteboard alone, full screen (2026-11-19: on a laptop the student could
+  // not read the tutor's slides beside the video column).
+  async function toggleStageFullscreen() {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await stageBox.current?.requestFullscreen();
+    } catch {
+      // The browser refused: nothing changes.
+    }
   }
 
   async function toggleFullscreen() {
@@ -726,6 +794,14 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
     moveRoom.current = () => { void reconnect(); };
   });
 
+  async function leaveFor(why: string) {
+    if (adapter.current) await adapter.current.leave();
+    session.current = null;
+    setRejoinProblem("");
+    setReason(why);
+    setPhase("blocked");
+  }
+
   async function leave() {
     setMenuOpen(false);
     // Leaving the media room reports "Closed" through the adapter; without one, say it directly.
@@ -761,7 +837,8 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
     return (
       <ClassroomPrejoin
         locale={locale} onLocale={setLocale} phase={phase === "joined" ? "joining" : phase} reason={reason} synthetic={synthetic}
-        preview={preview} onRecheck={recheckPreview} onEnter={() => void enter()} showSignIn={showSignIn} signInUrl={signInUrl}
+        preview={preview} onRecheck={recheckPreview} onEnter={() => void enter(phase === "blocked" && (reason === "OTHER_TAB" || reason === "TAKEN_OVER"))} showSignIn={showSignIn} signInUrl={signInUrl}
+        enterLabel={phase === "blocked" && (reason === "OTHER_TAB" || reason === "TAKEN_OVER") ? text.continueHere : undefined}
       />
     );
   }
@@ -778,7 +855,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
           {phase === "left" && <p>{text.left}</p>}
           {phase === "blocked" && <p className="classroom-room-problem" role="alert">{text.reasons[reason] ?? text.reasons.UNAVAILABLE}</p>}
           <div className="classroom-room-actions">
-            <button type="button" className="classroom-room-primary" disabled={phase === "joining"} onClick={enter}>
+            <button type="button" className="classroom-room-primary" disabled={phase === "joining"} onClick={() => void enter()}>
               {phase === "joining" ? text.entering : phase === "blocked" ? text.retry : phase === "left" ? text.rejoin : text.enter}
             </button>
             {showSignIn && <a className="classroom-room-secondary" href={signInUrl}>{text.signIn}</a>}
@@ -802,6 +879,10 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   const boardTools = isTutor && !!adapter.current?.setWhiteboard && (zoom || !!simulator);
   const canExport = media.whiteboard === "presenting" && !!adapter.current?.exportWhiteboard;
   const stageLabel = mode === "share" ? (media.share === "sending" ? text.stageLabel.ownShare : text.stageLabel.share) : text.stageLabel[mode];
+  // Someone else's screen on this page (2026-11-19): the material comes first (the videos go to a
+  // narrow column) and can be enlarged, scrolled, or shown full screen.
+  const reading = mode === "share" && media.share === "receiving";
+  const zoomed = reading && shareZoom > 1;
   const roomName = roomLabel === "Lobby" ? (locale === "en" ? "Lobby" : "主會議室") : roomLabel;
   const headcount = blockMode && media.remote.others != null ? media.remote.others + 1 : null;
 
@@ -862,7 +943,9 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
 
   return (
     <Shell className="classroom-room room2" data-mode={mode} data-panel={panel} data-focus={focus ? "on" : "off"} data-role={joined.role}
-      data-provider={provider} data-device={device} data-count={people.length} data-spot={spotlight ? "on" : "off"}>
+      data-provider={provider} data-device={device} data-count={people.length} data-spot={spotlight ? "on" : "off"}
+      data-reading={reading ? "on" : "off"} data-share-zoom={zoomed ? "zoomed" : "fit"}
+      style={reading ? ({ "--share-zoom": String(shareZoom) } as CSSProperties) : undefined}>
       <div className="room2-shell">
         <header className="room2-top">
           <div className="room2-brand">
@@ -935,16 +1018,31 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
           })}
           {toolProblem && <p className="classroom-room-problem" role="alert" data-board-code={toolProblem === "share" ? undefined : boardCode ?? undefined}>{toolProblem === "share" ? v.shareFailed : boardProblemText(v, toolProblem, boardCode)}</p>}
           {handProblem && <p className="classroom-room-problem" role="alert">{text.handFailed}</p>}
+          {elsewhere > 0 && <p className="classroom-room-problem" role="alert" data-elsewhere={elsewhere}>{text.elsewhere}</p>}
           {isTutor && recording?.status === "FAILED" && <p className="classroom-room-problem" role="alert">{text.failedRecording}</p>}
           {isTutor && hostProblem === "unstable" && <p className="classroom-room-problem" role="status">{text.unstable}</p>}
           {isTutor && hostProblem === "signedOut" && <p className="classroom-room-problem" role="alert">{text.signedOut} <a href={signInUrl}>{text.signIn}</a></p>}
         </div>
 
         <div className="room2-main">
-          <section className="room2-stage" aria-label={lcic ? text.stage : text.materials}>
+          <section className="room2-stage" ref={stageBox} aria-label={lcic ? text.stage : text.materials}>
             <div className="room2-stage-bar">
               <span className="room2-stage-label">{stageLabel}</span>
               <div className="room2-stage-tools">
+                {reading && (
+                  <div className="room2-zoom" role="group" aria-label={text.zoomLevel(Math.round(shareZoom * 100))} data-share-zoom-level={Math.round(shareZoom * 100)}>
+                    <button type="button" className="room2-stage-tool" aria-label={text.zoomOut} disabled={shareZoom <= SHARE_ZOOMS[0]} onClick={() => setShareZoom((value) => stepZoom(value, -1))}>−</button>
+                    <button type="button" className="room2-stage-tool room2-zoom-fit" aria-pressed={shareZoom === 1} onClick={() => setShareZoom(1)}>
+                      {shareZoom === 1 ? text.zoomFit : `${Math.round(shareZoom * 100)}%`}
+                    </button>
+                    <button type="button" className="room2-stage-tool" aria-label={text.zoomIn} disabled={shareZoom >= SHARE_ZOOMS[SHARE_ZOOMS.length - 1]} onClick={() => setShareZoom((value) => stepZoom(value, 1))}>+</button>
+                  </div>
+                )}
+                {canFullscreen && (mode === "share" || mode === "board") && (
+                  <button type="button" className="room2-stage-tool" data-stage-fullscreen aria-pressed={stageFull} aria-label={stageFull ? text.materialFullscreenExit : text.materialFullscreen} onClick={() => void toggleStageFullscreen()}>
+                    <RoomIcon name={stageFull ? "fullscreen-exit" : "fullscreen"} /><span>{stageFull ? text.materialFullscreenExit : text.materialFullscreen}</span>
+                  </button>
+                )}
                 <button type="button" className="room2-stage-tool" aria-pressed={focus} onClick={toggleFocus}>
                   <RoomIcon name="focus" /><span>{focus ? text.focusExit : text.focus}</span>
                 </button>
@@ -957,6 +1055,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
             </div>
             <div className={`classroom-vendor-stage ${provider}`} ref={vendorStage} data-provider={provider} />
             {simulator && mode === "share" && <p className="room2-simulated">{text.simulatedShare}</p>}
+            {reading && device !== "desktop" && <p className="room2-reading-tip">{text.readingTip}</p>}
             {simulator && mode === "board" && <p className="room2-simulated">{text.simulatedBoard}</p>}
           </section>
 

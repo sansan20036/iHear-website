@@ -356,3 +356,31 @@
 /* The site's admin tools (theme, layout, inline editing, back to top) float over every page for
    administrators; the classroom has nothing they edit, and they cover its controls (2026-11-13). */
 body:has(.classroom-room) > :is(.site-theme-trigger, .ihear-layout-trigger, .ihear-inline-edit-button, .ihear-layout-quick, .back-to-top) { display: none !important; }
+
+/* Reading someone else's shared screen (2026-11-19): the material first, the videos in a narrow
+   column; the material can be enlarged (and scrolled) or shown alone full screen. */
+/* Computers only: on a phone the material is already on top, full width, and the people below it. */
+@media (min-width: 1024px) {
+  .room2[data-reading="on"][data-panel="none"]:not([data-focus="on"]) .room2-main { grid-template-columns: minmax(0, 1fr) clamp(140px, 12vw, 190px); }
+  .room2[data-reading="on"]:not([data-panel="none"]):not([data-focus="on"]) .room2-main { grid-template-columns: minmax(0, 1fr) clamp(240px, 20vw, 300px); }
+  .room2[data-reading="on"][data-panel="none"] .room2-videos-host > * { grid-auto-flow: row; grid-template-columns: minmax(0, 1fr); grid-auto-columns: auto; }
+}
+.room2[data-reading="on"] .classroom-zoom-share { overflow: auto; }
+.room2[data-reading="on"][data-share-zoom="zoomed"] .classroom-zoom-share { place-items: start; }
+.room2[data-reading="on"] .classroom-zoom-share video-player { width: calc(100% * var(--share-zoom, 1)); height: calc(100% * var(--share-zoom, 1)); flex: none; }
+.room2-zoom { display: inline-flex; gap: 4px; }
+.room2-zoom .room2-stage-tool { min-width: 38px; justify-content: center; font-weight: 800; }
+.room2-zoom .room2-stage-tool:disabled { opacity: .45; cursor: default; }
+.room2-zoom-fit { min-width: 92px; }
+.room2-stage:fullscreen { width: 100vw; height: 100vh; border-radius: 0; padding: 10px; }
+.room2-stage:fullscreen .classroom-vendor-stage > :not([hidden]) { width: 100%; height: 100%; aspect-ratio: auto; }
+.room2-reading-tip { margin: 8px 0 0; font-size: 13px; color: #c8d2ea; text-align: center; pointer-events: none; }
+/* With a panel open the tip goes, so the stage is no taller than before. */
+.room2:not([data-panel="none"]) .room2-reading-tip { display: none; }
+@media (max-width: 1023px) {
+  /* One line on a phone (it scrolls sideways if it must), so the stage is no taller than before. */
+  .room2-stage-tools { flex-wrap: nowrap; overflow-x: auto; min-width: 0; scrollbar-width: none; }
+  .room2-stage-bar { min-width: 0; }
+  .room2-stage-tool[data-stage-fullscreen] span { display: none; }
+  .room2-zoom-fit { min-width: 0; }
+}
