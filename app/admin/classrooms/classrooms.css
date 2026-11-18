@@ -88,3 +88,13 @@
   .classroom-lesson-time div, .classroom-lessons td:not(.classroom-lesson-actions):not(.classroom-lesson-time) { white-space:normal; }
 }
 @media (max-width:390px) { .classroom-cards { grid-template-columns:1fr; } }
+
+/* Adding a lesson (2026-11-19): why the button waits, the result of the last press next to it, the
+   fields to fix, and the line that says a previous lesson's link was hidden. */
+.classroom-add-hint { margin:8px 0 0; font-size:14px; font-weight:700; line-height:1.5; color:var(--classroom-warn); }
+.classroom-add-problem { margin:10px 0 0; padding:9px 12px; border-radius:10px; background:var(--classroom-bad-bg); color:var(--classroom-bad); font-weight:700; line-height:1.5; overflow-wrap:anywhere; }
+.classroom-field-error { margin:4px 0 0; font-size:13px; font-weight:700; line-height:1.45; color:var(--classroom-bad); }
+.classroom-form [data-invalid] input, .classroom-form [data-invalid] select { border-color:var(--classroom-bad); box-shadow:0 0 0 2px var(--classroom-bad-bg); }
+.classroom-link .classroom-link-note { font-weight:400; font-size:13px; }
+.classroom-link-hidden { margin:12px 0 0; font-size:14px; line-height:1.5; color:#475467; }
+.classroom-list-note { margin:14px 0 8px; }

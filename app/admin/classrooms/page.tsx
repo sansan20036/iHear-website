@@ -4,13 +4,19 @@ import { useCallback, useEffect, useState } from "react";
 import { useAdmin } from "../admin-context";
 import { adminFetch, displayError } from "../admin-api";
 import { HOUSE_TIME_ZONE, wallIn } from "../../../lib/zoned-time";
-import { LessonForm, lessonErrorText, type LessonRequest, type Scheduling } from "./lesson-form";
+import { LessonForm, type AddResult, type LessonRequest, type Scheduling } from "./lesson-form";
+import { addFailureOf, LESSON_FORM_WORDS } from "./lesson-form-checks";
 import { shortStamp, zoneMark, zoneName } from "./time-zone-names";
 import "./classrooms.css";
 
 // The live classroom overview for owners. It polls every 15 seconds while the tab is visible:
 // first the server's periodic work (the same tick the tutor's heartbeat runs), then the
 // overview. Cards come from the server already reduced to codes and labels.
+//
+// A student's personal link (2026-11-19) is shown only right after it was made: a lesson just added
+// from the form, or a link just reissued, always under that lesson's code. As soon as the add form
+// is changed, or an add is refused, the link and its copy button are hidden (the page says whose
+// link was hidden), so an earlier lesson's link is never taken for the lesson being typed.
 
 const copy = {
   en: {
@@ -23,7 +29,7 @@ const copy = {
     anomalies: "Problem records", anomaliesIntro: "Every problem the overview found stays here, with who handled it and how. Write codes and actions, never names.",
     noAnomalies: "No problems recorded.", open: "Open", resolved: "Cleared", handled: "Handled", unhandled: "Needs handling", earlier: "Handled before it came back", note: "What was done", save: "Record handling", firstSeen: "First seen", lastSeen: "Last seen",
     lessons: "Lessons", houseTimes: "Times on this page are US Eastern (New York) unless marked otherwise.", house: "US Eastern", taipei: "Taiwan", enteredIn: "Entered as",
-    linkOnce: "Student's personal link (shown only now; send it to the family):", copyLink: "Copy link", copied: "Copied",
+    copyLink: "Copy link", copied: "Copied",
     revokeLink: "Revoke student link", reissueLink: "Reissue student link", cancelLesson: "Cancel lesson", cancelledMark: "Cancelled",
     confirmRevoke: "Revoke the student's link? It can no longer be used to enter, and no new link is made. Someone already in the room is not disconnected at once: the classroom page normally leaves within about 15 seconds, but this cannot be guaranteed.",
     confirmReissue: "Make a new student link? The current link can no longer be used to enter. Someone already in the room with it is not disconnected at once: the classroom page normally leaves within about 15 seconds, but this cannot be guaranteed.",
@@ -51,7 +57,7 @@ const copy = {
     anomalies: "異常紀錄", anomaliesIntro: "總覽發現的每個問題都會留在這裡，並記下誰處理、怎麼處理。請寫代碼與處置，不要寫姓名。",
     noAnomalies: "目前沒有異常紀錄。", open: "未解除", resolved: "已解除", handled: "已處置", unhandled: "待處置", earlier: "先前處置（之後又再發生）", note: "處置說明", save: "記錄處置", firstSeen: "首次發現", lastSeen: "最後出現",
     lessons: "課程", houseTimes: "本頁時間除另有標示外，皆為美東時間（紐約）。", house: "美東", taipei: "台灣", enteredIn: "建立時輸入",
-    linkOnce: "學生專屬連結（只顯示這一次，請交給家長）：", copyLink: "複製連結", copied: "已複製",
+    copyLink: "複製連結", copied: "已複製",
     revokeLink: "撤銷學生連結", reissueLink: "重發學生連結", cancelLesson: "取消課程", cancelledMark: "已取消",
     confirmRevoke: "確定撤銷學生連結？目前的連結會立即無法再用來進入，也不會產生新連結。已在教室裡的人不會立即斷線：教室頁面通常會在約 15 秒內自行離開，但無法保證。",
     confirmReissue: "確定重發學生連結？目前的連結會立即無法再用來進入。已用舊連結在教室裡的人不會立即斷線：教室頁面通常會在約 15 秒內自行離開，但無法保證。",
@@ -79,7 +85,7 @@ const copy = {
     anomalies: "异常记录", anomaliesIntro: "总览发现的每个问题都会留在这里，并记下谁处理、怎么处理。请写代码与处置，不要写姓名。",
     noAnomalies: "目前没有异常记录。", open: "未解除", resolved: "已解除", handled: "已处置", unhandled: "待处置", earlier: "先前处置（之后又再发生）", note: "处置说明", save: "记录处置", firstSeen: "首次发现", lastSeen: "最后出现",
     lessons: "课程", houseTimes: "本页时间除另有标示外，均为美东时间（纽约）。", house: "美东", taipei: "台湾", enteredIn: "建立时输入",
-    linkOnce: "学生专属链接（只显示这一次，请交给家长）：", copyLink: "复制链接", copied: "已复制",
+    copyLink: "复制链接", copied: "已复制",
     revokeLink: "撤销学生链接", reissueLink: "重发学生链接", cancelLesson: "取消课程", cancelledMark: "已取消",
     confirmRevoke: "确定撤销学生链接？目前的链接会立即无法再用来进入，也不会产生新链接。已在教室里的人不会立即断线：教室页面通常会在约 15 秒内自行离开，但无法保证。",
     confirmReissue: "确定重发学生链接？目前的链接会立即无法再用来进入。已用旧链接在教室里的人不会立即断线：教室页面通常会在约 15 秒内自行离开，但无法保证。",
@@ -133,6 +139,7 @@ const SOURCE = { zoom_webhook: "視訊服務", host_sdk: "小老師端", zoom_ap
 export default function ClassroomsPage() {
   const { locale, principal, setSubmitting } = useAdmin();
   const text = copy[locale];
+  const words = LESSON_FORM_WORDS[locale];
   const stamp = (iso: string | null) => (iso ? `${shortStamp(Date.parse(iso), HOUSE, locale)} ${zoneMark(Date.parse(iso), HOUSE)}` : "—");
   const [overview, setOverview] = useState<Overview | null>(null);
   const [error, setError] = useState("");
@@ -143,7 +150,9 @@ export default function ClassroomsPage() {
   const [resuming, setResuming] = useState("");
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
-  const [studentLink, setStudentLink] = useState("");
+  // The link on show (whose, and how it was made) and the code of a link just hidden.
+  const [linkBox, setLinkBox] = useState<{ code: string; url: string; kind: "created" | "reissued" } | null>(null);
+  const [hiddenLink, setHiddenLink] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [notice, setNotice] = useState("");
   const [consent, setConsent] = useState({ personCode: "", role: "student", status: "granted" });
@@ -226,22 +235,35 @@ export default function ClassroomsPage() {
     setNotes((current) => ({ ...current, [id]: "" }));
     await refresh();
   });
-  const addLesson = async (request: LessonRequest) => {
-    let added = false;
-    await mutate(async () => {
-      try {
-        const data = await adminFetch<{ studentLink: string }>("/api/admin/classrooms", { method: "POST", body: JSON.stringify(request) });
-        setStudentLink(`${window.location.origin}${data.studentLink}`);
-        setCopied(false);
-        setNotice("");
-        added = true;
-      } catch (failure) {
-        const message = lessonErrorText(failure, locale, request, overview?.scheduling ?? null);
-        throw message ? Object.assign(new Error(message), { status: 400 }) : failure;
-      }
+  // Any link on show is hidden, and the page says whose it was.
+  const hideLink = () => {
+    if (!linkBox) return;
+    setHiddenLink(linkBox.code);
+    setLinkBox(null);
+    setCopied(false);
+  };
+  // An add answers the form itself (the result is shown by the button, never in the page's
+  // top alert, which the automatic refresh clears). The same lesson API and checks as before.
+  const addLesson = async (request: LessonRequest): Promise<AddResult> => {
+    if (busy) return { ok: false, failure: { kind: "other", error: null } };
+    setBusy(true);
+    setSubmitting(true);
+    try {
+      const data = await adminFetch<{ studentLink: string; lesson?: { code?: string } }>("/api/admin/classrooms", { method: "POST", body: JSON.stringify(request) });
+      const code = data.lesson?.code ?? request.code.trim();
+      setLinkBox({ code, url: `${window.location.origin}${data.studentLink}`, kind: "created" });
+      setHiddenLink(null);
+      setCopied(false);
+      setNotice("");
       await refresh();
-    });
-    return added;
+      return { ok: true, code };
+    } catch (failure) {
+      hideLink();
+      return { ok: false, failure: addFailureOf(failure, request) };
+    } finally {
+      setBusy(false);
+      setSubmitting(false);
+    }
   };
   // Revoke or reissue the student's link, or cancel the lesson; each asks first. A reissued link
   // is shown once, in the same box as a new lesson's.
@@ -252,7 +274,8 @@ export default function ClassroomsPage() {
       const data = await adminFetch<{ studentLink?: string }>(`/api/admin/classrooms/${encodeURIComponent(item.lessonId)}`, {
         method: "PATCH", body: JSON.stringify({ action, studentCode: item.studentCodes[0] }),
       });
-      setStudentLink(data.studentLink ? `${window.location.origin}${data.studentLink}` : "");
+      setLinkBox(data.studentLink ? { code: item.code, url: `${window.location.origin}${data.studentLink}`, kind: "reissued" } : null);
+      setHiddenLink(null);
       setCopied(false);
       setNotice(action === "cancel" ? `${item.code}：${text.cancelledNotice}` : action === "revoke_link" ? `${item.code}：${text.revokedNotice}` : "");
       await refresh();
@@ -372,15 +395,18 @@ export default function ClassroomsPage() {
       </div>
 
       <div className="admin-panel classroom-panel classroom-add-panel">
-        <LessonForm locale={locale} busy={busy} scheduling={overview?.scheduling ?? null} onSubmit={addLesson} />
-        {studentLink && (
-          <div className="classroom-link" role="status">
-            <p>{text.linkOnce}</p>
-            <code>{studentLink}</code>
-            <button type="button" className="admin-button secondary" onClick={() => navigator.clipboard?.writeText(studentLink).then(() => setCopied(true), () => setCopied(false))}>{copied ? text.copied : text.copyLink}</button>
+        <LessonForm locale={locale} busy={busy} scheduling={overview?.scheduling ?? null} onSubmit={addLesson} onChange={hideLink} />
+        {linkBox && (
+          <div className="classroom-link" role="status" data-link-code={linkBox.code} data-link-kind={linkBox.kind}>
+            <p>{linkBox.kind === "created" ? words.linkCreated(linkBox.code) : words.linkReissued(linkBox.code)}</p>
+            <code>{linkBox.url}</code>
+            <button type="button" className="admin-button secondary" onClick={() => navigator.clipboard?.writeText(linkBox.url).then(() => setCopied(true), () => setCopied(false))}>{copied ? text.copied : text.copyLink}</button>
+            {linkBox.kind === "created" && <p className="classroom-link-note">{words.copyFirst}</p>}
           </div>
         )}
+        {hiddenLink && !linkBox && <p className="classroom-link-hidden" role="status" data-link-hidden={hiddenLink}>{words.linkHidden(hiddenLink)}</p>}
         {notice && <p className="classroom-notice" role="status">{notice}</p>}
+        <p className="admin-muted classroom-list-note" data-list-window>{words.listNote}</p>
         {overview?.lessons.length ? (
           <div className="admin-table-wrap">
             <table className="admin-table classroom-lessons">

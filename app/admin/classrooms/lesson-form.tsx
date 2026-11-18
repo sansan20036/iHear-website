@@ -1,7 +1,12 @@
 "use client";
 
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { AdminLocale } from "../admin-context";
+import { displayError } from "../admin-api";
+import {
+  addBlockedBy, fieldMessage, fieldsSummary, firstField, LESSON_FORM_WORDS, peopleFieldProblems, timeRefusalFields,
+  type AddFailure, type FieldProblems, type LessonField, type TimeRefusal,
+} from "./lesson-form-checks";
 import { COMMON_TIME_ZONES, describeInstant, parseClock, parseIsoDate, validTimeZone, wallIn, zonedInstant } from "../../../lib/zoned-time";
 import { allTimeZones, INTL_LOCALE, offsetAt, shortStamp, zoneMark, zoneName } from "./time-zone-names";
 
@@ -10,9 +15,17 @@ import { allTimeZones, INTL_LOCALE, offsetAt, shortStamp, zoneMark, zoneName } f
 // zone defaults to US Eastern (the house zone); the start is picked on a 24-hour clock, so AM and
 // PM cannot be mixed up. The preview converts with the same code the server uses
 // (lib/zoned-time.ts); the server checks everything again and is the one that decides.
+//
+// 2026-11-19: the result of a press is said next to the button and stays there (the overview's
+// automatic refresh never clears it); the field to fix is marked and focused; a disabled button
+// says why; the lesson and people fields are checked with the server's own rules before sending;
+// a code another lesson has is said as such (lesson-form-checks.ts). Any change to the form tells
+// the page (onChange), which then hides the previous lesson's student link.
 
 export type Scheduling = { houseTimeZone: string; legacyTimeZone: string; joinWindowBeforeMs: number; joinWindowAfterMs: number };
 export type LessonRequest = { code: string; date: string; time: string; minutes: number; tutorCode: string; tutorEmail: string; studentCode: string; timeZone: string };
+/** What the page answers for one press: the lesson's code when it was added, or why it was not. */
+export type AddResult = { ok: true; code: string } | { ok: false; failure: AddFailure };
 
 const TAIPEI = "Asia/Taipei";
 const OTHER = "__other";
@@ -28,7 +41,6 @@ type Copy = {
   gap: (zone: string, date: string, time: string) => string; repeat: (zone: string, date: string, time: string) => string; zoneInvalid: string;
   zoneChanged: (from: string, to: string) => string; keepLocal: string; keepLocalNote: (text: string) => string; keepInstant: string; keepInstantNote: (text: string) => string; choose: string;
   confirm: (text: string) => string; add: string; adding: string; created: (code: string, text: string) => string;
-  fields: Record<string, string>; check: (fields: string) => string; list: string;
 };
 
 const copy: Record<AdminLocale, Copy> = {
@@ -56,8 +68,6 @@ const copy: Record<AdminLocale, Copy> = {
     confirm: (text) => `I have checked the date, the time zone and the start time: ${text}`,
     add: "Add a one-to-one lesson", adding: "Adding…",
     created: (code, text) => `Added ${code}: ${text}`,
-    fields: { code: "lesson code", date: "date", time: "start time", minutes: "length", tutorCode: "tutor code", tutorEmail: "tutor sign-in email", studentCode: "student code", timeZone: "time zone" },
-    check: (fields) => `Please check: ${fields}.`, list: ", ",
   },
   zhHant: {
     title: "新增一對一課程",
@@ -83,8 +93,6 @@ const copy: Record<AdminLocale, Copy> = {
     confirm: (text) => `我已確認日期、時區和開始時間：${text}`,
     add: "新增一對一課程", adding: "新增中…",
     created: (code, text) => `已建立 ${code}：${text}`,
-    fields: { code: "課程代碼", date: "日期", time: "開始時間", minutes: "時長", tutorCode: "小老師代碼", tutorEmail: "小老師登入 Email", studentCode: "學生代碼", timeZone: "時區" },
-    check: (fields) => `請檢查：${fields}。`, list: "、",
   },
   zhHans: {
     title: "新增一对一课程",
@@ -110,30 +118,16 @@ const copy: Record<AdminLocale, Copy> = {
     confirm: (text) => `我已确认日期、时区和开始时间：${text}`,
     add: "新增一对一课程", adding: "新增中…",
     created: (code, text) => `已建立 ${code}：${text}`,
-    fields: { code: "课程代码", date: "日期", time: "开始时间", minutes: "时长", tutorCode: "小老师代码", tutorEmail: "小老师登录 Email", studentCode: "学生代码", timeZone: "时区" },
-    check: (fields) => `请检查：${fields}。`, list: "、",
   },
 };
 
-/** The admin's language for a refused lesson: the server's codes first, then the fields it named. */
-export function lessonErrorText(error: unknown, locale: AdminLocale, request: LessonRequest | null, scheduling: Scheduling | null): string | null {
-  const details = error as { status?: number; codes?: Record<string, string>; issues?: Record<string, string> };
-  if (details?.status !== 400) return null;
-  const text = copy[locale];
-  const after = Math.round((scheduling?.joinWindowAfterMs ?? 15 * 60_000) / 60_000);
-  const code = details.codes?.time ?? details.codes?.timeZone;
-  if (code === "ENTRY_WINDOW_PASSED") return text.windowPassed(after);
-  if (code === "TIME_ZONE_INVALID") return text.zoneInvalid;
-  if ((code === "TIME_DOES_NOT_EXIST" || code === "TIME_IS_AMBIGUOUS") && request) {
-    const zone = zoneName(request.timeZone, locale);
-    return (code === "TIME_DOES_NOT_EXIST" ? text.gap : text.repeat)(zone, request.date, request.time);
-  }
-  const fields = Object.keys(details.issues ?? {}).map((key) => text.fields[key] ?? key);
-  return fields.length ? text.check(fields.join(text.list)) : null;
-}
-
 type Draft = { timeZone: string; date: string; hour: string; minute: string; minutes: string; code: string; tutorCode: string; tutorEmail: string; studentCode: string };
 const emptyDraft = (timeZone: string): Draft => ({ timeZone, date: "", hour: "", minute: "", minutes: "60", code: "", tutorCode: "", tutorEmail: "", studentCode: "" });
+const FIELD_OF: Record<keyof Draft, LessonField> = { timeZone: "timeZone", date: "date", hour: "time", minute: "time", minutes: "minutes", code: "code", tutorCode: "tutorCode", tutorEmail: "tutorEmail", studentCode: "studentCode" };
+// The last press that did not add a lesson: why (its words are chosen when shown, so they follow a
+// change of language), whether the line under the button still shows (until the form is changed),
+// and the fields still to fix (each until it is changed).
+type Outcome = { failure: AddFailure; summary: boolean; fields: FieldProblems };
 
 type Plan =
   | { kind: "incomplete" | "minutes" }
@@ -170,13 +164,18 @@ function spanIn(start: number, end: number, zone: string, locale: AdminLocale) {
   return { when: sameDay ? `${from.date} ${from.time}–${to.time}` : `${from.date} ${from.time} – ${to.date} ${to.time}`, marks };
 }
 
-export function LessonForm({ locale, busy, scheduling, onSubmit }: {
+export function LessonForm({ locale, busy, scheduling, onSubmit, onChange }: {
   locale: AdminLocale; busy: boolean; scheduling: Scheduling | null;
-  onSubmit: (request: LessonRequest) => Promise<boolean>;
+  onSubmit: (request: LessonRequest) => Promise<AddResult>;
+  onChange?: () => void;
 }) {
   const text = copy[locale];
+  const words = LESSON_FORM_WORDS[locale];
   const house = scheduling?.houseTimeZone ?? "America/New_York";
-  const ids = { time: useId(), hint: useId(), zones: useId() };
+  const ids = { time: useId(), hint: useId(), zones: useId(), blocked: useId(), problem: useId(), field: useId() };
+  const formRef = useRef<HTMLDivElement>(null);
+  const [outcome, setOutcome] = useState<Outcome | null>(null);
+  const [focusField, setFocusField] = useState<LessonField | null>(null);
   const [draft, setDraft] = useState<Draft>(() => emptyDraft(house));
   const [confirmed, setConfirmed] = useState(false);
   const [pending, setPending] = useState<{ from: string; instant: number; date: string; time: string } | null>(null);
@@ -190,6 +189,12 @@ export function LessonForm({ locale, busy, scheduling, onSubmit }: {
     const timer = setInterval(() => setNow(Date.now()), 30_000);
     return () => clearInterval(timer);
   }, []);
+  // The first field to fix gets the focus (and so comes into view).
+  useEffect(() => {
+    if (!focusField) return;
+    formRef.current?.querySelector<HTMLElement>(`[data-field="${focusField}"] input, [data-field="${focusField}"] select`)?.focus();
+    setFocusField(null);
+  }, [focusField]);
   const zones = useMemo(() => (searching ? allTimeZones() : []), [searching]);
   const plan = useMemo(() => planOf(draft, now, scheduling), [draft, now, scheduling]);
   const time = draft.hour && draft.minute ? `${draft.hour}:${draft.minute}` : "";
@@ -200,8 +205,18 @@ export function LessonForm({ locale, busy, scheduling, onSubmit }: {
 
   // Any change to the time asks for a new confirmation; a pending zone question is dropped when
   // the time itself is typed again.
+  const touched = (keys: (keyof Draft)[]) => {
+    setOutcome((current) => {
+      if (!current) return current;
+      const fields = { ...current.fields };
+      for (const key of keys) delete fields[FIELD_OF[key]];
+      return Object.keys(fields).length ? { ...current, summary: false, fields } : null;
+    });
+    onChange?.();
+  };
   const edit = (changes: Partial<Draft>, timeChanged: boolean) => {
     setDraft((current) => ({ ...current, ...changes }));
+    touched(Object.keys(changes) as (keyof Draft)[]);
     setCreated(null);
     if (timeChanged) {
       setConfirmed(false);
@@ -214,6 +229,7 @@ export function LessonForm({ locale, busy, scheduling, onSubmit }: {
     const start = zonedStart(draft);
     setPending(Number.isFinite(start) ? { from: draft.timeZone, instant: start, date: draft.date, time } : null);
     setDraft((current) => ({ ...current, timeZone: next }));
+    touched(["timeZone"]);
     setConfirmed(false);
     setCreated(null);
     setSearching(false);
@@ -224,17 +240,50 @@ export function LessonForm({ locale, busy, scheduling, onSubmit }: {
     const wall = wallIn(pending.instant, draft.timeZone);
     setDraft((current) => ({ ...current, date: wall.date, hour: wall.time.slice(0, 2), minute: wall.time.slice(3, 5) }));
     setPending(null);
+    touched(["date", "hour", "minute"]);
+  };
+  const timeRefusalText = (reason: TimeRefusal) => {
+    const after = Math.round((scheduling?.joinWindowAfterMs ?? 15 * 60_000) / 60_000);
+    if (reason === "ENTRY_WINDOW_PASSED") return text.windowPassed(after);
+    if (reason === "TIME_ZONE_INVALID") return text.zoneInvalid;
+    return (reason === "TIME_DOES_NOT_EXIST" ? text.gap : text.repeat)(zoneName(draft.timeZone, locale), longDateOf(draft.date, draft.timeZone, locale), time);
+  };
+  const fieldsOf = (failure: AddFailure): FieldProblems =>
+    failure.kind === "fields" ? failure.fields : failure.kind === "codeTaken" ? { code: "taken" } : failure.kind === "time" ? timeRefusalFields(failure.reason) : {};
+  const summaryOf = (failure: AddFailure) => {
+    if (failure.kind === "fields") return fieldsSummary(words, failure.fields);
+    if (failure.kind === "codeTaken") return words.notAdded(words.codeTaken(failure.code));
+    if (failure.kind === "time") return words.notAdded(timeRefusalText(failure.reason));
+    // Signed out or too many requests: the usual admin wording. Anything else: the lesson may have
+    // been saved before the server failed, so the list is checked before trying again.
+    const status = (failure.error as { status?: number } | null)?.status;
+    return words.notAdded(status === 403 || status === 429 ? displayError(failure.error, locale) : words.serverFailed);
+  };
+  const show = (failure: AddFailure) => {
+    const fields = fieldsOf(failure);
+    setOutcome({ failure, summary: true, fields });
+    setFocusField(firstField(fields));
   };
   const submit = async () => {
-    if (plan.kind !== "ok" || plan.windowPassed || pending || !confirmed || busy) return;
+    if (plan.kind !== "ok" || blocked || busy) return;
+    const local = peopleFieldProblems(draft);
+    if (firstField(local)) {
+      onChange?.();
+      show({ kind: "fields", fields: local });
+      return;
+    }
     const request: LessonRequest = {
       code: draft.code, date: draft.date, time, minutes: Number(draft.minutes),
       tutorCode: draft.tutorCode, tutorEmail: draft.tutorEmail, studentCode: draft.studentCode, timeZone: draft.timeZone,
     };
-    if (await onSubmit(request)) {
-      setCreated({ code: request.code, start: plan.start, end: plan.end, zone: request.timeZone });
+    const result = await onSubmit(request);
+    if (result.ok) {
+      setOutcome(null);
+      setCreated({ code: result.code, start: plan.start, end: plan.end, zone: request.timeZone });
       setDraft(emptyDraft(draft.timeZone));
       setConfirmed(false);
+    } else {
+      show(result.failure);
     }
   };
 
@@ -252,17 +301,31 @@ export function LessonForm({ locale, busy, scheduling, onSubmit }: {
     instant: (() => { const wall = wallIn(pending.instant, draft.timeZone); return `${zoneName(draft.timeZone, locale)} ${longDateOf(wall.date, draft.timeZone, locale)} ${wall.time}`; })(),
   } : null;
   const windowMinutes = scheduling ? { before: Math.round(scheduling.joinWindowBeforeMs / 60_000), after: Math.round(scheduling.joinWindowAfterMs / 60_000) } : null;
-  const canSubmit = plan.kind === "ok" && !plan.windowPassed && !pending && confirmed && !busy;
+  const blocked = addBlockedBy({ plan: plan.kind, windowPassed: plan.kind === "ok" && plan.windowPassed, zoneChoicePending: Boolean(pending), confirmed });
+  const canSubmit = !blocked && !busy;
+  // A field to fix: marked, its message under it, and the message read with it.
+  const problemOf = (field: LessonField) => outcome?.fields[field];
+  const errorId = (field: LessonField) => `${ids.field}-${field}`;
+  const fieldError = (field: LessonField) => {
+    const problem = problemOf(field);
+    const taken = outcome?.failure.kind === "codeTaken" ? outcome.failure.code : "";
+    return problem ? <p className="classroom-field-error" id={errorId(field)}>{fieldMessage(words, field, problem, taken)}</p> : null;
+  };
+  const marked = (field: LessonField, describedBy?: string) => {
+    const described = [problemOf(field) ? errorId(field) : null, describedBy].filter(Boolean).join(" ");
+    return { ...(problemOf(field) ? { "aria-invalid": true as const } : {}), ...(described ? { "aria-describedby": described } : {}) };
+  };
+  const invalid = (field: LessonField) => (problemOf(field) ? "true" : undefined);
 
   return (
     <>
       <h2>{text.title}</h2>
-      <div className="classroom-form">
+      <div className="classroom-form" ref={formRef}>
         <div className="classroom-form-group">
-          <div className="classroom-zone-field" data-field="timeZone">
+          <div className="classroom-zone-field" data-field="timeZone" data-invalid={invalid("timeZone")}>
             <label className="admin-field">
               <span>{text.timeZone}</span>
-              <select aria-label={text.timeZone} title={validTimeZone(draft.timeZone) ? zoneOption(draft.timeZone) : undefined} value={searching ? OTHER : draft.timeZone} onChange={(event) => {
+              <select aria-label={text.timeZone} {...marked("timeZone")} title={validTimeZone(draft.timeZone) ? zoneOption(draft.timeZone) : undefined} value={searching ? OTHER : draft.timeZone} onChange={(event) => {
                 if (event.target.value === OTHER) setSearching(true);
                 else { setSearching(false); changeZone(event.target.value); }
               }}>
@@ -294,53 +357,61 @@ export function LessonForm({ locale, busy, scheduling, onSubmit }: {
                 <p className="classroom-field-hint">{search && !zones.some((zone) => zone.toLowerCase().includes(search.trim().toLowerCase().replace(/ /g, "_"))) ? text.searchNoMatch : text.searchHint}</p>
               </div>
             )}
+            {fieldError("timeZone")}
           </div>
-          <div data-field="date">
+          <div data-field="date" data-invalid={invalid("date")}>
             <label className="admin-field"><span>{text.date}</span>
-              <input type="date" value={draft.date} onChange={(event) => edit({ date: event.target.value }, true)} />
+              <input type="date" {...marked("date")} value={draft.date} onChange={(event) => edit({ date: event.target.value }, true)} />
             </label>
+            {fieldError("date")}
           </div>
-          <div data-field="time" className="admin-field" role="group" aria-labelledby={ids.time}>
+          <div data-field="time" data-invalid={invalid("time")} className="admin-field" role="group" aria-labelledby={ids.time}>
             <span id={ids.time}>{text.time}</span>
             <div className="classroom-time-pick">
-              <select aria-label={text.hour} value={draft.hour} onChange={(event) => edit({ hour: event.target.value, minute: draft.minute || "00" }, true)}>
+              <select aria-label={text.hour} {...marked("time")} value={draft.hour} onChange={(event) => edit({ hour: event.target.value, minute: draft.minute || "00" }, true)}>
                 <option value="">--</option>
                 {HOURS.map((hour) => <option key={hour} value={hour}>{hour}</option>)}
               </select>
               <span aria-hidden="true">:</span>
-              <select aria-label={text.minute} value={draft.minute} onChange={(event) => edit({ minute: event.target.value }, true)}>
+              <select aria-label={text.minute} {...marked("time")} value={draft.minute} onChange={(event) => edit({ minute: event.target.value }, true)}>
                 <option value="">--</option>
                 {MINUTES.map((minute) => <option key={minute} value={minute}>{minute}</option>)}
               </select>
             </div>
+            {fieldError("time")}
           </div>
-          <div data-field="minutes">
+          <div data-field="minutes" data-invalid={invalid("minutes")}>
             <label className="admin-field"><span>{text.minutes}</span>
-              <input type="number" min={15} max={240} step={5} inputMode="numeric" value={draft.minutes} onChange={(event) => edit({ minutes: event.target.value }, true)} />
+              <input type="number" min={15} max={240} step={5} inputMode="numeric" {...marked("minutes")} value={draft.minutes} onChange={(event) => edit({ minutes: event.target.value }, true)} />
             </label>
+            {fieldError("minutes")}
           </div>
         </div>
         <div className="classroom-form-group">
-          <div data-field="code">
+          <div data-field="code" data-invalid={invalid("code")}>
             <label className="admin-field"><span>{text.code}</span>
-              <input value={draft.code} onChange={(event) => edit({ code: event.target.value }, false)} />
+              <input {...marked("code")} value={draft.code} onChange={(event) => edit({ code: event.target.value }, false)} />
             </label>
+            {fieldError("code")}
           </div>
-          <div data-field="tutorCode">
+          <div data-field="tutorCode" data-invalid={invalid("tutorCode")}>
             <label className="admin-field"><span>{text.tutorCode}</span>
-              <input value={draft.tutorCode} onChange={(event) => edit({ tutorCode: event.target.value }, false)} />
+              <input {...marked("tutorCode")} value={draft.tutorCode} onChange={(event) => edit({ tutorCode: event.target.value }, false)} />
             </label>
+            {fieldError("tutorCode")}
           </div>
-          <div data-field="tutorEmail">
+          <div data-field="tutorEmail" data-invalid={invalid("tutorEmail")}>
             <label className="admin-field"><span>{text.tutorEmail}</span>
-              <input type="email" autoComplete="off" aria-describedby={ids.hint} value={draft.tutorEmail} onChange={(event) => edit({ tutorEmail: event.target.value }, false)} />
+              <input type="email" autoComplete="off" {...marked("tutorEmail", ids.hint)} value={draft.tutorEmail} onChange={(event) => edit({ tutorEmail: event.target.value }, false)} />
             </label>
+            {fieldError("tutorEmail")}
             <p id={ids.hint} className="classroom-field-hint">{text.emailHint}</p>
           </div>
-          <div data-field="studentCode">
+          <div data-field="studentCode" data-invalid={invalid("studentCode")}>
             <label className="admin-field"><span>{text.studentCode}</span>
-              <input value={draft.studentCode} onChange={(event) => edit({ studentCode: event.target.value }, false)} />
+              <input {...marked("studentCode")} value={draft.studentCode} onChange={(event) => edit({ studentCode: event.target.value }, false)} />
             </label>
+            {fieldError("studentCode")}
           </div>
         </div>
 
@@ -388,7 +459,7 @@ export function LessonForm({ locale, busy, scheduling, onSubmit }: {
                 )}
                 {!plan.windowPassed && (
                   <label className="classroom-confirm" data-confirm>
-                    <input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />
+                    <input type="checkbox" checked={confirmed} onChange={(event) => { setConfirmed(event.target.checked); onChange?.(); }} />
                     <span>{text.confirm(`${enteredName} ${longDateOf(draft.date, draft.timeZone, locale)} ${time}`)}</span>
                   </label>
                 )}
@@ -397,9 +468,14 @@ export function LessonForm({ locale, busy, scheduling, onSubmit }: {
           </section>
         )}
       </div>
-      <button type="button" className="admin-button primary" disabled={!canSubmit} onClick={submit}>{busy ? text.adding : text.add}</button>
+      <button type="button" className="admin-button primary" data-add-lesson disabled={!canSubmit} onClick={submit}
+        aria-describedby={[blocked && !busy ? ids.blocked : null, outcome?.summary ? ids.problem : null].filter(Boolean).join(" ") || undefined}>
+        {busy ? text.adding : text.add}
+      </button>
+      {blocked && !busy && <p id={ids.blocked} className="classroom-add-hint" data-add-blocked={blocked}>{words.blocked[blocked]}</p>}
+      {outcome?.summary && <p id={ids.problem} className="classroom-add-problem" role="alert" data-add-problem={outcome.failure.kind}>{summaryOf(outcome.failure)}</p>}
       {created && (
-        <p className="classroom-created" role="status">
+        <p className="classroom-created" role="status" data-created={created.code}>
           {text.created(created.code, `${zoneName(created.zone, locale)} ${spanIn(created.start, created.end, created.zone, locale).when} ${zoneMark(created.start, created.zone)}`
             + (created.zone !== house ? ` · ${text.house} ${shortStamp(created.start, house, locale)}` : "")
             + (created.zone !== TAIPEI ? ` · ${text.taipei} ${shortStamp(created.start, TAIPEI, locale)}` : ""))}
