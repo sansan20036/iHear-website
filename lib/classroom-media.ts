@@ -890,7 +890,7 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
       // browser waits for the person to press something again.
       listen("auto-play-audio-failed", () => {
         // While only listening, it is the room's sound that waits for a press, not the microphone.
-        if (this.listenOnly) { this.soundBlocked = true; console.info("[classroom] listening: the browser is holding the sound back until a press"); this.emit({ type: "sound", state: "blocked", at: this.now() }); }
+        if (this.listenOnly) { this.soundBlocked = true; console.debug("[classroom] listening: the browser is holding the sound back until a press"); this.emit({ type: "sound", state: "blocked", at: this.now() }); }
         else this.fromZoom("microphone", { state: "failed", problem: "autoplay" });
       });
       listen("device-permission-change", (payload) => {
@@ -1137,10 +1137,10 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
       await stream.startAudio({ speakerOnly: true });
       // One line for whoever looks into "no sound" (real Zoom, 2026-11-19: after an automatic move
       // to a teaching room nothing was heard until a press, though this had run). No name, no id.
-      console.info("[classroom] listening: joined the audio with the speaker only");
+      console.debug("[classroom] listening: joined the audio with the speaker only");
     } catch (error) {
       const reason = (error as { reason?: unknown; type?: unknown } | null);
-      console.info(`[classroom] listening: not started (${String(reason?.type ?? "")} ${String(reason?.reason ?? (error instanceof Error ? error.message : ""))})`.slice(0, 160));
+      console.debug(`[classroom] listening: not started (${String(reason?.type ?? "")} ${String(reason?.reason ?? (error instanceof Error ? error.message : ""))})`.slice(0, 160));
       if (attempt === this.attempt && this.stream === stream) this.listenOnly = false;
     }
   }
