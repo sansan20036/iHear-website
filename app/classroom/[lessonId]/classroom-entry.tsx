@@ -12,7 +12,7 @@ import {
 import { classroomDeviceOf, deviceLimits, type CapabilityName, type ClassroomDevice } from "../../../lib/classroom-capabilities";
 import { entryEndedBy, rejoinRoom, requestJoin, type JoinedSession } from "../../../lib/classroom-join-client";
 import { browserClassroomLocale, CLASSROOM_LOCALES, htmlLangOf, intlLocaleOf, LOCALE_NAMES, type ClassroomLocale } from "../../../lib/classroom-locale";
-import { HAND_NOTICE_MS, initialsOf, newHands, orderPeople, personLabel, spotlightOf, stageModeOf } from "../../../lib/classroom-room";
+import { connectionStep, devicesToOffer, HAND_NOTICE_MS, initialsOf, newHands, orderPeople, personLabel, spotlightOf, stageModeOf } from "../../../lib/classroom-room";
 import { claimLessonTab, lessonTabName, type TabClaim } from "../../../lib/classroom-tab";
 import { roomCopy as copy, vendorCopy } from "./classroom-copy";
 import { RoomIcon, type RoomIconName } from "./classroom-icons";
@@ -158,6 +158,10 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   const devicesChanged = useRef(onDevicesChange);
   devicesChanged.current = onDevicesChange;
   const [restoreOffered, setRestoreOffered] = useState(true);
+  // A one-to-one room after a reconnect (2026-11-20): what this person turned on with their own
+  // presses in this room, and, once the room is connected again, what to offer to turn on again.
+  const wanted = useRef<Record<DeviceKind, boolean>>({ camera: false, microphone: false });
+  const [rejoinOffer, setRejoinOffer] = useState<Record<DeviceKind, boolean> | null>(null);
   const [locale, setLocale] = useState<Locale>("zhHant");
   const [joinKey, setJoinKey] = useState<string | null>(givenKey ?? null);
   const blockMode = givenKey !== undefined;
@@ -373,10 +377,18 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
     adapter.current = current;
     setSimulator(current instanceof SyntheticMediaAdapter ? current : null);
     setFeatures({ chat: current.capabilities.chat, raiseHand: current.capabilities.raiseHand });
+    // A new room starts with both devices off and nothing pressed yet.
+    wanted.current = { camera: false, microphone: false };
+    let lost = false;
     const unsubscribe = current.subscribe((event: MediaEvent) => {
       if (event.type === "connection") {
+        const step = connectionStep(lost, connection.current, event.state);
+        lost = step.lost;
         connection.current = event.state;
         setMedia((state) => ({ ...state, connection: event.state }));
+        // Connected again after losing the connection: what was on came back off, and the room
+        // offers it (`offered` below, shown only while connected).
+        if (step.back) setRejoinOffer({ ...wanted.current });
       } else if (event.type === "device") {
         setMedia((state) => ({
           ...state, devices: { ...state.devices, [event.kind]: event.state },
@@ -448,6 +460,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
       setHandNotices([]);
       handsBefore.current = [];
       setElsewhere(0);
+      setRejoinOffer(null);
     };
   }, [phase, joined, report]);
 
@@ -660,7 +673,19 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
     const on = media.devices[kind] !== "on";
     // What this person wants on, from their own presses only (P3-Multi: offered again after a move).
     devicesChanged.current?.({ camera: kind === "camera" ? on : media.devices.camera === "on", microphone: kind === "microphone" ? on : media.devices.microphone === "on" });
+    // The same for a reconnect in this room; a press of its own answers the offer for that device.
+    wanted.current = { ...wanted.current, [kind]: on };
+    setRejoinOffer((offer) => (offer?.[kind] ? { ...offer, [kind]: false } : offer));
     await current.setDevice(kind, on);
+  }
+
+  // After a reconnect: one press turns on again what this person had on (never by itself). The
+  // microphone first (devicesToOffer): its sound needs the press, and a camera can be slow to start.
+  async function turnOnAgain(kinds: readonly DeviceKind[]) {
+    const current = adapter.current;
+    setRejoinOffer(null);
+    if (!current) return;
+    for (const kind of kinds) await current.setDevice(kind, true).catch(() => undefined);
   }
 
   // After a move: one press turns on again what was on in the previous room (never by itself).
@@ -882,6 +907,8 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   const cameraText = { on: cameraOn, off: text.cameraOff, denied: text.cameraDenied, unavailable: text.cameraUnavailable, starting: text.cameraStarting, failed: text.cameraFailed }[media.devices.camera];
   const micText = { on: text.micOn, off: text.micOff, denied: text.micDenied, unavailable: text.micUnavailable, starting: text.micStarting, failed: text.micFailed }[media.devices.microphone];
   const connected = media.connection === "connected";
+  // A one-to-one room only: a block's rooms offer what was on after a move (restoreDevices).
+  const offered = !blockMode && connected ? devicesToOffer(rejoinOffer, media.devices) : [];
   const handUp = hands.some((hand) => hand.self);
   const othersHands = hands.filter((hand) => !hand.self);
   // A chat line's time, Taipei like the lesson's.
@@ -1050,6 +1077,13 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
               <p>{locale === "en" ? "You moved to another room, so your camera and microphone start off here. Turn on what you had on before?" : "換了教室，攝影機和麥克風先保持關閉。要重新開啟你在上一間教室開著的裝置嗎？"}</p>
               <button type="button" className="classroom-room-secondary" onClick={() => void restoreNow()}>{locale === "en" ? "Turn them on" : "重新開啟"}</button>
               <button type="button" className="classroom-room-secondary" onClick={() => setRestoreOffered(false)}>{locale === "en" ? "Not now" : "不用"}</button>
+            </div>
+          )}
+          {offered.length > 0 && (
+            <div className="classroom-room-note" role="status" data-rejoin-devices={offered.join(" ")}>
+              <p>{offered.length > 1 ? text.rejoinDevices.both : text.rejoinDevices[offered[0]]}</p>
+              <button type="button" className="classroom-room-secondary" onClick={() => void turnOnAgain(offered)}>{text.rejoinTurnOn}</button>
+              <button type="button" className="classroom-room-secondary" onClick={() => setRejoinOffer(null)}>{text.rejoinNotNow}</button>
             </div>
           )}
           {media.available && media.connection === "reconnecting" && <p className="classroom-room-problem" role="status">{text.reconnecting}</p>}

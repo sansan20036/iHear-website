@@ -248,6 +248,107 @@ try {
     await shared.close();
   });
 
+  // After a reconnect (2026-11-20): joining again starts with the camera and microphone off (Zoom's
+  // client is released and a new one joins). The one-to-one room said nothing, and with the
+  // automatic reconnect the failure shows for a few seconds only. Now it says what is off and turns
+  // it on again with one press, never by itself.
+  await check('after a reconnect the room says the camera and microphone are off; one press turns on again what was on, never by itself', async () => {
+    // A lesson of its own: a one-to-one lesson allows 10 joins a minute from one address, and every
+    // page of this run shares the same address (it joins 6 times here).
+    const own = { code: 'TEST-R2J', date: lesson.date, time: lesson.time, minutes: lesson.minutes, tutorCode: 'TEST-RT2', tutorEmail: 'room2-tutor2@example.test', studentCode: 'TEST-RS2' };
+    const added = await admin.evaluate(async body => {
+      const response = await fetch('/api/admin/classrooms', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+      return { status: response.status, body: await response.json() };
+    }, own);
+    expect(added.status).toBe(201);
+    const page = watch(await (await context(DEVICES.computer, [1280, 800])).newPage(), 'student-rejoin');
+    await enter(page, new URL(added.body.studentLink, origin).href);
+    const pill = page.locator('.room2-top .classroom-room-connection');
+    const camera = page.getByRole('button', { name: /^攝影機：/ }), microphone = page.getByRole('button', { name: /^麥克風：/ });
+    const offer = page.locator('[data-rejoin-devices]');
+    const failedAlert = page.getByRole('alert').filter({ hasText: '視訊無法連線' });
+    const pressed = async (cameraOn, microphoneOn) => {
+      await expect(camera).toHaveAttribute('aria-pressed', String(cameraOn));
+      await expect(microphone).toHaveAttribute('aria-pressed', String(microphoneOn));
+    };
+    await camera.click();
+    await microphone.click();
+    await pressed(true, true);
+
+    // 1. Zoom gives up and the page joins again by itself (after 3 s): both came back off, and it says so.
+    await simulate(page, '連線失敗');
+    await expect(failedAlert).toBeVisible();
+    await expect(offer).toHaveCount(0);
+    await expect(pill).toHaveText('已連線', { timeout: 10_000 });
+    await pressed(false, false);
+    await expect(offer).toHaveAttribute('data-rejoin-devices', 'microphone camera');
+    await expect(offer).toHaveAttribute('role', 'status');
+    await expect(offer.locator('p')).toHaveText('剛才重新連線，你的攝影機和麥克風都關掉了，對方看不到也聽不到你。要重新開啟嗎？');
+    await layout(page, 'student-1280-rejoin-offer');
+    await page.setViewportSize({ width: 320, height: 640 });
+    await layout(page, 'student-320-rejoin-offer');
+    await page.setViewportSize({ width: 1280, height: 800 });
+    // Nothing turns on by itself while the offer waits.
+    await page.waitForTimeout(1500);
+    await pressed(false, false);
+    await offer.getByRole('button', { name: '重新開啟', exact: true }).click();
+    await pressed(true, true);
+    await expect(offer).toHaveCount(0);
+
+    // 2. "Connect again" pressed at once, with only the camera on before: only the camera is offered; "Not now" leaves it off.
+    await microphone.click();
+    await pressed(true, false);
+    await simulate(page, '連線失敗');
+    await page.getByRole('button', { name: '重新連線', exact: true }).click();
+    await expect(pill).toHaveText('已連線');
+    await expect(offer.locator('p')).toHaveText('剛才重新連線，你的攝影機關掉了，對方看不到你。要重新開啟嗎？');
+    await offer.getByRole('button', { name: '不用', exact: true }).click();
+    await expect(offer).toHaveCount(0);
+    await page.waitForTimeout(500);
+    await pressed(false, false);
+
+    // 3. A press of the person's own answers the offer for that device.
+    await camera.click();
+    await microphone.click();
+    await simulate(page, '連線失敗');
+    await expect(pill).toHaveText('已連線', { timeout: 10_000 });
+    await expect(offer).toHaveAttribute('data-rejoin-devices', 'microphone camera');
+    await microphone.click();
+    await expect(offer).toHaveAttribute('data-rejoin-devices', 'camera');
+    await expect(offer.locator('p')).toHaveText('剛才重新連線，你的攝影機關掉了，對方看不到你。要重新開啟嗎？');
+    // Turned off again by the person: the offer does not come back for it.
+    await microphone.click();
+    await pressed(false, false);
+    await page.waitForTimeout(300);
+    await expect(offer).toHaveAttribute('data-rejoin-devices', 'camera');
+    await camera.click();
+    await expect(offer).toHaveCount(0);
+    await microphone.click();
+    await pressed(true, true);
+
+    // 4. Zoom's own short reconnect keeps the devices on: nothing to offer.
+    await simulate(page, '網路中斷');
+    await expect(pill).toHaveText('重新連線中…');
+    await simulate(page, '網路恢復');
+    await expect(pill).toHaveText('已連線');
+    await page.waitForTimeout(500);
+    await expect(offer).toHaveCount(0);
+    await pressed(true, true);
+
+    // 5. Leaving on purpose and entering again is no reconnect, and nothing pressed before counts in the new room.
+    await page.getByRole('button', { name: '離開教室' }).first().click();
+    await expect(page.getByText('你已離開教室。')).toBeVisible();
+    await page.getByRole('button', { name: '重新進入' }).click();
+    await expect(pill).toHaveText('已連線');
+    await pressed(false, false);
+    await expect(offer).toHaveCount(0);
+    await simulate(page, '連線失敗');
+    await expect(pill).toHaveText('已連線', { timeout: 10_000 });
+    await page.waitForTimeout(500);
+    await expect(offer).toHaveCount(0);
+    await page.context().close();
+  });
+
   // ---------- A tutor on a computer ----------
   let tutorPage;
   await check('tutor, computer: share and whiteboard take the stage; focus mode; the More menu and panels by keyboard', async () => {

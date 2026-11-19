@@ -1,6 +1,8 @@
 import { describe, expect, test } from "vitest";
 
-import { HAND_NOTICE_MS, initialsOf, newHands, orderPeople, personLabel, spotlightOf, stageModeOf } from "../lib/classroom-room";
+import { connectionStep, devicesToOffer, HAND_NOTICE_MS, initialsOf, newHands, orderPeople, personLabel, spotlightOf, stageModeOf } from "../lib/classroom-room";
+
+const { roomCopy } = await import("../app/classroom/[lessonId]/classroom-copy");
 
 // Classroom 2.0 (2026-11-12): the room's layout rules, from the media state alone. Synthetic people
 // with test codes only; nothing here touches a page, an SDK or the network.
@@ -57,5 +59,69 @@ describe("Classroom 2.0: what the room shows", () => {
     expect(spotlightOf("TEST-S02", people)).toBe("TEST-S02");
     expect(spotlightOf("TEST-S09", people)).toBeNull();
     expect(spotlightOf(null, people)).toBeNull();
+  });
+});
+
+// 2026-11-20: after a reconnect the camera and microphone are off, and the one-to-one room now says
+// so. The connection's states as the page hears them, one at a time (the adapters never repeat one).
+const replay = (states) => {
+  let lost = false, before = "idle";
+  const backs = [];
+  for (const state of states) {
+    const step = connectionStep(lost, before, state);
+    lost = step.lost;
+    before = state;
+    backs.push(step.back);
+  }
+  return { backs, lost };
+};
+
+describe("after a reconnect: what the room offers to turn on again", () => {
+  test("RJ-1: the first join is no reconnect; Zoom's own reconnect, a failure with joining again, and a move are", () => {
+    expect(replay(["connecting", "connected"]).backs).toEqual([false, false]);
+    // Zoom reconnects by itself.
+    expect(replay(["connecting", "connected", "reconnecting", "connected"]).backs).toEqual([false, false, false, true]);
+    // Zoom gives up; the page (or "Connect again") joins again.
+    expect(replay(["connecting", "connected", "failed", "connecting", "connected"]).backs).toEqual([false, false, false, false, true]);
+    // Reconnecting, then failing, then joined again: offered once.
+    expect(replay(["connecting", "connected", "reconnecting", "failed", "connecting", "connected"]).backs.filter(Boolean)).toHaveLength(1);
+    // A move to another room (D-5) joins again straight from "connected".
+    expect(replay(["connecting", "connected", "connecting", "connected"]).backs).toEqual([false, false, false, true]);
+    // A first join that failed and was tried again: nothing was on before, nothing is offered.
+    expect(replay(["connecting", "failed", "connecting", "connected"]).backs).toEqual([false, false, false, false]);
+    // Still down at the end: lost, not back.
+    expect(replay(["connecting", "connected", "failed"])).toEqual({ backs: [false, false, false], lost: true });
+  });
+
+  test("RJ-2: only what the person had turned on and is off now; the microphone first", () => {
+    const off = { camera: "off", microphone: "off" };
+    expect(devicesToOffer(null, off)).toEqual([]);
+    expect(devicesToOffer({ camera: false, microphone: false }, off)).toEqual([]);
+    expect(devicesToOffer({ camera: true, microphone: true }, off)).toEqual(["microphone", "camera"]);
+    expect(devicesToOffer({ camera: true, microphone: false }, off)).toEqual(["camera"]);
+    expect(devicesToOffer({ camera: false, microphone: true }, off)).toEqual(["microphone"]);
+    // On or starting needs nothing; blocked or failed has its own help and its own "Try again".
+    for (const state of ["on", "starting", "denied", "unavailable", "failed"]) {
+      expect(devicesToOffer({ camera: true, microphone: true }, { camera: state, microphone: state }), state).toEqual([]);
+    }
+    expect(devicesToOffer({ camera: true, microphone: true }, { camera: "on", microphone: "off" })).toEqual(["microphone"]);
+  });
+
+  test("RJ-3: the offer in all three languages names what is off, each in its own script", () => {
+    for (const locale of ["en", "zhHant", "zhHans"]) {
+      const text = roomCopy[locale];
+      for (const key of ["both", "camera", "microphone"]) expect(String(text.rejoinDevices?.[key] ?? "").length, `${locale}.rejoinDevices.${key}`).toBeGreaterThan(0);
+      for (const key of ["rejoinTurnOn", "rejoinNotNow"]) expect(String(text[key] ?? "").length, `${locale}.${key}`).toBeGreaterThan(0);
+      const says = (value, word) => value.toLowerCase().includes(word.toLowerCase());
+      expect(says(text.rejoinDevices.camera, text.camera) && !says(text.rejoinDevices.camera, text.microphone), `${locale} camera`).toBe(true);
+      expect(says(text.rejoinDevices.microphone, text.microphone) && !says(text.rejoinDevices.microphone, text.camera), `${locale} microphone`).toBe(true);
+      expect(says(text.rejoinDevices.both, text.camera) && says(text.rejoinDevices.both, text.microphone), `${locale} both`).toBe(true);
+    }
+    // The question names the button that answers it.
+    for (const locale of ["zhHant", "zhHans"]) for (const key of ["both", "camera", "microphone"]) expect(roomCopy[locale].rejoinDevices[key]).toContain(roomCopy[locale].rejoinTurnOn);
+    const words = (locale) => { const t = roomCopy[locale]; return [...Object.values(t.rejoinDevices), t.rejoinTurnOn, t.rejoinNotNow].join(" "); };
+    expect(words("en")).not.toMatch(/\p{Script=Han}/u);
+    expect(words("zhHant")).not.toMatch(/[这个页标签设备进们说时间开关请显视频务连线摄头对听吗启]/u);
+    expect(words("zhHans")).not.toMatch(/[這個頁標籤設備進們說時間開關請顯視頻螢務連線攝頭對聽嗎啟]/u);
   });
 });

@@ -256,6 +256,14 @@ export class SyntheticMediaAdapter implements ClassroomMediaAdapter {
     if (this.connection === "connected" || this.connection === "connecting") return;
     this.role = input.role;
     this.participantCode = input.participantCode;
+    // Joining again (after a failure) starts with the camera and microphone off, as Zoom's does: its
+    // old client is released first and a new one joins (ZoomVideoSdkMediaAdapter.teardown). A
+    // blocked device stays blocked.
+    for (const kind of ["camera", "microphone"] as const) {
+      if (this.devices[kind] !== "on" && this.devices[kind] !== "starting") continue;
+      this.devices[kind] = "off";
+      this.emit({ type: "device", kind, state: "off", at: this.now() });
+    }
     this.setConnection("connecting");
     if (this.connectDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, this.connectDelayMs));
     // leave() or a simulated failure may have happened while connecting.

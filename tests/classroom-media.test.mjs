@@ -105,6 +105,31 @@ describe("the provider-neutral media adapter", () => {
     for (const scenario of SYNTHETIC_SCENARIOS) expect(() => adapter.simulate(scenario)).not.toThrow();
   });
 
+  // 2026-11-20: as Zoom's adapter does (its client is released and a new one joins), joining again
+  // after a failure starts with the camera and microphone off, so the page can offer them again.
+  test("RJ-4: joining again after a failure starts with both devices off and says so first; Zoom's own reconnect keeps them; a blocked device stays blocked", async () => {
+    const adapter = new SyntheticMediaAdapter({ connectDelayMs: 0 });
+    const events = recorded(adapter);
+    const told = () => events.filter(event => event.type === "connection" || event.type === "device").map(event => (event.type === "connection" ? event.state : `${event.kind}:${event.state}`));
+    await adapter.join(joinInput);
+    await adapter.setDevice("camera", true);
+    await adapter.setDevice("microphone", true);
+    adapter.simulate("network-drop");
+    adapter.simulate("network-restore");
+    expect(adapter.state.devices).toEqual({ camera: "on", microphone: "on" });
+    adapter.simulate("connection-failed");
+    events.length = 0;
+    await adapter.join(joinInput);
+    expect(told()).toEqual(["camera:off", "microphone:off", "connecting", "connected"]);
+    expect(adapter.state.devices).toEqual({ camera: "off", microphone: "off" });
+    // A device the browser blocks stays blocked through joining again.
+    adapter.simulate("camera-denied");
+    await adapter.setDevice("microphone", true);
+    adapter.simulate("connection-failed");
+    await adapter.join(joinInput);
+    expect(adapter.state.devices).toEqual({ camera: "denied", microphone: "off" });
+  });
+
   test("the tutor reports connection changes in the existing report vocabulary, and joins only with a user key", () => {
     const at = 1;
     expect(hostReportFor({ type: "connection", state: "connected", at })).toEqual({ type: "connection", state: "Connected" });

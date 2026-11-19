@@ -2,7 +2,7 @@
 // SDK), so the rules can be tested without a browser. The page (app/classroom/[lessonId]) draws it.
 
 import type { RaisedHand } from "./classroom-chat";
-import type { RoomPerson } from "./classroom-media";
+import type { ConnectionState, DeviceKind, DeviceState, RoomPerson } from "./classroom-media";
 
 // What fills the main stage: the people (nobody shares), the shared screen, the whiteboard, or the
 // vendor's whole classroom page (LCIC). The whiteboard wins when both are on.
@@ -55,4 +55,22 @@ export function initialsOf(person: RoomPerson, words: { tutor: string; student: 
 // A person to enlarge on this page only: kept while they are here, dropped when they leave.
 export function spotlightOf(current: string | null, people: readonly RoomPerson[]): string | null {
   return current && people.some((person) => person.id === current) ? current : null;
+}
+
+// After a reconnect (2026-11-20): joining again starts with the camera and microphone off (Zoom's
+// client is released and a new one joins), and the one-to-one room said nothing; with the automatic
+// reconnect the failure shows for only a few seconds, so the person may not notice they are muted.
+// The room follows its connection: "lost" once a connected room is no longer connected (Zoom's own
+// reconnect, a failure, a move to another room), "back" when it is connected again after that.
+export function connectionStep(lost: boolean, before: ConnectionState, now: ConnectionState): { lost: boolean; back: boolean } {
+  if (now === "connected") return { lost: false, back: lost };
+  return { lost: lost || before === "connected", back: false };
+}
+
+// What to offer to turn on again once back: what the person had turned on with their own presses
+// and is off now. A blocked or failed device is not offered (it has its own help and its own "Try
+// again"); one starting or on needs nothing. The microphone comes first: its sound needs the press.
+export function devicesToOffer(wanted: Readonly<Record<DeviceKind, boolean>> | null, devices: Readonly<Record<DeviceKind, DeviceState>>): DeviceKind[] {
+  if (!wanted) return [];
+  return (["microphone", "camera"] as const).filter((kind) => wanted[kind] && devices[kind] === "off");
 }
