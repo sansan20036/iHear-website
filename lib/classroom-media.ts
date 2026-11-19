@@ -46,6 +46,9 @@ export type MediaEvent =
   // the production site the tutor was in one lesson up to three times at once, and the student saw
   // and heard a different one than the tutor was using). Told when the count changes; 0 when gone.
   | { type: "duplicate"; count: number; at: number }
+  // The browser would not play the room's sound without the person pressing something first
+  // ("blocked"); "playing" when it plays again.
+  | { type: "sound"; state: "blocked" | "playing"; at: number }
   // The vendor's id for the session this page joined. Nothing on the page shows it; the tutor's
   // page reports it where the server confirms such ids with the vendor.
   | { type: "session"; sessionId: string; at: number }
@@ -524,7 +527,7 @@ export type ZoomChat = { sendToAll(text: string): Promise<unknown>; setPrivilege
 // The command channel carries raised hands; without a target a message goes to the whole session.
 export type ZoomCommand = { send(text: string, target?: number): Promise<unknown> };
 export type ZoomStream = {
-  startAudio(): Promise<unknown>; stopAudio(): Promise<unknown>; muteAudio(): Promise<unknown>; unmuteAudio(): Promise<unknown>;
+  startAudio(options?: { speakerOnly?: boolean }): Promise<unknown>; stopAudio(): Promise<unknown>; muteAudio(): Promise<unknown>; unmuteAudio(): Promise<unknown>;
   startVideo(): Promise<unknown>; stopVideo(): Promise<unknown>; isCapturingVideo(): boolean;
   attachVideo(userId: number, quality: number): Promise<unknown>; detachVideo(userId: number): Promise<unknown>;
   // Materials: the tutor shares a screen, window or tab; the other side sees it in a container of its own.
@@ -651,6 +654,15 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
   private stream: ZoomStream | null = null;
   private stage: ZoomStage | null = null;
   private audioStarted = false;
+  // Hearing the room does not wait for the microphone (real Zoom, 2026-11-19: a student moved to a
+  // teaching room heard nothing until pressing the microphone button, because the page joined
+  // Zoom's audio only on that press). On joining, the page now joins the audio with the speaker
+  // only (no microphone, so no permission is asked); the first press on the microphone leaves that
+  // and joins with the microphone. `listenOnly`: in the speaker-only audio. `switchingAudio`:
+  // between the two, when Zoom's "left the audio" is not the microphone going off.
+  private listenOnly = false;
+  private switchingAudio = false;
+  private soundBlocked = false;
   private sharing: "none" | "sending" | "receiving" = "none";
   private sharer: number | null = null;
   private board: "none" | "presenting" | "viewing" = "none";
@@ -858,6 +870,11 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
       });
       listen("current-audio-change", (payload) => {
         const action = (payload as { action?: string })?.action;
+        // The speaker-only audio (and leaving it for the microphone) says nothing about the microphone.
+        if (this.listenOnly || this.switchingAudio) {
+          if (action === "join" && this.soundBlocked) { this.soundBlocked = false; this.emit({ type: "sound", state: "playing", at: this.now() }); }
+          return;
+        }
         if (action === "join") this.audioStarted = true;
         if (action === "leave") this.audioStarted = false;
         if (action === "join" || action === "unmuted") this.fromZoom("microphone", { state: "on" });
@@ -865,7 +882,11 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
       });
       // Zoom: this "may occur when invoking stream.startAudio() immediately after joining"; the
       // browser waits for the person to press something again.
-      listen("auto-play-audio-failed", () => this.fromZoom("microphone", { state: "failed", problem: "autoplay" }));
+      listen("auto-play-audio-failed", () => {
+        // While only listening, it is the room's sound that waits for a press, not the microphone.
+        if (this.listenOnly) { this.soundBlocked = true; this.emit({ type: "sound", state: "blocked", at: this.now() }); }
+        else this.fromZoom("microphone", { state: "failed", problem: "autoplay" });
+      });
       listen("device-permission-change", (payload) => {
         const { name, state } = (payload ?? {}) as { name?: string; state?: string };
         if ((name === "camera" || name === "microphone") && state === "denied") this.fromZoom(name, { state: "denied" });
@@ -876,6 +897,8 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
       this.stream = zoom.getMediaStream();
       for (const ready of [...this.streamWaiters]) ready();
       this.setConnection("connected");
+      // The room is heard from now on, microphone or not. Not waited for: sound never holds up the join.
+      void this.startListening(this.stream, attempt);
       // Zoom's id for this session, for the server to confirm and then use without webhooks. An
       // SDK without it (or an empty id) just says nothing.
       const sessionId = client.getSessionInfo?.()?.sessionId;
@@ -919,7 +942,8 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     const client = this.client, handlers = this.handlers.splice(0);
     const own = client?.getCurrentUserInfo()?.userId;
     if (typeof own === "number") this.pastSelf.add(own);
-    this.client = null; this.stream = null; this.audioStarted = false; this.tiles.clear(); this.sharer = null;
+    this.client = null; this.stream = null; this.audioStarted = false; this.listenOnly = false; this.switchingAudio = false; this.tiles.clear(); this.sharer = null;
+    if (this.soundBlocked) { this.soundBlocked = false; this.emit({ type: "sound", state: "playing", at: this.now() }); }
     clearTimeout(this.videosTimer);
     this.waitingVideos.clear();
     if (this.elsewhere) { this.elsewhere = 0; this.emit({ type: "duplicate", count: 0, at: this.now() }); }
@@ -1076,11 +1100,35 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
       await stream.stopAudio().catch(() => undefined);
       this.audioStarted = false;
     }
-    if (this.audioStarted) {
-      await stream.unmuteAudio();
-    } else {
-      await stream.startAudio();
-      this.audioStarted = true;
+    // From listening only to the microphone: the speaker-only audio is left first (Zoom joins the
+    // audio one way at a time). The room is silent for the moment in between.
+    if (this.listenOnly && !retry) {
+      this.switchingAudio = true;
+      await stream.stopAudio().catch(() => undefined);
+    }
+    this.listenOnly = false;
+    try {
+      if (this.audioStarted) {
+        await stream.unmuteAudio();
+      } else {
+        await stream.startAudio();
+        this.audioStarted = true;
+      }
+    } finally {
+      this.switchingAudio = false;
+    }
+  }
+
+  // Joins Zoom's audio with the speaker only, so the room is heard before (and without) the
+  // microphone. A browser that will not play sound yet says so through "auto-play-audio-failed";
+  // a failure here leaves things as they were before 2026-11-19 (sound from the first microphone press).
+  private async startListening(stream: ZoomStream, attempt: number) {
+    if (this.audioStarted || this.listenOnly) return;
+    this.listenOnly = true;
+    try {
+      await stream.startAudio({ speakerOnly: true });
+    } catch {
+      if (attempt === this.attempt && this.stream === stream) this.listenOnly = false;
     }
   }
 

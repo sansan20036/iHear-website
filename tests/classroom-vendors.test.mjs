@@ -501,7 +501,8 @@ describe("browser adapters", () => {
     let capturing = false;
     const qualities = [];
     const stream = {
-      startAudio: async () => { calls.push("startAudio"); if (hangs.audio > 0) { hangs.audio -= 1; await never(); } },
+      // Joining the audio with the speaker only (hearing the room, 2026-11-19) is its own call: "listen".
+      startAudio: async (options) => { if (options?.speakerOnly) { calls.push("listen"); return; } calls.push("startAudio"); if (hangs.audio > 0) { hangs.audio -= 1; await never(); } },
       stopAudio: async () => calls.push("stopAudio"), muteAudio: async () => calls.push("muteAudio"), unmuteAudio: async () => calls.push("unmuteAudio"),
       startVideo: async () => {
         calls.push("startVideo");
@@ -869,7 +870,7 @@ describe("browser adapters", () => {
     expect(await adapter.setDevice("microphone", true)).toBe("on");
     expect(await adapter.setDevice("microphone", false)).toBe("off");
     expect(await adapter.setDevice("microphone", true)).toBe("on");
-    expect(zoom.calls.filter(call => /Audio/.test(call))).toEqual(["startAudio", "muteAudio", "unmuteAudio"]);
+    expect(zoom.calls.filter(call => /Audio/.test(call))).toEqual(["stopAudio", "startAudio", "muteAudio", "unmuteAudio"]);
     expect(await adapter.setDevice("camera", true)).toBe("denied");
     await adapter.leave();
     expect(zoom.calls).toContain("leave");
@@ -959,7 +960,7 @@ describe("browser adapters", () => {
     const pressedAgain = Date.now();
     expect(await sound.adapter.setDevice("microphone", true)).toBe("on");
     expect(Date.now() - pressedAgain).toBeLessThan(1_000);
-    expect(sound.zoom.calls.filter(call => /Audio/.test(call))).toEqual(["startAudio", "stopAudio", "startAudio"]);
+    expect(sound.zoom.calls.filter(call => /Audio/.test(call))).toEqual(["stopAudio", "startAudio", "stopAudio", "startAudio"]);
     const blocked = await joined({ videoHangs: 1 }, { deviceStartMs: 5_000 });
     const asking = blocked.adapter.setDevice("camera", true);
     await settle();
@@ -1693,6 +1694,43 @@ describe("browser adapters", () => {
     zoom.users.push({ userId: 30, userIdentity: zoom.users[0].userIdentity });
     await peopleChanged(zoom, "user-added");
     expect(duplicates().at(-1)).toBe(1);
+  });
+
+  // 2026-11-19, real Zoom: a student moved to a teaching room heard nothing until pressing the
+  // microphone button, because the page joined Zoom's audio only on that press.
+  test("AV-8 the room is heard without the microphone: joining joins the audio with the speaker only, the microphone stays off, and the first press joins with the microphone", async () => {
+    const { zoom, adapter, events } = await joined({ others: [{ userId: 2, userIdentity: "P-TEST-S01" }] }, quick);
+    await settle();
+    expect(zoom.calls.filter(call => call === "listen")).toEqual(["listen"]);
+    expect(zoom.calls.filter(call => /Audio/.test(call))).toEqual([]);
+    // Zoom says "joined the audio" for the speaker too: that is not the microphone coming on.
+    zoom.handlers.get("current-audio-change")({ action: "join" }); await settle();
+    const microphone = () => events.filter(event => event.type === "device" && event.kind === "microphone").map(event => event.state);
+    expect(microphone().includes("on")).toBe(false);
+    // The first press: out of the speaker-only audio, in with the microphone.
+    const pressed = adapter.setDevice("microphone", true);
+    await settle();
+    zoom.handlers.get("current-audio-change")({ action: "join" });
+    expect(await pressed).toBe("on");
+    expect(zoom.calls.filter(call => /Audio/.test(call))).toEqual(["stopAudio", "startAudio"]);
+    // Off again is a mute: the room is still heard.
+    await adapter.setDevice("microphone", false);
+    expect(zoom.calls.filter(call => /Audio/.test(call))).toEqual(["stopAudio", "startAudio", "muteAudio"]);
+    // A new join (another room, or after a failure) listens again.
+    await adapter.leave();
+    await adapter.join(zoomJoin); await settle();
+    expect(zoom.calls.filter(call => call === "listen")).toEqual(["listen", "listen"]);
+  });
+
+  test("AV-9 a browser that will not play the room's sound yet is said as that (not as a microphone problem), and unsaid when the sound plays", async () => {
+    const { zoom, events } = await joined({ others: [{ userId: 2, userIdentity: "P-TEST-S01" }] }, quick);
+    await settle();
+    zoom.handlers.get("auto-play-audio-failed")(); await settle();
+    const sound = () => events.filter(event => event.type === "sound").map(event => event.state);
+    expect(sound()).toEqual(["blocked"]);
+    expect(events.some(event => event.type === "device" && event.kind === "microphone" && event.state === "failed")).toBe(false);
+    zoom.handlers.get("current-audio-change")({ action: "join" }); await settle();
+    expect(sound()).toEqual(["blocked", "playing"]);
   });
 
   test("AV-4 looking at the cameras never touches this page's own camera or microphone, and draws nobody's own video twice", async () => {

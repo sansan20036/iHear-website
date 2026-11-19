@@ -277,6 +277,17 @@ try {
     // The material alone, full screen, works for the whiteboard too.
     await expect(page.locator('[data-stage-fullscreen]')).toBeVisible();
     await layout(page, 'tutor-1440-whiteboard', { material: true });
+    // The other way round (real Zoom, 2026-11-19: with the whiteboard open a press on "share" did
+    // nothing and the page blamed a cancelled choice): this page's own board is closed first, so one
+    // press shares; then one press on the whiteboard brings the board back.
+    await share.click();
+    await expect(share).toHaveAttribute('aria-pressed', 'true');
+    await expect(board).toHaveAccessibleName('開啟白板');
+    await expect(page.locator('.room2-stage-label')).toHaveText('你正在分享畫面');
+    await expect(page.getByRole('alert').filter({ hasText: '畫面沒有開始分享' })).toHaveCount(0);
+    await board.click();
+    await expect(page.locator('.room2')).toHaveAttribute('data-mode', 'board');
+    await expect(share).toHaveAttribute('aria-pressed', 'false');
     // Focus mode from the stage, and Escape leaves it.
     await page.locator('.room2-stage-tool', { hasText: '專注模式' }).click();
     await expect(page.locator('.room2')).toHaveAttribute('data-focus', 'on');

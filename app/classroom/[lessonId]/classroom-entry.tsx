@@ -215,6 +215,8 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   // zoom and the stage alone full screen.
   const tabClaim = useRef<TabClaim | null>(null);
   const [elsewhere, setElsewhere] = useState(0);
+  // The browser is holding back the room's sound until the person presses something (2026-11-19).
+  const [soundBlocked, setSoundBlocked] = useState(false);
   const [shareZoom, setShareZoom] = useState(1);
   const stageBox = useRef<HTMLElement | null>(null);
   const [stageFull, setStageFull] = useState(false);
@@ -405,6 +407,8 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
         setSpeaking(event.ids);
       } else if (event.type === "duplicate") {
         setElsewhere(event.count);
+      } else if (event.type === "sound") {
+        setSoundBlocked(event.state === "blocked");
       }
       // A session id changes nothing on screen; it is reported only when the join answer asked.
       if (joined.role === "tutor") {
@@ -680,6 +684,10 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
     if (!current?.setScreenShare) return;
     setToolProblem("");
     const on = media.share !== "sending";
+    // Zoom shares no screen while its whiteboard is open (real Zoom, 2026-11-19: the press did
+    // nothing and the page blamed a cancelled choice). This page's own board is closed first, so one
+    // press shares, the same way one press on the whiteboard stops this page's own share.
+    if (on && media.whiteboard === "presenting" && current.setWhiteboard) await current.setWhiteboard(false).catch(() => false);
     const started = await current.setScreenShare(on).catch(() => false);
     if (on && !started) setToolProblem("share");
   }
@@ -795,6 +803,44 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   useEffect(() => {
     moveRoom.current = () => { void reconnect(); };
   });
+
+  // The enlarged material can be moved by dragging it (asked for after the real test of
+  // 2026-11-19; before, only the scroll bars moved it). Only while enlarged, and only with a mouse
+  // or pen: a finger already scrolls it.
+  const draggable = phase === "joined" && media.share === "receiving" && shareZoom > 1;
+  useEffect(() => {
+    const area = draggable ? stageBox.current?.querySelector<HTMLElement>(".classroom-zoom-share") : null;
+    if (!area) return;
+    let from: { x: number; y: number; left: number; top: number } | null = null;
+    const down = (event: PointerEvent) => {
+      if (event.pointerType === "touch" || event.button !== 0) return;
+      from = { x: event.clientX, y: event.clientY, left: area.scrollLeft, top: area.scrollTop };
+      area.setPointerCapture?.(event.pointerId);
+      area.dataset.dragging = "on";
+    };
+    const move = (event: PointerEvent) => {
+      if (!from) return;
+      area.scrollLeft = from.left - (event.clientX - from.x);
+      area.scrollTop = from.top - (event.clientY - from.y);
+    };
+    const up = (event: PointerEvent) => {
+      if (!from) return;
+      from = null;
+      area.releasePointerCapture?.(event.pointerId);
+      delete area.dataset.dragging;
+    };
+    area.addEventListener("pointerdown", down);
+    area.addEventListener("pointermove", move);
+    area.addEventListener("pointerup", up);
+    area.addEventListener("pointercancel", up);
+    return () => {
+      area.removeEventListener("pointerdown", down);
+      area.removeEventListener("pointermove", move);
+      area.removeEventListener("pointerup", up);
+      area.removeEventListener("pointercancel", up);
+      delete area.dataset.dragging;
+    };
+  }, [draggable]);
 
   // Zoom gave up on a connection (real Zoom, 2026-11-19: after 4 of 9 network cuts of 30 seconds the
   // room said "connection failed" and waited for a press on "Connect again"; a child does not know
@@ -1036,6 +1082,13 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
           {toolProblem && <p className="classroom-room-problem" role="alert" data-board-code={toolProblem === "share" ? undefined : boardCode ?? undefined}>{toolProblem === "share" ? v.shareFailed : boardProblemText(v, toolProblem, boardCode)}</p>}
           {handProblem && <p className="classroom-room-problem" role="alert">{text.handFailed}</p>}
           {elsewhere > 0 && <p className="classroom-room-problem" role="alert" data-elsewhere={elsewhere}>{text.elsewhere}</p>}
+          {soundBlocked && (
+            <div className="classroom-room-problem classroom-room-problem-row" role="alert" data-sound-blocked>
+              <span>{text.soundBlocked}</span>
+              {/* The press itself is what the browser waits for: Zoom then plays the sound. */}
+              <button type="button" className="classroom-room-secondary" onClick={() => setSoundBlocked(false)}>{text.soundOn}</button>
+            </div>
+          )}
           {isTutor && recording?.status === "FAILED" && <p className="classroom-room-problem" role="alert">{text.failedRecording}</p>}
           {isTutor && hostProblem === "unstable" && <p className="classroom-room-problem" role="status">{text.unstable}</p>}
           {isTutor && hostProblem === "signedOut" && <p className="classroom-room-problem" role="alert">{text.signedOut} <a href={signInUrl}>{text.signIn}</a></p>}
