@@ -1690,6 +1690,13 @@ describe("browser adapters", () => {
     await peopleChanged(zoom, "user-added");
     expect(duplicates().filter(count => count > 0)).toEqual([]);
     expect(people()).toEqual(["2", "5"]);
+    // Zoom reconnects by itself and gives a new id again, while the client no longer says the old one
+    // (real Zoom probe, 2026-11-19): the entry left behind (5) is still not "elsewhere", and not shown.
+    client.getCurrentUserInfo = () => ({ userId: 8 });
+    zoom.users.push({ userId: 8, userIdentity: zoom.users[0].userIdentity });
+    await peopleChanged(zoom, "user-added");
+    expect(duplicates().filter(count => count > 0)).toEqual([]);
+    expect(people()).toEqual(["2", "8"]);
     // The same person on a really different page or device is still said.
     zoom.users.push({ userId: 30, userIdentity: zoom.users[0].userIdentity });
     await peopleChanged(zoom, "user-added");

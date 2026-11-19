@@ -686,6 +686,12 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
   // own earlier joins in this session (they are never "elsewhere"), and of several entries with one
   // participant id it keeps the one that came last (usersNow).
   private pastSelf = new Set<number>();
+  // The id Zoom gives this page now. Zoom gives a NEW id on every reconnect, its own included, and
+  // after a failed connection the old client no longer says its id (real Zoom probe, 2026-11-19:
+  // the page's own earlier entry stayed on its own page as another person, with the "entered
+  // elsewhere" notice). So the id is remembered while it is known, and becomes a past one the
+  // moment Zoom reports a different one.
+  private selfId: number | null = null;
   private firstSeen = new Map<number, number>();
   private looks = 0;
   // The room (session name) this page joined last; a join to another room moves there (D-5).
@@ -778,7 +784,7 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     if (!input.sessionToken || !input.sessionName) throw new Error("A Zoom join token and its session name are required");
     if (this.joining) return this.joining;
     if (this.client && ZOOM_IN_SESSION.has(this.connection) && input.sessionName === this.sessionName) return;
-    if (input.sessionName !== this.sessionName) { this.pastSelf.clear(); this.firstSeen.clear(); }
+    if (input.sessionName !== this.sessionName) { this.pastSelf.clear(); this.firstSeen.clear(); this.selfId = null; }
     this.sessionName = input.sessionName;
     const joining = this.connect({ ...input, sessionName: input.sessionName });
     this.joining = joining;
@@ -942,6 +948,8 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     const client = this.client, handlers = this.handlers.splice(0);
     const own = client?.getCurrentUserInfo()?.userId;
     if (typeof own === "number") this.pastSelf.add(own);
+    if (this.selfId !== null) this.pastSelf.add(this.selfId);
+    this.selfId = null;
     this.client = null; this.stream = null; this.audioStarted = false; this.listenOnly = false; this.switchingAudio = false; this.tiles.clear(); this.sharer = null;
     if (this.soundBlocked) { this.soundBlocked = false; this.emit({ type: "sound", state: "playing", at: this.now() }); }
     clearTimeout(this.videosTimer);
@@ -1343,6 +1351,11 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     const all = this.client?.getAllUser() ?? [];
     const self = this.client?.getCurrentUserInfo()?.userId;
     const keyOf = (user: ZoomParticipant) => user.userKey ?? user.userIdentity ?? null;
+    if (typeof self === "number" && self !== this.selfId) {
+      if (this.selfId !== null) this.pastSelf.add(this.selfId);
+      this.selfId = self;
+      this.pastSelf.delete(self);
+    }
     this.looks += 1;
     for (const user of all) if (!this.firstSeen.has(user.userId)) this.firstSeen.set(user.userId, this.looks);
     for (const id of [...this.firstSeen.keys()]) if (!all.some(user => user.userId === id)) this.firstSeen.delete(id);
