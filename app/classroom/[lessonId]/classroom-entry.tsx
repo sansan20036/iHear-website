@@ -7,12 +7,12 @@ import { appendChat, CHAT_MAX_LENGTH, chatTextOf, type ChatLine, type RaisedHand
 import {
   createMediaAdapter, hostReportFor, MAX_REMOTE_VIDEOS, MediaAdapterUnavailableError, SYNTHETIC_SCENARIOS, SyntheticMediaAdapter,
   ZOOM_WHITEBOARD_ACCOUNT_DISABLE, ZOOM_WHITEBOARD_HOST_PRIVILEGE_REQUIRED, ZOOM_WHITEBOARD_SCREEN_SHARE_CONFLICT, ZOOM_WHITEBOARD_UNSUPPORTED,
-  type ClassroomMediaAdapter, type ConnectionState, type DeviceKind, type DeviceProblem, type DeviceState, type MediaEvent, type MediaSystemCheck, type RoomPerson, type SyntheticScenario,
+  type ClassroomMediaAdapter, type ConnectionState, type DeviceKind, type DeviceProblem, type DeviceState, type MediaEvent, type MediaSystemCheck, type RoomPerson, type SoundProblem, type SoundState, type SyntheticScenario,
 } from "../../../lib/classroom-media";
 import { classroomDeviceOf, deviceLimits, type CapabilityName, type ClassroomDevice } from "../../../lib/classroom-capabilities";
 import { entryEndedBy, rejoinRoom, requestJoin, type JoinedSession } from "../../../lib/classroom-join-client";
 import { browserClassroomLocale, CLASSROOM_LOCALES, htmlLangOf, intlLocaleOf, LOCALE_NAMES, type ClassroomLocale } from "../../../lib/classroom-locale";
-import { connectionStep, devicesToOffer, HAND_NOTICE_MS, initialsOf, newHands, orderPeople, personLabel, spotlightOf, stageModeOf } from "../../../lib/classroom-room";
+import { connectionStep, devicesToOffer, soundOffered, HAND_NOTICE_MS, initialsOf, newHands, orderPeople, personLabel, spotlightOf, stageModeOf } from "../../../lib/classroom-room";
 import { claimLessonTab, lessonTabName, type TabClaim } from "../../../lib/classroom-tab";
 import { roomCopy as copy, vendorCopy } from "./classroom-copy";
 import { RoomIcon, type RoomIconName } from "./classroom-icons";
@@ -80,11 +80,14 @@ type Media = {
   remote: { present: boolean; camera: boolean; microphone: boolean; seen: boolean; others?: number; waiting?: number };
   share: "none" | "sending" | "receiving";
   whiteboard: "none" | "presenting" | "viewing";
+  // Whether this page hears the room (2026-11-20), and why "Turn on sound" did not work.
+  sound: SoundState;
+  soundProblem?: SoundProblem;
 };
 // The one side panel: chat, the participants, or the lesson's details (Classroom 2.0).
 type Panel = "none" | "chat" | "people" | "info";
 
-const initialMedia = (): Media => ({ available: true, connection: "idle", devices: { camera: "off", microphone: "off" }, deviceProblems: {}, remote: { present: false, camera: false, microphone: false, seen: false }, share: "none", whiteboard: "none" });
+const initialMedia = (): Media => ({ available: true, connection: "idle", devices: { camera: "off", microphone: "off" }, deviceProblems: {}, remote: { present: false, camera: false, microphone: false, seen: false }, share: "none", whiteboard: "none", sound: "off" });
 
 // The personal key from the address: behind # (#k=…), or the older ?k=. It is taken out of the
 // address bar at once (replacing the history entry, so none keeps it): not left in the history,
@@ -188,7 +191,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   // In-class chat and raised hands (2026-11-12): on this page only and never saved (the owner's
   // decision); leaving the room clears them. The unread count shows on the chat button while the
   // chat is closed: a sign to see, not a sound.
-  const [features, setFeatures] = useState({ chat: false, raiseHand: false });
+  const [features, setFeatures] = useState({ chat: false, raiseHand: false, sound: false });
   const [chat, setChat] = useState<readonly ChatLine[]>([]);
   const [unread, setUnread] = useState(0);
   const [draft, setDraft] = useState("");
@@ -376,7 +379,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
     }
     adapter.current = current;
     setSimulator(current instanceof SyntheticMediaAdapter ? current : null);
-    setFeatures({ chat: current.capabilities.chat, raiseHand: current.capabilities.raiseHand });
+    setFeatures({ chat: current.capabilities.chat, raiseHand: current.capabilities.raiseHand, sound: typeof current.joinSound === "function" });
     // A new room starts with both devices off and nothing pressed yet.
     wanted.current = { camera: false, microphone: false };
     let lost = false;
@@ -394,6 +397,8 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
           ...state, devices: { ...state.devices, [event.kind]: event.state },
           deviceProblems: { ...state.deviceProblems, [event.kind]: event.state === "failed" ? event.problem ?? "error" : undefined },
         }));
+      } else if (event.type === "sound") {
+        setMedia((state) => ({ ...state, sound: event.state, soundProblem: event.state === "failed" ? event.problem ?? "error" : undefined }));
       } else if (event.type === "remote") {
         setMedia((state) => ({ ...state, remote: { present: event.present, camera: event.camera, microphone: event.microphone, seen: state.remote.seen || event.present, others: event.others, waiting: event.videosWaiting } }));
       } else if (event.type === "share") {
@@ -446,7 +451,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
       setToolProblem("");
       connection.current = "idle";
       // Chat is not kept: leaving the room (or moving to another) clears it.
-      setFeatures({ chat: false, raiseHand: false });
+      setFeatures({ chat: false, raiseHand: false, sound: false });
       setChat([]);
       setPanel("none");
       setUnread(0);
@@ -688,6 +693,13 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
     for (const kind of kinds) await current.setDevice(kind, true).catch(() => undefined);
   }
 
+  // "Turn on sound" (2026-11-20): one press and the room is heard; the microphone stays muted.
+  async function hearRoom() {
+    const current = adapter.current;
+    if (!current?.joinSound) return;
+    await current.joinSound().catch(() => false);
+  }
+
   // After a move: one press turns on again what was on in the previous room (never by itself).
   async function restoreNow() {
     const current = adapter.current;
@@ -909,6 +921,10 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   const connected = media.connection === "connected";
   // A one-to-one room only: a block's rooms offer what was on after a move (restoreDevices).
   const offered = !blockMode && connected ? devicesToOffer(rejoinOffer, media.devices) : [];
+  // "Turn on sound", unless an offer above already turns the microphone on again.
+  const restoringMic = Boolean(blockMode && restoreDevices?.microphone && restoreOffered && media.devices.microphone !== "on");
+  const offerSound = soundOffered({ connected: media.available && connected, canJoin: features.sound, sound: media.sound, microphone: media.devices.microphone, micOffered: offered.includes("microphone") || restoringMic });
+  const soundText = media.sound === "failed" ? text.sound[media.soundProblem ?? "error"] : text.sound.off;
   const handUp = hands.some((hand) => hand.self);
   const othersHands = hands.filter((hand) => !hand.self);
   // A chat line's time, Taipei like the lesson's.
@@ -1084,6 +1100,15 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
               <p>{offered.length > 1 ? text.rejoinDevices.both : text.rejoinDevices[offered[0]]}</p>
               <button type="button" className="classroom-room-secondary" onClick={() => void turnOnAgain(offered)}>{text.rejoinTurnOn}</button>
               <button type="button" className="classroom-room-secondary" onClick={() => setRejoinOffer(null)}>{text.rejoinNotNow}</button>
+            </div>
+          )}
+          {offerSound && (
+            <div className="classroom-room-note room2-sound" role="status" data-sound={media.sound} data-sound-problem={media.sound === "failed" ? media.soundProblem ?? "error" : undefined}>
+              {/* A failure is always said in full; otherwise a phone shows the short line. */}
+              <p>{media.sound === "failed" ? soundText : <><span className="room2-sound-long">{text.sound.off}</span><span className="room2-sound-short">{text.sound.short}</span></>}</p>
+              <button type="button" className="classroom-room-secondary" data-control="sound" disabled={media.sound === "joining"} onClick={() => void hearRoom()}>
+                {media.sound === "joining" ? text.sound.joining : text.sound.turnOn}
+              </button>
             </div>
           )}
           {media.available && media.connection === "reconnecting" && <p className="classroom-room-problem" role="status">{text.reconnecting}</p>}

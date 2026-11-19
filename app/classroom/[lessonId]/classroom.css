@@ -102,6 +102,11 @@
 .room2-alerts .classroom-room-note, .room2-alerts .classroom-room-problem { padding: 7px 12px; font-size: 14px; }
 .room2-alerts .classroom-room-note p { margin: 0 0 6px; }
 .room2-alerts .classroom-room-secondary { min-height: 38px; padding: 6px 14px; margin-right: 6px; }
+/* "Turn on sound" (2026-11-20): one row; a phone shows the short line so the material keeps its room. */
+.room2-alerts .room2-sound { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.room2-alerts .room2-sound p { margin: 0; flex: 1 1 220px; }
+.room2-alerts .room2-sound .classroom-room-secondary { margin-right: 0; }
+.room2-sound-short { display: none; }
 
 /* The main area. Nothing the video service drew moves between places: a layout is styling only. */
 .room2-main { grid-area: main; position: relative; min-height: 0; margin-top: 10px; display: grid; gap: 14px; align-content: start;
@@ -304,6 +309,14 @@
   .room2-top .classroom-lang { padding: 4px 10px; font-size: 12.5px; }
   .classroom-room-connection, .classroom-room-badge { padding: 4px 9px; font-size: 12.5px; }
   .room2-alerts .classroom-room-note, .room2-alerts .classroom-room-problem { font-size: 13px; }
+  .room2-sound-long { display: none; }
+  .room2-sound-short { display: inline; }
+  /* One row even at 320 px: the short line wraps beside a smaller button. */
+  .room2-alerts .room2-sound { flex-wrap: nowrap; }
+  .room2-alerts .room2-sound p { flex: 1 1 auto; min-width: 0; }
+  .room2-alerts .room2-sound .classroom-room-secondary { flex: 0 0 auto; min-height: 34px; padding: 4px 12px; }
+  /* While the chat or another sheet is open, it waits (as the reading tip does): it comes back when the sheet closes. */
+  .room2:not([data-panel="none"]) .room2-sound { display: none; }
   .room2-main { gap: 10px; }
   .room2-stage { padding: 8px; border-radius: 16px; }
   .room2-stage-bar { margin-bottom: 8px; min-height: 34px; }

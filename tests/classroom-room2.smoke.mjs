@@ -349,6 +349,84 @@ try {
     await page.context().close();
   });
 
+  // "Turn on sound" (2026-11-20): nobody heard the room before pressing the microphone, because the
+  // page joined Zoom's audio only on that press. The room now says so, and one press joins the
+  // sound with the microphone muted. Synthetic: this proves the page, not how real Zoom sounds.
+  await check('Turn on sound: the room says it is not heard yet; one press hears it with the microphone muted; again after a reconnect; blocked sound and a missing microphone are explained', async () => {
+    const own = { code: 'TEST-R2S', date: lesson.date, time: lesson.time, minutes: lesson.minutes, tutorCode: 'TEST-RT3', tutorEmail: 'room2-tutor3@example.test', studentCode: 'TEST-RS3' };
+    const added = await admin.evaluate(async body => {
+      const response = await fetch('/api/admin/classrooms', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+      return { status: response.status, body: await response.json() };
+    }, own);
+    expect(added.status).toBe(201);
+    const page = watch(await (await context(DEVICES.computer, [1280, 800])).newPage(), 'student-sound');
+    await enter(page, new URL(added.body.studentLink, origin).href);
+    const pill = page.locator('.room2-top .classroom-room-connection');
+    const microphone = page.getByRole('button', { name: /^麥克風：/ });
+    const sound = page.locator('[data-sound]');
+    const turnOn = sound.getByRole('button', { name: '開啟聲音', exact: true });
+    const offer = page.locator('[data-rejoin-devices]');
+    // 1. Entered: not heard yet, and said so in full on a computer, in a short line on a phone.
+    await expect(sound).toHaveAttribute('data-sound', 'off');
+    await expect(sound).toHaveAttribute('role', 'status');
+    await expect(sound.locator('.room2-sound-long')).toHaveText('你還聽不到教室的聲音。按「開啟聲音」就能聽到；你的麥克風會保持靜音，對方聽不到你。瀏覽器可能會詢問是否允許使用麥克風。');
+    await expect(sound.locator('.room2-sound-short')).toBeHidden();
+    await layout(page, 'student-1280-sound');
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(sound.locator('.room2-sound-short')).toHaveText('還聽不到聲音？（麥克風會保持靜音）');
+    await expect(sound.locator('.room2-sound-long')).toBeHidden();
+    const row = await sound.boundingBox();
+    expect(row.height).toBeLessThan(70);
+    await layout(page, 'student-390-sound');
+    // On a phone it waits while the chat sheet is open, and comes back when the sheet closes.
+    await page.getByRole('button', { name: /^聊天/ }).click();
+    await expect(sound).toBeHidden();
+    await page.getByRole('button', { name: '關閉聊天', exact: true }).click();
+    await expect(sound).toBeVisible();
+    await page.setViewportSize({ width: 1280, height: 800 });
+    // 2. One press: heard, and the microphone stays off.
+    await turnOn.click();
+    await expect(sound).toHaveCount(0);
+    await expect(microphone).toHaveAttribute('aria-pressed', 'false');
+    // 3. A reconnect starts silent again: offered again (nothing was on, so no other offer).
+    await simulate(page, '連線失敗');
+    await expect(pill).toHaveText('已連線', { timeout: 10_000 });
+    await expect(sound).toHaveAttribute('data-sound', 'off');
+    await expect(offer).toHaveCount(0);
+    // 4. The microphone brings the sound too.
+    await microphone.click();
+    await expect(microphone).toHaveAttribute('aria-pressed', 'true');
+    await expect(sound).toHaveCount(0);
+    // 5. After a reconnect with the microphone on, the offer to turn it on again brings the sound:
+    // "Turn on sound" waits until that offer is declined.
+    await simulate(page, '連線失敗');
+    await expect(pill).toHaveText('已連線', { timeout: 10_000 });
+    await expect(offer).toHaveAttribute('data-rejoin-devices', 'microphone');
+    await expect(sound).toHaveCount(0);
+    await offer.getByRole('button', { name: '不用', exact: true }).click();
+    await expect(sound).toHaveAttribute('data-sound', 'off');
+    // 6. The browser blocking the sound: said, and pressed again once it plays.
+    await simulate(page, '瀏覽器擋住聲音');
+    await turnOn.click();
+    await expect(sound).toHaveAttribute('data-sound', 'failed');
+    await expect(sound).toHaveAttribute('data-sound-problem', 'autoplay');
+    await expect(sound.locator('p')).toHaveText('瀏覽器擋住了教室的聲音。請再按一次「開啟聲音」。');
+    await simulate(page, '裝置恢復');
+    await turnOn.click();
+    await expect(sound).toHaveCount(0);
+    await expect(microphone).toHaveAttribute('aria-pressed', 'false');
+    // 7. No microphone: Zoom's muted join needs one, and the page says what to do.
+    await page.getByRole('button', { name: '離開教室' }).first().click();
+    await page.getByRole('button', { name: '重新進入' }).click();
+    await expect(pill).toHaveText('已連線');
+    await simulate(page, '找不到麥克風');
+    await turnOn.click();
+    await expect(sound).toHaveAttribute('data-sound-problem', 'capture');
+    await expect(sound.locator('p')).toHaveText('聲音沒有開啟：瀏覽器沒有允許使用麥克風，或找不到麥克風。即使只是聽，Zoom 也需要麥克風（會保持靜音）。請在瀏覽器的網站設定允許麥克風，或接上麥克風後，再按一次「開啟聲音」。');
+    await layout(page, 'student-1280-sound-capture');
+    await page.context().close();
+  });
+
   // ---------- A tutor on a computer ----------
   let tutorPage;
   await check('tutor, computer: share and whiteboard take the stage; focus mode; the More menu and panels by keyboard', async () => {

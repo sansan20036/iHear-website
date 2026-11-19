@@ -1,5 +1,5 @@
 import type { CapabilityName, ClassroomDevice } from "../../../lib/classroom-capabilities";
-import type { ConnectionState, DeviceKind, DeviceProblem, DeviceState, MediaSystemCheck, SyntheticScenario } from "../../../lib/classroom-media";
+import type { ConnectionState, DeviceKind, DeviceProblem, DeviceState, MediaSystemCheck, SoundProblem, SyntheticScenario } from "../../../lib/classroom-media";
 
 // The room's words in English, Traditional and Simplified Chinese (moved here unchanged from
 // classroom-entry.tsx and extended with Simplified Chinese, D2 2026-11-07).
@@ -126,6 +126,16 @@ export const roomCopy = {
       microphone: "You were reconnected, and your microphone is off now: the other person cannot hear you. Turn it on again?",
     },
     rejoinTurnOn: "Turn on again", rejoinNotNow: "Not now",
+    // Hearing the room without the microphone (2026-11-20): what is wrong, and the one press.
+    sound: {
+      off: "You can't hear the classroom yet. Press “Turn on sound” to hear it; your microphone stays muted, so nobody hears you. The browser may ask to use the microphone.",
+      capture: "The sound did not turn on: the browser did not allow the microphone, or there is none. Zoom needs a microphone even just to listen (it stays muted). Allow the microphone in the browser's site settings, or connect one, then press “Turn on sound” again.",
+      autoplay: "The browser blocked the classroom's sound. Press “Turn on sound” again.",
+      error: "The sound did not turn on. Press “Turn on sound” again; if that does not help, press the microphone or reload this page.",
+      turnOn: "Turn on sound", joining: "Turning on sound…",
+      // On a phone, so the material keeps its room.
+      short: "Can't hear the class yet? (Your microphone stays muted.)",
+    } as Record<SoundProblem | "off" | "short" | "turnOn" | "joining", string>,
     zoomOut: "Smaller", zoomIn: "Larger", zoomFit: "Fit to screen", zoomLevel: (percent: number) => `Zoom ${percent}%`,
     materialFullscreen: "Show the material full screen", materialFullscreenExit: "Exit full screen",
     readingTip: "Turn the phone sideways to make the shared screen larger.",
@@ -178,6 +188,7 @@ export const roomCopy = {
       "remote-shares-screen": "They share their screen", "remote-stops-sharing": "They stop sharing", "remote-opens-whiteboard": "They open the whiteboard", "remote-closes-whiteboard": "They close the whiteboard",
       "remote-speaks": "They speak", "group-joins": "5 test students enter", "group-leaves": "The test students leave",
       "self-elsewhere": "You also enter elsewhere", "self-elsewhere-ends": "The other place leaves",
+      "sound-blocked": "The browser blocks sound",
     } as Record<SyntheticScenario, string>,
     reasons: {
       LESSON_NOT_FOUND: "This lesson could not be found. Check that the link is complete, or contact iHear.",
@@ -230,6 +241,14 @@ export const roomCopy = {
       microphone: "剛才重新連線，你的麥克風關掉了，對方聽不到你。要重新開啟嗎？",
     },
     rejoinTurnOn: "重新開啟", rejoinNotNow: "不用",
+    sound: {
+      off: "你還聽不到教室的聲音。按「開啟聲音」就能聽到；你的麥克風會保持靜音，對方聽不到你。瀏覽器可能會詢問是否允許使用麥克風。",
+      capture: "聲音沒有開啟：瀏覽器沒有允許使用麥克風，或找不到麥克風。即使只是聽，Zoom 也需要麥克風（會保持靜音）。請在瀏覽器的網站設定允許麥克風，或接上麥克風後，再按一次「開啟聲音」。",
+      autoplay: "瀏覽器擋住了教室的聲音。請再按一次「開啟聲音」。",
+      error: "聲音沒有開啟。請再按一次「開啟聲音」；如果還是不行，請按麥克風，或重新整理這個頁面。",
+      turnOn: "開啟聲音", joining: "開啟聲音中…",
+      short: "還聽不到聲音？（麥克風會保持靜音）",
+    } as Record<SoundProblem | "off" | "short" | "turnOn" | "joining", string>,
     zoomOut: "縮小", zoomIn: "放大", zoomFit: "符合畫面", zoomLevel: (percent: number) => `顯示比例 ${percent}%`,
     materialFullscreen: "全螢幕檢視教材", materialFullscreenExit: "結束全螢幕",
     readingTip: "把手機橫放，分享的畫面會更大。",
@@ -281,6 +300,7 @@ export const roomCopy = {
       "remote-shares-screen": "對方分享畫面", "remote-stops-sharing": "對方停止分享", "remote-opens-whiteboard": "對方開啟白板", "remote-closes-whiteboard": "對方關閉白板",
       "remote-speaks": "對方說話", "group-joins": "5 位測試學生進入", "group-leaves": "測試學生離開",
       "self-elsewhere": "你也在另一處進入", "self-elsewhere-ends": "另一處已離開",
+      "sound-blocked": "瀏覽器擋住聲音",
     } as Record<SyntheticScenario, string>,
     reasons: {
       LESSON_NOT_FOUND: "找不到這堂課。請確認連結是否完整，或聯絡 iHear。",
@@ -333,6 +353,14 @@ export const roomCopy = {
       microphone: "刚才重新连接，你的麦克风关掉了，对方听不到你。要重新开启吗？",
     },
     rejoinTurnOn: "重新开启", rejoinNotNow: "不用",
+    sound: {
+      off: "你还听不到教室的声音。按“开启声音”就能听到；你的麦克风会保持静音，对方听不到你。浏览器可能会询问是否允许使用麦克风。",
+      capture: "声音没有开启：浏览器没有允许使用麦克风，或找不到麦克风。即使只是听，Zoom 也需要麦克风（会保持静音）。请在浏览器的网站设置中允许麦克风，或接上麦克风后，再按一次“开启声音”。",
+      autoplay: "浏览器挡住了教室的声音。请再按一次“开启声音”。",
+      error: "声音没有开启。请再按一次“开启声音”；如果还是不行，请按麦克风，或刷新这个页面。",
+      turnOn: "开启声音", joining: "开启声音中…",
+      short: "还听不到声音？（麦克风会保持静音）",
+    } as Record<SoundProblem | "off" | "short" | "turnOn" | "joining", string>,
     zoomOut: "缩小", zoomIn: "放大", zoomFit: "适合屏幕", zoomLevel: (percent: number) => `显示比例 ${percent}%`,
     materialFullscreen: "全屏查看教材", materialFullscreenExit: "退出全屏",
     readingTip: "把手机横放，共享的屏幕会更大。",
@@ -384,6 +412,7 @@ export const roomCopy = {
       "remote-shares-screen": "对方共享屏幕", "remote-stops-sharing": "对方停止共享", "remote-opens-whiteboard": "对方打开白板", "remote-closes-whiteboard": "对方关闭白板",
       "remote-speaks": "对方说话", "group-joins": "5 位测试学生进入", "group-leaves": "测试学生离开",
       "self-elsewhere": "你也在另一处进入", "self-elsewhere-ends": "另一处已离开",
+      "sound-blocked": "浏览器挡住声音",
     } as Record<SyntheticScenario, string>,
     reasons: {
       LESSON_NOT_FOUND: "找不到这堂课。请确认链接是否完整，或联系 iHear。",

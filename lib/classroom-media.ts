@@ -27,10 +27,18 @@ export type DeviceKind = "camera" | "microphone";
 export type DeviceState = "off" | "on" | "denied" | "unavailable" | "starting" | "failed";
 export type DeviceProblem = "timeout" | "capture" | "autoplay" | "missing" | "busy" | "error";
 export type MediaRole = "tutor" | "student";
+// Whether this page hears the room (2026-11-20). Zoom plays the others' sound only once this page has
+// joined its audio, and the page joined it only on the first microphone press, so nobody heard the
+// room before pressing the microphone. "on": joined (by "Turn on sound" with the microphone muted,
+// or by the microphone); "joining": on its way; "failed": did not join, can be pressed again.
+export type SoundState = "off" | "joining" | "on" | "failed";
+export type SoundProblem = "autoplay" | "capture" | "error";
 
 export type MediaEvent =
   | { type: "connection"; state: ConnectionState; at: number }
   | { type: "device"; kind: DeviceKind; state: DeviceState; problem?: DeviceProblem; at: number }
+  // Whether this page hears the room (see SoundState); never reported to iHear.
+  | { type: "sound"; state: SoundState; problem?: SoundProblem; at: number }
   // The other person in the room. A real adapter also passes their user key (our participant
   // id, which the session token carries) so the tutor's page can report joins and leaves.
   // P3-Multi: in a room of several, how many others are there and how many of their videos are shown
@@ -91,6 +99,9 @@ export interface ClassroomMediaAdapter {
   join(input: MediaJoin): Promise<void>;
   leave(): Promise<void>;
   setDevice(kind: DeviceKind, on: boolean): Promise<DeviceState>;
+  // Hear the room without the microphone (2026-11-20): joins the vendor's audio with the microphone
+  // muted, on the person's own press; true once joined. Never turns the microphone on.
+  joinSound?(): Promise<boolean>;
   subscribe(listener: (event: MediaEvent) => void): () => void;
   // Where the vendor draws: its classroom, the shared screen and the whiteboard in `element`, and
   // (Classroom 2.0) the people's tiles in `videos` when the page gives them a column of their own.
@@ -128,7 +139,9 @@ export type SyntheticScenario =
   | "remote-shares-screen" | "remote-stops-sharing" | "remote-opens-whiteboard" | "remote-closes-whiteboard"
   | "remote-speaks" | "group-joins" | "group-leaves"
   // 2026-11-19: this page's person in the room from another page or device too, and that ending.
-  | "self-elsewhere" | "self-elsewhere-ends";
+  | "self-elsewhere" | "self-elsewhere-ends"
+  // 2026-11-20: the browser will not play the room's sound yet (cleared by "devices-restored").
+  | "sound-blocked";
 
 export const SYNTHETIC_SCENARIOS: readonly SyntheticScenario[] = [
   "remote-joins", "remote-leaves", "remote-camera-off", "remote-camera-on",
@@ -137,7 +150,7 @@ export const SYNTHETIC_SCENARIOS: readonly SyntheticScenario[] = [
   "remote-chat", "remote-raises-hand", "remote-lowers-hand",
   "remote-shares-screen", "remote-stops-sharing", "remote-opens-whiteboard", "remote-closes-whiteboard",
   "remote-speaks", "group-joins", "group-leaves",
-  "self-elsewhere", "self-elsewhere-ends",
+  "self-elsewhere", "self-elsewhere-ends", "sound-blocked",
 ];
 // The other person's line in the synthetic room: no real person writes it.
 const SYNTHETIC_CHAT = "TEST: Hello / 你好 / 你好";
@@ -205,6 +218,9 @@ export class SyntheticMediaAdapter implements ClassroomMediaAdapter {
   private connection: ConnectionState = "idle";
   private readonly devices: Record<DeviceKind, DeviceState> = { camera: "off", microphone: "off" };
   private readonly blocked: Record<DeviceKind, DeviceState | null> = { camera: null, microphone: null };
+  // Hearing the room, played as a state (2026-11-20), and the browser refusing to play it yet.
+  private sound: SoundState = "off";
+  private soundBlocked = false;
   private remote = { present: false, camera: false, microphone: false };
   // Chat and raised hands stay on this page: nothing travels to another page or the server.
   private role: MediaRole = "student";
@@ -277,6 +293,7 @@ export class SyntheticMediaAdapter implements ClassroomMediaAdapter {
     this.setRemote({ present: false, camera: false, microphone: false });
     this.clearHands();
     this.endPlayed();
+    this.setSound("off");
     this.setConnection("disconnected");
   }
 
@@ -285,7 +302,28 @@ export class SyntheticMediaAdapter implements ClassroomMediaAdapter {
     this.devices[kind] = state;
     this.reportPeople();
     this.emit({ type: "device", kind, state, at: this.now() });
+    // The microphone joins the room's sound as well, as Zoom's first microphone press does.
+    if (kind === "microphone" && state === "on") this.setSound("on");
     return state;
+  }
+
+  // "Turn on sound": the room is heard with the microphone off. A microphone the browser blocks
+  // (Zoom's muted join still needs it) or a sound the browser will not play yet makes it fail.
+  async joinSound() {
+    if (this.connection !== "connected") return false;
+    if (this.sound === "on") return true;
+    if (this.soundBlocked || this.blocked.microphone) {
+      this.setSound("failed", this.soundBlocked ? "autoplay" : "capture");
+      return false;
+    }
+    this.setSound("on");
+    return true;
+  }
+
+  private setSound(state: SoundState, problem?: SoundProblem) {
+    if (this.sound === state && state !== "failed") return;
+    this.sound = state;
+    this.emit({ type: "sound", state, ...(problem ? { problem } : {}), at: this.now() });
   }
 
   // The tutor's own share and whiteboard, played as states only: nothing is captured or sent.
@@ -366,8 +404,12 @@ export class SyntheticMediaAdapter implements ClassroomMediaAdapter {
           this.group = false;
           this.setRemote({ present: false, camera: false, microphone: false });
           this.endPlayed();
+          this.setSound("off");
           this.setConnection("failed");
         }
+        break;
+      case "sound-blocked":
+        this.soundBlocked = true;
         break;
       case "camera-denied":
         this.block("camera", "denied");
@@ -376,6 +418,7 @@ export class SyntheticMediaAdapter implements ClassroomMediaAdapter {
         this.block("microphone", "unavailable");
         break;
       case "devices-restored":
+        this.soundBlocked = false;
         for (const kind of ["camera", "microphone"] as const) {
           if (!this.blocked[kind]) continue;
           this.blocked[kind] = null;
@@ -532,7 +575,9 @@ export type ZoomChat = { sendToAll(text: string): Promise<unknown>; setPrivilege
 // The command channel carries raised hands; without a target a message goes to the whole session.
 export type ZoomCommand = { send(text: string, target?: number): Promise<unknown> };
 export type ZoomStream = {
-  startAudio(): Promise<unknown>; stopAudio(): Promise<unknown>; muteAudio(): Promise<unknown>; unmuteAudio(): Promise<unknown>;
+  // `mute`: Zoom's documented option "join audio with microphone muted" ("Turn on sound", 2026-11-20).
+  startAudio(options?: { mute?: boolean }): Promise<unknown>; stopAudio(): Promise<unknown>; muteAudio(): Promise<unknown>; unmuteAudio(): Promise<unknown>;
+  isAudioMuted?(): boolean;
   startVideo(): Promise<unknown>; stopVideo(): Promise<unknown>; isCapturingVideo(): boolean;
   attachVideo(userId: number, quality: number): Promise<unknown>; detachVideo(userId: number): Promise<unknown>;
   // Materials: the tutor shares a screen, window or tab; the other side sees it in a container of its own.
@@ -618,6 +663,14 @@ function zoomErrorCodeOf(error: unknown): number | null {
   return typeof code === "number" && Number.isInteger(code) && code >= 0 && code < 100_000 ? code : null;
 }
 type DeviceAnswer = { state: DeviceState; problem?: DeviceProblem };
+// "Turn on sound" refused: Zoom's muted audio still needs the microphone, so a microphone that is
+// blocked, missing or busy (Zoom's AUDIO_CAPTURE_FAILED among them) is "capture"; anything else "error".
+function soundProblemOf(error: unknown): SoundProblem {
+  const { type, reason } = (error ?? {}) as { type?: string; reason?: string };
+  if (/AUDIO_CAPTURE_FAILED|INSUFFICIENT_PRIVILEGES/i.test(`${type ?? ""} ${reason ?? ""}`)) return "capture";
+  const answer = deviceAnswerOf(error);
+  return answer.state === "denied" || answer.problem === "missing" || answer.problem === "busy" ? "capture" : "error";
+}
 // A refused start: blocked by the person or the browser, or worth another try (and why).
 function deviceAnswerOf(error: unknown): DeviceAnswer {
   const { name, type, reason, message } = (error ?? {}) as { name?: string; type?: string; reason?: string; message?: string };
@@ -659,6 +712,14 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
   private stream: ZoomStream | null = null;
   private stage: ZoomStage | null = null;
   private audioStarted = false;
+  // Hearing the room (2026-11-20): its state; "Turn on sound" on its way; and `soundOnly`: Zoom's
+  // audio was joined for the sound with the microphone muted, so Zoom's "joined the audio" is not the
+  // microphone going on (until the person presses the microphone); `soundBlockedNow`: the browser
+  // refused to play the sound during that join.
+  private sound: SoundState = "off";
+  private soundJoin: Promise<boolean> | null = null;
+  private soundOnly = false;
+  private soundBlockedNow = false;
   private sharing: "none" | "sending" | "receiving" = "none";
   private sharer: number | null = null;
   private board: "none" | "presenting" | "viewing" = "none";
@@ -872,14 +933,24 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
       });
       listen("current-audio-change", (payload) => {
         const action = (payload as { action?: string })?.action;
-        if (action === "join") this.audioStarted = true;
-        if (action === "leave") this.audioStarted = false;
+        if (action === "join") { this.audioStarted = true; this.setSound("on"); }
+        if (action === "leave") { this.audioStarted = false; this.soundOnly = false; this.setSound("off"); }
+        // Joined for the sound only ("Turn on sound", microphone muted): the microphone stays off.
+        if (action === "join" && this.soundOnly) return;
         if (action === "join" || action === "unmuted") this.fromZoom("microphone", { state: "on" });
         else if ((action === "muted" || action === "leave") && this.devices.microphone === "on") this.fromZoom("microphone", { state: "off" });
       });
       // Zoom: this "may occur when invoking stream.startAudio() immediately after joining"; the
-      // browser waits for the person to press something again.
-      listen("auto-play-audio-failed", () => this.fromZoom("microphone", { state: "failed", problem: "autoplay" }));
+      // browser waits for the person to press something again. During "Turn on sound" (no
+      // microphone press waiting) it is the sound that did not start: that button is pressed again.
+      listen("auto-play-audio-failed", () => {
+        if (!this.waiting.microphone && (this.soundJoin || this.soundOnly)) {
+          this.soundBlockedNow = true;
+          this.setSound("failed", "autoplay");
+          return;
+        }
+        this.fromZoom("microphone", { state: "failed", problem: "autoplay" });
+      });
       listen("device-permission-change", (payload) => {
         const { name, state } = (payload ?? {}) as { name?: string; state?: string };
         if ((name === "camera" || name === "microphone") && state === "denied") this.fromZoom(name, { state: "denied" });
@@ -936,6 +1007,9 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     if (this.selfId !== null) this.pastSelf.add(this.selfId);
     this.selfId = null;
     this.client = null; this.stream = null; this.audioStarted = false; this.tiles.clear(); this.sharer = null;
+    // The room's sound goes with the room: the next join hears nothing until the person turns it on.
+    this.soundJoin = null; this.soundOnly = false; this.soundBlockedNow = false;
+    this.setSound("off");
     clearTimeout(this.videosTimer);
     this.waitingVideos.clear();
     if (this.elsewhere) { this.elsewhere = 0; this.emit({ type: "duplicate", count: 0, at: this.now() }); }
@@ -1088,6 +1162,10 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
       await stream.startVideo();
       return;
     }
+    // "Turn on sound" on its way: the microphone waits for that join (one audio join at a time), then
+    // unmutes it. From here on Zoom's audio reports are the microphone's again.
+    if (this.soundJoin) await this.soundJoin;
+    this.soundOnly = false;
     if (retry) {
       await stream.stopAudio().catch(() => undefined);
       this.audioStarted = false;
@@ -1098,6 +1176,75 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
       await stream.startAudio();
       this.audioStarted = true;
     }
+    // The microphone's audio plays the room's sound too.
+    if (stream === this.stream) this.setSound("on");
+  }
+
+  // "Turn on sound" (2026-11-20): on the person's own press, Zoom's audio is joined with the
+  // microphone muted (startAudio's documented option `mute`), so the room is heard and nobody hears
+  // this person. It is the same audio join the microphone has always used (heard by ear on real Zoom
+  // after every re-entry, 2026-11-20 00:26–00:31), only muted from the start; should Zoom ever join
+  // unmuted, the microphone is muted at once. Zoom's speaker-only audio is NOT used: switching from it
+  // to the microphone left a re-entered person inaudible on production (802fb1b, rolled back 11/20).
+  // The browser may ask for the microphone (Zoom's audio needs it even muted). Joining runs at most
+  // deviceStartMs; one that answers later is taken from Zoom's own "joined" report.
+  async joinSound(): Promise<boolean> {
+    const stream = this.stream;
+    if (!stream) return false;
+    if (this.audioStarted && this.sound === "on") return true;
+    // A microphone press on its way joins the audio itself.
+    if (this.devices.microphone === "starting") return true;
+    if (this.soundJoin) return this.soundJoin;
+    const join = (async () => {
+      // Pressed again after the browser refused to play: the audio is joined again (as the
+      // microphone's "Try again" does), once, with the microphone still muted.
+      const again = this.audioStarted;
+      this.soundBlockedNow = false;
+      this.soundOnly = true;
+      this.setSound("joining");
+      try {
+        if (again) {
+          await stream.stopAudio().catch(() => undefined);
+          this.audioStarted = false;
+        }
+        const started = stream.startAudio({ mute: true });
+        let deadline: ReturnType<typeof setTimeout> | undefined;
+        const answered = await Promise.race([
+          started.then(() => true),
+          new Promise<boolean>((resolve) => { deadline = setTimeout(() => resolve(false), this.deviceStartMs); }),
+        ]).finally(() => clearTimeout(deadline));
+        if (stream !== this.stream) return false;
+        if (!answered) {
+          started.catch(() => undefined);
+          this.setSound("failed", "error");
+          return false;
+        }
+        this.audioStarted = true;
+        if (stream.isAudioMuted?.() === false && this.soundOnly) await stream.muteAudio().catch(() => undefined);
+        if (this.soundBlockedNow) {
+          this.setSound("failed", "autoplay");
+          return false;
+        }
+        this.setSound("on");
+        return true;
+      } catch (error) {
+        if (stream === this.stream) this.setSound("failed", soundProblemOf(error));
+        return false;
+      }
+    })();
+    this.soundJoin = join;
+    try {
+      return await join;
+    } finally {
+      if (this.soundJoin === join) this.soundJoin = null;
+    }
+  }
+
+  private setSound(state: SoundState, problem?: SoundProblem) {
+    // A repeated failure is told again, for the page's message.
+    if (this.sound === state && state !== "failed") return;
+    this.sound = state;
+    this.emit({ type: "sound", state, ...(problem ? { problem } : {}), at: this.now() });
   }
 
   // Zoom's own report on a device answers the press now waiting, or else stands by itself.

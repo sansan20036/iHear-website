@@ -469,7 +469,9 @@ describe("browser adapters", () => {
     };
     return { doc, root: doc.createElement("div") };
   }
-  function fakeZoom({ joinError = null, videoError = null, shareError = null, canBoard = true, boardEnabled = true, boardError = null, boardViewError = null, presenter = null, sharingAtJoin = 0, videoHangs = 0, slowVideo = 0, audioHangs = 0, slowJoin = false, failedJoins = 0, sessionId = "", chatAnswer = null, commandAnswer = null, others = [] } = {}) {
+  // `audioError`: what Zoom's startAudio rejects with (the first time); `ignoresMute`: a Zoom that
+  // joins the audio unmuted although asked to mute (2026-11-20, "Turn on sound").
+  function fakeZoom({ joinError = null, videoError = null, shareError = null, canBoard = true, boardEnabled = true, boardError = null, boardViewError = null, presenter = null, sharingAtJoin = 0, videoHangs = 0, slowVideo = 0, audioHangs = 0, audioError = null, ignoresMute = false, slowJoin = false, failedJoins = 0, sessionId = "", chatAnswer = null, commandAnswer = null, others = [] } = {}) {
     const calls = [];
     // In-class chat and the command channel (2026-11-12), recorded apart from `calls` so the older
     // checks of the call order stay as they were. A *Answer option stands for Zoom's failure answer.
@@ -500,9 +502,23 @@ describe("browser adapters", () => {
     let slowVideos = slowVideo, releaseVideo = () => {};
     let capturing = false;
     const qualities = [];
+    // The audio as Zoom keeps it: joined or not, and muted. A held start (holdNextAudio) answers only
+    // when the test says so, so Zoom's own events can be played in between.
+    let audioMuted = false, heldAudio = null, audioFailure = audioError;
     const stream = {
-      startAudio: async () => { calls.push("startAudio"); if (hangs.audio > 0) { hangs.audio -= 1; await never(); } },
-      stopAudio: async () => calls.push("stopAudio"), muteAudio: async () => calls.push("muteAudio"), unmuteAudio: async () => calls.push("unmuteAudio"),
+      startAudio: async (options) => {
+        calls.push(options?.speakerOnly ? "startAudio:speakerOnly" : options?.mute ? "startAudio:muted" : "startAudio");
+        if (hangs.audio > 0) { hangs.audio -= 1; await never(); }
+        const held = heldAudio;
+        heldAudio = null;
+        if (held) await held;
+        if (audioFailure) { const error = audioFailure; audioFailure = null; throw error; }
+        audioMuted = Boolean(options?.mute) && !ignoresMute;
+      },
+      stopAudio: async () => calls.push("stopAudio"),
+      muteAudio: async () => { calls.push("muteAudio"); audioMuted = true; },
+      unmuteAudio: async () => { calls.push("unmuteAudio"); audioMuted = false; },
+      isAudioMuted: () => audioMuted,
       startVideo: async () => {
         calls.push("startVideo");
         if (videoError) throw videoError;
@@ -572,10 +588,12 @@ describe("browser adapters", () => {
     const listening = () => Object.fromEntries([...live].filter(([, set]) => set.size > 0).map(([name, set]) => [name, set.size]));
     const holdNextJoin = () => { let release; heldJoin = new Promise(resolve => { release = resolve; }); return () => release(); };
     const holdNextView = () => { let release; heldView = new Promise(resolve => { release = resolve; }); return () => release(); };
+    const holdNextAudio = () => { let release; heldAudio = new Promise(resolve => { release = resolve; }); return () => release(); };
+    const failNextAudio = error => { audioFailure = error; };
     const setPresenter = value => { presenter = value; };
     const setSharer = userId => { sharingAtJoin = userId; };
     const failViews = (error, times) => { failingView = error; viewFailures = times; };
-    return { calls, handlers, users, sdk, created, listening, holdNextJoin, holdNextView, setPresenter, setSharer, failViews, releaseJoin: () => releaseJoin(), releaseVideo: () => releaseVideo(), qualities, chatSent, privileges, commandsSent };
+    return { calls, handlers, users, sdk, created, listening, holdNextJoin, holdNextView, holdNextAudio, failNextAudio, isMuted: () => audioMuted, setPresenter, setSharer, failViews, releaseJoin: () => releaseJoin(), releaseVideo: () => releaseVideo(), qualities, chatSent, privileges, commandsSent };
   }
   const zoomJoin = { sessionToken: "synthetic.jwt.token", sessionName: "ihear-l-test-v01", lessonCode: "TEST-V01", participantCode: "TEST-T01", role: "tutor" };
   // Zoom calls its handlers without waiting; let their asynchronous work finish.
@@ -874,6 +892,148 @@ describe("browser adapters", () => {
     await adapter.leave();
     expect(zoom.calls).toContain("leave");
     expect(zoom.handlers.size).toBe(0);
+  });
+
+  // "Turn on sound" (2026-11-20). Nobody heard the room before pressing the microphone: the page
+  // joined Zoom's audio only on that press. The sound is now joined on its own press with the
+  // microphone muted. Never Zoom's speaker-only audio: switching from it to the microphone left a
+  // re-entered person inaudible on production (802fb1b, rolled back). A fake Zoom cannot show how
+  // real Zoom sounds: these check the calls and states only; the sound itself needs a check by ear.
+  const audioCalls = zoom => zoom.calls.filter(call => typeof call === "string" && /Audio/.test(call));
+  const soundsOf = events => events.filter(event => event.type === "sound").map(event => (event.problem ? `${event.state}:${event.problem}` : event.state));
+  const micOf = events => events.filter(event => event.type === "device" && event.kind === "microphone").map(event => event.state);
+
+  test("SB-1: Turn on sound joins Zoom's audio once with the microphone muted (never speaker-only); Zoom's own 'joined' is not the microphone going on", async () => {
+    const { zoom, adapter, events } = await joined();
+    const release = zoom.holdNextAudio();
+    const joining = adapter.joinSound();
+    await settle();
+    // Zoom says it joined the audio before its call answers: the microphone stays off.
+    zoom.handlers.get("current-audio-change")({ action: "join" });
+    release();
+    expect(await joining).toBe(true);
+    expect(audioCalls(zoom)).toEqual(["startAudio:muted"]);
+    expect(zoom.isMuted()).toBe(true);
+    expect(soundsOf(events)).toEqual(["joining", "on"]);
+    expect(micOf(events)).toEqual([]);
+    // Pressed again while heard: nothing more.
+    expect(await adapter.joinSound()).toBe(true);
+    expect(audioCalls(zoom)).toEqual(["startAudio:muted"]);
+    expect(zoom.calls.some(call => /speakerOnly/.test(call))).toBe(false);
+  });
+
+  test("SB-2: after Turn on sound the microphone unmutes the same audio (never a second start) and mutes it again; the sound stays on", async () => {
+    const { zoom, adapter, events } = await joined();
+    await adapter.joinSound();
+    expect(await adapter.setDevice("microphone", true)).toBe("on");
+    expect(zoom.isMuted()).toBe(false);
+    expect(await adapter.setDevice("microphone", false)).toBe("off");
+    expect(zoom.isMuted()).toBe(true);
+    expect(audioCalls(zoom)).toEqual(["startAudio:muted", "unmuteAudio", "muteAudio"]);
+    expect(soundsOf(events).at(-1)).toBe("on");
+    // Zoom's reports on the microphone count again once it was pressed.
+    zoom.handlers.get("current-audio-change")({ action: "unmuted" });
+    expect(micOf(events).at(-1)).toBe("on");
+  });
+
+  test("SB-3: a microphone press while Turn on sound is on its way waits for it and then unmutes: one audio join, never two at once", async () => {
+    const { zoom, adapter } = await joined();
+    const release = zoom.holdNextAudio();
+    const joining = adapter.joinSound();
+    await settle();
+    const speaking = adapter.setDevice("microphone", true);
+    await settle();
+    expect(audioCalls(zoom)).toEqual(["startAudio:muted"]);
+    release();
+    expect(await joining).toBe(true);
+    expect(await speaking).toBe("on");
+    expect(audioCalls(zoom)).toEqual(["startAudio:muted", "unmuteAudio"]);
+    // The other way round: a microphone press on its way joins the audio itself.
+    const second = await joined();
+    const held = second.zoom.holdNextAudio();
+    const pressed = second.adapter.setDevice("microphone", true);
+    await settle();
+    expect(await second.adapter.joinSound()).toBe(true);
+    held();
+    expect(await pressed).toBe("on");
+    expect(audioCalls(second.zoom)).toEqual(["startAudio"]);
+    expect(soundsOf(second.events)).toEqual(["on"]);
+  });
+
+  test("SB-4: a Zoom that joins unmuted although asked is muted at once; the microphone stays off", async () => {
+    const { zoom, adapter, events } = await joined({ ignoresMute: true });
+    expect(await adapter.joinSound()).toBe(true);
+    expect(audioCalls(zoom)).toEqual(["startAudio:muted", "muteAudio"]);
+    expect(zoom.isMuted()).toBe(true);
+    expect(micOf(events)).toEqual([]);
+  });
+
+  test("SB-5: a refused microphone is 'capture' (said on the page), with no speaker-only fallback; pressing again tries the muted join again", async () => {
+    const refused = Object.assign(new Error("no microphone"), { type: "INSUFFICIENT_PRIVILEGES", reason: "AUDIO_CAPTURE_FAILED" });
+    const { zoom, adapter, events } = await joined({ audioError: refused });
+    expect(await adapter.joinSound()).toBe(false);
+    expect(soundsOf(events)).toEqual(["joining", "failed:capture"]);
+    expect(audioCalls(zoom)).toEqual(["startAudio:muted"]);
+    expect(await adapter.joinSound()).toBe(true);
+    expect(audioCalls(zoom)).toEqual(["startAudio:muted", "startAudio:muted"]);
+    expect(zoom.calls.some(call => /speakerOnly/.test(call))).toBe(false);
+    // A browser's own refusal reads the same way.
+    const browser = await joined({ audioError: Object.assign(new Error("Permission denied"), { name: "NotAllowedError" }) });
+    expect(await browser.adapter.joinSound()).toBe(false);
+    expect(soundsOf(browser.events).at(-1)).toBe("failed:capture");
+    const other = await joined({ audioError: new Error("something else") });
+    expect(await other.adapter.joinSound()).toBe(false);
+    expect(soundsOf(other.events).at(-1)).toBe("failed:error");
+  });
+
+  test("SB-6: the browser refusing to play during Turn on sound fails the sound (not the microphone); pressing again joins the audio again, still muted", async () => {
+    const { zoom, adapter, events } = await joined();
+    const release = zoom.holdNextAudio();
+    const joining = adapter.joinSound();
+    await settle();
+    zoom.handlers.get("auto-play-audio-failed")();
+    release();
+    expect(await joining).toBe(false);
+    expect(soundsOf(events)).toEqual(["joining", "failed:autoplay", "failed:autoplay"]);
+    expect(micOf(events)).toEqual([]);
+    expect(await adapter.joinSound()).toBe(true);
+    expect(audioCalls(zoom)).toEqual(["startAudio:muted", "stopAudio", "startAudio:muted"]);
+    expect(soundsOf(events).at(-1)).toBe("on");
+    // With a microphone press waiting, the failure is the microphone's, as before.
+    const pressing = await joined({ audioHangs: 1 }, { deviceStartMs: 5_000 });
+    const speaking = pressing.adapter.setDevice("microphone", true);
+    await settle();
+    pressing.zoom.handlers.get("auto-play-audio-failed")();
+    expect(await speaking).toBe("failed");
+    expect(soundsOf(pressing.events)).toEqual([]);
+  });
+
+  test("SB-7: leaving, joining again (a second room on the same page) and Zoom leaving the audio all start silent again; each new room uses the same muted join", async () => {
+    const { zoom, adapter, events } = await joined();
+    await adapter.joinSound();
+    await adapter.leave();
+    expect(soundsOf(events)).toEqual(["joining", "on", "off"]);
+    await adapter.join(zoomJoin);
+    expect(await adapter.joinSound()).toBe(true);
+    expect(await adapter.setDevice("microphone", true)).toBe("on");
+    expect(audioCalls(zoom)).toEqual(["startAudio:muted", "startAudio:muted", "unmuteAudio"]);
+    // Zoom leaving the audio by itself: the room is silent and offers the sound again.
+    zoom.handlers.get("current-audio-change")({ action: "leave" });
+    expect(soundsOf(events).at(-1)).toBe("off");
+    expect(micOf(events).at(-1)).toBe("off");
+    expect(zoom.calls.some(call => /speakerOnly/.test(call))).toBe(false);
+  });
+
+  test("SB-8: a muted join Zoom never answers fails after the deadline; Zoom's later 'joined' report turns the sound on with the microphone still off", async () => {
+    const { zoom, adapter, events } = await joined({ audioHangs: 1 }, { deviceStartMs: 50 });
+    expect(await adapter.joinSound()).toBe(false);
+    expect(soundsOf(events)).toEqual(["joining", "failed:error"]);
+    zoom.handlers.get("current-audio-change")({ action: "join" });
+    expect(soundsOf(events).at(-1)).toBe("on");
+    expect(micOf(events)).toEqual([]);
+    // The microphone's first press unmutes that audio.
+    expect(await adapter.setDevice("microphone", true)).toBe("on");
+    expect(audioCalls(zoom)).toEqual(["startAudio:muted", "unmuteAudio"]);
   });
 
   test("Zoom devices: a start Zoom never answers ends 'failed' after the deadline; pressing again gives it one more deadline, then clears it and starts", async () => {

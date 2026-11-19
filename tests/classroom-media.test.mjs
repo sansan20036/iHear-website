@@ -130,6 +130,39 @@ describe("the provider-neutral media adapter", () => {
     expect(adapter.state.devices).toEqual({ camera: "denied", microphone: "off" });
   });
 
+  // 2026-11-20: hearing the room in the test classroom, as the page needs it: "Turn on sound" or the
+  // microphone joins the sound; a blocked microphone or blocked playback fails it; every new join
+  // (after a failure, after leaving) starts silent; Zoom's own short reconnect keeps it.
+  test("SB-9: the synthetic sound: joined by Turn on sound or the microphone, failed when blocked, silent again after a failure or leaving", async () => {
+    const adapter = new SyntheticMediaAdapter({ connectDelayMs: 0 });
+    const events = recorded(adapter);
+    const sounds = () => events.filter(event => event.type === "sound").map(event => (event.problem ? `${event.state}:${event.problem}` : event.state));
+    expect(await adapter.joinSound()).toBe(false);
+    await adapter.join(joinInput);
+    expect(await adapter.joinSound()).toBe(true);
+    expect(adapter.state.devices.microphone).toBe("off");
+    adapter.simulate("network-drop");
+    adapter.simulate("network-restore");
+    adapter.simulate("connection-failed");
+    await adapter.join(joinInput);
+    expect(sounds()).toEqual(["on", "off"]);
+    // The microphone brings the sound as well.
+    await adapter.setDevice("microphone", true);
+    expect(sounds().at(-1)).toBe("on");
+    await adapter.leave();
+    expect(sounds().at(-1)).toBe("off");
+    // Blocked playback, then a blocked microphone (Zoom's muted join needs it), then both restored.
+    await adapter.join(joinInput);
+    adapter.simulate("sound-blocked");
+    expect(await adapter.joinSound()).toBe(false);
+    adapter.simulate("devices-restored");
+    adapter.simulate("microphone-unavailable");
+    expect(await adapter.joinSound()).toBe(false);
+    adapter.simulate("devices-restored");
+    expect(await adapter.joinSound()).toBe(true);
+    expect(sounds().slice(-3)).toEqual(["failed:autoplay", "failed:capture", "on"]);
+  });
+
   test("the tutor reports connection changes in the existing report vocabulary, and joins only with a user key", () => {
     const at = 1;
     expect(hostReportFor({ type: "connection", state: "connected", at })).toEqual({ type: "connection", state: "Connected" });
@@ -144,6 +177,8 @@ describe("the provider-neutral media adapter", () => {
     expect(hostReportFor({ type: "remote", present: true, camera: true, microphone: true, userKey: null, at })).toBeNull();
     expect(hostReportFor({ type: "remote", present: true, camera: true, microphone: true, userKey: "P-1", at })).toEqual({ type: "user_added", userKey: "P-1" });
     expect(hostReportFor({ type: "remote", present: false, camera: false, microphone: false, userKey: "P-1", at })).toEqual({ type: "user_removed", userKey: "P-1" });
+    // "Turn on sound" is never reported.
+    expect(hostReportFor({ type: "sound", state: "on", at })).toBeNull();
   });
 
   // 2026-11-12: chat and raised hands. Nothing is saved, and none of it is reported to iHear.

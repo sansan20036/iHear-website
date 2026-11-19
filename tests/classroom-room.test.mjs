@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 
-import { connectionStep, devicesToOffer, HAND_NOTICE_MS, initialsOf, newHands, orderPeople, personLabel, spotlightOf, stageModeOf } from "../lib/classroom-room";
+import { connectionStep, devicesToOffer, HAND_NOTICE_MS, initialsOf, newHands, orderPeople, personLabel, soundOffered, spotlightOf, stageModeOf } from "../lib/classroom-room";
+import { SYNTHETIC_SCENARIOS } from "../lib/classroom-media";
 
 const { roomCopy } = await import("../app/classroom/[lessonId]/classroom-copy");
 
@@ -123,5 +124,44 @@ describe("after a reconnect: what the room offers to turn on again", () => {
     expect(words("en")).not.toMatch(/\p{Script=Han}/u);
     expect(words("zhHant")).not.toMatch(/[这个页标签设备进们说时间开关请显视频务连线摄头对听吗启]/u);
     expect(words("zhHans")).not.toMatch(/[這個頁標籤設備進們說時間開關請顯視頻螢務連線攝頭對聽嗎啟]/u);
+  });
+});
+
+// 2026-11-20: "Turn on sound" — nobody heard the room before pressing the microphone.
+describe("Turn on sound: when the room offers it, and what it says", () => {
+  const base = { connected: true, canJoin: true, sound: "off", microphone: "off", micOffered: false };
+  test("SB-10: offered while connected and silent, by an adapter that can; not when the microphone (or an offer to turn it on) brings the sound", () => {
+    expect(soundOffered(base)).toBe(true);
+    expect(soundOffered({ ...base, sound: "joining" })).toBe(true);
+    expect(soundOffered({ ...base, sound: "failed" })).toBe(true);
+    expect(soundOffered({ ...base, sound: "on" })).toBe(false);
+    expect(soundOffered({ ...base, connected: false })).toBe(false);
+    expect(soundOffered({ ...base, canJoin: false })).toBe(false);
+    expect(soundOffered({ ...base, microphone: "on" })).toBe(false);
+    expect(soundOffered({ ...base, microphone: "starting" })).toBe(false);
+    expect(soundOffered({ ...base, micOffered: true })).toBe(false);
+    // A blocked microphone: the sound is still offered, and its failure is explained.
+    for (const microphone of ["denied", "unavailable", "failed"]) expect(soundOffered({ ...base, microphone }), microphone).toBe(true);
+  });
+
+  test("SB-11: the words in all three languages, each in its own script; they promise a muted microphone and name the button", () => {
+    for (const locale of ["en", "zhHant", "zhHans"]) {
+      const text = roomCopy[locale];
+      for (const key of ["off", "short", "capture", "autoplay", "error", "turnOn", "joining"]) expect(String(text.sound?.[key] ?? "").length, `${locale}.sound.${key}`).toBeGreaterThan(0);
+      // The phone's short line is short, and still promises the muted microphone.
+      expect([...text.sound.short].length, `${locale}.sound.short`).toBeLessThanOrEqual(60);
+      for (const key of ["off", "capture", "autoplay", "error"]) expect(text.sound[key], `${locale}.sound.${key} names the button`).toContain(text.sound.turnOn);
+      // Every test scenario has its button label.
+      for (const scenario of SYNTHETIC_SCENARIOS) expect(String(text.scenario[scenario] ?? "").length, `${locale}.scenario.${scenario}`).toBeGreaterThan(0);
+    }
+    for (const key of ["off", "short"]) {
+      expect(roomCopy.en.sound[key]).toMatch(/microphone stays muted/);
+      expect(roomCopy.zhHant.sound[key]).toContain("麥克風會保持靜音");
+      expect(roomCopy.zhHans.sound[key]).toContain("麦克风会保持静音");
+    }
+    const words = (locale) => [...Object.values(roomCopy[locale].sound), roomCopy[locale].scenario["sound-blocked"]].join(" ");
+    expect(words("en")).not.toMatch(/\p{Script=Han}/u);
+    expect(words("zhHant")).not.toMatch(/[这个页标签设备进们说时间开关请显视频务连线摄头对听吗启声没浏览挡试启置刷]/u);
+    expect(words("zhHans")).not.toMatch(/[這個頁標籤設備進們說時間開關請顯視頻螢務連線攝頭對聽嗎啟聲沒瀏覽擋試設]/u);
   });
 });

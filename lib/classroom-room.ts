@@ -2,7 +2,17 @@
 // SDK), so the rules can be tested without a browser. The page (app/classroom/[lessonId]) draws it.
 
 import type { RaisedHand } from "./classroom-chat";
-import type { ConnectionState, DeviceKind, DeviceState, RoomPerson } from "./classroom-media";
+import type { ConnectionState, DeviceKind, DeviceState, RoomPerson, SoundState } from "./classroom-media";
+
+// "Turn on sound" (2026-11-20): offered while connected and this page does not hear the room yet,
+// by an adapter that can join the sound; not when the microphone is starting or on (its audio plays
+// the room as well), nor when an offer on the page already turns the microphone on again (after a
+// reconnect or a room move): that press brings the sound too.
+export function soundOffered(input: { connected: boolean; canJoin: boolean; sound: SoundState; microphone: DeviceState; micOffered: boolean }): boolean {
+  if (!input.connected || !input.canJoin || input.sound === "on") return false;
+  if (input.microphone === "on" || input.microphone === "starting") return false;
+  return !input.micOffered;
+}
 
 // What fills the main stage: the people (nobody shares), the shared screen, the whiteboard, or the
 // vendor's whole classroom page (LCIC). The whiteboard wins when both are on.
