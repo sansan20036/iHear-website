@@ -215,8 +215,6 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   // zoom and the stage alone full screen.
   const tabClaim = useRef<TabClaim | null>(null);
   const [elsewhere, setElsewhere] = useState(0);
-  // The browser is holding back the room's sound until the person presses something (2026-11-19).
-  const [soundBlocked, setSoundBlocked] = useState(false);
   const [shareZoom, setShareZoom] = useState(1);
   const stageBox = useRef<HTMLElement | null>(null);
   const [stageFull, setStageFull] = useState(false);
@@ -407,8 +405,6 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
         setSpeaking(event.ids);
       } else if (event.type === "duplicate") {
         setElsewhere(event.count);
-      } else if (event.type === "sound") {
-        setSoundBlocked(event.state === "blocked");
       }
       // A session id changes nothing on screen; it is reported only when the join answer asked.
       if (joined.role === "tutor") {
@@ -1082,13 +1078,6 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
           {toolProblem && <p className="classroom-room-problem" role="alert" data-board-code={toolProblem === "share" ? undefined : boardCode ?? undefined}>{toolProblem === "share" ? v.shareFailed : boardProblemText(v, toolProblem, boardCode)}</p>}
           {handProblem && <p className="classroom-room-problem" role="alert">{text.handFailed}</p>}
           {elsewhere > 0 && <p className="classroom-room-problem" role="alert" data-elsewhere={elsewhere}>{text.elsewhere}</p>}
-          {soundBlocked && (
-            <div className="classroom-room-problem classroom-room-problem-row" role="alert" data-sound-blocked>
-              <span>{text.soundBlocked}</span>
-              {/* The press itself is what the browser waits for: Zoom then plays the sound. */}
-              <button type="button" className="classroom-room-secondary" onClick={() => setSoundBlocked(false)}>{text.soundOn}</button>
-            </div>
-          )}
           {isTutor && recording?.status === "FAILED" && <p className="classroom-room-problem" role="alert">{text.failedRecording}</p>}
           {isTutor && hostProblem === "unstable" && <p className="classroom-room-problem" role="status">{text.unstable}</p>}
           {isTutor && hostProblem === "signedOut" && <p className="classroom-room-problem" role="alert">{text.signedOut} <a href={signInUrl}>{text.signIn}</a></p>}
