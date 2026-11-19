@@ -667,6 +667,15 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
   // its way that the room was left (or rejoined) meanwhile.
   private joining: Promise<void> | null = null;
   private attempt = 0;
+  // Zoom keeps a page that was cut off (or closed without leaving) in its list of people for
+  // minutes (real Zoom, 2026-11-19: about 3 to 4.5 minutes). Meanwhile the person who came back is
+  // there twice: others saw two tiles of one student, and the student was told "you also entered
+  // elsewhere" about a page that no longer existed. So this page remembers the ids Zoom gave its
+  // own earlier joins in this session (they are never "elsewhere"), and of several entries with one
+  // participant id it keeps the one that came last (usersNow).
+  private pastSelf = new Set<number>();
+  private firstSeen = new Map<number, number>();
+  private looks = 0;
   // The room (session name) this page joined last; a join to another room moves there (D-5).
   private sessionName: string | null = null;
   // This page's camera and microphone, the latest press of each, and the press now waiting for Zoom.
@@ -757,6 +766,7 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     if (!input.sessionToken || !input.sessionName) throw new Error("A Zoom join token and its session name are required");
     if (this.joining) return this.joining;
     if (this.client && ZOOM_IN_SESSION.has(this.connection) && input.sessionName === this.sessionName) return;
+    if (input.sessionName !== this.sessionName) { this.pastSelf.clear(); this.firstSeen.clear(); }
     this.sessionName = input.sessionName;
     const joining = this.connect({ ...input, sessionName: input.sessionName });
     this.joining = joining;
@@ -907,6 +917,8 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
   // Ends this page's part in the session: presses, videos, shares, and Zoom's client itself.
   private async teardown() {
     const client = this.client, handlers = this.handlers.splice(0);
+    const own = client?.getCurrentUserInfo()?.userId;
+    if (typeof own === "number") this.pastSelf.add(own);
     this.client = null; this.stream = null; this.audioStarted = false; this.tiles.clear(); this.sharer = null;
     clearTimeout(this.videosTimer);
     this.waitingVideos.clear();
@@ -1275,10 +1287,40 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
 
   // Everyone in the session as the page shows them, and their tiles (Classroom 2.0). The page's own
   // camera and microphone come from its own presses; everyone else's from Zoom's user list.
+  // Zoom's list of people without the entries a cut-off or closed page left behind: never this
+  // page's own earlier joins, and of several entries with one participant id (the user key from the
+  // join token) only the one that came last. The page's own entry always stays; so does this
+  // person's entry on ANOTHER page or device, which the room must still say (reportRemote).
+  private usersNow(): ZoomParticipant[] {
+    const all = this.client?.getAllUser() ?? [];
+    const self = this.client?.getCurrentUserInfo()?.userId;
+    const keyOf = (user: ZoomParticipant) => user.userKey ?? user.userIdentity ?? null;
+    this.looks += 1;
+    for (const user of all) if (!this.firstSeen.has(user.userId)) this.firstSeen.set(user.userId, this.looks);
+    for (const id of [...this.firstSeen.keys()]) if (!all.some(user => user.userId === id)) this.firstSeen.delete(id);
+    const later = (a: ZoomParticipant, b: ZoomParticipant) => {
+      const seenA = this.firstSeen.get(a.userId) ?? 0, seenB = this.firstSeen.get(b.userId) ?? 0;
+      return seenA !== seenB ? seenA > seenB : a.userId > b.userId;
+    };
+    const last = new Map<string, ZoomParticipant>();
+    for (const user of all) {
+      const key = keyOf(user);
+      if (user.userId === self || this.pastSelf.has(user.userId) || !key) continue;
+      const kept = last.get(key);
+      if (!kept || later(user, kept)) last.set(key, user);
+    }
+    return all.filter((user) => {
+      if (user.userId === self) return true;
+      if (this.pastSelf.has(user.userId)) return false;
+      const key = keyOf(user);
+      return !key || last.get(key) === user;
+    });
+  }
+
   private reportPeople() {
     const client = this.client;
     const self = client?.getCurrentUserInfo()?.userId;
-    const people: RoomPerson[] = (client?.getAllUser() ?? []).map((user) => {
+    const people: RoomPerson[] = this.usersNow().map((user) => {
       const own = user.userId === self;
       const camera = own ? this.devices.camera === "on" : Boolean(user.bVideoOn);
       return {
@@ -1315,7 +1357,7 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
   private reportRemote() {
     this.reportPeople();
     const self = this.client?.getCurrentUserInfo()?.userId;
-    const all = this.client?.getAllUser() ?? [];
+    const all = this.usersNow();
     // The same person (the same participant id, which Zoom keeps as the user key) on another page.
     const keyOf = (user: ZoomParticipant | undefined) => user?.userKey ?? user?.userIdentity ?? null;
     const selfKey = keyOf(all.find(user => user.userId === self));
@@ -1343,7 +1385,7 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
   private async drawVideosAlreadyOn() {
     const self = this.client?.getCurrentUserInfo()?.userId;
     const before = this.tiles.size + this.waitingVideos.size;
-    for (const user of this.client?.getAllUser() ?? []) {
+    for (const user of this.usersNow()) {
       if (user.userId === self || !user.bVideoOn) continue;
       await this.attach(user.userId).catch(() => undefined);
     }
@@ -1365,7 +1407,7 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
   private async checkVideos() {
     if (!this.stream || this.connection !== "connected") return;
     const self = this.client?.getCurrentUserInfo()?.userId;
-    const present = new Set((this.client?.getAllUser() ?? []).map(user => user.userId));
+    const present = new Set(this.usersNow().map(user => user.userId));
     const before = `${[...this.tiles.keys()]}|${[...this.waitingVideos]}`;
     for (const userId of [...this.waitingVideos]) if (!present.has(userId)) this.waitingVideos.delete(userId);
     for (const userId of [...this.tiles.keys()]) if (userId !== self && !present.has(userId)) await this.releaseVideo(userId);

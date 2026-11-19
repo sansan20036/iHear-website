@@ -64,6 +64,8 @@ const RETRY_MS = 5_000;
 const ACTIVE = new Set(["START_REQUESTED", "RECORDING", "PAUSED"]);
 // While the video connection is down the tutor is not in class, so no heartbeat says otherwise.
 const DOWN = new Set<ConnectionState>(["reconnecting", "disconnected", "failed"]);
+// How long the room waits before each try of its own to connect again after Zoom gave up.
+const AUTO_RECONNECT_MS = [3000, 8000, 20000];
 
 type Phase = "ready" | "joining" | "joined" | "blocked" | "left";
 // sessionReports: the join answer asked this (tutor's) page to report the vendor's session id.
@@ -793,6 +795,21 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   useEffect(() => {
     moveRoom.current = () => { void reconnect(); };
   });
+
+  // Zoom gave up on a connection (real Zoom, 2026-11-19: after 4 of 9 network cuts of 30 seconds the
+  // room said "connection failed" and waited for a press on "Connect again"; a child does not know
+  // to press it). The page now asks again by itself, after 3, 8 and 20 seconds; after that only the
+  // button is left. Each try is the same protected request as the button. A refusal by the server
+  // (the lesson ended, the link was revoked) ends the tries, and being connected starts them anew.
+  const autoTries = useRef(0);
+  useEffect(() => {
+    if (media.connection === "connected") { autoTries.current = 0; return; }
+    if (media.connection !== "failed" || !joined || rejoining || rejoinProblem) return;
+    const wait = AUTO_RECONNECT_MS[autoTries.current];
+    if (wait === undefined) return;
+    const timer = setTimeout(() => { autoTries.current += 1; moveRoom.current(); }, wait);
+    return () => clearTimeout(timer);
+  }, [media.connection, joined, rejoining, rejoinProblem]);
 
   async function leaveFor(why: string) {
     if (adapter.current) await adapter.current.leave();

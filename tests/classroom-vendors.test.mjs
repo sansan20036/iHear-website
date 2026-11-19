@@ -1652,6 +1652,49 @@ describe("browser adapters", () => {
     expect(duplicates()).toEqual([1, 0]);
   });
 
+  // 2026-11-19, real Zoom: a page that was cut off, or closed without leaving, stays in Zoom's list
+  // for minutes. The person who came back was shown twice, and was told "also entered elsewhere".
+  test("AV-6 a person Zoom lists twice (the entry a cut-off page left behind, and the one that came back) is one person here: the later entry", async () => {
+    const { zoom, events } = await joined({ others: [{ userId: 2, userIdentity: "P-TEST-S01", bVideoOn: true }] }, quick);
+    const people = () => events.filter(event => event.type === "people").at(-1).people.map(person => person.id);
+    expect(people()).toEqual(["1", "2"]);
+    // The student's page is cut off; Zoom keeps entry 2. The student connects again as entry 9.
+    zoom.users.push({ userId: 9, userIdentity: "P-TEST-S01", bVideoOn: true });
+    await peopleChanged(zoom, "user-added");
+    expect(people()).toEqual(["1", "9"]);
+    // The video of the entry left behind is let go; the one that came back is drawn.
+    expect(zoom.calls).toContain("detach:2");
+    expect(zoom.calls).toContain("attach:9");
+    // Zoom drops the old entry minutes later: nothing changes on the page.
+    zoom.users.splice(1, 1);
+    await peopleChanged(zoom, "user-removed");
+    expect(people()).toEqual(["1", "9"]);
+    // Two different people are of course both shown.
+    zoom.users.push({ userId: 12, userIdentity: "P-TEST-S02" });
+    await peopleChanged(zoom, "user-added");
+    expect(people()).toEqual(["1", "9", "12"]);
+  });
+
+  test("AV-7 this page's own earlier join, still in Zoom's list after connecting again, is not \"entered elsewhere\" and is not shown; another device still is", async () => {
+    const { zoom, adapter, events } = await joined({ others: [{ userId: 2, userIdentity: "P-TEST-S01" }] }, quick);
+    const duplicates = () => events.filter(event => event.type === "duplicate").map(event => event.count);
+    const people = () => events.filter(event => event.type === "people").at(-1).people.map(person => person.id);
+    // The connection failed; the page connects again (the same session) and Zoom gives it a new id,
+    // while the old entry (1) is still listed.
+    await adapter.leave();
+    const client = zoom.sdk.createClient();
+    client.getCurrentUserInfo = () => ({ userId: 5 });
+    zoom.users.push({ userId: 5, userIdentity: zoom.users[0].userIdentity });
+    await adapter.join(zoomJoin);
+    await peopleChanged(zoom, "user-added");
+    expect(duplicates().filter(count => count > 0)).toEqual([]);
+    expect(people()).toEqual(["2", "5"]);
+    // The same person on a really different page or device is still said.
+    zoom.users.push({ userId: 30, userIdentity: zoom.users[0].userIdentity });
+    await peopleChanged(zoom, "user-added");
+    expect(duplicates().at(-1)).toBe(1);
+  });
+
   test("AV-4 looking at the cameras never touches this page's own camera or microphone, and draws nobody's own video twice", async () => {
     const { zoom, adapter, events } = await joined({ others: [{ userId: 2, userIdentity: "P-TEST-S01", bVideoOn: true }] }, quick);
     expect(await adapter.setDevice("camera", true)).toBe("on");

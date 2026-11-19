@@ -361,6 +361,20 @@ try {
     await expect(chip).toHaveCount(0);
   });
 
+  // 2026-11-19 (real Zoom: after 4 of 9 network cuts the room said "connection failed" and waited
+  // for a press): the room now asks to join again by itself a few seconds later.
+  await check('RC-4b: after a failed connection the room connects again by itself within a few seconds, with one new join request and nobody pressing', async () => {
+    const asked = [];
+    const listen = item => { if (item.method() === 'POST' && item.url().endsWith(`/api/classroom/${lesson.id}/join`)) asked.push(item); };
+    tutorPage.on('request', listen);
+    try {
+      await tutorPage.getByRole('button', { name: '連線失敗', exact: true }).click();
+      await expect(tutorPage.getByRole('alert').filter({ hasText: '視訊無法連線' })).toBeVisible();
+      await expect(tutorPage.locator('.classroom-room-connection')).toHaveText('已連線', { timeout: 10_000 });
+      expect(asked.length).toBe(1);
+    } finally { tutorPage.off('request', listen); }
+  });
+
   // R-1 and R-2 (2026-11-06): "Connect again" used to rejoin with the token given on entry (Zoom's
   // lasts 30 minutes). It now asks the protected join check for a new one each time.
   await check('RC-5: after a failed connection, "Connect again" asks the join check again (once, even on a double click) and reconnects', async () => {
