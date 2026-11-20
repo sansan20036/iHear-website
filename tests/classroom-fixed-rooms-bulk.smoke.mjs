@@ -43,7 +43,7 @@ function watch(page, who) {
   return page;
 }
 const shot = (page, name) => page.screenshot({ path: path.join(directory, `${name}.png`), fullPage: true });
-const LINE = new RegExp(`^"((?:Room|Hall)\\d+)","(${origin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/classroom/r/FR-[0-9a-f]{32}#k=[A-Za-z0-9_-]{43})"$`);
+const LINE = new RegExp(`^"((?:Room|Hall|Desk|Seat)\\d+)","(${origin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/classroom/r/FR-[0-9a-f]{32}#k=[A-Za-z0-9_-]{43})"$`);
 // Every link key handed out in a file during the run (round 4: none may be found anywhere after).
 const handedOut = new Set();
 // The downloaded list: its heading, then one line per room; as [name, address] pairs. The file is
