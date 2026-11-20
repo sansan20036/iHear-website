@@ -1,0 +1,74 @@
+// Classroom 3.0 round 3 (2026-11-21): the words of a fixed room's page (/classroom/r/<room>), three
+// languages. The prompt stays in English in every language, as the iHear teacher asked.
+
+export const ROOM_COPY = {
+  zhHant: {
+    title: "iHear 線上教室", prompt: "Please enter your first name (in English)", promptLocal: "請輸入你的英文名字",
+    note: "名字只用來讓老師認出你，不是登入。", enter: "進入教室", entering: "送出中…",
+    waiting: "已經通知老師。老師讓你進入後，這個頁面會自動帶你進教室。請不要關掉這個頁面。",
+    admitted: "老師已經讓你進入，正在帶你進教室…",
+    error: "暫時連不上教室，稍後會自動再試。", other: "用另一個名字重新輸入",
+    noLink: "這個網址少了教室的連結。請用老師給你的完整連結再打開一次。",
+    states: {
+      declined: "老師沒有讓你進入這間教室。如果有問題，請聯絡老師。",
+      removed: "你已經離開這間教室。如果有問題，請聯絡老師。",
+      expired: "等了太久，這次的申請已經失效。請重新輸入名字。",
+      replaced: "這個教室連結已經更換。請向老師要新的連結。",
+      ended: "這次上課已經結束。",
+    } as Record<string, string>,
+    reasons: {
+      NOT_FOUND: "找不到這間教室。請確認你用的是老師給你的完整連結。",
+      LINK_REPLACED: "這個教室連結已經更換。請向老師要新的連結。",
+      INVALID_NAME: "請用英文字母輸入名字（可以有空格、. 和 '）。",
+      ROOM_FULL: "教室已經滿了（最多 10 人）。請聯絡老師。",
+      TOO_MANY_WAITING: "等待的人很多，請過一會兒再試。",
+      NAME_TAKEN: "同名的人太多了，請在名字後面加上姓氏的第一個字母。",
+    } as Record<string, string>,
+  },
+  en: {
+    title: "iHear Classroom", prompt: "Please enter your first name (in English)", promptLocal: "",
+    note: "Your name only helps your teacher recognize you; it is not a sign-in.", enter: "Join Classroom", entering: "Sending…",
+    waiting: "Your teacher has been told. Once they let you in, this page takes you into the classroom. Please keep this page open.",
+    admitted: "Your teacher let you in; taking you to the classroom…",
+    error: "The classroom cannot be reached right now; trying again shortly.", other: "Enter another name",
+    noLink: "This address is missing the classroom's link. Please open the full link your teacher gave you.",
+    states: {
+      declined: "Your teacher did not let you into this classroom. Please contact your teacher if you need help.",
+      removed: "You have left this classroom. Please contact your teacher if you need help.",
+      expired: "You waited too long and this request has lapsed. Please enter your name again.",
+      replaced: "This classroom link has been replaced. Please ask your teacher for the new link.",
+      ended: "This lesson has ended.",
+    } as Record<string, string>,
+    reasons: {
+      NOT_FOUND: "This classroom cannot be found. Please check that you used the full link your teacher gave you.",
+      LINK_REPLACED: "This classroom link has been replaced. Please ask your teacher for the new link.",
+      INVALID_NAME: "Please use English letters (spaces, . and ' are fine).",
+      ROOM_FULL: "The classroom is full (10 people at most). Please contact your teacher.",
+      TOO_MANY_WAITING: "Many people are waiting; please try again in a moment.",
+      NAME_TAKEN: "Too many people have this name; add the first letter of your family name.",
+    } as Record<string, string>,
+  },
+  zhHans: {
+    title: "iHear 在线教室", prompt: "Please enter your first name (in English)", promptLocal: "请输入你的英文名字",
+    note: "名字只用来让老师认出你，不是登录。", enter: "进入教室", entering: "发送中…",
+    waiting: "已经通知老师。老师让你进入后，这个页面会自动带你进教室。请不要关掉这个页面。",
+    admitted: "老师已经让你进入，正在带你进教室…",
+    error: "暂时连不上教室，稍后会自动再试。", other: "用另一个名字重新输入",
+    noLink: "这个网址少了教室的链接。请用老师给你的完整链接再打开一次。",
+    states: {
+      declined: "老师没有让你进入这间教室。如果有问题，请联系老师。",
+      removed: "你已经离开这间教室。如果有问题，请联系老师。",
+      expired: "等了太久，这次的申请已经失效。请重新输入名字。",
+      replaced: "这个教室链接已经更换。请向老师要新的链接。",
+      ended: "这次上课已经结束。",
+    } as Record<string, string>,
+    reasons: {
+      NOT_FOUND: "找不到这间教室。请确认你用的是老师给你的完整链接。",
+      LINK_REPLACED: "这个教室链接已经更换。请向老师要新的链接。",
+      INVALID_NAME: "请用英文字母输入名字（可以有空格、. 和 '）。",
+      ROOM_FULL: "教室已经满了（最多 10 人）。请联系老师。",
+      TOO_MANY_WAITING: "等待的人很多，请过一会儿再试。",
+      NAME_TAKEN: "同名的人太多了，请在名字后面加上姓氏的第一个字母。",
+    } as Record<string, string>,
+  },
+};

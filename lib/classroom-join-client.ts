@@ -9,7 +9,8 @@ import type { ClassroomMediaAdapter, MediaRole } from "./classroom-media";
 export type JoinedSession = { kind?: "sdk" | "embed"; token?: string; sessionName?: string; embedUrl?: string; recordingDisabled?: boolean; expiresAt: string };
 export type JoinAnswer =
   // sessionReports: the server asks this (tutor's) page to report the vendor's session id (P1).
-  | { ok: true; provider: string; lesson: { code: string; startsAt: string; endsAt: string }; role: MediaRole; participantCode: string; session: JoinedSession | null; sessionReports?: boolean }
+  // fixedRoom: a fixed room's lesson (round 3): no host, so no chat or raised hands on the page.
+  | { ok: true; provider: string; lesson: { code: string; startsAt: string; endsAt: string }; role: MediaRole; participantCode: string; session: JoinedSession | null; sessionReports?: boolean; fixedRoom?: boolean }
   | { ok: false; code: string };
 export type RejoinResult = { ok: true; session: JoinedSession } | { ok: false; code: string };
 
@@ -27,6 +28,7 @@ export async function requestJoin(lessonId: string, joinKey: string | null, fetc
       return {
         ok: true, provider: data.provider, lesson: data.lesson, role: data.role, participantCode: data.participantCode, session: data.session ?? null,
         ...(data.sessionReports === true ? { sessionReports: true } : {}),
+        ...(data.fixedRoom === true ? { fixedRoom: true } : {}),
       };
     }
     const code = response.status === 429 ? "RATE_LIMITED" : typeof data?.code === "string" ? data.code : "UNAVAILABLE";

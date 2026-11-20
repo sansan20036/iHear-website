@@ -12,6 +12,7 @@ import { buildDashboard, LABELS } from "../tools/recording-pathway/classroom/liv
 // @ts-ignore - shared classroom logic, plain JavaScript.
 import { answerLost, mayHaveReachedZoom, OPERATED } from "../tools/recording-pathway/classroom/operations.mjs";
 import type { ClassroomDrive } from "./classroom-drive";
+import { fixedRoomOf } from "./classroom-fixed-room-facts";
 import type { ClassroomProvider } from "./classroom-provider";
 import type { ClassroomBlock, ClassroomBlockMember, ClassroomEvent, ClassroomLesson, ClassroomStore, OperationState, RecordingFile } from "./classroom-store";
 import { sessionReportsEnabled, vendorDeletionEnabled } from "./classroom-switches";
@@ -422,6 +423,10 @@ export async function joinClassroom({ store, provider, lessonId, key, sessionEma
         : { kind: "sdk", token: token.token, ...(token.sessionName ? { sessionName: token.sessionName } : {}), expiresAt: new Date(token.expiresAt).toISOString() },
       // Only the tutor's page reports the vendor's session id, and only where it is confirmed.
       ...(participant!.role === "tutor" && sessionReportsEnabled() ? { sessionReports: true } : {}),
+      // Round 3: a fixed room's lesson (the server's own scheduling fact says so). It has no tutor to
+      // host it, so the page offers no chat or raised hands there until real Zoom shows what a session
+      // without a host allows (D-14).
+      ...(fixedRoomOf(events) ? { fixedRoom: true } : {}),
     },
   };
 }

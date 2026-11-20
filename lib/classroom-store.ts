@@ -219,6 +219,10 @@ export type ClassroomStore = {
   listLessonsForStaff(email: string, window: { from: number; to: number }): Promise<ClassroomLesson[]>;
   // Owners' changes to who can enter: false when there is no such lesson (or student row).
   setLessonCancelled(id: string): Promise<boolean>;
+  // Classroom 3.0 round 3 (2026-11-21), fixed rooms: one more student let into a lesson that is
+  // not a block's (a fixed room's lesson), under the lesson's lock: refused whole when the lesson
+  // is gone or cancelled, already holds `max` active students, or the id, code or key is taken.
+  addLessonParticipant(input: { lessonId: string; participant: ClassroomParticipant; max: number; events: ClassroomEvent[] }): Promise<AddParticipantResult>;
   replaceStudentKeyHash(lessonId: string, participantId: string, keyHash: string): Promise<boolean>;
   // D-4: a revoked or reissued link gives the student a new participant id. The id and key
   // change and the change's facts are stored (the rotation and the room's new generation), all in
@@ -288,6 +292,8 @@ export type BlockChange = {
 export type BlockChangeResult =
   | { ok: true; version: number; seat?: SeatResult & { ok: true } }
   | { ok: false; reason: "BLOCK_NOT_FOUND" | "STALE_VERSION" | "CHANGED_CONCURRENTLY" | "ROOM_FULL" | "NOT_A_ROOM" | "NO_SUCH_MEMBER"; version?: number };
+
+export type AddParticipantResult = { ok: true } | { ok: false; reason: "LESSON_NOT_FOUND" | "LESSON_CANCELLED" | "ROOM_FULL" | "CODE_TAKEN" };
 
 export class ClassroomLessonConflictError extends Error {}
 
@@ -589,6 +595,17 @@ export function createFileClassroomStore(filePath: string): ClassroomStore {
       if (state.lessons.some((item) => item.id === lesson.id || item.code === lesson.code)) throw new ClassroomLessonConflictError("A lesson with this code already exists");
       state.lessons.push(clone(lesson));
       for (const event of events) state.events[event.key] ??= clone(event);
+    }),
+    addLessonParticipant: ({ lessonId, participant, max, events }) => run((state): AddParticipantResult => {
+      const lesson = state.lessons.find((item) => item.id === lessonId);
+      if (!lesson || lesson.blockId) return { ok: false, reason: "LESSON_NOT_FOUND" };
+      if (lesson.cancelled) return { ok: false, reason: "LESSON_CANCELLED" };
+      if (lesson.participants.filter((entry) => entry.role === "student" && entry.active !== false).length >= max) return { ok: false, reason: "ROOM_FULL" };
+      const keyTaken = Boolean(participant.joinKeyHash) && state.lessons.some((item) => item.participants.some((entry) => entry.joinKeyHash === participant.joinKeyHash));
+      if (keyTaken || lesson.participants.some((entry) => entry.id === participant.id || entry.code === participant.code)) return { ok: false, reason: "CODE_TAKEN" };
+      lesson.participants.push(clone(participant));
+      for (const event of events) state.events[event.key] ??= clone(event);
+      return { ok: true };
     }),
     listLessons: ({ from, to }) => run((state) => clone(state.lessons
       .filter((lesson) => Date.parse(lesson.startsAt) < to && Date.parse(lesson.endsAt) > from)
@@ -1244,6 +1261,34 @@ export function createPostgresClassroomStore(sql: postgres.Sql): ClassroomStore 
         });
       } catch (error) {
         if ((error as { code?: string }).code === "23505") throw new ClassroomLessonConflictError("A lesson with this code already exists");
+        throw error;
+      }
+    },
+    // The lesson's row locked (FOR UPDATE), so two admissions at once never pass its limit together.
+    async addLessonParticipant({ lessonId, participant, max, events }) {
+      try {
+        return await sql.begin(async (tx) => {
+          const [lesson] = await tx`SELECT id, cancelled, block_id FROM public.classroom_lessons WHERE id = ${lessonId} FOR UPDATE`;
+          if (!lesson || lesson.block_id != null) return { ok: false, reason: "LESSON_NOT_FOUND" };
+          if (lesson.cancelled) return { ok: false, reason: "LESSON_CANCELLED" };
+          const [{ count }] = await tx`SELECT count(*)::int AS count FROM public.classroom_participants WHERE lesson_id = ${lessonId} AND role = 'student' AND active`;
+          if (Number(count) >= max) return { ok: false, reason: "ROOM_FULL" };
+          const taken = await tx`
+            SELECT 1 FROM public.classroom_participants
+            WHERE (lesson_id = ${lessonId} AND (participant_id = ${participant.id} OR code = ${participant.code})) OR join_key_hash = ${participant.joinKeyHash ?? null}
+            LIMIT 1
+          `;
+          if (taken.length) return { ok: false, reason: "CODE_TAKEN" };
+          await tx`
+            INSERT INTO public.classroom_participants (lesson_id, participant_id, code, role, staff_email, join_key_hash)
+            VALUES (${lessonId}, ${participant.id}, ${participant.code}, 'student', ${null}, ${participant.joinKeyHash ?? null})
+          `;
+          await insertEvents(tx, events);
+          return { ok: true };
+        }) as AddParticipantResult;
+      } catch (error) {
+        // A key or code someone else took at the same moment (the unique indexes): refused whole.
+        if ((error as { code?: string }).code === "23505") return { ok: false, reason: "CODE_TAKEN" };
         throw error;
       }
     },

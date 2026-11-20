@@ -69,7 +69,8 @@ const AUTO_RECONNECT_MS = [3000, 8000, 20000];
 
 type Phase = "ready" | "joining" | "joined" | "blocked" | "left";
 // sessionReports: the join answer asked this (tutor's) page to report the vendor's session id.
-type Joined = { provider: string; lesson: { code: string; startsAt: string; endsAt: string }; role: "tutor" | "student"; participantCode: string; sessionReports: boolean };
+// fixedRoom: a fixed room's lesson (round 3): no host, so no chat or raised hands until D-14.
+type Joined = { provider: string; lesson: { code: string; startsAt: string; endsAt: string }; role: "tutor" | "student"; participantCode: string; sessionReports: boolean; fixedRoom: boolean };
 type Recording = { decided: boolean; allowed: boolean; status: string; basis: string };
 type Media = {
   available: boolean;
@@ -299,7 +300,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
     const answer = await requestJoin(lessonId, joinKey);
     if (answer.ok) {
       session.current = answer.session;
-      setJoined({ provider: answer.provider, lesson: answer.lesson, role: answer.role, participantCode: answer.participantCode, sessionReports: answer.sessionReports === true });
+      setJoined({ provider: answer.provider, lesson: answer.lesson, role: answer.role, participantCode: answer.participantCode, sessionReports: answer.sessionReports === true, fixedRoom: answer.fixedRoom === true });
       setRecording(null);
       setMedia(initialMedia());
       setPhase("joined");
@@ -379,7 +380,8 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
     }
     adapter.current = current;
     setSimulator(current instanceof SyntheticMediaAdapter ? current : null);
-    setFeatures({ chat: current.capabilities.chat, raiseHand: current.capabilities.raiseHand, sound: typeof current.joinSound === "function" });
+    // A fixed room has no host to keep chat public (D-14): no chat and no raised hands there for now.
+    setFeatures({ chat: current.capabilities.chat && !joined.fixedRoom, raiseHand: current.capabilities.raiseHand && !joined.fixedRoom, sound: typeof current.joinSound === "function" });
     // A new room starts with both devices off and nothing pressed yet.
     wanted.current = { camera: false, microphone: false };
     let lost = false;
