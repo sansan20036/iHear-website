@@ -420,14 +420,24 @@ async function createRooms({ store, input, actor, now }: { store: ClassroomStore
   if (taken.length) return refusedFor(409, "LABEL_TAKEN", "A room with this name exists", taken);
   const rooms: { id: string; label: string; link: string }[] = [];
   const failed: { label: string; code: string }[] = [];
-  for (const label of labels) {
-    const made = await createRoom({ store, label, actor, now });
+  // Round 4 (2026-11-21): a store that fails part-way never takes the rooms already made with it.
+  // The room it failed on may or may not exist now (unknown); the ones after it are not tried.
+  const unknown: { label: string }[] = [];
+  const notAttempted: { label: string }[] = [];
+  for (const [index, label] of labels.entries()) {
+    let made;
+    try { made = await createRoom({ store, label, actor, now }); } catch (error) {
+      if (!rooms.length) throw error;
+      unknown.push({ label });
+      notAttempted.push(...labels.slice(index + 1).map((rest) => ({ label: rest })));
+      break;
+    }
     const body = made.body as { room?: { id: string; label: string }; link?: string; code?: string };
     if (made.status === 201 && body.room && body.link) rooms.push({ id: body.room.id, label: body.room.label, link: body.link });
     else failed.push({ label, code: String(body.code ?? "FAILED") });
   }
   if (!rooms.length) return refusedFor(409, "LABEL_TAKEN", "A room with this name exists", failed.map((entry) => entry.label));
-  return { status: 201, body: { ok: true, rooms, failed } };
+  return { status: 201, body: { ok: true, rooms, failed, unknown, notAttempted } };
 }
 
 // Every room's link, once more. Only a link's hash is kept, so a link that was lost cannot be shown
@@ -446,13 +456,24 @@ async function exportLinks({ store, input, actor, now }: { store: ClassroomStore
   if (chosen.length > BULK_MAX) return refused(400, "TOO_MANY", `At most ${BULK_MAX} rooms at a time: name the rooms`);
   const links: { room: string; label: string; link: string; generation: number }[] = [];
   const failed: { room: string; label: string; code: string }[] = [];
-  for (const room of chosen) {
-    const replaced = await replaceLink({ store, room, actor, now });
+  // Round 4 (2026-11-21): a store that fails part-way never takes the links already made with it
+  // (they exist nowhere else). The room it failed on may or may not have a new link now (unknown);
+  // the rooms after it are not tried. A failure before any link was made is thrown as before.
+  const unknown: { room: string; label: string }[] = [];
+  const notAttempted: { room: string; label: string }[] = [];
+  for (const [index, room] of chosen.entries()) {
+    let replaced;
+    try { replaced = await replaceLink({ store, room, actor, now }); } catch (error) {
+      if (!links.length) throw error;
+      unknown.push({ room: room.id, label: room.label });
+      notAttempted.push(...chosen.slice(index + 1).map((rest) => ({ room: rest.id, label: rest.label })));
+      break;
+    }
     const body = replaced.body as { link?: string; generation?: number; code?: string };
     if (replaced.status === 200 && body.link) links.push({ room: room.id, label: room.label, link: body.link, generation: Number(body.generation) });
     else failed.push({ room: room.id, label: room.label, code: String(body.code ?? "FAILED") });
   }
-  return { status: 200, body: { ok: true, links, failed } };
+  return { status: 200, body: { ok: true, links, failed, unknown, notAttempted } };
 }
 
 // Every room's own recording switch at once, by the single room's rules: on only where the site

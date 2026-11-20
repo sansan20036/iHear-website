@@ -16,7 +16,7 @@ const { classroomStore } = await import("../lib/classroom-store");
 const { classroomDrive } = await import("../lib/classroom-drive");
 const { setSyntheticConsent, runClassroomTick } = await import("../lib/classroom-service");
 const rooms = await import("../lib/classroom-fixed-rooms");
-const { bulkRange, chunks, EXPORT_AT_ONCE, exportInParts, linksCsv, naturalByLabel, occupied, roomsToShow } = await import("../app/admin/classrooms/rooms/room-links");
+const { bulkRange, chunks, EXPORT_AT_ONCE, exportInParts, generationsOf, labelOf, labelsOfRange, linksCsv, linkStates, mergeMade, naturalByLabel, occupied, partOutcome, roomsToShow, rowsToExport, summaryOf } = await import("../app/admin/classrooms/rooms/room-links");
 // @ts-ignore
 const { buildSessionTokenClaims, roomNameOf, signSessionToken } = await import("../tools/recording-pathway/classroom/eligibility.mjs");
 // @ts-ignore
@@ -288,43 +288,127 @@ describe("the admin page's helpers for many rooms", () => {
     expect(chunks([1, 2, 3], 2.9)).toEqual([[1, 2], [3]]);
   });
 
-  test("BR-16: every link anew in parts: a part refused, or one that never answers, stops there; the links of the parts done before are always given back, and the rooms not done are named", async () => {
+  test("BR-16: every link anew in parts: the run stops at the first part refused or not known, never sends the parts after it, and always gives back the links of the parts done before; a room is only taken from its own part's answer", async () => {
     const list = Array.from({ length: 7 }, (_, index) => ({ id: `FR-${index}`, label: `Room${index + 1}` }));
-    const linkOf = id => ({ label: `Room${Number(id.slice(3)) + 1}`, link: `/classroom/r/${id}#k=new` });
+    const labelOfId = id => `Room${Number(id.slice(3)) + 1}`;
+    const made = ids => ids.map(id => ({ room: id, label: labelOfId(id), link: `/classroom/r/${id}#k=new`, generation: 2 }));
+    const answered = ids => ({ ok: true, status: 200, data: { ok: true, links: made(ids), failed: [] } });
     const sent = [];
-    const good = async ids => { sent.push(ids); return { ok: true, data: { ok: true, links: ids.map(linkOf), failed: [] } }; };
+    const good = async ids => { sent.push(ids); return answered(ids); };
     // Every part answered.
     const all = await exportInParts(list, good, 3);
     expect(sent).toEqual([["FR-0", "FR-1", "FR-2"], ["FR-3", "FR-4", "FR-5"], ["FR-6"]]);
-    expect(all).toEqual({ rows: list.map(room => linkOf(room.id)), failed: [], problem: null });
-    // The second part refused: the first part's links are kept, the rest is named, nothing more is sent.
+    expect(all).toEqual({ made: made(list.map(room => room.id)), notChanged: [], unknown: [], problem: null });
+    // The second part refused whole (a 4xx with the server's code): nothing of it was changed; the
+    // first part's links are kept, the rest is not changed, nothing more is sent.
+    const at2 = reply => async ids => { sent.push(ids); return sent.length === 2 ? reply(ids) : answered(ids); };
     sent.length = 0;
-    const refusedAt2 = await exportInParts(list, async ids => (sent.length === 1 ? (sent.push(ids), { ok: false, data: { ok: false, code: "TOO_MANY" } }) : good(ids)), 3);
+    const refusedAt2 = await exportInParts(list, at2(() => ({ ok: false, status: 409, data: { ok: false, code: "NO_ROOMS" } })), 3);
     expect(sent).toHaveLength(2);
-    expect(refusedAt2.rows).toEqual(list.slice(0, 3).map(room => linkOf(room.id)));
-    expect(refusedAt2.failed).toEqual(["Room4", "Room5", "Room6", "Room7"]);
-    expect(refusedAt2.problem).toEqual({ kind: "refused", data: { ok: false, code: "TOO_MANY" } });
-    // The second part never answers (the connection dropped): the same, said as a lost connection.
+    expect(refusedAt2).toEqual({ made: made(["FR-0", "FR-1", "FR-2"]), notChanged: ["Room4", "Room5", "Room6", "Room7"], unknown: [], problem: { kind: "refused", data: { ok: false, code: "NO_ROOMS" } } });
+    // The second part with no answer, a server error, an answer that cannot be read, or a 4xx with no
+    // code of ours: its rooms are not known (the server may have changed them), the parts after it are
+    // not sent and not changed, and the first part's links are kept.
+    for (const reply of [
+      () => { throw new TypeError("Failed to fetch"); },
+      () => ({ ok: false, status: 503, data: { error: "The rooms are temporarily unavailable" } }),
+      () => ({ ok: false, status: 500, data: { code: "ANY" } }),
+      () => ({ ok: true, status: 200, data: {} }),
+      () => ({ ok: true, status: 200, data: { links: "none" } }),
+      () => ({ ok: false, status: 413, data: {} }),
+    ]) {
+      sent.length = 0;
+      const result = await exportInParts(list, at2(reply), 3);
+      expect(sent).toHaveLength(2);
+      expect(result).toEqual({ made: made(["FR-0", "FR-1", "FR-2"]), notChanged: ["Room7"], unknown: ["Room4", "Room5", "Room6"], problem: { kind: "unknown" } });
+    }
+    // The very first part not known: nothing made, nothing more sent.
     sent.length = 0;
-    const droppedAt2 = await exportInParts(list, async ids => { if (sent.length === 1) { sent.push(ids); throw new TypeError("Failed to fetch"); } return good(ids); }, 3);
+    expect(await exportInParts(list, async ids => { sent.push(ids); throw new Error("offline"); }, 3)).toEqual({ made: [], notChanged: ["Room4", "Room5", "Room6", "Room7"], unknown: ["Room1", "Room2", "Room3"], problem: { kind: "unknown" } });
+    expect(sent).toHaveLength(1);
+    // A part that answers for each room: a room someone else changed at the same moment is not changed
+    // by this run (the look afterwards says whether its link still works); the run goes on.
+    const some = await exportInParts(list.slice(0, 4), async ids => ({ ok: true, status: 200, data: { links: made(ids.slice(1)), failed: [{ room: ids[0], label: labelOfId(ids[0]), code: "CHANGED_CONCURRENTLY" }] } }), 2);
+    expect(some).toEqual({ made: made(["FR-1", "FR-3"]), notChanged: ["Room1", "Room3"], unknown: [], problem: null });
+    // The server's store failed part-way through a part (round 4): the links made are given back, the
+    // room it failed on is not known, the rooms it did not try are not changed, and the run stops.
+    sent.length = 0;
+    const storeDown = await exportInParts(list, async ids => {
+      sent.push(ids);
+      if (sent.length === 1) return answered(ids);
+      return { ok: true, status: 200, data: { links: made([ids[0]]), failed: [], unknown: [{ room: ids[1], label: labelOfId(ids[1]) }], notAttempted: [{ room: ids[2], label: labelOfId(ids[2]) }] } };
+    }, 3);
     expect(sent).toHaveLength(2);
-    expect(droppedAt2.rows).toEqual(list.slice(0, 3).map(room => linkOf(room.id)));
-    expect(droppedAt2.failed).toEqual(["Room4", "Room5", "Room6", "Room7"]);
-    expect(droppedAt2.problem).toEqual({ kind: "connection" });
-    // The very first part dropped: nothing made, every room named.
-    const droppedAt1 = await exportInParts(list, async () => { throw new Error("offline"); }, 3);
-    expect(droppedAt1).toEqual({ rows: [], failed: list.map(room => room.label), problem: { kind: "connection" } });
-    // A part that answers with rooms of its own it could not do: those are named, the rest go on.
-    const some = await exportInParts(list.slice(0, 4), async ids => ({ ok: true, data: { links: ids.slice(1).map(linkOf), failed: [{ room: ids[0], label: linkOf(ids[0]).label, code: "CHANGED_CONCURRENTLY" }] } }), 2);
-    expect(some.rows.map(row => row.label)).toEqual(["Room2", "Room4"]);
-    expect(some.failed).toEqual(["Room1", "Room3"]);
-    expect(some.problem).toBeNull();
-    // An answer in an odd shape gives nothing and breaks nothing; no rooms, nothing sent.
-    expect(await exportInParts(list.slice(0, 2), async () => ({ ok: true, data: { links: "none", failed: [{}, null, { label: 5 }] } }), 2)).toEqual({ rows: [], failed: [], problem: null });
-    expect(await exportInParts(list.slice(0, 2), async () => ({ ok: true }), 2)).toEqual({ rows: [], failed: [], problem: null });
+    expect(storeDown).toEqual({ made: made(["FR-0", "FR-1", "FR-2", "FR-3"]), notChanged: ["Room6", "Room7"], unknown: ["Room5"], problem: { kind: "unknown" } });
+    // An answer about other rooms, a room twice or a link without a version gives nothing for them; a
+    // room of the part the answer leaves out is not known, never taken as done.
+    const odd = await exportInParts(list.slice(0, 2), async () => ({ ok: true, status: 200, data: { links: [
+      { room: "FR-9", label: "Room10", link: "/x#k=a", generation: 2 },
+      { room: "FR-0", label: "Room1", link: "/classroom/r/FR-0#k=first", generation: 2 },
+      { room: "FR-0", label: "Room1", link: "/classroom/r/FR-0#k=again", generation: 3 },
+      { room: "FR-1", label: "Room2", link: "/classroom/r/FR-1#k=b" },
+      null,
+    ] } }), 2);
+    expect(odd).toEqual({ made: [{ room: "FR-0", label: "Room1", link: "/classroom/r/FR-0#k=first", generation: 2 }], notChanged: [], unknown: ["Room2"], problem: { kind: "unknown" } });
+    // No rooms: nothing sent.
     sent.length = 0;
-    expect(await exportInParts([], good)).toEqual({ rows: [], failed: [], problem: null });
+    expect(await exportInParts([], good)).toEqual({ made: [], notChanged: [], unknown: [], problem: null });
     expect(sent).toEqual([]);
+  });
+
+  test("BR-17: what an answer says: only a 4xx carrying the server's own code is a refusal (nothing changed); no answer, a server error or an answer that cannot be read is not known", () => {
+    expect(partOutcome(null, "links")).toBe("unknown");
+    expect(partOutcome({ ok: true, status: 200, data: { links: [] } }, "links")).toBe("answered");
+    expect(partOutcome({ ok: true, status: 201, data: { rooms: [] } }, "rooms")).toBe("answered");
+    expect(partOutcome({ ok: true, status: 200, data: { changed: [] } }, "changed")).toBe("answered");
+    expect(partOutcome({ ok: true, status: 200, data: { rooms: [] } }, "links")).toBe("unknown");
+    expect(partOutcome({ ok: true, status: 200, data: {} }, "rooms")).toBe("unknown");
+    for (const status of [400, 403, 404, 409, 429]) expect(partOutcome({ ok: false, status, data: { code: "ANY" } }, "links")).toBe("refused");
+    for (const status of [400, 408, 413]) expect(partOutcome({ ok: false, status, data: {} }, "links")).toBe("unknown");
+    for (const status of [500, 502, 503, 504]) expect(partOutcome({ ok: false, status, data: { code: "ANY" } }, "links")).toBe("unknown");
+    expect(partOutcome({ ok: false, data: { code: "ANY" } }, "links")).toBe("unknown");
+    expect(partOutcome({ ok: false, status: 0, data: {} }, "links")).toBe("unknown");
+  });
+
+  test("BR-18: where each room stands after a change, from what was received and each link's version before and now; the file holds only links that work now; never complete unless every room is done", () => {
+    const link = (label, generation) => ({ room: `FR-${label}`, label, link: `/classroom/r/FR-${label}#k=${label}${generation}`, generation });
+    const asked = ["Room1", "Room2", "Room3", "Room4", "Room5", "Room6", "Room7", "Room10"];
+    const baseline = { room1: 1, room2: 1, room3: 1, room4: 1, room5: 4, room6: 2, room10: 3 };
+    const made = mergeMade({}, [link("Room1", 2), link("Room2", 2), link("Room10", 4)]);
+    const current = { room1: 2, room2: 3, room3: 2, room4: 1, room5: 3, room6: 2, room10: 4 };
+    const states = linkStates({ asked, baseline, made, current });
+    expect(states).toEqual({
+      room1: "done", // received, and it is the room's link now
+      room2: "replacedAgain", // received, then replaced again: it no longer works
+      room3: "lost", // replaced, no link received: the old one no longer works
+      room4: "unchanged", // the link it had still works
+      room5: "unknown", // older now than before: makes no sense
+      room6: "unchanged",
+      room7: "notCreated", // asked to be made, there is no such room
+      room10: "done",
+    });
+    expect(rowsToExport(made, states)).toEqual([{ label: "Room1", link: "/classroom/r/FR-Room1#k=Room12" }, { label: "Room10", link: "/classroom/r/FR-Room10#k=Room104" }]);
+    expect(summaryOf(asked, states)).toEqual({ done: ["Room1", "Room10"], replacedAgain: ["Room2"], lost: ["Room3"], unchanged: ["Room4", "Room6"], notCreated: ["Room7"], unknown: ["Room5"], complete: false });
+    // The rooms could not be read again: what was received is shown, everything else is not known.
+    const unread = linkStates({ asked, baseline, made, current: null });
+    expect(summaryOf(asked, unread)).toMatchObject({ done: ["Room1", "Room2", "Room10"], unknown: ["Room3", "Room4", "Room5", "Room6", "Room7"], complete: false });
+    // A link received for a room that is not listed now, or newer than the room's link: not known.
+    expect(linkStates({ asked: ["Room1"], baseline: {}, made, current: {} })).toEqual({ room1: "unknown" });
+    expect(linkStates({ asked: ["Room1"], baseline: {}, made, current: { room1: 1 } })).toEqual({ room1: "unknown" });
+    // Names are matched without regard to capitals, as the server keeps them unique.
+    expect(linkStates({ asked: ["ROOM1"], baseline: {}, made, current: { room1: 2 } })).toEqual({ room1: "done" });
+    // Complete only when every room asked about is done; an empty list is never complete.
+    const doneAll = linkStates({ asked: ["Room1", "Room10"], baseline, made, current });
+    expect(summaryOf(["Room1", "Room10"], doneAll).complete).toBe(true);
+    expect(summaryOf([], {}).complete).toBe(false);
+    // The newest link of a room wins, whatever order the links come in.
+    expect(mergeMade(mergeMade({}, [link("Room1", 3)]), [link("room1", 2)]).room1.generation).toBe(3);
+    expect(mergeMade(mergeMade({}, [link("Room1", 2)]), [link("Room1", 3)]).room1.generation).toBe(3);
+    expect(generationsOf([{ label: "Room1", linkGeneration: 2 }, { label: "Lab A", linkGeneration: 1 }])).toEqual({ room1: 2, "lab a": 1 });
+    // The page names the rooms of a run exactly as the server keeps them.
+    expect(labelsOfRange({ prefix: "  Lab  ", from: 9, to: 11 })).toEqual(["Lab 9", "Lab 10", "Lab 11"]);
+    expect(labelOf(" Room  1 ")).toBe("Room 1");
+    expect(labelsOfRange({ prefix: "Room", from: 3, to: 2 })).toEqual([]);
   });
 
   test("BR-15: the server takes the page's parts: 112 rooms in parts of 100 and 12 give every room one new link", async () => {
@@ -352,19 +436,99 @@ describe("the admin page's helpers for many rooms", () => {
     expect(activity).not.toMatch(/links|\.link\b|rooms\b(?!\/)/);
     const page = await readFile(path.resolve("app/admin/classrooms/rooms/page.tsx"), "utf8");
     // The list is made in the browser and offered for download; it is never sent anywhere.
-    expect(page).toContain("new Blob([linksCsv(window.location.origin, list.rows)]");
+    expect(page).toContain("new Blob([linksCsv(window.location.origin, rows)]");
+    expect(page).toContain("const rows = rowsToExport(list.made, states);");
     expect(page.match(/fetch\(/g)).toHaveLength(3);
     expect(page).not.toMatch(/localStorage|sessionStorage|console\./);
     // Every link anew: the rooms go in parts the server takes, and the confirm says what happens to
     // the links handed out and to the people waiting.
-    expect(page).toContain('exportInParts(all, (ids) => send("export_links", { rooms: ids }))');
+    expect(page).toContain('exportInParts(targets, (ids) => send("export_links", { rooms: ids }))');
     expect(page).toContain("已經發出去的舊連結都不能再用來進教室（已經在教室裡的人不受影響）。正在等待進入的人，要用新連結重新輸入名字。");
-    // The links that were made are shown before the page asks the server for anything more, and a
-    // connection that drops is said, never thrown past the list.
-    const exportAll = page.slice(page.indexOf("async function exportAll()"), page.indexOf("async function recordAll("));
-    expect(exportAll.indexOf("setList(")).toBeGreaterThan(-1);
-    expect(exportAll.indexOf("setList(")).toBeLessThan(exportAll.indexOf("await load()"));
-    expect(exportAll).toContain("ERRORS.CONNECTION_LOST");
-    expect(page).toContain("await send(action, input).catch(() => null)");
+    // Round 4: the links received are shown before the rooms are read again; nothing is sent again by
+    // itself (a change only ever starts from a person's press, after a confirm); every answer is waited
+    // for a limited time, and a request with no answer is caught, never thrown past the list.
+    const lf = page.replace(/\r\n/g, "\n");
+    const settle = lf.slice(lf.indexOf("async function settle("), lf.indexOf("async function recheck("));
+    expect(settle.indexOf("setList(")).toBeGreaterThan(-1);
+    expect(settle.indexOf("setList(")).toBeLessThan(settle.indexOf("await recheck(run)"));
+    expect(lf.match(/await regenerate\(/g)).toHaveLength(2);
+    expect(lf.match(/await makeRooms\(/g)).toHaveLength(2);
+    for (const caller of ["async function exportAll()", "async function fillLinks(", "async function makeMissing("]) {
+      const body = lf.slice(lf.indexOf(caller), lf.indexOf("\n  }\n", lf.indexOf(caller)));
+      const change = Math.max(body.indexOf("await regenerate("), body.indexOf("await makeRooms("));
+      expect(change, caller).toBeGreaterThan(-1);
+      expect(body.indexOf("window.confirm("), caller).toBeGreaterThan(-1);
+      expect(body.indexOf("window.confirm("), caller).toBeLessThan(change);
+    }
+    expect(lf).toContain("signal: AbortSignal.timeout(ANSWER_WITHIN_MS)");
+    expect(lf.match(/try \{ answer = await send\(/g)).toHaveLength(2);
+    expect(lf).toContain("ERRORS.OUTCOME_UNKNOWN");
+    // A list with links not yet downloaded asks before the page is left or the list is put away.
+    expect(lf).toContain('window.addEventListener("beforeunload", warn)');
+    expect(lf).toContain("這份清單還沒有下載。");
+  });
+});
+
+describe("a bulk change when the store fails part-way (round 4)", () => {
+  // A store whose n-th write fails: before it is made ("before"), or after it was made with its
+  // answer lost ("after"). Everything else goes to the real store.
+  const failing = (at, when) => {
+    let writes = 0;
+    return new Proxy(store, {
+      get(target, prop) {
+        if (prop === "transaction") return async fn => {
+          writes += 1;
+          if (writes === at && when === "before") throw new Error("store down (test)");
+          const result = await target.transaction(fn);
+          if (writes === at && when === "after") throw new Error("answer lost (test)");
+          return result;
+        };
+        const value = target[prop];
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+  };
+  const bulkWith = (s, action, input, now = START + 20 * MIN) => rooms.manageFixedRoomsBulk({ store: s, principal: OWNER, action, input, now });
+
+  test("BR-19: rooms and links made before the store failed are given back; the room it failed on is not known and the rest not tried; the page then says each room as it stands; a failure before anything was made is thrown (the route answers 503, which the page takes as not known)", async () => {
+    const before = await view(START + 20 * MIN);
+    // Making Flaky1 to Flaky5: the third room is made, but its answer is lost.
+    const madeAnswer = await bulkWith(failing(3, "after"), "create_many", { prefix: "Flaky", from: 1, to: 5 });
+    expect(madeAnswer.status).toBe(201);
+    expect(madeAnswer.body.rooms.map(room => room.label)).toEqual(["Flaky1", "Flaky2"]);
+    expect(madeAnswer.body.unknown).toEqual([{ label: "Flaky3" }]);
+    expect(madeAnswer.body.notAttempted).toEqual([{ label: "Flaky4" }, { label: "Flaky5" }]);
+    const listed = await view(START + 20 * MIN);
+    expect(listed.map(room => room.label)).toEqual(expect.arrayContaining(["Flaky1", "Flaky2", "Flaky3"]));
+    expect(listed.map(room => room.label)).not.toEqual(expect.arrayContaining(["Flaky4"]));
+    const asked = labelsOfRange({ prefix: "Flaky", from: 1, to: 5 });
+    const made = mergeMade({}, madeAnswer.body.rooms.map(room => ({ room: room.id, label: room.label, link: room.link, generation: 1 })));
+    const states = linkStates({ asked, baseline: generationsOf(before), made, current: generationsOf(listed) });
+    expect(summaryOf(asked, states)).toMatchObject({ done: ["Flaky1", "Flaky2"], lost: ["Flaky3"], notCreated: ["Flaky4", "Flaky5"], unknown: [], complete: false });
+    expect(rowsToExport(made, states).map(row => row.label)).toEqual(["Flaky1", "Flaky2"]);
+
+    // Every link of Flaky1 to Flaky3 anew: the second write fails before it is made.
+    const ids = Object.fromEntries(listed.map(room => [room.label, room.id]));
+    const exported = await bulkWith(failing(2, "before"), "export_links", { rooms: [ids.Flaky1, ids.Flaky2, ids.Flaky3] });
+    expect(exported.status).toBe(200);
+    expect(exported.body.links.map(entry => entry.label)).toEqual(["Flaky1"]);
+    expect(exported.body.unknown).toEqual([{ room: ids.Flaky2, label: "Flaky2" }]);
+    expect(exported.body.notAttempted).toEqual([{ room: ids.Flaky3, label: "Flaky3" }]);
+    const after = await view(START + 21 * MIN);
+    expect(linkStates({ asked: ["Flaky1", "Flaky2", "Flaky3"], baseline: generationsOf(listed), made: mergeMade({}, exported.body.links), current: generationsOf(after) }))
+      .toEqual({ flaky1: "done", flaky2: "unchanged", flaky3: "unchanged" });
+    // The same with the second write made and its answer lost: that room's old link no longer works.
+    const lostAnswer = await bulkWith(failing(2, "after"), "export_links", { rooms: [ids.Flaky1, ids.Flaky2, ids.Flaky3] }, START + 22 * MIN);
+    expect(lostAnswer.body.unknown).toEqual([{ room: ids.Flaky2, label: "Flaky2" }]);
+    const later = await view(START + 22 * MIN);
+    expect(linkStates({ asked: ["Flaky1", "Flaky2", "Flaky3"], baseline: generationsOf(after), made: mergeMade({}, lostAnswer.body.links), current: generationsOf(later) }))
+      .toEqual({ flaky1: "done", flaky2: "lost", flaky3: "unchanged" });
+
+    // Nothing made yet when the store fails: thrown as before, and nothing was changed.
+    await expect(bulkWith(failing(1, "before"), "export_links", { rooms: [ids.Flaky1] })).rejects.toThrow("store down (test)");
+    await expect(bulkWith(failing(1, "before"), "create_many", { labels: ["Flaky9"] })).rejects.toThrow("store down (test)");
+    const last = await view(START + 23 * MIN);
+    expect(last.map(room => room.label)).not.toContain("Flaky9");
+    expect(generationsOf(last).flaky1).toBe(generationsOf(later).flaky1);
   });
 });

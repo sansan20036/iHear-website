@@ -3,8 +3,12 @@
 // stands in for Zoom. The iHear teacher (an owner) makes Room1 to Room12 at once and downloads their
 // links as one file, once; the rooms are listed in their natural order, can be narrowed to those
 // with somebody or by name; every link can be made anew (the old ones then let nobody new in).
+// Round 4 (2026-11-21): changes cut off on the way (before the server, or after it with the answer
+// lost, or with the rooms unreadable afterwards) are said room by room and never retried by
+// themselves; no link key handed out is left in any log, record, report or file.
 // Proves our pages and checks, not Zoom.
-import { readFile, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { readdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { chromium, expect as playwrightExpect } from '@playwright/test';
 import { localContext, startAcademyServer } from './helpers/academy-smoke.mjs';
@@ -40,15 +44,25 @@ function watch(page, who) {
 }
 const shot = (page, name) => page.screenshot({ path: path.join(directory, `${name}.png`), fullPage: true });
 const LINE = new RegExp(`^"((?:Room|Hall)\\d+)","(${origin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/classroom/r/FR-[0-9a-f]{32}#k=[A-Za-z0-9_-]{43})"$`);
-// The downloaded list: its heading, then one line per room; as [name, address] pairs.
+// Every link key handed out in a file during the run (round 4: none may be found anywhere after).
+const handedOut = new Set();
+// The downloaded list: its heading, then one line per room; as [name, address] pairs. The file is
+// read once and deleted at once: no list of links is left on this computer.
 async function listOf(download) {
   expect(download.suggestedFilename()).toMatch(/^ihear-room-links-\d{4}-\d{2}-\d{2}\.csv$/);
-  const text = await readFile(await download.path(), 'utf8');
+  const where = await download.path();
+  const text = await readFile(where, 'utf8');
+  await download.delete();
+  if (existsSync(where)) throw new Error('a downloaded list of links was left on disk');
   const lines = text.split('\r\n');
   expect(lines[0]).toBe('Room,Link');
   expect(lines.at(-1)).toBe('');
-  return lines.slice(1, -1).map(line => { const found = LINE.exec(line); if (!found) throw new Error(`not a room line: ${line.slice(0, 40)}`); return [found[1], found[2]]; });
+  const rows = lines.slice(1, -1).map(line => { const found = LINE.exec(line); if (!found) throw new Error(`not a room line: ${line.slice(0, 40)}`); return [found[1], found[2]]; });
+  for (const [, address] of rows) handedOut.add(address.split('#k=')[1]);
+  return rows;
 }
+// Every file under a folder, however deep.
+const filesUnder = async folder => (await readdir(folder, { recursive: true, withFileTypes: true })).filter(entry => entry.isFile()).map(entry => path.join(entry.parentPath ?? entry.path, entry.name));
 const names = Array.from({ length: 12 }, (_, index) => `Room${index + 1}`);
 
 try {
@@ -59,7 +73,7 @@ try {
   const bulkForm = () => admin.getByRole('form', { name: '一次建立多間' });
   // The bulk tools sit in a section that is closed again after each reload.
   const openBulk = async () => { if (!(await admin.locator('[data-rooms-bulk]').evaluate(node => node.open))) await admin.locator('[data-rooms-bulk] summary').click(); };
-  let first, second;
+  let first, second, third;
 
   await check('B1', '老師一次建立 Room1 到 Room12：連結清單只出現這一次，可以下載成一個檔案', async () => {
     await admin.goto(`${origin}/admin/classrooms/rooms`);
@@ -194,7 +208,7 @@ try {
     ]);
     expect(asked.at(-1)).toContain('這會更換全部 112 間教室的連結');
     expect(parts).toEqual([100, 12]);
-    const third = await listOf(download);
+    third = await listOf(download);
     expect(third).toHaveLength(112);
     expect(new Set(third.map(([name]) => name)).size).toBe(112);
     expect(new Set(third.map(([, address]) => address)).size).toBe(112);
@@ -208,47 +222,199 @@ try {
     await expect(admin.locator('[data-room="Hall100"]')).toContainText('連結第 2 版');
   });
 
-  await check('B7', '重新產生途中連線中斷：已經換好的那一批連結仍然顯示、可以下載；沒完成的教室列出名稱，它們的連結沒有變', async () => {
-    await openBulk();
-    const list = admin.locator('[data-room-links-list]');
-    let exports = 0;
+  // Round 4 (2026-11-21): a change cut off. What each export request named, and a way to cut one.
+  const exports = [];
+  admin.on('request', request => {
+    if (request.method() !== 'POST' || !request.url().endsWith('/api/admin/classrooms/rooms')) return;
+    const body = request.postDataJSON();
+    if (body?.action === 'export_links') exports.push(body.rooms.length);
+  });
+  const ROOMS_API = '**/api/admin/classrooms/rooms';
+  // how: 'before' (never reaches the server), 'after' (the server does it, the answer is lost).
+  const cutNth = async (action, nth, how, { thenOffline = false } = {}) => {
+    let seen = 0;
+    let offline = false;
     cutting = true;
-    await admin.route('**/api/admin/classrooms/rooms', route => {
+    await admin.route(ROOMS_API, async route => {
       const request = route.request();
-      if (request.method() === 'POST' && request.postDataJSON()?.action === 'export_links') {
-        exports += 1;
-        // The second part never reaches the server.
-        if (exports === 2) return route.abort('connectionfailed');
+      if (request.method() === 'GET' && offline) return route.abort('internetdisconnected');
+      if (request.method() === 'POST' && request.postDataJSON()?.action === action) {
+        seen += 1;
+        if (seen === nth) {
+          if (how === 'after') await route.fetch();
+          if (thenOffline) offline = true;
+          return route.abort('connectionfailed');
+        }
       }
       return route.fallback();
     });
+  };
+  const uncut = async () => { await admin.unroute(ROOMS_API); cutting = false; };
+  const list = () => admin.locator('[data-room-links-list]');
+  const namesIn = async selector => (await list().locator(selector).innerText()).replace(/^[^：]*：/, '').replace(/。.*$/s, '').split('、');
+  const leaving = () => admin.evaluate(() => { const event = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(event); return event.defaultPrevented; });
+  const halls = Array.from({ length: 100 }, (_, index) => `Hall${index + 1}`);
+  const tryLink = async (address, name) => {
+    const page = watch(await (await context({})).newPage(), `student-${name}`);
+    await page.goto(address);
+    await page.getByLabel(/Please enter your first name/).fill(name);
+    await page.getByRole('button', { name: '進入教室' }).click();
+    const result = await Promise.race([
+      page.locator('[data-room-waiting]').waitFor().then(() => 'waiting'),
+      page.locator('[data-room-final]').waitFor().then(async () => (await page.locator('[data-room-final]').innerText()).trim()),
+    ]);
+    await page.context().close();
+    return result;
+  };
+  let partial;
+
+  await check('B7', '重新產生途中連線中斷、請求沒有到伺服器：已經換好的那一批連結仍然顯示、可以下載；沒送到的教室說明「連結沒有更換，原本的連結仍然可以用」，而且真的還能用；不會自己再送一次', async () => {
+    await openBulk();
+    exports.length = 0;
+    await cutNth('export_links', 2, 'before');
     const [download] = await Promise.all([
       admin.waitForEvent('download', { timeout: 60_000 }),
       (async () => {
         await admin.getByRole('button', { name: '重新產生全部連結並下載' }).click();
-        await expect(list).toContainText('已重新產生 100 間教室的連結', { timeout: 60_000 });
-        await list.getByRole('button', { name: '下載清單（CSV，100 間）' }).click();
+        await expect(list().locator('[data-links-unchanged]')).toBeVisible({ timeout: 60_000 });
+        await list().getByRole('button', { name: '下載清單（CSV，100 間）' }).click();
       })(),
     ]);
-    expect(exports).toBe(2);
-    await expect(admin.locator('p.admin-error')).toContainText('連線中斷，沒有收到結果。');
-    const notDone = (await list.getByRole('alert').innerText()).replace(/^.*：/, '').replace(/。$/, '').split('、');
-    expect([...notDone].sort((a, b) => a.localeCompare(b, 'en', { numeric: true }))).toEqual(names);
+    await expect(list().locator('[data-links-title]')).toHaveText('已拿到 100 間教室的新連結；12 間沒有完成，請看下面。');
+    await expect(admin.locator('p.admin-error')).toContainText('沒有收到伺服器的結果');
+    expect(await namesIn('[data-links-unchanged]')).toEqual(names);
+    await expect(list().locator('[data-links-lost], [data-links-unknown], [data-links-unchecked]')).toHaveCount(0);
+    await expect(list().locator('[data-links-fill-unchanged]')).toHaveText('也為連結沒有更換的 12 間產生新連結');
+    expect(exports).toEqual([100, 12]);
     const kept = await listOf(download);
-    expect(kept.map(([name]) => name)).toEqual(Array.from({ length: 100 }, (_, index) => `Hall${index + 1}`));
-    await admin.unroute('**/api/admin/classrooms/rooms');
-    cutting = false;
-    await list.getByRole('button', { name: '我已經下載這份清單' }).click();
+    expect(kept.map(([name]) => name)).toEqual(halls);
+    await uncut();
+    // "Still works" is true: Room2's link from the list before this run lets a person ask to come in.
+    expect(await tryLink(Object.fromEntries(third).Room2, 'Bea')).toBe('waiting');
+    await list().getByRole('button', { name: '我已經下載這份清單' }).click();
     await admin.reload();
-    // The part that was done has its new links; the part that was cut keeps the links it had.
     await expect(admin.locator('[data-room="Hall1"]')).toContainText('連結第 3 版');
     await expect(admin.locator('[data-room="Room1"]')).toContainText('連結第 3 版');
     await expect(admin.locator('[data-room="Room12"]')).toContainText('連結第 3 版');
   });
 
-  await check('B8', '沒有對外請求，頁面沒有非預期的錯誤', async () => {
+  await check('B8', '伺服器已經換了連結、但回覆在路上遺失：那 12 間標成「連結已經更換，但新連結沒有收到」，檔案裡沒有它們；不會自己重試；離開頁面前會先問；老師按下補產生之後才再送一次，最後的清單完整、一致', async () => {
+    await openBulk();
+    exports.length = 0;
+    await cutNth('export_links', 2, 'after');
+    await admin.getByRole('button', { name: '重新產生全部連結並下載' }).click();
+    await expect(list().locator('[data-links-lost]')).toBeVisible({ timeout: 60_000 });
+    await expect(list().locator('[data-links-title]')).toHaveText('已拿到 100 間教室的新連結；12 間沒有完成，請看下面。');
+    expect(await namesIn('[data-links-lost]')).toEqual(names);
+    await expect(list().locator('[data-links-unchanged], [data-links-unknown], [data-links-unchecked]')).toHaveCount(0);
+    expect(exports).toEqual([100, 12]);
+    await uncut();
+    // Nothing was sent again by itself.
+    await admin.waitForTimeout(1500);
+    expect(exports).toEqual([100, 12]);
+    // The page asks before it is left while the links are not downloaded.
+    expect(await leaving()).toBe(true);
+    const [first100] = await Promise.all([admin.waitForEvent('download'), list().getByRole('button', { name: '下載清單（CSV，100 間）' }).click()]);
+    partial = await listOf(first100);
+    expect(partial.map(([name]) => name)).toEqual(halls);
+    await expect.poll(() => leaving()).toBe(false);
+    // The links handed out before for those 12 no longer work: the server did change them.
+    expect(await tryLink(Object.fromEntries(third).Room3, 'Cy')).toBe('這個教室連結已經更換。請向老師要新的連結。');
+    // A person chooses to fill in the 12: asked first, one request for exactly those rooms.
+    await list().locator('[data-links-fill]').click();
+    expect(asked.at(-1)).toContain('為這 12 間教室重新產生連結');
+    await expect(list().locator('[data-links-title]')).toHaveText('已重新產生 112 間教室的連結，全部完成。', { timeout: 60_000 });
+    expect(exports).toEqual([100, 12, 12]);
+    const [whole] = await Promise.all([admin.waitForEvent('download'), list().getByRole('button', { name: '下載清單（CSV，112 間）' }).click()]);
+    const all = await listOf(whole);
+    expect(all.map(([name]) => name)).toEqual([...halls, ...names]);
+    // The same links for the 100 rooms in both files: the fill changed only the 12.
+    expect(Object.fromEntries(all.slice(0, 100))).toEqual(Object.fromEntries(partial));
+    expect(new Set(all.map(([, address]) => address)).size).toBe(112);
+    expect(await tryLink(Object.fromEntries(all).Room3, 'Cy')).toBe('waiting');
+    expect(await tryLink(Object.fromEntries(all).Hall7, 'Di')).toBe('waiting');
+    await list().getByRole('button', { name: '我已經下載這份清單' }).click();
+    await admin.reload();
+    await expect(admin.locator('[data-room="Room1"]')).toContainText('連結第 5 版');
+    await expect(admin.locator('[data-room="Hall1"]')).toContainText('連結第 4 版');
+  });
+
+  await check('B9', '中斷之後連查詢也連不上：沒拿到的教室標成「狀態還不知道」，不提供補產生，只能「重新確認狀態」；已拿到的仍可下載；連線恢復後按「重新確認狀態」才說出實際狀態', async () => {
+    await openBulk();
+    exports.length = 0;
+    await cutNth('export_links', 2, 'before', { thenOffline: true });
+    await admin.getByRole('button', { name: '重新產生全部連結並下載' }).click();
+    await expect(list().locator('[data-links-unknown]')).toBeVisible({ timeout: 60_000 });
+    await expect(list().locator('[data-links-unchecked]')).toBeVisible();
+    expect(await namesIn('[data-links-unknown]')).toEqual(names);
+    await expect(list().locator('[data-links-fill], [data-links-fill-unchanged], [data-links-make-missing]')).toHaveCount(0);
+    await expect(list().locator('[data-links-recheck]')).toBeVisible();
+    expect(exports).toEqual([100, 12]);
+    // Still offline: the links received can be downloaded.
+    const [offlineFile] = await Promise.all([admin.waitForEvent('download'), list().getByRole('button', { name: '下載清單（CSV，100 間）' }).click()]);
+    expect((await listOf(offlineFile)).map(([name]) => name)).toEqual(halls);
+    await list().locator('[data-links-recheck]').click();
+    await expect(admin.locator('p.admin-error')).toContainText('還不能確認每間教室的狀態');
+    await expect(list().locator('[data-links-unknown]')).toBeVisible();
+    await uncut();
+    await list().locator('[data-links-recheck]').click();
+    await expect(list().locator('[data-links-unchanged]')).toBeVisible();
+    expect(await namesIn('[data-links-unchanged]')).toEqual(names);
+    await expect(list().locator('[data-links-unknown], [data-links-unchecked]')).toHaveCount(0);
+    expect(exports).toEqual([100, 12]);
+    await list().getByRole('button', { name: '我已經下載這份清單' }).click();
+  });
+
+  await check('B10', '一次建立時回覆遺失：已經建立、沒拿到連結的教室說「已經建立，但沒有收到連結」，請求沒到的說「沒有建立」；老師按下之後才補產生連結、補建立，最後一份完整清單', async () => {
+    await openBulk();
+    // Desk1 to Desk3: made on the server, the answer lost.
+    await cutNth('create_many', 1, 'after');
+    await bulkForm().getByLabel('名稱開頭').fill('Desk');
+    await bulkForm().getByLabel('從幾號').fill('1');
+    await bulkForm().getByLabel('到幾號').fill('3');
+    await bulkForm().getByRole('button', { name: '一次建立多間' }).click();
+    await expect(list().locator('[data-links-lost]')).toBeVisible({ timeout: 60_000 });
+    await uncut();
+    await expect(list().locator('[data-links-title]')).toHaveText('已建立並拿到 0 間教室的連結；3 間沒有完成，請看下面。');
+    expect(await namesIn('[data-links-lost]')).toEqual(['Desk1', 'Desk2', 'Desk3']);
+    await expect(list().getByRole('button', { name: '下載清單（CSV，0 間）' })).toBeDisabled();
+    await list().locator('[data-links-fill]').click();
+    expect(asked.at(-1)).toContain('為這 3 間教室重新產生連結：Desk1、Desk2、Desk3');
+    await expect(list().locator('[data-links-title]')).toHaveText('已建立 3 間教室，全部完成。');
+    const [desks] = await Promise.all([admin.waitForEvent('download'), list().getByRole('button', { name: '下載清單（CSV，3 間）' }).click()]);
+    const deskLinks = await listOf(desks);
+    expect(deskLinks.map(([name]) => name)).toEqual(['Desk1', 'Desk2', 'Desk3']);
+    expect(await tryLink(deskLinks[1][1], 'Eve')).toBe('waiting');
+    await list().getByRole('button', { name: '我已經下載這份清單' }).click();
+    // Seat1 to Seat2: the request never reaches the server.
+    await openBulk();
+    await cutNth('create_many', 1, 'before');
+    await bulkForm().getByLabel('名稱開頭').fill('Seat');
+    await bulkForm().getByLabel('從幾號').fill('1');
+    await bulkForm().getByLabel('到幾號').fill('2');
+    await bulkForm().getByRole('button', { name: '一次建立多間' }).click();
+    await expect(list().locator('[data-links-not-created]')).toBeVisible({ timeout: 60_000 });
+    await uncut();
+    expect(await namesIn('[data-links-not-created]')).toEqual(['Seat1', 'Seat2']);
+    await list().locator('[data-links-make-missing]').click();
+    expect(asked.at(-1)).toContain('建立這 2 間教室：Seat1、Seat2');
+    await expect(list().locator('[data-links-title]')).toHaveText('已建立 2 間教室，全部完成。');
+    const [seats] = await Promise.all([admin.waitForEvent('download'), list().getByRole('button', { name: '下載清單（CSV，2 間）' }).click()]);
+    expect((await listOf(seats)).map(([name]) => name)).toEqual(['Seat1', 'Seat2']);
+    await list().getByRole('button', { name: '我已經下載這份清單' }).click();
+  });
+
+  await check('B11', '沒有對外請求，頁面沒有非預期的錯誤；發出去的每一個連結金鑰都不在伺服器紀錄、測試資料（含操作紀錄）、報告或任何輸出檔案裡', async () => {
     if (report.externalRequests.length) throw new Error(`external requests: ${report.externalRequests.join(', ')}`);
     if (report.pageProblems.length) throw new Error(`page problems: ${report.pageProblems.join(' | ')}`);
+    expect(handedOut.size).toBeGreaterThan(300);
+    const places = [['the server log', server.logs()], ['the report so far', JSON.stringify(report)]];
+    for (const file of await filesUnder(directory)) places.push([path.relative(directory, file), (await readFile(file)).toString('latin1')]);
+    expect(places.length).toBeGreaterThan(3);
+    for (const [where, text] of places) {
+      expect(text, where).not.toMatch(/#k=[A-Za-z0-9_-]{43}/);
+      for (const key of handedOut) if (text.includes(key)) throw new Error(`a link's key is in ${where}`);
+    }
   });
   report.status = 'passed';
 } catch (error) {
