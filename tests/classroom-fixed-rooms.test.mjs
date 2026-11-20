@@ -107,7 +107,7 @@ describe("fixed classroom links", () => {
     expect(answer).toMatchObject({ ok: true, state: "admitted" });
     const lesson = await store.lesson(answer.lessonId);
     expect(fixedRoomOf(await store.eventsFor([lesson.id]))).toBe(r.id);
-    expect(lesson.participants).toEqual([expect.objectContaining({ role: "student", staffEmail: null, code: expect.stringMatching(/^R[0-9a-f]{8}-001$/) })]);
+    expect(lesson.participants).toEqual([expect.objectContaining({ role: "student", staffEmail: null, code: expect.stringMatching(/^R[0-9a-f]{8}-[0-9a-f]{6}$/) })]);
     const entered = await join(lesson.id, kyle.body.ticket);
     expect(entered.status).toBe(200);
     expect(entered.body).toMatchObject({ role: "student", fixedRoom: true });
@@ -260,5 +260,146 @@ describe("fixed classroom links", () => {
     expect((await status(r, asked)).body).toEqual({ ok: true, state: "waiting" });
     expect(fixedRoomOf([{ source: "zoom_webhook", type: "server.lesson_scheduled", lessonId: "L-x", fixedRoomId: r.id, occurredAt: 1, key: "k" }])).toBeNull();
     expect(fixedRoomOf([{ source: "server", type: "server.lesson_scheduled", lessonId: "L-x", fixedRoomId: r.id, occurredAt: 1, key: "k" }])).toBe(r.id);
+  });
+});
+
+// Round 3, phase 4 (2026-11-21): recording in a fixed room. Its lesson has no tutor, so it records
+// only with the site's and the room's switches on, two people in it by Zoom's word and every person
+// let in holding a valid consent: two people in a room is never a consent. Its recordings are named
+// by the room, the New York date and time and the names, filed in <month>/<room>. Synthetic only.
+const { setSyntheticConsent, runClassroomTick } = await import("../lib/classroom-service");
+// @ts-ignore
+const { fileRecording, processJobs } = await import("../tools/recording-pathway/classroom/recording-filing.mjs");
+// @ts-ignore
+const { createDrive, syntheticContent } = await import("../tools/recording-pathway/test/fake-classroom-store.mjs");
+// @ts-ignore
+const Core = (await import("../tools/recording-pathway/apps-script/Core.js")).default;
+
+describe("recording in a fixed room", () => {
+  const starts = [];
+  const stops = [];
+  const recorder = {
+    ...provider,
+    startRecording: async (lesson, sessionId) => { starts.push([lesson.id, sessionId]); return { ok: true, httpStatus: 202 }; },
+    stopRecording: async (lesson, sessionId) => { stops.push([lesson.id, sessionId]); return { ok: true, httpStatus: 202 }; },
+  };
+  let facts = 0;
+  const fact = (lessonId, type, at, fields) => { facts += 1; return store.transaction(tx => storeEvent(tx, { source: "zoom_webhook", type, lessonId, occurredAt: at, receivedAt: at, key: `${type}:${lessonId}:${at}:${facts}`, ...fields })); };
+  // A room with these people let in (consent for those named), and its lesson's Zoom session live.
+  async function inRoom(names, { consented = names, present = names } = {}) {
+    const r = await room();
+    const asked = {};
+    for (const name of names) {
+      asked[name] = await ask(r, name);
+      expect((await manage("admit", { room: r.id, request: asked[name].body.requestId })).status).toBe(200);
+    }
+    const lessonId = (await status(r, asked[names[0]])).body.lessonId;
+    const lesson = await store.lesson(lessonId);
+    // Let in in this order: the n-th person has the n-th row.
+    const rowOf = name => lesson.participants[names.indexOf(name)];
+    for (const name of consented) await setSyntheticConsent({ store, personCode: rowOf(name).code, role: "student", status: "granted", actor: OWNER.email, now: START - 30 * MIN });
+    const sessionId = `ZS-${lessonId.slice(2, 10)}`;
+    await fact(lessonId, "session.started", START + MIN, { providerSessionId: sessionId, sessionName: roomNameOf(lessonId, 0) });
+    for (const name of present) await fact(lessonId, "session.user_joined", START + MIN, { providerSessionId: sessionId, participantId: rowOf(name).id });
+    return { r, lessonId, sessionId, rowOf };
+  }
+  const tick = (lessonId, at) => runClassroomTick({ store, provider: recorder, drive, now: START + at * MIN, lessonIds: [lessonId], workerId: "fr-rec" });
+  const lastDecision = async lessonId => (await store.eventsFor([lessonId])).filter(event => event.type === "server.recording_eligibility").at(-1);
+
+  test("FR-REC-1: off by default: the site's switch off, a room cannot turn recording on, and two people with every consent never record", async () => {
+    vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "");
+    const { r, lessonId } = await inRoom(["Ann", "Kyle"]);
+    expect((await manage("set_recording", { room: r.id, on: true })).body.code).toBe("RECORDING_NOT_AVAILABLE");
+    for (const at of [2, 3]) await tick(lessonId, at);
+    expect(starts.filter(([id]) => id === lessonId)).toEqual([]);
+    expect(await lastDecision(lessonId)).toMatchObject({ eligible: false, reason: "RECORDING_DISABLED" });
+    expect((await view(r)).recording).toEqual({ on: false, available: false });
+  });
+
+  test("FR-REC-2: with both switches on: one person in never starts it (consent alone is not enough); two in, one without consent, never; two in with consent starts it; off while recording is refused, and ending the lesson stops it", async () => {
+    vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "on");
+    try {
+      const alone = await inRoom(["Ann"]);
+      expect((await manage("set_recording", { room: alone.r.id, on: true })).status).toBe(200);
+      for (const at of [2, 3]) await tick(alone.lessonId, at);
+      expect(await lastDecision(alone.lessonId)).toMatchObject({ eligible: true });
+      const unconsented = await inRoom(["Ann", "Bo"], { consented: ["Ann"] });
+      await manage("set_recording", { room: unconsented.r.id, on: true });
+      for (const at of [2, 3]) await tick(unconsented.lessonId, at);
+      expect(await lastDecision(unconsented.lessonId)).toMatchObject({ eligible: false, reason: "CONSENT_MISSING" });
+      const both = await inRoom(["Ann", "Kyle"]);
+      // The room's switch turned on after its lesson opened: written to the lesson, which decides again.
+      await manage("set_recording", { room: both.r.id, on: true });
+      for (const at of [2, 3]) await tick(both.lessonId, at);
+      expect(starts.filter(([id]) => id === both.lessonId)).toEqual([[both.lessonId, both.sessionId]]);
+      for (const other of [alone.lessonId, unconsented.lessonId]) expect(starts.filter(([id]) => id === other)).toEqual([]);
+      await fact(both.lessonId, "session.recording_started", START + 4 * MIN, { providerSessionId: both.sessionId, status: "Recording" });
+      expect((await manage("set_recording", { room: both.r.id, on: false }, { now: START + 5 * MIN })).body.code).toBe("RECORDING_MAY_BE_ON");
+      const ended = await rooms.manageFixedRoom({ store, provider: recorder, drive, principal: OWNER, action: "end_lesson", input: { room: both.r.id }, now: START + 5 * MIN });
+      expect(ended.status).toBe(200);
+      expect(stops.filter(([id]) => id === both.lessonId).map(([, sessionId]) => sessionId)).toContain(both.sessionId);
+      expect((await manage("set_recording", { room: both.r.id, on: false }, { now: START + 6 * MIN })).status).toBe(200);
+    } finally {
+      vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "");
+    }
+  });
+
+  test("FR-REC-5: a recording stops once fewer than two people have been in the room for 5 minutes; a shorter time alone does not stop it", async () => {
+    vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "on");
+    try {
+      const both = await inRoom(["Ann", "Kyle"]);
+      await manage("set_recording", { room: both.r.id, on: true });
+      for (const at of [2, 3]) await tick(both.lessonId, at);
+      expect(starts.filter(([id]) => id === both.lessonId)).toHaveLength(1);
+      await fact(both.lessonId, "session.recording_started", START + 4 * MIN, { providerSessionId: both.sessionId, status: "Recording" });
+      await fact(both.lessonId, "session.user_left", START + 5 * MIN, { providerSessionId: both.sessionId, participantId: both.rowOf("Kyle").id });
+      await tick(both.lessonId, 8);
+      expect(stops.filter(([id]) => id === both.lessonId)).toEqual([]);
+      await tick(both.lessonId, 10.5);
+      expect(stops.filter(([id]) => id === both.lessonId).map(([, sessionId]) => sessionId)).toEqual([both.sessionId]);
+    } finally {
+      vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "");
+    }
+  });
+
+  test("FR-REC-3: everyone let in must have consented, in the room or not: two consented people in it and a third let in without consent are not recorded", async () => {
+    vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "on");
+    try {
+      const three = await inRoom(["Ann", "Bo", "Cy"], { consented: ["Ann", "Bo"], present: ["Ann", "Bo"] });
+      await manage("set_recording", { room: three.r.id, on: true });
+      for (const at of [2, 3]) await tick(three.lessonId, at);
+      expect(starts.filter(([id]) => id === three.lessonId)).toEqual([]);
+      expect(await lastDecision(three.lessonId)).toMatchObject({ eligible: false, reason: "CONSENT_MISSING" });
+    } finally {
+      vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "");
+    }
+  });
+
+  test("FR-REC-4: a fixed room's recording is named room_New-York-date-time_names and filed in <month>/<room>; no tutor never breaks its naming", async () => {
+    const { r, lessonId, sessionId } = await inRoom(["Kyle", "Ann"]);
+    // The lesson's own decision allowed recording at its start (as its consent check would).
+    await store.transaction(tx => storeEvent(tx, { source: "server", type: "server.recording_eligibility", lessonId, eligible: true, reason: "ALL_CONSENTED", count: 0, occurredAt: START, receivedAt: START, key: `server.recording_eligibility:${lessonId}:fr4` }));
+    const recorded = (id, from, to) => store.transaction(tx => storeEvent(tx, {
+      source: "zoom_api", type: "session.recording_completed", lessonId, provider: "synthetic", providerSessionId: sessionId, sessionName: roomNameOf(lessonId, 0),
+      occurredAt: to + 5 * MIN, receivedAt: to + 5 * MIN, key: `session.recording_completed:${id}`,
+      files: [{ providerFileId: id, kind: "composite", extension: "mp4", size: 1000, status: "completed", recordingStart: from, recordingEnd: to }],
+    }));
+    // START is 15:00 UTC on 10 December 2026: 10:00 in New York (EST).
+    const first = `FR4-${made}-A`, second = `FR4-${made}-B`;
+    await recorded(first, START + 2 * MIN, START + 30 * MIN);
+    await recorded(second, START + 35 * MIN, START + 50 * MIN);
+    expect((await store.fileRecord(first)).plannedName).toBe(`${r.label}_2026-12-10 1002_Ann-Kyle.mp4`);
+    expect((await store.fileRecord(second)).plannedName).toBe(`${r.label}_2026-12-10 1035_Ann-Kyle.mp4`);
+    const fake = createDrive();
+    const results = await processJobs({
+      store, now: START + 60 * MIN, workerId: "fr-filing", handlers: {
+        file_recording: input => fileRecording({ store, drive: fake, download: async (record, { start, end }) => syntheticContent(record.providerFileId, start, end), rootFolderId: fake.rootFolderId, ...input }),
+        delete_vendor_copy: async ({ job, leaseVersion }) => ({ status: (await store.completeJob({ jobId: job.id, leaseVersion })) ? "DONE" : "LEASE_LOST" }),
+      },
+    });
+    expect(results.filter(result => String(result.jobId).startsWith("file:FR4")).map(result => result.status)).toEqual(["STORED", "STORED"]);
+    const lesson = await store.lesson(lessonId);
+    const folder = fake.ensureFolder(fake.ensureFolder(fake.rootFolderId, Core.monthlyFolderName(lesson.date)), r.label);
+    expect((await fake.listNames(folder)).sort()).toEqual([`${r.label}_2026-12-10 1002_Ann-Kyle.mp4`, `${r.label}_2026-12-10 1035_Ann-Kyle.mp4`]);
   });
 });

@@ -74,6 +74,16 @@ export function getRecordingEligibility({ lesson, consents, notices, policy, now
     // The room's roster as it is now: seats given up do not count (P3-Multi).
     const roster = lesson.participants.filter(entry => entry.active !== false);
     const students = roster.filter(entry => entry.role === 'student');
+    // Classroom 3.0 round 3 (2026-11-21): a fixed room's lesson has no tutor and nobody marked. It
+    // may record only when every person let in has a valid consent of their own (and its switches
+    // are on: recordingDisabled above); the plan then starts it only once two people are confirmed
+    // in it (lesson-state.mjs). Two people in a room is never a consent.
+    if (lesson.fixedRoom === true) {
+      if (!students.length) return refuse(['ROSTER_INCOMPLETE']);
+      const missing = students.map(student => consentProblem(consents.find(record => record.participantId === student.id), policy, now)).filter(Boolean);
+      if (missing.length) return refuse(missing);
+      return { eligible: true, reason: 'ALL_CONSENTED', consentVersion: policy.consentVersion };
+    }
     const tutor = roster.find(entry => entry.role === 'tutor');
     if (!tutor || !students.length) return refuse(['ROSTER_INCOMPLETE']);
     const problems = students

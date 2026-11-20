@@ -12,10 +12,10 @@ import { buildDashboard, LABELS } from "../tools/recording-pathway/classroom/liv
 // @ts-ignore - shared classroom logic, plain JavaScript.
 import { answerLost, mayHaveReachedZoom, OPERATED } from "../tools/recording-pathway/classroom/operations.mjs";
 import type { ClassroomDrive } from "./classroom-drive";
-import { fixedRoomOf } from "./classroom-fixed-room-facts";
+import { fixedRoomOf, roomRecordingOn } from "./classroom-fixed-room-facts";
 import type { ClassroomProvider } from "./classroom-provider";
 import type { ClassroomBlock, ClassroomBlockMember, ClassroomEvent, ClassroomLesson, ClassroomStore, OperationState, RecordingFile } from "./classroom-store";
-import { sessionReportsEnabled, vendorDeletionEnabled } from "./classroom-switches";
+import { fixedRoomRecordingEnabled, sessionReportsEnabled, vendorDeletionEnabled } from "./classroom-switches";
 import { HOUSE_TIME_ZONE, LEGACY_LESSON_TIME_ZONE, parseClock, parseIsoDate, validTimeZone, wallIn, zonedInstant } from "./zoned-time";
 
 const RECORDING_LABELS: Record<string, string> = LABELS.recording;
@@ -271,6 +271,13 @@ function rotatedAway(events: ClassroomEvent[], participantId: string) {
 // (from the room's own facts, when given).
 export function forRules(lesson: ClassroomLesson, events?: ClassroomEvent[]) {
   const participants = lesson.participants.map(({ id, code, role, active }) => ({ id, code, role, ...(active === false ? { active: false } : {}) }));
+  // Round 3: a fixed room's lesson (the server's own scheduling fact): it records only with the
+  // site's and the room's switches on and everyone's consent (eligibility.mjs), and starts only with
+  // two people confirmed in it (lesson-state.mjs). Without its facts it is read as an ordinary
+  // lesson, which has no tutor and so never records either.
+  if (!lesson.blockId && events && fixedRoomOf(events)) {
+    return { ...lesson, participants, fixedRoom: true, recordingDisabled: !(fixedRoomRecordingEnabled() && roomRecordingOn(events)) };
+  }
   if (!lesson.blockId) return { ...lesson, participants };
   return { ...lesson, participants, observersEnabled: true, recordingDisabled: !roomMayRecordByMode(lesson, events ?? []) };
 }
@@ -689,8 +696,10 @@ async function consentNow(store: ClassroomStore, lesson: ClassroomLesson, now: n
     const person = staff.find((entry) => entry.code === record.personCode);
     return person ? [{ participantId: person.id, version: record.version, acknowledgedAt: record.acknowledgedAt }] : [];
   }) : [];
-  // A block's room reads from its own facts whether its block may record now (18.6).
-  const events = lesson.blockId ? await store.eventsFor([lesson.id]) : undefined;
+  // A block's room reads from its own facts whether its block may record now (18.6); a fixed room's
+  // lesson (round 3) whether its switches are on and how many people are in it. A one-to-one
+  // lesson's facts change nothing here.
+  const events = await store.eventsFor([lesson.id]);
   return getRecordingEligibility({ lesson: forRules(lesson, events), consents, notices, policy: consentPolicy(), now });
 }
 
@@ -976,7 +985,7 @@ export async function runClassroomTick({ store, provider, drive, now, lessonIds,
     if (summary.sessionsChecked) byLesson = groupByLesson(lessons, await store.eventsFor(ids));
   }
   for (const lesson of lessons) {
-    for (const action of planActions(forRules(lesson), byLesson.get(lesson.id) ?? [], now) as Action[]) {
+    for (const action of planActions(forRules(lesson, byLesson.get(lesson.id) ?? []), byLesson.get(lesson.id) ?? [], now) as Action[]) {
       await perform({ store, provider, lesson, action, now, owner: workerId });
       summary.actions += 1;
     }

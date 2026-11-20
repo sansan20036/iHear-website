@@ -7,6 +7,7 @@ import path from 'node:path';
 import postgres from 'postgres';
 import { createClassroomBlock, manageBlock } from '../lib/classroom-blocks';
 import { createClassroomLesson, joinClassroom } from '../lib/classroom-service';
+import { manageFixedRoom, requestEntry, requestStatus } from '../lib/classroom-fixed-rooms';
 import { createPostgresClassroomStore } from '../lib/classroom-store';
 import { buildSessionTokenClaims, signSessionToken } from '../tools/recording-pathway/classroom/eligibility.mjs';
 
@@ -150,6 +151,57 @@ describe('draft 029 on PostgreSQL', () => {
     expect(after.members.find(member => member.id === student.id).joinKeyHash).toBe('a'.repeat(64));
     const room = await store.lesson(stored.roomIds[0]);
     expect(room.participants.find(entry => entry.memberId === student.id)).toMatchObject({ id: rotations.find(entry => entry.lessonId === room.id).toId, active: false });
+  });
+
+  // Round 3 (2026-11-21): fixed rooms on PostgreSQL. Twelve people let in at the same moment from
+  // separate connections: the lesson's lock keeps it to ten, one lesson is opened, every person has a
+  // row and a code of their own; a ticket enters its lesson; taking one out frees a place.
+  test('FR-PG: a fixed room on PostgreSQL: twelve let in at once give ten seats in one lesson, two told the room is full; a ticket enters; a removal frees a place', async () => {
+    vi.stubEnv('CLASSROOM_FIXED_ROOMS', 'on');
+    try {
+      const now = Date.parse('2026-12-23T08:00:00Z');
+      const owner = { email: 'pg-rooms-owner@example.test', owner: true };
+      const pool = connect('classroom_multi', 8);
+      const parallel = createPostgresClassroomStore(pool);
+      const act = (action, input, at = now, on = store) => manageFixedRoom({ store: on, provider, drive, principal: owner, action, input, now: at });
+      const made = await act('create', { label: 'PG Room' });
+      expect(made.status).toBe(201);
+      const roomId = made.body.room.id;
+      const key = new URLSearchParams(made.body.link.split('#')[1]).get('k');
+      const asked = [];
+      for (let n = 0; n < 12; n += 1) {
+        const answer = await requestEntry({ store, roomId, key, name: `P${String.fromCharCode(65 + n)}`, now });
+        expect(answer.status).toBe(200);
+        asked.push(answer.body);
+      }
+      const first = await Promise.all(asked.map(entry => act('admit', { room: roomId, request: entry.requestId }, now, parallel)));
+      // Any answered "try again" are asked once more, one at a time (the iHear teacher pressing again).
+      const answers = [...first];
+      for (const [index, answer] of first.entries()) if (answer.body.code === 'TRY_AGAIN') answers[index] = await act('admit', { room: roomId, request: asked[index].requestId });
+      expect(answers.filter(answer => answer.status === 200)).toHaveLength(10);
+      expect(answers.filter(answer => answer.body.code === 'ROOM_FULL')).toHaveLength(2);
+      const states = await Promise.all(asked.map(entry => requestStatus({ store, roomId, requestId: entry.requestId, ticket: entry.ticket, now })));
+      const lessons = new Set(states.filter(answer => answer.body.state === 'admitted').map(answer => answer.body.lessonId));
+      expect(lessons.size).toBe(1);
+      const [lessonId] = [...lessons];
+      const [{ count: rows }] = await sql`SELECT count(*)::int AS count FROM public.classroom_participants WHERE lesson_id = ${lessonId} AND role = 'student' AND active`;
+      expect(rows).toBe(10);
+      const [{ codes }] = await sql`SELECT count(DISTINCT code)::int AS codes FROM public.classroom_participants WHERE lesson_id = ${lessonId}`;
+      expect(codes).toBe(10);
+      const inside = asked[states.findIndex(answer => answer.body.state === 'admitted')];
+      const entered = await joinClassroom({ store, provider, lessonId, key: inside.ticket, now });
+      expect(entered.status).toBe(200);
+      expect(entered.body.fixedRoom).toBe(true);
+      // One taken out: their ticket gets nothing; a place is free for one of the two who waited.
+      expect((await act('remove', { room: roomId, request: inside.requestId }, now + MIN)).status).toBe(200);
+      expect((await joinClassroom({ store, provider, lessonId, key: inside.ticket, now: now + MIN })).body.code).toBe('NOT_ON_ROSTER');
+      const waited = asked[answers.findIndex(answer => answer.body.code === 'ROOM_FULL')];
+      expect((await act('admit', { room: roomId, request: waited.requestId }, now + 2 * MIN)).status).toBe(200);
+      const [{ count: after }] = await sql`SELECT count(*)::int AS count FROM public.classroom_participants WHERE lesson_id = ${lessonId} AND role = 'student'`;
+      expect(after).toBe(11);
+    } finally {
+      vi.stubEnv('CLASSROOM_FIXED_ROOMS', '');
+    }
   });
 
   test('the whole flow on PostgreSQL: the manager enters the Lobby, opens it, starts the breakout; a student is let into its room only; cancelling closes every lesson', async () => {

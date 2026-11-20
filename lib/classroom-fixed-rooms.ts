@@ -29,8 +29,10 @@ import { hashKey } from "./classroom-block-rules";
 import type { ClassroomDrive } from "./classroom-drive";
 import { distinctName, entryNameOf } from "./classroom-names";
 import type { ClassroomProvider } from "./classroom-provider";
-import { changeLessonAccess, stopRecordingForCancelledLesson } from "./classroom-service";
+import { roomRecordingOn } from "./classroom-fixed-room-facts";
+import { changeLessonAccess, roomMayRecordNow, stopRecordingForCancelledLesson } from "./classroom-service";
 import type { ClassroomEvent, ClassroomLesson, ClassroomParticipant, ClassroomStore } from "./classroom-store";
+import { fixedRoomRecordingEnabled } from "./classroom-switches";
 import { HOUSE_TIME_ZONE, LEGACY_LESSON_TIME_ZONE, wallIn } from "./zoned-time";
 
 export const FIXED_ROOM_CAPACITY = 10;
@@ -63,7 +65,7 @@ type DecisionKind = "admitted" | "declined" | "removed";
 type Decision = { kind: DecisionKind; at: number; actor: string; classLessonId: string | null; code: string | null };
 type RoomRequest = { id: string; name: string; shown: string; ticketHash: string; at: number; generation: number; decisions: Decision[] };
 type RoomLesson = { classLessonId: string; n: number; endsAt: number; ended: boolean };
-export type FixedRoom = { id: string; label: string; createdAt: number; links: { generation: number; keyHash: string }[]; lessons: RoomLesson[]; requests: RoomRequest[] };
+export type FixedRoom = { id: string; label: string; createdAt: number; recording: boolean; links: { generation: number; keyHash: string }[]; lessons: RoomLesson[]; requests: RoomRequest[] };
 export type RequestState = "waiting" | "admitted" | "declined" | "removed" | "expired" | "replaced" | "ended";
 
 // Of decisions made at the same moment, the stricter one stands.
@@ -81,7 +83,7 @@ function roomFrom(definition: ClassroomEvent, events: readonly ClassroomEvent[])
     decisions.set(String(event.requestId), list);
   }
   return {
-    id, label: String(definition.label), createdAt: definition.occurredAt,
+    id, label: String(definition.label), createdAt: definition.occurredAt, recording: roomRecordingOn(own),
     links: serverFacts(own, "server.room_link").map((event) => ({ generation: Number(event.generation), keyHash: String(event.keyHash) })).sort((a, b) => a.generation - b.generation),
     lessons: serverFacts(own, "server.room_lesson").map((event) => ({ classLessonId: String(event.classLessonId), n: Number(event.n), endsAt: Number(event.endsAt), ended: ended.has(String(event.classLessonId)) })).sort((a, b) => a.n - b.n),
     requests: serverFacts(own, "server.room_request").map((event) => ({
@@ -202,7 +204,7 @@ async function lessonToFill({ store, room, actor, now }: { store: ClassroomStore
   await store.createLesson(lesson, [{
     source: "server", type: "server.lesson_scheduled", key: `server.lesson_scheduled:${classLessonId}`, lessonId: classLessonId, occurredAt: now, receivedAt: now,
     timeZone: HOUSE_TIME_ZONE, localDate: local.date, localTime: local.time, zoneGiven: false, minutes: LESSON_LENGTH_MS / 60_000, fixedRoomId: room.id,
-  }]);
+  }, { source: "server", type: "server.room_recording", lessonId: classLessonId, roomId: room.id, on: room.recording, copied: true, actor, occurredAt: now, receivedAt: now, key: `server.room_recording:${classLessonId}:opened` }]);
   return classLessonId;
 }
 
@@ -220,7 +222,8 @@ async function admit({ store, roomId, requestId, actor, now }: { store: Classroo
     if (!classLessonId) { await pause(100); continue; }
     const ofLesson = room.requests.filter((entry) => entry.decisions.some((decision) => decision.kind === "admitted" && decision.classLessonId === classLessonId));
     const removed = ofLesson.filter((entry) => requestState(room, entry, now) === "removed").length;
-    const code = `R${room.id.slice(3, 11)}-${String(ofLesson.length + 1 + attempt).padStart(3, "0")}`;
+    // A code of its own (random, so people let in at the same moment never take each other's).
+    const code = `R${room.id.slice(3, 11)}-${randomBytes(3).toString("hex")}`;
     const participant: ClassroomParticipant = { id: shortId("P"), code, role: "student", staffEmail: null, joinKeyHash: request.ticketHash };
     // The person's row and the decision in one step: never let in without the record of who did it.
     const result = await store.addLessonParticipant({
@@ -267,6 +270,29 @@ async function decide({ store, roomId, requestId, kind, actor, now }: { store: C
   return { status: 200, body: { ok: true, [kind]: requestId } };
 }
 
+// The room's own recording switch (item 36: each room its own, set by the iHear teacher). On only
+// where the site allows fixed rooms to record at all; written to the room and to its lesson now, so
+// the lesson's next decision follows it (off: a recording there is stopped at the next tick).
+async function setRecording({ store, room, on, actor, now }: { store: ClassroomStore; room: FixedRoom; on: unknown; actor: string; now: number }) {
+  if (on !== true && on !== false) return refused(400, "INVALID_SWITCH", "Say on: true or false");
+  if (on && !fixedRoomRecordingEnabled()) return refused(409, "RECORDING_NOT_AVAILABLE", "Recording in fixed rooms is not turned on for this site");
+  const stamp = `${now}:${randomUUID()}`;
+  const lesson = currentLesson(room, now);
+  // Off while the room's lesson may be recording is refused, as for a block (18.6): ending the lesson
+  // stops it (and ends its session); then the switch can be turned off.
+  const row = lesson ? await store.lesson(lesson.classLessonId) : null;
+  if (!on && row && await roomMayRecordNow(store, row, now)) return refused(409, "RECORDING_MAY_BE_ON", "The room may be recording now: end this lesson to stop it first");
+  await remember(store, [
+    { source: "server", type: "server.room_recording", lessonId: room.id, roomId: room.id, on, actor, occurredAt: now, receivedAt: now, key: `server.room_recording:${room.id}:${stamp}` },
+    ...(lesson ? [
+      { source: "server", type: "server.room_recording", lessonId: lesson.classLessonId, roomId: room.id, on, actor, occurredAt: now, receivedAt: now, key: `server.room_recording:${lesson.classLessonId}:${stamp}` },
+      // The lesson decides again whether it may record (its earlier decision was made on the old switch).
+      { source: "server", type: "server.consent_changed", lessonId: lesson.classLessonId, reason: "room_recording_switch", occurredAt: now, receivedAt: now, key: `server.consent_changed:${lesson.classLessonId}:${stamp}` },
+    ] : []),
+  ]);
+  return { status: 200, body: { ok: true, recording: on } };
+}
+
 async function endLesson({ store, provider, drive, room, actor, now }: { store: ClassroomStore; provider: ClassroomProvider; drive: ClassroomDrive; room: FixedRoom; actor: string; now: number }) {
   const last = room.lessons.at(-1);
   if (!last || last.ended) return refused(409, "NO_LESSON", "No lesson is open in this room");
@@ -279,7 +305,7 @@ async function endLesson({ store, provider, drive, room, actor, now }: { store: 
   return { status: 200, body: { ok: true, ended: last.classLessonId } };
 }
 
-export const FIXED_ROOM_ACTIONS = ["create", "replace_link", "admit", "decline", "remove", "end_lesson"] as const;
+export const FIXED_ROOM_ACTIONS = ["create", "replace_link", "admit", "decline", "remove", "end_lesson", "set_recording"] as const;
 export type FixedRoomAction = (typeof FIXED_ROOM_ACTIONS)[number];
 
 // What an owner does with the fixed rooms (the iHear teacher, signed in). The route checks the
@@ -297,6 +323,7 @@ export async function manageFixedRoom({ store, provider, drive, principal, actio
   if (!room) return refused(404, "NO_SUCH_ROOM", "No such room");
   if (action === "replace_link") return replaceLink({ store, room, actor, now });
   if (action === "end_lesson") return endLesson({ store, provider, drive, room, actor, now });
+  if (action === "set_recording") return setRecording({ store, room, on: input.on, actor, now });
   const requestId = String(input.request ?? "");
   if (action === "admit") return admit({ store, roomId: room.id, requestId, actor, now });
   return decide({ store, roomId: room.id, requestId, kind: action === "decline" ? "declined" : "removed", actor, now });
@@ -328,6 +355,7 @@ export async function fixedRoomsView({ store, now }: { store: ClassroomStore; no
     const row = lesson ? lessons.get(lesson.classLessonId) ?? null : null;
     return {
       id: room.id, label: room.label, createdAt: iso(room.createdAt), linkGeneration: room.links.at(-1)?.generation ?? 0, capacity: FIXED_ROOM_CAPACITY,
+      recording: { on: room.recording, available: fixedRoomRecordingEnabled() },
       lesson: lesson ? { lessonId: lesson.classLessonId, endsAt: iso(lesson.endsAt) } : null,
       waiting: waiting(room, now).map((request) => ({ request: request.id, name: request.shown, at: iso(request.at) })),
       inRoom: inRoom(room, now).map((request) => {

@@ -31,6 +31,9 @@ export const TIMING = Object.freeze({
   realtimeWindowMs: 90_000,
   staleAfterMs: 5 * 60_000,
   tutorAbsentStopMs: 5 * 60_000,
+  // Round 3 (2026-11-21): a fixed room (no tutor) stops recording once fewer than two people have
+  // been in it this long (the user's default "a few minutes", still to be confirmed by the teacher).
+  fixedRoomAloneStopMs: 5 * 60_000,
   tutorAbsentEndMs: 15 * 60_000,
   // Recording stops this long after the lesson's scheduled end (a grace for the last words), and
   // never starts after it.
@@ -949,6 +952,10 @@ export function planActions(lesson, events, now) {
   // stop, the lesson is not past its end, the session is live, and both the tutor (the host) and
   // a student are confirmed in the room.
   const studentHere = state.attendance.some(entry => entry.role === 'student' && entry.status === 'PRESENT' && entry.basis === 'confirmed');
+  // Round 3 (2026-11-21): a fixed room's lesson has no tutor (no host): it starts only with two
+  // people confirmed in it (the decision has already checked everyone's consent and the switches).
+  const studentsHere = state.attendance.filter(entry => entry.role === 'student' && entry.status === 'PRESENT' && entry.basis === 'confirmed').length;
+  const peopleHere = lesson.fixedRoom === true ? studentsHere >= 2 : tutor?.status === 'PRESENT' && tutor.basis === 'confirmed' && studentHere;
   const endStopAt = toMs(lesson.endsAt) + TIMING.lessonEndStopMs;
   // A cancelled lesson whose cancellation is not stored yet (the request that cancelled it
   // failed to store it, or another path set the flag): store it now, with the time it was found.
@@ -957,7 +964,7 @@ export function planActions(lesson, events, now) {
   const cancelled = Boolean(f.cancellation || f.cancelledFlag);
   if (f.currentGeneration) planRoomStart({ lesson, f, state, want, now, endStopAt, cancelled });
   else if (f.eligibility?.eligible === true && !f.withdrawal && !f.emergency && !cancelled && now < endStopAt
-    && live && tutor?.status === 'PRESENT' && tutor.basis === 'confirmed' && studentHere) {
+    && live && peopleHere) {
     const attempt = f.startRequests.length ? Math.max(...f.startRequests.map(request => request.attempt)) : 0;
     const response = f.startResponses.find(entry => entry.attempt === attempt);
     // A start goes to the session the lesson is in now: the newest one Zoom has not said is over.
@@ -1077,6 +1084,14 @@ export function planActions(lesson, events, now) {
     }
     if (now - tutor.since >= TIMING.tutorAbsentEndMs) want(`end:${id}:tutor_absent:${tutor.since}`, 'END_SESSION', { reason: 'tutor_absent', targets: liveNow.map(entry => entry.id) });
   }
+  // Round 3: a fixed room (no tutor): once fewer than two people have been in it for 5 minutes, its
+  // recording stops (the session itself goes on: the people may still be talking).
+  if (lesson.fixedRoom === true && live && captureMayBeOn(f) && studentsHere < 2) {
+    const lastLeft = Math.max(-Infinity, ...state.attendance.filter(entry => entry.role === 'student' && entry.status === 'LEFT' && entry.since != null).map(entry => entry.since));
+    if (Number.isFinite(lastLeft) && now - lastLeft >= TIMING.fixedRoomAloneStopMs) {
+      want(`stop:${id}:fewer_than_two:${lastLeft}`, 'STOP_RECORDING', { reason: 'fewer_than_two', attempt: 1, channels: ['rest'], targets: capturingIds });
+    }
+  }
   // D-5: an older generation of the room is cleaned up. Nothing there is recorded any more: a
   // recording in it is stopped at once (the lesson goes on in the new room). The room is ended
   // once everyone legitimate has moved to the new one, or after a grace; when someone who should
@@ -1158,9 +1173,12 @@ function planRoomStart({ lesson, f, state, want, now, endStopAt, cancelled }) {
   const inside = participantId => room.present.get(participantId)?.in === true;
   const tutorIn = lesson.participants.some(entry => entry.role === 'tutor' && entry.active !== false && inside(entry.id));
   const studentIn = lesson.participants.some(entry => entry.role === 'student' && entry.active !== false && inside(entry.id));
+  // Round 3: a fixed room's moved room starts, as its first one, with two people in it (no tutor).
+  const studentsIn = lesson.participants.filter(entry => entry.role === 'student' && entry.active !== false && inside(entry.id)).length;
+  const peopleIn = lesson.fixedRoom === true ? studentsIn >= 2 : tutorIn && studentIn;
   const stranger = [...room.present.values()].some(presence => presence.in && !presence.legit);
   const olderRecording = liveSessions(f).some(entry => entry !== room && captureOnIn(f, entry));
-  if (!tutorIn || !studentIn || stranger || olderRecording || captureOnIn(f, room)) return;
+  if (!peopleIn || stranger || olderRecording || captureOnIn(f, room)) return;
   const prefix = `start:${id}:g${g}:`;
   const tries = f.startRequests.filter(request => request.key.startsWith(prefix));
   const startIn = { generation: g, targets: [room.id] };

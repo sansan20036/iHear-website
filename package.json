@@ -40,6 +40,8 @@
     "test:classroom:multi-browser": "node tests/classroom-multi.smoke.mjs",
     "test:classroom:browser": "node tests/classroom.smoke.mjs",
     "test:classroom:room2": "node tests/classroom-room2.smoke.mjs",
+    "test:classroom:rooms": "node tests/classroom-fixed-rooms.smoke.mjs",
+    "test:classroom:devices": "node tests/classroom-devices.smoke.mjs",
     "test:classroom:lobby": "node tests/classroom-lobby.smoke.mjs",
     "test:classroom:controls": "node tests/classroom-controls.smoke.mjs",
     "test:classroom:rate-limit": "node tests/classroom-ratelimit.smoke.mjs",

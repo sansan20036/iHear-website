@@ -414,7 +414,9 @@ export async function fileRecording({ store, drive, download, job, leaseVersion,
   const quarantine = record.hold === 'CONSENT_WITHDRAWN' || withdrawnAt != null || !lesson;
   const outcome = quarantine ? 'QUARANTINED' : 'STORED';
   // A block's room (P3-Multi, section 9): <parent>/<students>/<tutors>/, the parts of its own name.
-  const folderPath = quarantine ? [QUARANTINE_FOLDER] : lesson.blockId ? blockFolderPath(record.plannedName) : [Core.monthlyFolderName(lesson.date), lessonFolderName(lesson)];
+  // A fixed room's lesson (round 3: no tutor): <month>/<room>/, the room being its name's first part.
+  const fixedRoom = !lesson?.blockId && lesson && !lesson.participants.some(entry => entry.role === 'tutor');
+  const folderPath = quarantine ? [QUARANTINE_FOLDER] : lesson.blockId ? blockFolderPath(record.plannedName) : fixedRoom ? [Core.monthlyFolderName(lesson.date), String(record.plannedName).split('_')[0]] : [Core.monthlyFolderName(lesson.date), lessonFolderName(lesson)];
 
   // Already uploaded, for example by a worker that was stopped after its upload but before
   // writing to the database: adopt that copy, upload nothing.

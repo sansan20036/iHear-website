@@ -18,3 +18,9 @@ export const vendorDeletionEnabled = () => process.env.CLASSROOM_VENDOR_DELETION
 // the real Zoom checks pass and iHear approves recording in blocks; even then each block starts
 // Classroom Only and an owner switches it, which re-checks everything first (18.6).
 export const multiRecordingEnabled = () => process.env.CLASSROOM_MULTI_RECORDING === "on";
+
+// Classroom 3.0 round 3 (2026-11-21): whether a fixed room's lessons may be recorded at all. Off:
+// no fixed room records, whatever its own switch says. On only in local synthetic tests until Gate B
+// (recording consent, the Zoom account holder's authorization, Drive sharing, a real recording test)
+// is approved; even then each room starts off and the iHear teacher turns it on.
+export const fixedRoomRecordingEnabled = () => process.env.CLASSROOM_FIXED_ROOM_RECORDING === "on";
