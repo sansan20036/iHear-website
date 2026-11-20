@@ -59,6 +59,8 @@ describe('env-check', () => {
     expect(codes(checkMetadata(swap('CLASSROOM_PROVIDER', { target: ['preview', 'production'] }), 'pilot'))).toEqual(['error:CLASSROOM_PROVIDER:NOT_PRODUCTION_ONLY']);
     expect(codes(checkMetadata([...pilotListing, { key: 'CLASSROOM_VENDOR_DELETION', type: 'sensitive', target: ['production'] }], 'pilot'))).toEqual(['error:CLASSROOM_VENDOR_DELETION:FORBIDDEN_IN_PRODUCTION']);
     expect(codes(checkMetadata([...pilotListing, { key: 'CLASSROOM_MULTI_RECORDING', type: 'sensitive', target: ['production'] }], 'pilot'))).toEqual(['error:CLASSROOM_MULTI_RECORDING:FORBIDDEN_IN_PRODUCTION']);
+    // Round 4: what is not approved yet is refused in production too (Gate B; D-16, D-14).
+    for (const key of ['CLASSROOM_FIXED_ROOM_RECORDING', 'CLASSROOM_FIXED_ROOMS', 'CLASSROOM_PERMANENT_ENTRY']) expect(codes(checkMetadata([...pilotListing, { key, type: 'sensitive', target: ['production'] }], 'pilot')), key).toEqual([`error:${key}:FORBIDDEN_IN_PRODUCTION`]);
     expect(codes(checkMetadata([...pilotListing, { key: 'CLASSROOM_SOMETHING_NEW', type: 'sensitive', target: ['production'] }], 'pilot'))).toEqual(['error:CLASSROOM_SOMETHING_NEW:UNKNOWN_CLASSROOM_SETTING']);
     expect(codes(checkMetadata(pilotListing.filter(e => e.key !== 'CLASSROOM_SESSION_REPORTS'), 'pilot'))).toEqual(['warn:CLASSROOM_SESSION_REPORTS:RECOMMENDED_MISSING']);
   });

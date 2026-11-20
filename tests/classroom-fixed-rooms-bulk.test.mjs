@@ -234,6 +234,51 @@ describe("the fixed rooms in bulk", () => {
       expect((await bulk("set_recording_all", { on: true })).body.code).toBe("RECORDING_NOT_AVAILABLE");
       expect((await bulk("set_recording_all", { on: false })).status).toBe(200);
     });
+
+    test("BR-20 (round 4): every room's switch on at once never gets round the other rules: one person alone, or two with one consent missing, never record; two with consent do; the site's switch turned off afterwards wins over every room's switch left on", async () => {
+      vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "on");
+      try {
+        const at = minutes => START + minutes * MIN;
+        const made = (await bulk("create_many", { labels: ["Rec2", "Rec3", "Rec4", "Rec5"] }, { now: at(10) })).body.rooms;
+        const on = await bulk("set_recording_all", { on: true }, { now: at(10) });
+        expect(on.status).toBe(200);
+        for (const room of made) expect(on.body.changed).toContain(room.id);
+        // A room's lesson: these people let in (in this order), consent for those marked, all in by Zoom's word.
+        const lessonIn = async (room, names, consented) => {
+          const asked = [];
+          for (const name of names) asked.push(await ask(room.id, keyOf(room.link), name, at(10)));
+          for (const person of asked) expect((await manage("admit", { room: room.id, request: person.body.requestId }, { now: at(10) })).status).toBe(200);
+          const lessonId = (await rooms.requestStatus({ store, roomId: room.id, requestId: asked[0].body.requestId, ticket: asked[0].body.ticket, now: at(10) })).body.lessonId;
+          const lesson = await store.lesson(lessonId);
+          for (const [index, person] of lesson.participants.entries()) if (consented[index]) await setSyntheticConsent({ store, personCode: person.code, role: "student", status: "granted", actor: OWNER.email, now: START });
+          const sessionId = `ZS-${lessonId.slice(2, 10)}`;
+          await fact(lessonId, "session.started", at(11), { providerSessionId: sessionId, sessionName: roomNameOf(lessonId, 0) });
+          for (const person of lesson.participants) await fact(lessonId, "session.user_joined", at(11), { providerSessionId: sessionId, participantId: person.id });
+          return { lessonId, sessionId };
+        };
+        const tick = (lessonId, minutes) => runClassroomTick({ store, provider, drive, now: at(minutes), lessonIds: [lessonId], workerId: "br-rec-all" });
+        const decided = async lessonId => (await store.eventsFor([lessonId])).filter(event => event.type === "server.recording_eligibility").at(-1);
+        const startsOf = lessonId => starts.filter(([id]) => id === lessonId);
+        const alone = await lessonIn(made[0], ["Ann"], [true]);
+        const missing = await lessonIn(made[1], ["Ann", "Bo"], [true, false]);
+        const both = await lessonIn(made[2], ["Cy", "Di"], [true, true]);
+        for (const { lessonId } of [alone, missing, both]) for (const minutes of [12, 13]) await tick(lessonId, minutes);
+        expect(startsOf(alone.lessonId)).toEqual([]);
+        expect(startsOf(missing.lessonId)).toEqual([]);
+        expect(await decided(missing.lessonId)).toMatchObject({ eligible: false, reason: "CONSENT_MISSING" });
+        expect(startsOf(both.lessonId)).toEqual([[both.lessonId, both.sessionId]]);
+        // The site's switch off afterwards: two people with every consent, the room's own switch still
+        // on from "every room on", never record.
+        vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "");
+        const late = await lessonIn(made[3], ["Ed", "Fay"], [true, true]);
+        for (const minutes of [14, 15]) await tick(late.lessonId, minutes);
+        expect((await switches(at(15))).Rec5).toBe(true);
+        expect(startsOf(late.lessonId)).toEqual([]);
+        expect(await decided(late.lessonId)).toMatchObject({ eligible: false, reason: "RECORDING_DISABLED" });
+      } finally {
+        vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "");
+      }
+    });
   });
 
   test("BR-10: exactly 100 rooms at a time are made; with more than 100 rooms in all, giving every link at once is refused and a list of rooms is asked for", async () => {
@@ -463,6 +508,10 @@ describe("the admin page's helpers for many rooms", () => {
     expect(lf).toContain("signal: AbortSignal.timeout(ANSWER_WITHIN_MS)");
     expect(lf.match(/try \{ answer = await send\(/g)).toHaveLength(2);
     expect(lf).toContain("ERRORS.OUTCOME_UNKNOWN");
+    // The file is made only after the rooms were read again (a link replaced since is left out).
+    const download = lf.slice(lf.indexOf("async function download()"), lf.indexOf("function dismiss()"));
+    expect(download.indexOf("await recheck(")).toBeGreaterThan(-1);
+    expect(download.indexOf("await recheck(")).toBeLessThan(download.indexOf("new Blob("));
     // A list with links not yet downloaded asks before the page is left or the list is put away.
     expect(lf).toContain('window.addEventListener("beforeunload", warn)');
     expect(lf).toContain("這份清單還沒有下載。");

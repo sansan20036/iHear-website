@@ -60,7 +60,12 @@ const PROFILES = {
 };
 // Never in production: they delete vendor copies, open block recording, or exist for local and
 // synthetic tests only (each is refused or meaningless there, and some would change behaviour).
+// Classroom 3.0 round 4 (2026-11-21): also the switches of what is not approved yet: fixed rooms'
+// recording (Gate B: consent policy, the Zoom account holder's authorization, Drive sharing, a real
+// recording test), the fixed rooms and the site-wide permanent entry (D-16, D-14). Each leaves this
+// list only by its own approval.
 export const FORBIDDEN = [
+  'CLASSROOM_FIXED_ROOM_RECORDING', 'CLASSROOM_FIXED_ROOMS', 'CLASSROOM_PERMANENT_ENTRY',
   'CLASSROOM_VENDOR_DELETION', 'CLASSROOM_MULTI_RECORDING', 'CLASSROOM_TRIAL_CONSENT',
   'CLASSROOM_SYNTHETIC_SECRET', 'CLASSROOM_WEBHOOK_SECRET', 'CLASSROOM_DRIVE_ROOT_NAME',
   'CLASSROOM_GOOGLE_CLIENT_FILE', 'CLASSROOM_GOOGLE_TOKEN_FILE', 'CLASSROOM_GOOGLE_API_BASE',
