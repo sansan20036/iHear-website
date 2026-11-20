@@ -34,24 +34,47 @@ describe("one release switch for the home page entries and the header", () => {
     expect(ignore.indexOf("!data/classroom-entry.json")).toBeGreaterThan(ignore.indexOf("data/*"));
   });
 
-  test("the home page holds two entries, the hero button and a footer link, to /classroom only and in three languages", async () => {
+  // 2026-11-21: the entry moved from the hero into the header (left of the sign-in), where the
+  // header script adds it on every page; the home page itself keeps the footer link only.
+  test("the home page holds one entry of its own, the footer link, to /classroom only and in three languages", async () => {
     const html = await source("index.html");
-    expect(html.split(START)).toHaveLength(3);
-    expect(html.split(END)).toHaveLength(3);
-    const blocks = html.split(START).slice(1).map(part => part.split(END)[0]);
-    for (const block of blocks) {
-      expect([...block.matchAll(/<a\b[^>]*>/g)]).toHaveLength(1);
-      expect(block).toMatch(/<a\b[^>]*\bhref="\/classroom"[^>]*\bdata-classroom-entry=/);
-      expect(block).not.toMatch(/target=|https?:/);
-      expect(block).toContain('<span lang="en">Online Classroom</span>');
-      expect(block).toContain('<span lang="zh-Hant">線上教室</span>');
-      expect(block).toContain('<span lang="zh-Hans">线上教室</span>');
-      // Never an editable or translated slot: nothing about it reaches the content catalog.
-      expect(block).not.toMatch(/data-i18n|data-editable/);
-    }
-    expect(blocks[0]).toContain("btn");
-    expect(html.indexOf(START)).toBeGreaterThan(html.indexOf('class="hero-ctas"'));
-    expect(html.lastIndexOf(START)).toBeGreaterThan(html.indexOf("<footer"));
+    expect(html.split(START)).toHaveLength(2);
+    expect(html.split(END)).toHaveLength(2);
+    const block = html.split(START)[1].split(END)[0];
+    expect([...block.matchAll(/<a\b[^>]*>/g)]).toHaveLength(1);
+    expect(block).toMatch(/<a\b[^>]*\bhref="\/classroom"[^>]*\bdata-classroom-entry="footer"/);
+    expect(block).not.toMatch(/target=|https?:/);
+    expect(block).toContain('<span lang="en">Online Classroom</span>');
+    expect(block).toContain('<span lang="zh-Hant">線上教室</span>');
+    expect(block).toContain('<span lang="zh-Hans">线上教室</span>');
+    // Never an editable or translated slot: nothing about it reaches the content catalog.
+    expect(block).not.toMatch(/data-i18n|data-editable/);
+    expect(html.indexOf(START)).toBeGreaterThan(html.indexOf("<footer"));
+    // Nothing is left in the hero.
+    expect(html).not.toMatch(/hero-classroom-entry|btn-classroom/);
+  });
+
+  test("the header's entry is the header script's, under the same switch, to /classroom only and in three languages", async () => {
+    const auth = await source("assets/auth.js");
+    const place = auth.slice(auth.indexOf("function placeClassroomEntries("), auth.indexOf("function createMounts("));
+    // Nothing is placed while the classroom is not open to everyone.
+    expect(place).toMatch(/^function placeClassroomEntries\([^)]*\) \{\s*if \(!CLASSROOM_ENTRY_RELEASED\) return;/);
+    expect(place).toContain('classroomEntry("header")');
+    expect(place).toContain('classroomEntry("menu")');
+    // Left of the sign-in on wide screens, just above it in the phone menu.
+    expect(place).toContain("navInner.insertBefore(classroomEntry(\"header\"), desktop)");
+    expect(place).toContain("navLinks.insertBefore(item, mobile)");
+    const entry = auth.slice(auth.indexOf("function classroomEntry("), auth.indexOf("let fitWatch"));
+    expect(entry).toContain('link.href = "/classroom";');
+    expect(entry).toContain('link.setAttribute("data-classroom-entry", place);');
+    expect(entry).not.toMatch(/target|https?:/);
+    for (const word of ['<span lang="en">Online Classroom</span>', '<span lang="zh-Hant">線上教室</span>', '<span lang="zh-Hans">线上教室</span>']) expect(entry).toContain(word);
+    // The pages themselves carry no header entry: no page but the home page has a classroom link.
+    for (const page of ["about.html", "team.html", "academy.html", "resources.html"]) expect(await source(page)).not.toMatch(/\/classroom|data-classroom-entry/);
+    // The styles for the three ways it may fit, and for the phone menu.
+    const css = await source("assets/site.css");
+    for (const rule of ['.nav-classroom[data-fit="icon"]', '.nav-classroom[data-fit="none"]{ display:none; }', ".nav-inner > .nav-classroom{ display:none; }", "html.js .nav-classroom-item{ display:block;"]) expect(css).toContain(rule);
+    expect(css).not.toMatch(/hero-classroom-entry|btn-classroom/);
   });
 
   test("switched off, the built home page has no classroom entry and nothing else changes", async () => {
@@ -70,9 +93,9 @@ describe("one release switch for the home page entries and the header", () => {
     }
   });
 
-  test("switched on, both entries stay and only the markers go", async () => {
+  test("switched on, the footer entry stays and only the markers go", async () => {
     const on = applyClassroomEntry(await source("index.html"), true);
-    expect(on.match(/href="\/classroom"/g)).toHaveLength(2);
+    expect(on.match(/href="\/classroom"/g)).toHaveLength(1);
     expect(on).not.toContain("classroom-entry:");
   });
 

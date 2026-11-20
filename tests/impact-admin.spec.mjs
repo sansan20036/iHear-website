@@ -3442,7 +3442,7 @@ test.describe("the home page's classroom entry and its release switch", () => {
       await expect(chip).toHaveText(PREVIEW[language]);
       await expect(chip).toHaveAttribute("href", "/classroom");
       await expect(page.locator("[data-auth-desktop] .auth-classroom-link")).toHaveAttribute("href", "/classroom");
-      // The hero and footer entries stay out of the page until the switch is on.
+      // The header and footer entries stay out of the page until the switch is on.
       await expect(entries(page)).toHaveCount(0);
       // The preview lasts for this tab only, and still asks the server on each page.
       await page.goto("/about");
@@ -3468,43 +3468,84 @@ test.describe("the home page's classroom entry and its release switch", () => {
     await expect(page.locator('[data-auth-desktop] .auth-admin-link[href="/admin"]')).toHaveCount(1);
   });
 
+  // 2026-11-21: the public entry is in the header, left of the sign-in (the header script adds it
+  // on every page), and in the home page's footer. A wide window, so it shows whatever the fonts.
+  const WIDE = { width: 1600, height: 900 };
+  const headerEntry = page => page.locator('.nav-inner > a[data-classroom-entry="header"]');
+  const menuEntry = page => page.locator('#navLinks a[data-classroom-entry="menu"]');
+  const footerEntry = page => page.locator("footer a[data-classroom-entry]");
+  const leftOfSignIn = page => headerEntry(page).evaluate(node => node.nextElementSibling?.matches("[data-auth-desktop]") === true
+    && node.getBoundingClientRect().right <= node.nextElementSibling.getBoundingClientRect().left + 0.5);
+  // The row's last part stays inside the row's own side padding.
+  const rowFits = page => page.evaluate(() => {
+    const inner = document.querySelector(".nav-inner");
+    const last = [...inner.children].reverse().find(child => child.getClientRects().length > 0);
+    return last.getBoundingClientRect().right <= inner.getBoundingClientRect().right - parseFloat(getComputedStyle(inner).paddingRight) + 1;
+  });
+
   for (const language of ["en", "zhTW", "zhCN"]) {
-    test(`switched on, the hero button and a footer link lead to /classroom, in the page's language (${language})`, async ({ page }) => {
+    test(`switched on, the header entry and a footer link lead to /classroom, in the page's language (${language})`, async ({ page }) => {
       await visit(page, { language });
       await page.context().addCookies([{ name: "ihear-lang", value: language, url: e2eOrigin }]);
       await switchedOn(page);
+      await page.setViewportSize(WIDE);
       await page.goto("/");
-      const hero = page.locator(".hero-ctas a[data-classroom-entry]");
-      const footer = page.locator("footer a[data-classroom-entry]");
-      await expect(hero).toBeVisible();
-      await expect(hero).toHaveText(LABEL[language], { useInnerText: true });
-      await expect(hero).toHaveAttribute("href", "/classroom");
-      expect(await hero.getAttribute("target")).toBeNull();
+      const header = headerEntry(page);
+      const footer = footerEntry(page);
+      await expect(header).toBeVisible();
+      await expect(header).toHaveText(LABEL[language], { useInnerText: true });
+      await expect(header).toHaveAttribute("href", "/classroom");
+      expect(await header.getAttribute("target")).toBeNull();
+      expect(await leftOfSignIn(page)).toBe(true);
+      expect(await rowFits(page)).toBe(true);
+      // Nothing is left among the hero's buttons.
+      await expect(page.locator(".hero-ctas a[data-classroom-entry]")).toHaveCount(0);
       await footer.scrollIntoViewIfNeeded();
       await expect(footer).toHaveText(LABEL[language], { useInnerText: true });
       await expect(footer).toHaveAttribute("href", "/classroom");
-      await expect(entries(page)).toHaveCount(2);
+      // In the page: the header's entry, its twin inside the phone menu (not shown here), the footer's.
+      await expect(entries(page)).toHaveCount(3);
+      await expect(menuEntry(page)).toBeHidden();
       // What people and screen readers get: one name, in this language.
       await expect(page.getByRole("link", { name: LABEL[language], exact: true })).toHaveCount(2);
-      for (const entry of [hero, footer]) expect(await entry.locator("span").evaluateAll(spans => spans.filter(span => getComputedStyle(span).display !== "none").length)).toBe(1);
+      for (const entry of [header, footer]) expect(await entry.locator("span").evaluateAll(spans => spans.filter(span => getComputedStyle(span).display !== "none").length)).toBe(1);
       // The language switch swaps the words at once.
       const next = language === "en" ? "zhCN" : "en";
       await page.locator(`#langSwitch button[data-lang="${next}"]`).click();
-      await expect(hero).toHaveText(LABEL[next], { useInnerText: true });
+      await expect(header).toHaveText(LABEL[next], { useInnerText: true });
       await expect(footer).toHaveText(LABEL[next], { useInnerText: true });
+      expect(await rowFits(page)).toBe(true);
     });
   }
 
+  test("switched on, every page's header carries the entry, signed in or not", async ({ page }) => {
+    await visit(page, { user: TUTOR, language: "zhTW" });
+    await switchedOn(page);
+    await page.setViewportSize(WIDE);
+    for (const route of ["/", "/about", "/resources"]) {
+      await page.goto(route);
+      await expect(page.locator("[data-auth-desktop] .auth-profile")).toBeVisible();
+      await expect(headerEntry(page)).toBeVisible();
+      await expect(headerEntry(page)).toHaveAttribute("href", "/classroom");
+      expect(await leftOfSignIn(page)).toBe(true);
+      expect(await rowFits(page)).toBe(true);
+    }
+  });
+
   test("switched on, the words are right from the first paint: the server's page language picks them, before any script runs", async ({ page }) => {
     await visit(page);
+    await page.setViewportSize(WIDE);
     await page.route("**/assets/site.js*", route => route.fulfill({ contentType: "text/javascript", body: "" }));
     for (const [locale, language] of [["en", "en"], ["zhHant", "zhTW"], ["zhHans", "zhCN"]]) {
       await page.unroute(`${e2eOrigin}/`);
       await page.unroute("**/assets/auth.js*");
       await switchedOn(page, { serverLocale: locale });
       await page.goto("/");
-      await expect(page.locator(".hero-ctas a[data-classroom-entry]")).toHaveText(LABEL[language], { useInnerText: true });
-      await expect(page.locator("footer a[data-classroom-entry]")).toHaveText(LABEL[language], { useInnerText: true });
+      await expect(footerEntry(page)).toHaveText(LABEL[language], { useInnerText: true });
+      // The header's entry is the header script's: it too takes its word from the page language.
+      // (Here the page's other words stay English, so the row may have no room to show it.)
+      await expect(headerEntry(page)).toHaveCount(1);
+      expect(await headerEntry(page).locator("span").evaluateAll(spans => spans.filter(span => getComputedStyle(span).display !== "none").map(span => span.textContent))).toEqual([LABEL[language]]);
     }
   });
 
@@ -3535,15 +3576,92 @@ test.describe("the home page's classroom entry and its release switch", () => {
     await switchedOn(page);
     const on = await count();
     expect(on).toBe(off);
-    for (const [width, height] of [[360, 780], [768, 1024], [1280, 900]]) {
+    // Phones and tablets: the header keeps to its logo and menu button; the entry is inside the menu.
+    for (const [width, height] of [[360, 780], [768, 1024]]) {
       await page.setViewportSize({ width, height });
       await page.goto("/");
-      const hero = page.locator(".hero-ctas a[data-classroom-entry]");
-      await expect(hero).toBeVisible();
-      const box = await hero.boundingBox();
+      await expect(page.locator("[data-auth-mobile] [data-auth-signin]")).toHaveCount(1);
+      await expect(headerEntry(page)).toBeHidden();
+      await page.locator("#navToggle").click();
+      const inMenu = menuEntry(page);
+      await expect(inMenu).toBeVisible();
+      await expect(inMenu).toHaveAttribute("href", "/classroom");
+      const box = await inMenu.boundingBox();
       expect(box.x).toBeGreaterThanOrEqual(0);
       expect(box.x + box.width).toBeLessThanOrEqual(width);
+      expect(box.height).toBeGreaterThanOrEqual(44);
+      // Just above the sign-in.
+      expect(await inMenu.evaluate(node => node.closest("li").nextElementSibling?.matches("[data-auth-mobile]") === true)).toBe(true);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     }
+    // A wide window: in the header row, left of the sign-in, inside the window.
+    await page.setViewportSize(WIDE);
+    await page.goto("/");
+    const header = headerEntry(page);
+    await expect(header).toBeVisible();
+    const box = await header.boundingBox();
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(WIDE.width);
+    expect(await leftOfSignIn(page)).toBe(true);
+    expect(await rowFits(page)).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  });
+
+  // The header row has little room. Whatever the fonts, the entry shows its word when the row has
+  // room for it, the icon alone when only that fits, and nothing when even the icon would push the
+  // buttons after it out of the row. The row's width is set here from what this browser measures.
+  test("the header entry takes what fits: the word, the icon alone, or nothing", async ({ page }) => {
+    await visit(page, { language: "zhTW" });
+    await page.context().addCookies([{ name: "ihear-lang", value: "zhTW", url: e2eOrigin }]);
+    await switchedOn(page);
+    await page.setViewportSize({ width: 2400, height: 900 });
+    await page.goto("/");
+    const header = headerEntry(page);
+    await expect(page.locator("[data-auth-desktop] [data-auth-signin]")).toBeVisible();
+    await expect(header).toBeVisible();
+    const sizes = await page.evaluate(() => {
+      const inner = document.querySelector(".nav-inner");
+      const entry = inner.querySelector(':scope > [data-classroom-entry="header"]');
+      const style = getComputedStyle(inner);
+      const gap = parseFloat(style.columnGap) || 0;
+      const padding = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+      const parts = [...inner.children].filter(child => child !== entry && child.getClientRects().length > 0);
+      const others = parts.reduce((sum, child) => sum + child.getBoundingClientRect().width, 0) + gap * (parts.length - 1);
+      return { others, gap, padding, word: entry.getBoundingClientRect().width, fit: entry.getAttribute("data-fit") };
+    });
+    expect(sizes.fit).toBeNull();
+    const rowOf = async inside => {
+      await page.evaluate(width => {
+        let style = document.getElementById("fit-test");
+        if (!style) { style = document.createElement("style"); style.id = "fit-test"; document.head.appendChild(style); }
+        style.textContent = `.nav > .container{ box-sizing:border-box!important; max-width:none!important; width:${width}px!important; margin-left:0!important; }`;
+      }, Math.ceil(inside + sizes.padding));
+    };
+    const fit = () => header.getAttribute("data-fit");
+    // Room for the word.
+    await rowOf(sizes.others + sizes.gap + sizes.word + 8);
+    await expect.poll(fit).toBeNull();
+    await expect(header).toBeVisible();
+    await expect(header).toHaveText(LABEL.zhTW, { useInnerText: true });
+    expect(await header.getAttribute("title")).toBeNull();
+    expect(await rowFits(page)).toBe(true);
+    // Room for the icon only: the word stays as the link's name and as its tooltip.
+    await rowOf(sizes.others + sizes.gap + 44 + 8);
+    await expect.poll(fit).toBe("icon");
+    await expect(header).toBeVisible();
+    expect((await header.boundingBox()).width).toBeLessThanOrEqual(46);
+    await expect(header).toHaveAttribute("title", LABEL.zhTW);
+    await expect(page.getByRole("link", { name: LABEL.zhTW, exact: true }).first()).toBeVisible();
+    expect(await leftOfSignIn(page)).toBe(true);
+    expect(await rowFits(page)).toBe(true);
+    // No room even for the icon: it steps aside, and the row is as it would be without it.
+    await rowOf(sizes.others + 8);
+    await expect.poll(fit).toBe("none");
+    await expect(header).toBeHidden();
+    expect(await rowFits(page)).toBe(true);
+    // Room again: the word is back.
+    await rowOf(sizes.others + sizes.gap + sizes.word + 8);
+    await expect.poll(fit).toBeNull();
+    await expect(header).toBeVisible();
   });
 });

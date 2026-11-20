@@ -138,9 +138,10 @@ for (const route of cmsPages) {
       expect(metrics.status()).toBe(200);
       expect(snapshot.metrics).toEqual((await metrics.json()).metrics);
       // The online classroom entries follow the release switch of the deployed code: none
-      // before the staff acceptance passes, the hero button and the footer link after.
+      // before the staff acceptance passes; after it the header's entry (one for wide screens,
+      // one inside the phone menu, both added by the header script) and the footer link.
       const { released } = JSON.parse(await readFile(new URL("../../data/classroom-entry.json", import.meta.url), "utf8"));
-      await expect(page.locator('a[href="/classroom"]'), "Classroom entries must follow data/classroom-entry.json").toHaveCount(released === true ? 2 : 0);
+      await expect(page.locator('a[href="/classroom"]'), "Classroom entries must follow data/classroom-entry.json").toHaveCount(released === true ? 3 : 0);
     }
     await expect.poll(() => page.locator("[data-editable-content]").evaluateAll((nodes, { content, route }) => nodes.flatMap(node => {
       const scope = node.dataset.editablePage || route;

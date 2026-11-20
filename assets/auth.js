@@ -94,6 +94,63 @@
     await fetch(authUrl("clear-stale"), { method: "POST", credentials: "same-origin", cache: "no-store" }).catch(() => null);
   }
 
+  // The public way into the online classroom, in the header of every page (2026-11-21): left of
+  // the sign-in on wide screens, and just above it in the phone menu. It is there only once the
+  // classroom is open to everyone, by the same switch as the home page's footer link; a staff
+  // preview keeps to its own fixed link. The word is picked by the page language in CSS
+  // ([data-classroom-entry] > [lang]), so a change of language needs no redraw here.
+  const CLASSROOM_ICON = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="6.5" width="12" height="11" rx="2.5"/><path d="M15 10.5l5-3v9l-5-3z"/></svg>';
+  function classroomEntry(place) {
+    const link = document.createElement("a");
+    link.className = "nav-classroom";
+    link.href = "/classroom";
+    link.setAttribute("data-classroom-entry", place);
+    link.innerHTML = `${CLASSROOM_ICON}<span lang="en">Online Classroom</span><span lang="zh-Hant">線上教室</span><span lang="zh-Hans">线上教室</span>`;
+    return link;
+  }
+  // The header row has little room, and how much depends on the language and the account button.
+  // So the entry takes what fits: the word, or the icon alone (the word stays for screen readers
+  // and as the tooltip), or nothing when even the icon would push the buttons after it out of the
+  // row. It is checked again whenever the row or anything in it changes size.
+  let fitWatch = null;
+  function fitClassroomEntry() {
+    const navInner = document.querySelector(".nav-inner");
+    const entry = navInner?.querySelector(':scope > [data-classroom-entry="header"]');
+    if (!entry) return;
+    entry.removeAttribute("data-fit");
+    entry.removeAttribute("title");
+    if (getComputedStyle(entry).display === "none") return; // the phone menu holds it instead
+    // The row is full when its last part passes the inner edge (the row's own side padding stays free).
+    const overflows = () => {
+      const last = [...navInner.children].reverse().find(child => child.getClientRects().length > 0);
+      const edge = navInner.getBoundingClientRect().right - (parseFloat(getComputedStyle(navInner).paddingRight) || 0);
+      return Boolean(last) && last.getBoundingClientRect().right > edge + 1;
+    };
+    if (!overflows()) return;
+    entry.setAttribute("data-fit", "icon");
+    entry.title = entry.innerText.trim();
+    if (overflows()) entry.setAttribute("data-fit", "none");
+  }
+  function watchClassroomEntryFit(navInner) {
+    if (fitWatch || typeof ResizeObserver !== "function") return;
+    fitWatch = new ResizeObserver(() => fitClassroomEntry());
+    fitWatch.observe(navInner);
+    for (const child of navInner.children) if (!child.matches("[data-classroom-entry]")) fitWatch.observe(child);
+  }
+  function placeClassroomEntries(navInner, navLinks, desktop, mobile) {
+    if (!CLASSROOM_ENTRY_RELEASED) return;
+    if (navInner && desktop?.parentNode === navInner && !navInner.querySelector(':scope > [data-classroom-entry="header"]')) {
+      navInner.insertBefore(classroomEntry("header"), desktop);
+      watchClassroomEntryFit(navInner);
+    }
+    if (navLinks && mobile?.parentNode === navLinks && !navLinks.querySelector('[data-classroom-entry="menu"]')) {
+      const item = document.createElement("li");
+      item.className = "nav-classroom-item";
+      item.appendChild(classroomEntry("menu"));
+      navLinks.insertBefore(item, mobile);
+    }
+  }
+
   function createMounts() {
     const navInner = document.querySelector(".nav-inner");
     const navLinks = document.getElementById("navLinks");
@@ -115,6 +172,7 @@
       mobile.setAttribute("data-auth-mobile", "");
       navLinks.appendChild(mobile);
     }
+    placeClassroomEntries(navInner, navLinks, desktop, mobile);
     return { desktop, mobile };
   }
 
@@ -261,6 +319,7 @@
     document.querySelectorAll("[data-auth-retry]").forEach((button) => button.addEventListener("click", refresh));
     bindPopover();
     renderPreviewLink();
+    fitClassroomEntry();
     window.dispatchEvent(new CustomEvent("ihear:auth", { detail: { session: currentSession, error: loadFailed } }));
   }
 

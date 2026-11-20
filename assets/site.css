@@ -1207,28 +1207,43 @@ html[lang="zh-Hans"] [data-classroom-entry] > [lang="zh-Hans"]{display:inline}
 /* A confirmed staff preview's link, fixed in a corner so nothing on the page moves. */
 .classroom-preview-link{position:fixed;right:16px;bottom:16px;z-index:150;display:inline-flex;align-items:center;min-height:44px;padding:10px 16px;border-radius:999px;border:2px dashed #fff;background:var(--navy);color:#fff;font-weight:700;text-decoration:none;box-shadow:0 6px 18px rgba(27,42,87,.25)}
 .classroom-preview-link:hover,.classroom-preview-link:focus-visible{background:var(--navy-deep);color:#fff}
-/* The online classroom entry, refined (2026-11-12). In the hero: its own row under the two main
-   buttons, a quieter card with a video icon, so the two main buttons keep their weight and the
-   classroom still stands out. The signed-in menu's entry carries the same icon, and on the phone
-   menu its hint sits under the title again. Colours, type and motion are the site's own tokens. */
+/* The online classroom entry (2026-11-21: moved from the hero into the header). On wide screens it
+   sits left of the sign-in and wears the same outlined pill; in the phone menu it is a full-width
+   row just above the sign-in. The signed-in menu's entry carries the same video icon. Colours,
+   type and motion are the site's own tokens. */
 :root{ --icon-classroom:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23263974' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='6.5' width='12' height='11' rx='2.5'/%3E%3Cpath d='M15 10.5l5-3v9l-5-3z'/%3E%3C/svg%3E"); }
-.hero-classroom-entry{ flex:1 1 100%; display:flex; }
-.hero-ctas .btn-classroom{
-  justify-content:flex-start; gap:12px; max-width:100%; min-height:56px; padding:8px 20px 8px 8px;
-  border:1.5px solid var(--line); border-radius:16px; background:var(--bg-surface,#fff); color:var(--navy);
-  box-shadow:0 4px 16px rgba(38,57,116,.08); font-family:var(--font-h); font-size:1.06rem; font-weight:700;
-  line-height:1.25; white-space:normal; text-align:left;
-  transition:transform var(--speed-1), box-shadow var(--speed-1), border-color var(--speed-1);
+.nav-classroom{
+  flex:0 0 auto; display:inline-flex; align-items:center; justify-content:center; gap:6px; min-height:44px; padding:9px 12px;
+  border:2px solid var(--navy); border-radius:999px; background:var(--bg-surface); color:var(--navy); box-shadow:var(--shadow);
+  font-family:var(--font-b); font-size:.88rem; font-weight:800; line-height:1.2; white-space:nowrap; text-decoration:none;
+  transition:transform var(--speed-1), box-shadow var(--speed-1), background var(--speed-1);
 }
-.btn-classroom svg{ flex:none; }
-.btn-classroom-icon{ width:40px; height:40px; padding:9px; border-radius:12px; background:var(--orange-soft); stroke-width:1.9; }
-.btn-classroom-arrow{ width:18px; height:18px; margin-left:4px; color:var(--orange-text); stroke-width:2.2; transition:transform var(--speed-1); }
-.hero-ctas .btn-classroom:hover{ transform:translateY(-1px); border-color:var(--orange); box-shadow:var(--shadow); }
-.hero-ctas .btn-classroom:hover .btn-classroom-arrow{ transform:translateX(3px); }
-.hero-ctas .btn-classroom:focus-visible{ border-color:var(--navy); }
+.nav-classroom svg{ flex:none; width:20px; height:20px; }
+.nav-classroom:hover{ transform:translateY(-1px); box-shadow:var(--shadow-lg); }
+/* What fits (set by assets/auth.js): the icon alone keeps the word for screen readers. */
+.nav-classroom[data-fit="icon"]{ position:relative; width:44px; padding:0; gap:0; }
+.nav-classroom[data-fit="icon"] > [lang]{ position:absolute; width:1px; height:1px; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+.nav-classroom[data-fit="none"]{ display:none; }
+/* Room for it on wide screens: the row's gaps give up 2px, the links' side padding 3px, and the
+   sign-in loses the 6px it kept empty beside its button. */
+@media (min-width:1025px){
+  .nav-inner{ gap:10px; }
+  .nav-links a{ padding-left:6px; padding-right:6px; }
+  .auth-widget{ min-width:142px; }
+}
+/* English words are longer than the page width has room for: its header row may be wider. */
+@media (min-width:1025px){ html:not([lang^="zh"]) .nav > .container{ max-width:calc(var(--max) + 200px); } }
+.nav-classroom-item{ display:none; }
+@media (max-width:1024px){
+  .nav-inner > .nav-classroom{ display:none; }
+  html.js .nav-classroom-item{ display:block; padding:4px; }
+  html.js .nav-links .nav-classroom{
+    display:flex; justify-content:center; width:100%; min-height:48px; padding:12px 14px; border-radius:999px;
+    color:var(--navy); font-size:1rem; font-weight:800; box-shadow:none;
+  }
+}
 .auth-classroom-link{ grid-template-columns:auto minmax(0,1fr); column-gap:12px; align-items:center; }
 .auth-classroom-link::before{ content:""; grid-row:1 / span 2; width:36px; height:36px; border-radius:10px; background:var(--orange-soft) var(--icon-classroom) center / 20px 20px no-repeat; }
 .auth-classroom-link > span,.auth-classroom-link > small{ grid-column:2; }
 html.js .nav-links .auth-mobile-panel .auth-classroom-link{ display:grid; justify-content:stretch; text-align:left; }
-@media (prefers-reduced-motion:reduce){ .hero-ctas .btn-classroom:hover,.hero-ctas .btn-classroom:hover .btn-classroom-arrow{ transform:none!important; } }
-@media (forced-colors:active){ .btn-classroom-icon{ background:none; } }
+@media (prefers-reduced-motion:reduce){ .nav-classroom:hover{ transform:none!important; } }
