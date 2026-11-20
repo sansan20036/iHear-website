@@ -30,8 +30,10 @@ const context = options => localContext(browser, origin, { external: report.exte
 const expectedRefusal = text => /Failed to load resource: the server responded with a status of (400|409|410)/.test(text);
 // What each confirm asked, as the owner read it before agreeing.
 const asked = [];
+// While a check cuts a request on purpose, the browser's own "failed to load" line is expected.
+let cutting = false;
 function watch(page, who) {
-  page.on('console', message => { if (message.type() === 'error' && !expectedRefusal(message.text())) report.pageProblems.push(`${who}: ${message.text()}`); });
+  page.on('console', message => { if (message.type() === 'error' && !expectedRefusal(message.text()) && !(cutting && /net::ERR_/.test(message.text()))) report.pageProblems.push(`${who}: ${message.text()}`); });
   page.on('pageerror', error => report.pageProblems.push(`${who}: ${error.message}`));
   page.on('dialog', dialog => { asked.push(dialog.message()); return dialog.accept(); });
   return page;
@@ -206,7 +208,45 @@ try {
     await expect(admin.locator('[data-room="Hall100"]')).toContainText('連結第 2 版');
   });
 
-  await check('B7', '沒有對外請求，頁面沒有非預期的錯誤', async () => {
+  await check('B7', '重新產生途中連線中斷：已經換好的那一批連結仍然顯示、可以下載；沒完成的教室列出名稱，它們的連結沒有變', async () => {
+    await openBulk();
+    const list = admin.locator('[data-room-links-list]');
+    let exports = 0;
+    cutting = true;
+    await admin.route('**/api/admin/classrooms/rooms', route => {
+      const request = route.request();
+      if (request.method() === 'POST' && request.postDataJSON()?.action === 'export_links') {
+        exports += 1;
+        // The second part never reaches the server.
+        if (exports === 2) return route.abort('connectionfailed');
+      }
+      return route.fallback();
+    });
+    const [download] = await Promise.all([
+      admin.waitForEvent('download', { timeout: 60_000 }),
+      (async () => {
+        await admin.getByRole('button', { name: '重新產生全部連結並下載' }).click();
+        await expect(list).toContainText('已重新產生 100 間教室的連結', { timeout: 60_000 });
+        await list.getByRole('button', { name: '下載清單（CSV，100 間）' }).click();
+      })(),
+    ]);
+    expect(exports).toBe(2);
+    await expect(admin.locator('p.admin-error')).toContainText('連線中斷，沒有收到結果。');
+    const notDone = (await list.getByRole('alert').innerText()).replace(/^.*：/, '').replace(/。$/, '').split('、');
+    expect([...notDone].sort((a, b) => a.localeCompare(b, 'en', { numeric: true }))).toEqual(names);
+    const kept = await listOf(download);
+    expect(kept.map(([name]) => name)).toEqual(Array.from({ length: 100 }, (_, index) => `Hall${index + 1}`));
+    await admin.unroute('**/api/admin/classrooms/rooms');
+    cutting = false;
+    await list.getByRole('button', { name: '我已經下載這份清單' }).click();
+    await admin.reload();
+    // The part that was done has its new links; the part that was cut keeps the links it had.
+    await expect(admin.locator('[data-room="Hall1"]')).toContainText('連結第 3 版');
+    await expect(admin.locator('[data-room="Room1"]')).toContainText('連結第 3 版');
+    await expect(admin.locator('[data-room="Room12"]')).toContainText('連結第 3 版');
+  });
+
+  await check('B8', '沒有對外請求，頁面沒有非預期的錯誤', async () => {
     if (report.externalRequests.length) throw new Error(`external requests: ${report.externalRequests.join(', ')}`);
     if (report.pageProblems.length) throw new Error(`page problems: ${report.pageProblems.join(' | ')}`);
   });

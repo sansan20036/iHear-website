@@ -16,7 +16,7 @@ const { classroomStore } = await import("../lib/classroom-store");
 const { classroomDrive } = await import("../lib/classroom-drive");
 const { setSyntheticConsent, runClassroomTick } = await import("../lib/classroom-service");
 const rooms = await import("../lib/classroom-fixed-rooms");
-const { bulkRange, chunks, EXPORT_AT_ONCE, linksCsv, naturalByLabel, occupied, roomsToShow } = await import("../app/admin/classrooms/rooms/room-links");
+const { bulkRange, chunks, EXPORT_AT_ONCE, exportInParts, linksCsv, naturalByLabel, occupied, roomsToShow } = await import("../app/admin/classrooms/rooms/room-links");
 // @ts-ignore
 const { buildSessionTokenClaims, roomNameOf, signSessionToken } = await import("../tools/recording-pathway/classroom/eligibility.mjs");
 // @ts-ignore
@@ -288,6 +288,45 @@ describe("the admin page's helpers for many rooms", () => {
     expect(chunks([1, 2, 3], 2.9)).toEqual([[1, 2], [3]]);
   });
 
+  test("BR-16: every link anew in parts: a part refused, or one that never answers, stops there; the links of the parts done before are always given back, and the rooms not done are named", async () => {
+    const list = Array.from({ length: 7 }, (_, index) => ({ id: `FR-${index}`, label: `Room${index + 1}` }));
+    const linkOf = id => ({ label: `Room${Number(id.slice(3)) + 1}`, link: `/classroom/r/${id}#k=new` });
+    const sent = [];
+    const good = async ids => { sent.push(ids); return { ok: true, data: { ok: true, links: ids.map(linkOf), failed: [] } }; };
+    // Every part answered.
+    const all = await exportInParts(list, good, 3);
+    expect(sent).toEqual([["FR-0", "FR-1", "FR-2"], ["FR-3", "FR-4", "FR-5"], ["FR-6"]]);
+    expect(all).toEqual({ rows: list.map(room => linkOf(room.id)), failed: [], problem: null });
+    // The second part refused: the first part's links are kept, the rest is named, nothing more is sent.
+    sent.length = 0;
+    const refusedAt2 = await exportInParts(list, async ids => (sent.length === 1 ? (sent.push(ids), { ok: false, data: { ok: false, code: "TOO_MANY" } }) : good(ids)), 3);
+    expect(sent).toHaveLength(2);
+    expect(refusedAt2.rows).toEqual(list.slice(0, 3).map(room => linkOf(room.id)));
+    expect(refusedAt2.failed).toEqual(["Room4", "Room5", "Room6", "Room7"]);
+    expect(refusedAt2.problem).toEqual({ kind: "refused", data: { ok: false, code: "TOO_MANY" } });
+    // The second part never answers (the connection dropped): the same, said as a lost connection.
+    sent.length = 0;
+    const droppedAt2 = await exportInParts(list, async ids => { if (sent.length === 1) { sent.push(ids); throw new TypeError("Failed to fetch"); } return good(ids); }, 3);
+    expect(sent).toHaveLength(2);
+    expect(droppedAt2.rows).toEqual(list.slice(0, 3).map(room => linkOf(room.id)));
+    expect(droppedAt2.failed).toEqual(["Room4", "Room5", "Room6", "Room7"]);
+    expect(droppedAt2.problem).toEqual({ kind: "connection" });
+    // The very first part dropped: nothing made, every room named.
+    const droppedAt1 = await exportInParts(list, async () => { throw new Error("offline"); }, 3);
+    expect(droppedAt1).toEqual({ rows: [], failed: list.map(room => room.label), problem: { kind: "connection" } });
+    // A part that answers with rooms of its own it could not do: those are named, the rest go on.
+    const some = await exportInParts(list.slice(0, 4), async ids => ({ ok: true, data: { links: ids.slice(1).map(linkOf), failed: [{ room: ids[0], label: linkOf(ids[0]).label, code: "CHANGED_CONCURRENTLY" }] } }), 2);
+    expect(some.rows.map(row => row.label)).toEqual(["Room2", "Room4"]);
+    expect(some.failed).toEqual(["Room1", "Room3"]);
+    expect(some.problem).toBeNull();
+    // An answer in an odd shape gives nothing and breaks nothing; no rooms, nothing sent.
+    expect(await exportInParts(list.slice(0, 2), async () => ({ ok: true, data: { links: "none", failed: [{}, null, { label: 5 }] } }), 2)).toEqual({ rows: [], failed: [], problem: null });
+    expect(await exportInParts(list.slice(0, 2), async () => ({ ok: true }), 2)).toEqual({ rows: [], failed: [], problem: null });
+    sent.length = 0;
+    expect(await exportInParts([], good)).toEqual({ rows: [], failed: [], problem: null });
+    expect(sent).toEqual([]);
+  });
+
   test("BR-15: the server takes the page's parts: 112 rooms in parts of 100 and 12 give every room one new link", async () => {
     const all = await view(START + 9 * MIN);
     expect(all.length).toBeGreaterThan(100);
@@ -318,7 +357,14 @@ describe("the admin page's helpers for many rooms", () => {
     expect(page).not.toMatch(/localStorage|sessionStorage|console\./);
     // Every link anew: the rooms go in parts the server takes, and the confirm says what happens to
     // the links handed out and to the people waiting.
-    expect(page).toContain("chunks(all, EXPORT_AT_ONCE)");
+    expect(page).toContain('exportInParts(all, (ids) => send("export_links", { rooms: ids }))');
     expect(page).toContain("已經發出去的舊連結都不能再用來進教室（已經在教室裡的人不受影響）。正在等待進入的人，要用新連結重新輸入名字。");
+    // The links that were made are shown before the page asks the server for anything more, and a
+    // connection that drops is said, never thrown past the list.
+    const exportAll = page.slice(page.indexOf("async function exportAll()"), page.indexOf("async function recordAll("));
+    expect(exportAll.indexOf("setList(")).toBeGreaterThan(-1);
+    expect(exportAll.indexOf("setList(")).toBeLessThan(exportAll.indexOf("await load()"));
+    expect(exportAll).toContain("ERRORS.CONNECTION_LOST");
+    expect(page).toContain("await send(action, input).catch(() => null)");
   });
 });

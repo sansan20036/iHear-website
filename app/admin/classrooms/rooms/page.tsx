@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useAdmin } from "../../admin-context";
-import { bulkRange, chunks, EXPORT_AT_ONCE, linksCsv, roomsToShow, type LinkRow } from "./room-links";
+import { bulkRange, exportInParts, linksCsv, roomsToShow, type LinkRow } from "./room-links";
 
 // Classroom 3.0 round 3 (2026-11-21): the fixed rooms, for owners (the iHear teacher). Each room has
 // one link, shown once when the room is made or its link replaced. People who open it type a first
@@ -38,6 +38,7 @@ const ERRORS: Record<string, string> = {
   INVALID_SWITCH: "請選擇開啟或關閉。",
   RECORDING_NOT_AVAILABLE: "這個網站目前沒有開啟固定教室的錄影。",
   RECORDING_MAY_BE_ON: "這間教室可能正在錄影：請先結束這次上課，再關閉錄影。",
+  CONNECTION_LOST: "連線中斷，沒有收到結果。請再看一次教室清單；已經建立或更換、但沒有拿到連結的教室，請用「重新產生全部連結並下載」。",
 };
 const PRESENCE: Record<string, string> = { in: "在教室裡（Zoom 回報）", out: "已離開（Zoom 回報）" };
 const time = (value: string) => new Date(value).toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit" });
@@ -104,11 +105,13 @@ export default function FixedRoomsPage() {
     setProblem("");
     setNote("");
     try {
-      const { ok, data } = await send(action, input);
-      if (!ok) { setProblem(problemOf(data)); return null; }
-      return data;
+      // No answer at all (the connection dropped): what the server did is not known.
+      const answer = await send(action, input).catch(() => null);
+      if (!answer) { setProblem(ERRORS.CONNECTION_LOST); return null; }
+      if (!answer.ok) { setProblem(problemOf(answer.data)); return null; }
+      return answer.data;
     } finally {
-      await load();
+      await load().catch(() => undefined);
       setBusy(false);
     }
   }
@@ -123,9 +126,10 @@ export default function FixedRoomsPage() {
     setList({ title: `已建立 ${made.length} 間教室`, rows: made.map((room) => ({ label: room.label, link: room.link })), failed });
   }
 
-  // Every room's link anew. The server takes at most 100 rooms at a time, so the rooms go in parts;
-  // the links of the parts that were done are kept and shown even when a later part is refused
-  // (those rooms already have their new links, which exist nowhere else).
+  // Every room's link anew. The server takes at most 100 rooms at a time, so the rooms go in parts
+  // (exportInParts). The links of the parts that were done are shown first, before anything else
+  // can go wrong, even when a later part is refused or the connection drops: those rooms already
+  // have their new links, which exist nowhere else.
   async function exportAll() {
     const all = rooms ?? [];
     if (!all.length) return;
@@ -133,26 +137,14 @@ export default function FixedRoomsPage() {
     setBusy(true);
     setProblem("");
     setNote("");
-    const rows: LinkRow[] = [];
-    const failed: string[] = [];
     try {
-      const parts = chunks(all, EXPORT_AT_ONCE);
-      for (let index = 0; index < parts.length; index += 1) {
-        const { ok, data } = await send("export_links", { rooms: parts[index].map((room) => room.id) });
-        if (!ok) {
-          // This part and the ones after it were not done.
-          setProblem(problemOf(data));
-          failed.push(...parts.slice(index).flat().map((room) => room.label));
-          break;
-        }
-        rows.push(...((data.links as { label: string; link: string }[] | undefined) ?? []).map((entry) => ({ label: entry.label, link: entry.link })));
-        failed.push(...((data.failed as { label: string }[] | undefined) ?? []).map((entry) => entry.label));
-      }
+      const result = await exportInParts(all, (ids) => send("export_links", { rooms: ids }));
+      if (result.rows.length || result.failed.length) setList({ title: `已重新產生 ${result.rows.length} 間教室的連結`, rows: result.rows, failed: result.failed });
+      if (result.problem) setProblem(result.problem.kind === "connection" ? ERRORS.CONNECTION_LOST : problemOf(result.problem.data));
+      await load().catch(() => undefined);
     } finally {
-      await load();
       setBusy(false);
     }
-    if (rows.length || failed.length) setList({ title: `已重新產生 ${rows.length} 間教室的連結`, rows, failed });
   }
 
   async function recordAll(on: boolean) {

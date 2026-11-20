@@ -25,6 +25,31 @@ export function chunks<Item>(items: readonly Item[], size: number): Item[][] {
   return parts;
 }
 
+export type PartAnswer = { ok: boolean; data: Record<string, unknown> };
+export type ExportResult = { rows: LinkRow[]; failed: string[]; problem: { kind: "refused"; data: Record<string, unknown> } | { kind: "connection" } | null };
+
+// Every room's link anew, in parts the server takes. A part that is refused, or that never answers
+// (the connection dropped: whether the server changed those rooms' links is then not known), is not
+// done, and neither are the parts after it. The links of the parts done before are kept and given
+// back whatever happens next, because they exist nowhere else. Never throws.
+export async function exportInParts<Room extends { id: string; label: string }>(rooms: readonly Room[], sendPart: (ids: string[]) => Promise<PartAnswer>, size: number = EXPORT_AT_ONCE): Promise<ExportResult> {
+  const rows: LinkRow[] = [];
+  const failed: string[] = [];
+  const parts = chunks(rooms, size);
+  for (let index = 0; index < parts.length; index += 1) {
+    let answer: PartAnswer | null = null;
+    try { answer = await sendPart(parts[index].map((room) => room.id)); } catch { answer = null; }
+    if (!answer?.ok) {
+      failed.push(...parts.slice(index).flat().map((room) => room.label));
+      return { rows, failed, problem: answer ? { kind: "refused", data: answer.data ?? {} } : { kind: "connection" } };
+    }
+    const entries = (value: unknown) => (Array.isArray(value) ? (value as { label?: unknown; link?: unknown }[]) : []);
+    for (const entry of entries(answer.data?.links)) if (typeof entry?.label === "string" && typeof entry.link === "string") rows.push({ label: entry.label, link: entry.link });
+    for (const entry of entries(answer.data?.failed)) if (typeof entry?.label === "string") failed.push(entry.label);
+  }
+  return { rows, failed, problem: null };
+}
+
 // A room with somebody: let in, or waiting to be.
 export const occupied = (room: { inRoom: readonly unknown[]; waiting: readonly unknown[] }) => room.inRoom.length > 0 || room.waiting.length > 0;
 
