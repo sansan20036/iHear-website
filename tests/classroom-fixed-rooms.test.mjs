@@ -253,6 +253,26 @@ describe("fixed classroom links", () => {
     expect((await store.lesson(lesson.id)).participants).toHaveLength(5);
   });
 
+  test("FR-14: the store's own step refuses whole: past its limit, a key or code taken, a cancelled or a block's lesson, a lesson that is not there", async () => {
+    const r = await room();
+    const asked = [];
+    for (const name of ["Ann", "Bo"]) {
+      asked.push(await ask(r, name));
+      await manage("admit", { room: r.id, request: asked.at(-1).body.requestId });
+    }
+    const lessonId = (await status(r, asked[0])).body.lessonId;
+    const person = n => ({ id: `P-fr14-${made}-${n}`, code: `RFR14${made}-${n}`, role: "student", staffEmail: null, joinKeyHash: `${String(n).padStart(2, "0")}${"f".repeat(62)}` });
+    const add = (participant, max = 10, id = lessonId) => store.addLessonParticipant({ lessonId: id, participant, max, events: [] });
+    expect(await add(person(1), 2)).toEqual({ ok: false, reason: "ROOM_FULL" });
+    expect(await add(person(1))).toEqual({ ok: true });
+    expect(await add({ ...person(2), joinKeyHash: person(1).joinKeyHash })).toEqual({ ok: false, reason: "CODE_TAKEN" });
+    expect(await add({ ...person(3), code: person(1).code })).toEqual({ ok: false, reason: "CODE_TAKEN" });
+    expect(await add(person(4), 10, "L-not-there")).toEqual({ ok: false, reason: "LESSON_NOT_FOUND" });
+    await manage("end_lesson", { room: r.id });
+    expect(await add(person(5))).toEqual({ ok: false, reason: "LESSON_CANCELLED" });
+    expect((await store.lesson(lessonId)).participants).toHaveLength(3);
+  });
+
   test("FR-13: only the server's own facts count: a decision or a fixed-room mark stored by another path is nothing", async () => {
     const r = await room();
     const asked = await ask(r, "Kyle");
@@ -339,6 +359,55 @@ describe("recording in a fixed room", () => {
       expect(ended.status).toBe(200);
       expect(stops.filter(([id]) => id === both.lessonId).map(([, sessionId]) => sessionId)).toContain(both.sessionId);
       expect((await manage("set_recording", { room: both.r.id, on: false }, { now: START + 6 * MIN })).status).toBe(200);
+    } finally {
+      vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "");
+    }
+  });
+
+  test("FR-REC-7: the site's switch turned off later wins over a room's switch left on: nothing records", async () => {
+    vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "on");
+    const both = await inRoom(["Ann", "Kyle"]);
+    expect((await manage("set_recording", { room: both.r.id, on: true })).status).toBe(200);
+    vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "");
+    for (const at of [2, 3]) await tick(both.lessonId, at);
+    expect(await lastDecision(both.lessonId)).toMatchObject({ eligible: false, reason: "RECORDING_DISABLED" });
+    expect(starts.filter(([id]) => id === both.lessonId)).toEqual([]);
+  });
+
+  test("FR-REC-8: after a person is taken out the lesson moves to a new Zoom session, and that one too starts only with two people in it", async () => {
+    vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "on");
+    try {
+      const three = await inRoom(["Ann", "Kyle", "Bo"], { present: [] });
+      await manage("set_recording", { room: three.r.id, on: true });
+      const bo = (await view(three.r)).inRoom.find(person => person.name === "Bo");
+      expect((await manage("remove", { room: three.r.id, request: bo.request })).status).toBe(200);
+      const lesson = await store.lesson(three.lessonId);
+      expect(roomGeneration(await store.eventsFor([lesson.id]))).toBe(1);
+      const moved = `ZS-G1-${three.lessonId.slice(2, 10)}`;
+      await fact(lesson.id, "session.started", START + 2 * MIN, { providerSessionId: moved, sessionName: roomNameOf(lesson.id, 1) });
+      const idOf = name => lesson.participants.find(entry => entry.code === three.rowOf(name).code).id;
+      await fact(lesson.id, "session.user_joined", START + 2 * MIN, { providerSessionId: moved, participantId: idOf("Ann") });
+      for (const at of [3, 4]) await tick(lesson.id, at);
+      expect(starts.filter(([id]) => id === lesson.id)).toEqual([]);
+      await fact(lesson.id, "session.user_joined", START + 5 * MIN, { providerSessionId: moved, participantId: idOf("Kyle") });
+      for (const at of [6, 7]) await tick(lesson.id, at);
+      expect(starts.filter(([id]) => id === lesson.id)).toEqual([[lesson.id, moved]]);
+    } finally {
+      vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "");
+    }
+  });
+
+  test("FR-REC-6: decided with the room's switch off, then turned on: the lesson decides again and starts; never on the old decision", async () => {
+    vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "on");
+    try {
+      const both = await inRoom(["Ann", "Kyle"]);
+      for (const at of [2, 3]) await tick(both.lessonId, at);
+      expect(await lastDecision(both.lessonId)).toMatchObject({ eligible: false, reason: "RECORDING_DISABLED" });
+      expect(starts.filter(([id]) => id === both.lessonId)).toEqual([]);
+      expect((await manage("set_recording", { room: both.r.id, on: true }, { now: START + 4 * MIN })).status).toBe(200);
+      for (const at of [5, 6]) await tick(both.lessonId, at);
+      expect(await lastDecision(both.lessonId)).toMatchObject({ eligible: true });
+      expect(starts.filter(([id]) => id === both.lessonId)).toEqual([[both.lessonId, both.sessionId]]);
     } finally {
       vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "");
     }
