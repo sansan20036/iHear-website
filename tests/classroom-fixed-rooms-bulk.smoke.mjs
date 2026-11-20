@@ -28,14 +28,16 @@ async function check(id, name, action) {
 const context = options => localContext(browser, origin, { external: report.externalRequests, secret, locale: 'zh-TW', ...options });
 // Refusals the checks provoke on purpose (too many rooms, a name taken, a replaced link) are not page problems.
 const expectedRefusal = text => /Failed to load resource: the server responded with a status of (400|409|410)/.test(text);
+// What each confirm asked, as the owner read it before agreeing.
+const asked = [];
 function watch(page, who) {
   page.on('console', message => { if (message.type() === 'error' && !expectedRefusal(message.text())) report.pageProblems.push(`${who}: ${message.text()}`); });
   page.on('pageerror', error => report.pageProblems.push(`${who}: ${error.message}`));
-  page.on('dialog', dialog => dialog.accept());
+  page.on('dialog', dialog => { asked.push(dialog.message()); return dialog.accept(); });
   return page;
 }
 const shot = (page, name) => page.screenshot({ path: path.join(directory, `${name}.png`), fullPage: true });
-const LINE = new RegExp(`^"(Room\\d+)","(${origin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/classroom/r/FR-[0-9a-f]{32}#k=[A-Za-z0-9_-]{43})"$`);
+const LINE = new RegExp(`^"((?:Room|Hall)\\d+)","(${origin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/classroom/r/FR-[0-9a-f]{32}#k=[A-Za-z0-9_-]{43})"$`);
 // The downloaded list: its heading, then one line per room; as [name, address] pairs.
 async function listOf(download) {
   expect(download.suggestedFilename()).toMatch(/^ihear-room-links-\d{4}-\d{2}-\d{2}\.csv$/);
@@ -142,6 +144,9 @@ try {
     second = await listOf(download);
     expect(second.map(([name]) => name)).toEqual(names);
     for (let index = 0; index < 12; index += 1) expect(second[index][1]).not.toBe(first[index][1]);
+    // The confirm said what happens, to the links handed out and to the people waiting.
+    expect(asked.at(-1)).toContain('這會更換全部 12 間教室的連結');
+    expect(asked.at(-1)).toContain('正在等待進入的人，要用新連結重新輸入名字。');
     await admin.locator('[data-room-links-list]').getByRole('button', { name: '我已經下載這份清單' }).click();
     await expect(admin.locator('[data-room="Room1"]')).toContainText('連結第 2 版');
     const late = watch(await (await context({})).newPage(), 'student-old-link');
@@ -160,7 +165,48 @@ try {
     await shot(admin, 'b5-links-made-anew');
   });
 
-  await check('B6', '沒有對外請求，頁面沒有非預期的錯誤', async () => {
+  await check('B6', '超過 100 間教室時，「重新產生全部連結」分批送出，清單仍然是一份、每間一個新連結', async () => {
+    await openBulk();
+    await bulkForm().getByLabel('名稱開頭').fill('Hall');
+    await bulkForm().getByLabel('從幾號').fill('1');
+    await bulkForm().getByLabel('到幾號').fill('100');
+    await bulkForm().getByRole('button', { name: '一次建立多間' }).click();
+    const list = admin.locator('[data-room-links-list]');
+    await expect(list).toContainText('已建立 100 間教室', { timeout: 60_000 });
+    await list.getByRole('button', { name: '我已經下載這份清單' }).click();
+    await expect(admin.locator('[data-rooms-count]')).toHaveText('顯示 112／共 112 間');
+    // What the page sends for "every link": the rooms in parts of at most 100.
+    const parts = [];
+    admin.on('request', request => {
+      if (request.method() !== 'POST' || !request.url().endsWith('/api/admin/classrooms/rooms')) return;
+      const body = request.postDataJSON();
+      if (body?.action === 'export_links') parts.push(body.rooms.length);
+    });
+    const [download] = await Promise.all([
+      admin.waitForEvent('download', { timeout: 60_000 }),
+      (async () => {
+        await admin.getByRole('button', { name: '重新產生全部連結並下載' }).click();
+        await expect(list).toContainText('已重新產生 112 間教室的連結', { timeout: 60_000 });
+        await list.getByRole('button', { name: '下載清單（CSV，112 間）' }).click();
+      })(),
+    ]);
+    expect(asked.at(-1)).toContain('這會更換全部 112 間教室的連結');
+    expect(parts).toEqual([100, 12]);
+    const third = await listOf(download);
+    expect(third).toHaveLength(112);
+    expect(new Set(third.map(([name]) => name)).size).toBe(112);
+    expect(new Set(third.map(([, address]) => address)).size).toBe(112);
+    // Natural order through both parts: Hall1 … Hall100, then Room1 … Room12.
+    expect(third.map(([name]) => name)).toEqual([...Array.from({ length: 100 }, (_, index) => `Hall${index + 1}`), ...names]);
+    const before = Object.fromEntries(second);
+    for (const name of names) expect(Object.fromEntries(third)[name]).not.toBe(before[name]);
+    await expect(admin.locator('p.admin-error')).toHaveCount(0);
+    await list.getByRole('button', { name: '我已經下載這份清單' }).click();
+    await expect(admin.locator('[data-room="Room1"]')).toContainText('連結第 3 版');
+    await expect(admin.locator('[data-room="Hall100"]')).toContainText('連結第 2 版');
+  });
+
+  await check('B7', '沒有對外請求，頁面沒有非預期的錯誤', async () => {
     if (report.externalRequests.length) throw new Error(`external requests: ${report.externalRequests.join(', ')}`);
     if (report.pageProblems.length) throw new Error(`page problems: ${report.pageProblems.join(' | ')}`);
   });

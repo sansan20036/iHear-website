@@ -16,6 +16,15 @@ export function linksCsv(origin: string, rows: readonly LinkRow[]): string {
   return `${["Room,Link", ...lines].join("\r\n")}\r\n`;
 }
 
+// The server gives new links for at most this many rooms at a time (BULK_MAX in
+// lib/classroom-fixed-rooms.ts); the page asks for more in parts.
+export const EXPORT_AT_ONCE = 100;
+export function chunks<Item>(items: readonly Item[], size: number): Item[][] {
+  const parts: Item[][] = [];
+  for (let start = 0; start < items.length; start += Math.max(1, Math.floor(size))) parts.push(items.slice(start, start + Math.max(1, Math.floor(size))));
+  return parts;
+}
+
 // A room with somebody: let in, or waiting to be.
 export const occupied = (room: { inRoom: readonly unknown[]; waiting: readonly unknown[] }) => room.inRoom.length > 0 || room.waiting.length > 0;
 

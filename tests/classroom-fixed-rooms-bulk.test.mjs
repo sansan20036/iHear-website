@@ -16,7 +16,7 @@ const { classroomStore } = await import("../lib/classroom-store");
 const { classroomDrive } = await import("../lib/classroom-drive");
 const { setSyntheticConsent, runClassroomTick } = await import("../lib/classroom-service");
 const rooms = await import("../lib/classroom-fixed-rooms");
-const { bulkRange, linksCsv, naturalByLabel, occupied, roomsToShow } = await import("../app/admin/classrooms/rooms/room-links");
+const { bulkRange, chunks, EXPORT_AT_ONCE, linksCsv, naturalByLabel, occupied, roomsToShow } = await import("../app/admin/classrooms/rooms/room-links");
 // @ts-ignore
 const { buildSessionTokenClaims, roomNameOf, signSessionToken } = await import("../tools/recording-pathway/classroom/eligibility.mjs");
 // @ts-ignore
@@ -274,6 +274,37 @@ describe("the admin page's helpers for many rooms", () => {
     for (const [prefix, from, to] of [["", "1", "2"], ["  ", "1", "2"], ["Room", "0", "2"], ["Room", "3", "2"], ["Room", "a", "2"], ["Room", "1", ""], ["Room", "1.5", "2"], ["Room", "-1", "2"], ["Room", "1", "12345"]]) expect(bulkRange(prefix, from, to), `${prefix}|${from}|${to}`).toBeNull();
   });
 
+  test("BR-14: more rooms than the server takes at a time go in parts: every room once, in order, no part over the limit; the page's limit is the server's", () => {
+    expect(EXPORT_AT_ONCE).toBe(rooms.BULK_MAX);
+    const many = Array.from({ length: 250 }, (_, index) => index);
+    const parts = chunks(many, EXPORT_AT_ONCE);
+    expect(parts.map(part => part.length)).toEqual([100, 100, 50]);
+    expect(parts.flat()).toEqual(many);
+    expect(chunks(many.slice(0, 100), 100).map(part => part.length)).toEqual([100]);
+    expect(chunks(many.slice(0, 101), 100).map(part => part.length)).toEqual([100, 1]);
+    expect(chunks([], 100)).toEqual([]);
+    // A size that makes no sense never loops for ever or drops a room.
+    expect(chunks([1, 2, 3], 0)).toEqual([[1], [2], [3]]);
+    expect(chunks([1, 2, 3], 2.9)).toEqual([[1, 2], [3]]);
+  });
+
+  test("BR-15: the server takes the page's parts: 112 rooms in parts of 100 and 12 give every room one new link", async () => {
+    const all = await view(START + 9 * MIN);
+    expect(all.length).toBeGreaterThan(100);
+    const before = Object.fromEntries(all.map(room => [room.id, room.linkGeneration]));
+    const got = [];
+    for (const part of chunks(all, EXPORT_AT_ONCE)) {
+      const answer = await bulk("export_links", { rooms: part.map(room => room.id) }, { now: START + 10 * MIN });
+      expect(answer.status, JSON.stringify(answer.body).slice(0, 200)).toBe(200);
+      expect(answer.body.failed).toEqual([]);
+      got.push(...answer.body.links);
+    }
+    expect(got).toHaveLength(all.length);
+    expect(new Set(got.map(entry => entry.room)).size).toBe(all.length);
+    expect(new Set(got.map(entry => keyOf(entry.link))).size).toBe(all.length);
+    for (const entry of got) expect(entry.generation).toBe(before[entry.room] + 1);
+  }, 120_000);
+
   test("BR-13: the route sends the three bulk actions to their own manager, and its activity record keeps field names only, never an answer's links", async () => {
     const route = await readFile(path.resolve("app/api/admin/classrooms/rooms/route.ts"), "utf8");
     expect(route).toMatch(/\(FIXED_ROOM_BULK_ACTIONS as readonly string\[\]\)\.includes\(String\(action\)\)\s*\? await manageFixedRoomsBulk\(/);
@@ -285,5 +316,9 @@ describe("the admin page's helpers for many rooms", () => {
     expect(page).toContain("new Blob([linksCsv(window.location.origin, list.rows)]");
     expect(page.match(/fetch\(/g)).toHaveLength(3);
     expect(page).not.toMatch(/localStorage|sessionStorage|console\./);
+    // Every link anew: the rooms go in parts the server takes, and the confirm says what happens to
+    // the links handed out and to the people waiting.
+    expect(page).toContain("chunks(all, EXPORT_AT_ONCE)");
+    expect(page).toContain("已經發出去的舊連結都不能再用來進教室（已經在教室裡的人不受影響）。正在等待進入的人，要用新連結重新輸入名字。");
   });
 });

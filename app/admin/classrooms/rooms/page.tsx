@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useAdmin } from "../../admin-context";
-import { bulkRange, linksCsv, roomsToShow, type LinkRow } from "./room-links";
+import { bulkRange, chunks, EXPORT_AT_ONCE, linksCsv, roomsToShow, type LinkRow } from "./room-links";
 
 // Classroom 3.0 round 3 (2026-11-21): the fixed rooms, for owners (the iHear teacher). Each room has
 // one link, shown once when the room is made or its link replaced. People who open it type a first
@@ -93,16 +93,20 @@ export default function FixedRoomsPage() {
 
   // Many rooms at once: the answer is used here and nowhere else (the links stay in this page's
   // memory until the list is downloaded and put away).
+  async function send(action: string, input: Record<string, unknown>) {
+    const response = await fetch("/api/admin/classrooms/rooms", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, ...input }) });
+    const data = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+    return { ok: response.ok, data };
+  }
   async function actOnMany(action: string, input: Record<string, unknown>, confirmText?: string) {
     if (confirmText && !window.confirm(confirmText)) return null;
     setBusy(true);
     setProblem("");
     setNote("");
     try {
-      const response = await fetch("/api/admin/classrooms/rooms", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, ...input }) });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) { setProblem(problemOf(data)); return null; }
-      return data as Record<string, unknown>;
+      const { ok, data } = await send(action, input);
+      if (!ok) { setProblem(problemOf(data)); return null; }
+      return data;
     } finally {
       await load();
       setBusy(false);
@@ -119,13 +123,36 @@ export default function FixedRoomsPage() {
     setList({ title: `已建立 ${made.length} 間教室`, rows: made.map((room) => ({ label: room.label, link: room.link })), failed });
   }
 
+  // Every room's link anew. The server takes at most 100 rooms at a time, so the rooms go in parts;
+  // the links of the parts that were done are kept and shown even when a later part is refused
+  // (those rooms already have their new links, which exist nowhere else).
   async function exportAll() {
-    const count = rooms?.length ?? 0;
-    const data = await actOnMany("export_links", {}, `這會更換全部 ${count} 間教室的連結：已經發出去的舊連結都不能再用來進教室（已經在教室裡的人不受影響）。新連結只顯示這一次。確定要重新產生嗎？`);
-    if (!data) return;
-    const links = (data.links as { label: string; link: string }[] | undefined) ?? [];
-    const failed = ((data.failed as { label: string }[] | undefined) ?? []).map((entry) => entry.label);
-    setList({ title: `已重新產生 ${links.length} 間教室的連結`, rows: links.map((entry) => ({ label: entry.label, link: entry.link })), failed });
+    const all = rooms ?? [];
+    if (!all.length) return;
+    if (!window.confirm(`這會更換全部 ${all.length} 間教室的連結：已經發出去的舊連結都不能再用來進教室（已經在教室裡的人不受影響）。正在等待進入的人，要用新連結重新輸入名字。新連結只顯示這一次。確定要重新產生嗎？`)) return;
+    setBusy(true);
+    setProblem("");
+    setNote("");
+    const rows: LinkRow[] = [];
+    const failed: string[] = [];
+    try {
+      const parts = chunks(all, EXPORT_AT_ONCE);
+      for (let index = 0; index < parts.length; index += 1) {
+        const { ok, data } = await send("export_links", { rooms: parts[index].map((room) => room.id) });
+        if (!ok) {
+          // This part and the ones after it were not done.
+          setProblem(problemOf(data));
+          failed.push(...parts.slice(index).flat().map((room) => room.label));
+          break;
+        }
+        rows.push(...((data.links as { label: string; link: string }[] | undefined) ?? []).map((entry) => ({ label: entry.label, link: entry.link })));
+        failed.push(...((data.failed as { label: string }[] | undefined) ?? []).map((entry) => entry.label));
+      }
+    } finally {
+      await load();
+      setBusy(false);
+    }
+    if (rows.length || failed.length) setList({ title: `已重新產生 ${rows.length} 間教室的連結`, rows, failed });
   }
 
   async function recordAll(on: boolean) {
