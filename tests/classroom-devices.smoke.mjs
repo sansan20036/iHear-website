@@ -51,10 +51,20 @@ try {
       const browser = await engine.launch({ headless: true });
       browsers.push(browser);
       const context = await browser.newContext({ ...devices[profile], locale: 'zh-TW' });
-      await context.route('**/*', route => {
+      await context.route('**/*', async route => {
         const url = new URL(route.request().url());
         if (url.origin !== origin && !url.protocol.startsWith('data') && !url.protocol.startsWith('blob')) { report.externalRequests.push(`${profile}: ${url.origin}`); return route.abort(); }
-        return route.continue();
+        if (route.request().resourceType() !== 'document') return route.continue();
+        // Over http://localhost WebKit applies the production CSP's upgrade-insecure-requests
+        // (Chromium exempts localhost) and asks for every asset by https, which this local server
+        // does not serve. Only that directive is dropped: on the real site, served by https, it
+        // changes nothing. The rest of the policy stays.
+        const response = await route.fetch();
+        const headers = { ...response.headers() };
+        for (const name of Object.keys(headers)) {
+          if (name.toLowerCase() === 'content-security-policy') headers[name] = headers[name].split(';').map(part => part.trim()).filter(part => part && part.toLowerCase() !== 'upgrade-insecure-requests').join('; ');
+        }
+        return route.fulfill({ response, headers });
       });
       const page = await context.newPage();
       page.on('pageerror', error => report.pageProblems.push(`${profile}: ${error.message}`));
@@ -68,10 +78,10 @@ try {
       expect(await tall(enter), 'the button is large enough to touch').toBeGreaterThanOrEqual(40);
       await enter.click();
       await expect(page.locator('[data-room-waiting]')).toBeVisible();
-      await card.locator(`[data-waiting-person="${name}"]`).getByRole('button', { name: '讓他進入' }).click();
+      await card.locator(`[data-waiting-person="${name}"]`).getByRole('button', { name: '讓他進入', exact: true }).click();
       await expect(page).toHaveURL(/\/classroom\/L-[0-9a-f]{32}$/);
       await page.getByRole('button', { name: '進入教室' }).click();
-      await expect(page.locator('[data-room-label]')).toBeVisible();
+      await expect(page.locator('.room2-top .classroom-room-connection')).toHaveText('已連線');
       expect(await noSideways(page), 'no sideways scrolling in the room').toBe(true);
       await expect(page.getByRole('button', { name: /^麥克風：/ })).toBeVisible();
       await page.screenshot({ path: path.join(directory, `v${n}-${profile.replace(/[^A-Za-z0-9]+/g, '-')}.png`) });

@@ -75,11 +75,11 @@ try {
   });
 
   await check('R3', '老師讓他進入：學生自動到教室頁並進入；按「開啟聲音」聽得到；沒有聊天和舉手（沒有主持人，D-14）', async () => {
-    await roomCard().locator('[data-waiting-person="Kyle"]').getByRole('button', { name: '讓他進入' }).click();
+    await roomCard().locator('[data-waiting-person="Kyle"]').getByRole('button', { name: '讓他進入', exact: true }).click();
     await expect(roomCard().locator('[data-in-room-person="Kyle"]')).toBeVisible();
     await expect(kyle).toHaveURL(new RegExp(`${origin}/classroom/L-[0-9a-f]{32}$`));
     await kyle.getByRole('button', { name: '進入教室' }).click();
-    await expect(kyle.locator('[data-room-label]')).toBeVisible();
+    await expect(kyle.locator('.room2-top .classroom-room-connection')).toHaveText('已連線');
     const sound = kyle.locator('[data-sound]');
     await expect(sound).toHaveAttribute('data-sound', 'off');
     await sound.getByRole('button', { name: '開啟聲音', exact: true }).click();
@@ -115,7 +115,7 @@ try {
     await late.getByLabel(/Please enter your first name/).fill('Ann');
     await late.getByRole('button', { name: '進入教室' }).click();
     await expect(late.locator('[data-room-final]')).toHaveText('這個教室連結已經更換。請向老師要新的連結。');
-    await expect(kyle.locator('[data-room-label]')).toBeVisible();
+    await expect(kyle.locator('.room2-top .classroom-room-connection')).toHaveText('已連線');
     const fresh = watch(await (await context({})).newPage(), 'student-new-link');
     await fresh.goto(link);
     await fresh.getByLabel(/Please enter your first name/).fill('Ann');
@@ -126,7 +126,7 @@ try {
   await check('R6', '請出教室：老師按請出，學生的頁面離開教室並說明；他的連結進不來', async () => {
     await roomCard().locator('[data-in-room-person="Kyle"]').getByRole('button', { name: '請出教室' }).click();
     await expect(roomCard().locator('[data-in-room-person="Kyle"]')).toHaveCount(0);
-    await expect(kyle.getByText('這個連結無法進入這堂課。請向 iHear 索取新的連結。')).toBeVisible({ timeout: 45_000 });
+    await expect(kyle.getByText('這個個人連結已失效（已撤銷或已更換），所以已離開教室。請向 iHear 索取新的連結。')).toBeVisible({ timeout: 45_000 });
     await shot(kyle, 'r6-taken-out');
   });
 
