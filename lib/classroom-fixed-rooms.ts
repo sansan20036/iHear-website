@@ -365,3 +365,125 @@ export async function fixedRoomsView({ store, now }: { store: ClassroomStore; no
     };
   }).sort((a, b) => a.label.localeCompare(b.label));
 }
+
+// ---------------------------------------------------------------------------------------------
+// The rooms in bulk (2026-11-21: the iHear teacher asked for 100 rooms named Room1, Room2, …).
+// Additions only. Each step below is the single room's own step taken once per room (createRoom,
+// replaceLink, setRecording), so every rule of one room holds for many: names, the owner, a link
+// kept as its hash only, the recording switches. A request is checked whole before anything is
+// written; what cannot be done for one room afterwards (two owners at the same moment) is said
+// for that room and never hidden.
+export const BULK_MAX = 100;
+export const FIXED_ROOM_BULK_ACTIONS = ["create_many", "export_links", "set_recording_all"] as const;
+export type FixedRoomBulkAction = (typeof FIXED_ROOM_BULK_ACTIONS)[number];
+
+const cleanLabel = (label: unknown) => String(label ?? "").normalize("NFC").trim().replace(/\s+/g, " ");
+// Room2 before Room10: a number inside a name counts as a number.
+const byLabel = (a: { label: string }, b: { label: string }) => a.label.localeCompare(b.label, "en", { numeric: true, sensitivity: "base" });
+const refusedFor = (status: number, code: string, error: string, labels: string[]) => ({ status, body: { ok: false, code, error, labels } });
+
+// The names asked for: a list, or a run of numbers after a prefix ("Room" 1 to 100: Room1 … Room100).
+// Null: the request is not one of the two shapes. More than BULK_MAX names is said by the caller.
+function labelsAsked(input: Record<string, unknown>): string[] | "TOO_MANY" | null {
+  if (Array.isArray(input.labels)) {
+    if (!input.labels.every((label) => typeof label === "string")) return null;
+    return input.labels.length > BULK_MAX ? "TOO_MANY" : input.labels.map(cleanLabel);
+  }
+  const { prefix, from, to } = input;
+  if (typeof prefix !== "string" || !Number.isInteger(from) || !Number.isInteger(to)) return null;
+  const first = from as number, last = to as number;
+  if (first < 1 || last < first || last > 9999) return null;
+  if (last - first + 1 > BULK_MAX) return "TOO_MANY";
+  return Array.from({ length: last - first + 1 }, (_, index) => cleanLabel(`${prefix}${first + index}`));
+}
+
+const allRooms = async (store: ClassroomStore) => {
+  const defs = await definitions(store);
+  const ids = defs.map((event) => String(event.roomId));
+  const events = ids.length ? await store.eventsFor(ids) : [];
+  return defs.map((definition) => roomFrom(definition, events)).sort(byLabel);
+};
+
+// Many rooms at once, each with a link of its own, given in this answer only. Nothing is made unless
+// every name is right, new, and asked for once.
+async function createRooms({ store, input, actor, now }: { store: ClassroomStore; input: Record<string, unknown>; actor: string; now: number }) {
+  const labels = labelsAsked(input);
+  if (labels === "TOO_MANY") return refused(400, "TOO_MANY", `At most ${BULK_MAX} rooms at a time`);
+  if (!labels || !labels.length) return refused(400, "INVALID_BULK", "Give labels (a list of names), or prefix, from and to (whole numbers from 1)");
+  const bad = labels.filter((label) => !ROOM_LABEL.test(label));
+  if (bad.length) return refusedFor(400, "INVALID_LABEL", "Use English letters and digits (spaces, . and ' too), at most 40, no - or _", bad);
+  const lower = labels.map((label) => label.toLowerCase());
+  const twice = labels.filter((_, index) => lower.indexOf(lower[index]) !== index);
+  if (twice.length) return refusedFor(409, "DUPLICATE_LABEL", "A name is asked for more than once", [...new Set(twice)]);
+  const existing = new Set((await definitions(store)).map((event) => String(event.label).toLowerCase()));
+  const taken = labels.filter((label) => existing.has(label.toLowerCase()));
+  if (taken.length) return refusedFor(409, "LABEL_TAKEN", "A room with this name exists", taken);
+  const rooms: { id: string; label: string; link: string }[] = [];
+  const failed: { label: string; code: string }[] = [];
+  for (const label of labels) {
+    const made = await createRoom({ store, label, actor, now });
+    const body = made.body as { room?: { id: string; label: string }; link?: string; code?: string };
+    if (made.status === 201 && body.room && body.link) rooms.push({ id: body.room.id, label: body.room.label, link: body.link });
+    else failed.push({ label, code: String(body.code ?? "FAILED") });
+  }
+  if (!rooms.length) return refusedFor(409, "LABEL_TAKEN", "A room with this name exists", failed.map((entry) => entry.label));
+  return { status: 201, body: { ok: true, rooms, failed } };
+}
+
+// Every room's link, once more. Only a link's hash is kept, so a link that was lost cannot be shown
+// again: each room here gets a new link (its old one lets nobody new in; people already in stay), and
+// the new links are in this answer only. All rooms, or the ones named.
+async function exportLinks({ store, input, actor, now }: { store: ClassroomStore; input: Record<string, unknown>; actor: string; now: number }) {
+  const every = await allRooms(store);
+  let chosen = every;
+  if (input.rooms !== undefined) {
+    if (!Array.isArray(input.rooms) || !input.rooms.length || !input.rooms.every((id) => typeof id === "string" && ROOM_ID.test(id))) return refused(400, "INVALID_BULK", "Give rooms as a list of room ids, or leave it out for every room");
+    const ids = new Set(input.rooms as string[]);
+    chosen = every.filter((room) => ids.has(room.id));
+    if (chosen.length !== ids.size) return refused(404, "NO_SUCH_ROOM", "No such room");
+  }
+  if (!chosen.length) return refused(409, "NO_ROOMS", "There are no rooms yet");
+  if (chosen.length > BULK_MAX) return refused(400, "TOO_MANY", `At most ${BULK_MAX} rooms at a time: name the rooms`);
+  const links: { room: string; label: string; link: string; generation: number }[] = [];
+  const failed: { room: string; label: string; code: string }[] = [];
+  for (const room of chosen) {
+    const replaced = await replaceLink({ store, room, actor, now });
+    const body = replaced.body as { link?: string; generation?: number; code?: string };
+    if (replaced.status === 200 && body.link) links.push({ room: room.id, label: room.label, link: body.link, generation: Number(body.generation) });
+    else failed.push({ room: room.id, label: room.label, code: String(body.code ?? "FAILED") });
+  }
+  return { status: 200, body: { ok: true, links, failed } };
+}
+
+// Every room's own recording switch at once, by the single room's rules: on only where the site
+// allows fixed rooms to record at all (then nothing changes anywhere); off is refused for a room that
+// may be recording now, and said for that room.
+async function setRecordingAll({ store, input, actor, now }: { store: ClassroomStore; input: Record<string, unknown>; actor: string; now: number }) {
+  const { on } = input;
+  if (on !== true && on !== false) return refused(400, "INVALID_SWITCH", "Say on: true or false");
+  if (on && !fixedRoomRecordingEnabled()) return refused(409, "RECORDING_NOT_AVAILABLE", "Recording in fixed rooms is not turned on for this site");
+  const changed: string[] = [];
+  const unchanged: string[] = [];
+  const refusedRooms: { room: string; label: string; code: string }[] = [];
+  for (const room of await allRooms(store)) {
+    if (room.recording === on) { unchanged.push(room.id); continue; }
+    const result = await setRecording({ store, room, on, actor, now });
+    if (result.status === 200) changed.push(room.id);
+    else refusedRooms.push({ room: room.id, label: room.label, code: String((result.body as { code?: string }).code ?? "FAILED") });
+  }
+  return { status: 200, body: { ok: true, recording: on, changed, unchanged, refused: refusedRooms } };
+}
+
+// What an owner does with many rooms at once. Off with the fixed rooms; an owner only, checked here
+// as manageFixedRoom checks it (the route checks first).
+export async function manageFixedRoomsBulk({ store, principal, action, input = {}, now }: {
+  store: ClassroomStore; principal: { email: string; owner: boolean } | null; action: unknown; input?: Record<string, unknown>; now: number;
+}) {
+  if (!fixedRoomsEnabled()) return refused(404, "NOT_FOUND", "Not found");
+  if (!principal?.owner || !principal.email) return refused(403, "OWNER_REQUIRED", "Only an owner manages the fixed rooms");
+  if (!FIXED_ROOM_BULK_ACTIONS.includes(action as FixedRoomBulkAction)) return refused(400, "INVALID_ACTION", `Use one of: ${FIXED_ROOM_BULK_ACTIONS.join(", ")}`);
+  const actor = principal.email;
+  if (action === "create_many") return createRooms({ store, input, actor, now });
+  if (action === "export_links") return exportLinks({ store, input, actor, now });
+  return setRecordingAll({ store, input, actor, now });
+}

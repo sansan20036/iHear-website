@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { authorizeAdminRequest } from "../../../../../lib/admin-auth";
 import { appendAdminActivity } from "../../../../../lib/admin-store";
 import { classroomDrive } from "../../../../../lib/classroom-drive";
-import { fixedRoomsEnabled, fixedRoomsView, manageFixedRoom } from "../../../../../lib/classroom-fixed-rooms";
+import { FIXED_ROOM_BULK_ACTIONS, fixedRoomsEnabled, fixedRoomsView, manageFixedRoom, manageFixedRoomsBulk } from "../../../../../lib/classroom-fixed-rooms";
 import { classroomProvider } from "../../../../../lib/classroom-provider";
 import { classroomStore } from "../../../../../lib/classroom-store";
 import { withRateLimitHeaders } from "../../../../../lib/rate-limit";
@@ -28,6 +28,9 @@ export async function GET(request: Request) {
 
 // One change by an owner: make a room, replace its link (each link is in that answer only), let a
 // waiting person in or not, take a person out, end the room's lesson. Checked again on the server.
+// Many rooms at once (make them, give every link once more, every recording switch) go the same way:
+// the links are in the answer only, never in the activity record, which keeps the names of the
+// fields that were sent and nothing of the answer.
 export async function POST(request: Request) {
   if (!fixedRoomsEnabled()) return notFound();
   const access = await authorizeAdminRequest(request, { owner: true, mutation: true });
@@ -42,7 +45,10 @@ export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}));
     const { action, ...input } = (body ?? {}) as Record<string, unknown>;
-    const result = await manageFixedRoom({ store: classroomStore(), provider, drive: classroomDrive(), principal: { email: access.principal.email, owner: true }, action, input, now: Date.now() });
+    const principal = { email: access.principal.email, owner: true };
+    const result = (FIXED_ROOM_BULK_ACTIONS as readonly string[]).includes(String(action))
+      ? await manageFixedRoomsBulk({ store: classroomStore(), principal, action, input, now: Date.now() })
+      : await manageFixedRoom({ store: classroomStore(), provider, drive: classroomDrive(), principal, action, input, now: Date.now() });
     if (result.status === 200 || result.status === 201) {
       await appendAdminActivity({
         actorEmail: access.principal.email, actorRole: access.principal.role, action: `classroom.fixed_room_${String(action)}`, entityType: "classroom",
