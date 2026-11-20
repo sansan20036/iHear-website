@@ -7,7 +7,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { chromium, expect } from '@playwright/test';
-import { localContext, noHorizontalOverflow, startAcademyServer } from './helpers/academy-smoke.mjs';
+import { screenshotSafely, localContext, noHorizontalOverflow, startAcademyServer } from './helpers/academy-smoke.mjs';
 
 // The release's name, read from its one source (lib/classroom-release.ts), as the pages must show it.
 const releaseSource = await readFile('lib/classroom-release.ts', 'utf8');
@@ -28,7 +28,7 @@ async function check(name, action) {
   try { await action(); report.checks.push({ name, status: 'passed' }); console.log(`PASS ${name}`); }
   catch (error) { report.checks.push({ name, status: 'failed', error: error.message }); throw error; }
 }
-const shot = (page, name) => page.screenshot({ path: path.join(directory, `${name}.png`), fullPage: true });
+const shot = (page, name) => screenshotSafely(page, { path: path.join(directory, `${name}.png`), fullPage: true });
 // Refusals this test causes on purpose (a link that no longer works, a visitor without one).
 const expectedRefusal = text => /Failed to load resource: the server responded with a status of (401|403)/.test(text);
 const context = options => localContext(browser, origin, { external: report.externalRequests, secret, locale: 'zh-TW', ...options });

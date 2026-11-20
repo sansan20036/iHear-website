@@ -8,7 +8,7 @@ import { createHmac } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { chromium, expect as playwrightExpect } from '@playwright/test';
-import { localContext, setSession, startAcademyServer } from './helpers/academy-smoke.mjs';
+import { screenshotSafely, localContext, setSession, startAcademyServer } from './helpers/academy-smoke.mjs';
 
 // A member's page learns of a move, a recall, a revoke or the end of the block on its next
 // question to the server: up to 8 s (waiting) plus 0.5 s of jitter plus the request itself
@@ -36,7 +36,7 @@ async function check(id, name, action) {
   try { await action(); report.checks.push({ id, name, status: 'PASS', ms: Date.now() - started }); console.log(`PASS ${id} ${name}`); }
   catch (error) { report.checks.push({ id, name, status: 'FAIL', error: error.message }); throw error; }
 }
-const shot = (page, name) => page.screenshot({ path: path.join(directory, `${name}.png`), fullPage: true });
+const shot = (page, name) => screenshotSafely(page, { path: path.join(directory, `${name}.png`), fullPage: true });
 // Refusals the checks provoke on purpose, and the requests made while E9 has the network off.
 const expectedRefusal = text => /Failed to load resource: (the server responded with a status of (401|403|409)|net::ERR_INTERNET_DISCONNECTED)/.test(text);
 const claimsOf = token => JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8'));

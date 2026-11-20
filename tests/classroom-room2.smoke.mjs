@@ -9,7 +9,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { chromium, devices, expect } from '@playwright/test';
-import { localContext, startAcademyServer } from './helpers/academy-smoke.mjs';
+import { screenshotSafely, localContext, startAcademyServer } from './helpers/academy-smoke.mjs';
 
 const secret = 'classroom-room2-local-only-not-production';
 const owner = 'room2-owner@example.test', tutor = 'room2-tutor@example.test';
@@ -41,7 +41,7 @@ function watch(page, who) {
   page.on('pageerror', error => report.pageProblems.push(`${who}: ${error.message}`));
   return page;
 }
-const shot = (page, name) => page.screenshot({ path: path.join(shots, `${name}.png`) });
+const shot = (page, name) => screenshotSafely(page, { path: path.join(shots, `${name}.png`) });
 
 // What the layout promises, measured in the page at the top of it (no scrolling).
 async function measure(page) {

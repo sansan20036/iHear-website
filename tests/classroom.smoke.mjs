@@ -7,7 +7,7 @@ import { createHmac } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { chromium, expect } from '@playwright/test';
-import { localContext, noHorizontalOverflow, startAcademyServer } from './helpers/academy-smoke.mjs';
+import { screenshotSafely, localContext, noHorizontalOverflow, startAcademyServer } from './helpers/academy-smoke.mjs';
 
 const secret = 'classroom-local-acceptance-only-not-production';
 const webhookSecret = 'classroom-webhook-local-acceptance-only';
@@ -46,7 +46,7 @@ async function check(name, action) {
   try { await action(); report.checks.push({ name, status: 'passed' }); console.log(`PASS ${name}`); }
   catch (error) { report.checks.push({ name, status: 'failed', error: error.message }); throw error; }
 }
-const shot = (page, name) => page.screenshot({ path: path.join(directory, `${name}.png`), fullPage: true, mask: [page.locator('.classroom-link code')] });
+const shot = (page, name) => screenshotSafely(page, { path: path.join(directory, `${name}.png`), fullPage: true, mask: [page.locator('.classroom-link code')] });
 // The pages are checked in Traditional Chinese unless a check asks for another language (a CI runner's
 // browser defaults to English).
 const context = options => localContext(browser, origin, { external: report.externalRequests, secret, locale: 'zh-TW', ...options });
@@ -764,7 +764,7 @@ try {
         await expect(panel.locator('[data-add-problem="codeTaken"]')).toContainText(`课程代码「${linkLesson.code}」已被其他课程使用`);
         await page.getByRole('button', { name: '繁', exact: true }).click();
       }
-      await page.screenshot({ path: path.join(directory, `10-add-lesson-${label}.png`), mask: [page.locator('.classroom-link code')] });
+      await screenshotSafely(page, { path: path.join(directory, `10-add-lesson-${label}.png`), mask: [page.locator('.classroom-link code')] });
       expect(unexpected).toEqual([]);
       expect(statuses.filter(item => item.endsWith(' 429'))).toEqual([]);
       expect(statuses.filter(item => item === 'POST 409')).toHaveLength(2);

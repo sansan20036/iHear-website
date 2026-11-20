@@ -6,7 +6,7 @@ import { createHmac } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { chromium, expect } from '@playwright/test';
-import { localContext, startAcademyServer } from './helpers/academy-smoke.mjs';
+import { screenshotSafely, localContext, startAcademyServer } from './helpers/academy-smoke.mjs';
 
 const secret = 'classroom-controls-smoke-key-never-use-in-production';
 const webhookSecret = 'classroom-controls-webhook-local-only';
@@ -82,7 +82,7 @@ try {
     await refresh();
     await expect(card(live.code)).toContainText('錄影中');
     await expect(card(live.code).getByRole('button', { name: '緊急停止錄影' })).toBeVisible();
-    await admin.screenshot({ path: path.join(directory, 'controls-1-recording.png'), fullPage: true });
+    await screenshotSafely(admin, { path: path.join(directory, 'controls-1-recording.png'), fullPage: true });
   });
 
   await check('one press and a confirmation stop it at once; the card says so and the button goes', async () => {
@@ -103,7 +103,7 @@ try {
     await zoom('session.recording_stopped', live, { recording_file: { recording_end: new Date().toISOString() } });
     await refresh();
     await expect(card(live.code)).toContainText('視訊服務已確認錄影停止');
-    await admin.screenshot({ path: path.join(directory, 'controls-2-emergency.png'), fullPage: true });
+    await screenshotSafely(admin, { path: path.join(directory, 'controls-2-emergency.png'), fullPage: true });
   });
 
   const waiting = await lessonFrom('TEST-UC3', 30, 3);
@@ -145,7 +145,7 @@ try {
     // The local stand-in has no page to open.
     await expect(card(ended.code).getByRole('link', { name: '在 Google 雲端硬碟開啟' })).toHaveCount(0);
     await expect(card(ended.code).getByRole('button', { name: '緊急停止錄影' })).toHaveCount(0);
-    await admin.screenshot({ path: path.join(directory, 'controls-3-filed.png'), fullPage: true });
+    await screenshotSafely(admin, { path: path.join(directory, 'controls-3-filed.png'), fullPage: true });
   });
 
   // 2026-11-08: a link reissued while recording moves the lesson to a new room. Nothing records
@@ -178,7 +178,7 @@ try {
     await refresh();
     const button = card(moved.code).getByRole('button', { name: '授權在新教室錄影' });
     await expect(button).toBeVisible();
-    await admin.screenshot({ path: path.join(directory, 'controls-4-room-moved.png'), fullPage: true });
+    await screenshotSafely(admin, { path: path.join(directory, 'controls-4-room-moved.png'), fullPage: true });
     let asked = null;
     admin.once('dialog', dialog => { asked = dialog.message(); dialog.accept(); });
     const [response] = await Promise.all([admin.waitForResponse(item => item.url().endsWith('/resume-recording')), button.click()]);
@@ -188,7 +188,7 @@ try {
     await refresh();
     await expect(card(moved.code)).toContainText('重新確認通過，可以在新教室錄影');
     await expect(card(moved.code).getByRole('button', { name: '授權在新教室錄影' })).toHaveCount(0);
-    await admin.screenshot({ path: path.join(directory, 'controls-5-authorized.png'), fullPage: true });
+    await screenshotSafely(admin, { path: path.join(directory, 'controls-5-authorized.png'), fullPage: true });
   });
 
   await check('nothing left this computer, and the page reported no errors', async () => {

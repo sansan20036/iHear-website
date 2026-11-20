@@ -8,6 +8,12 @@ import { encode } from 'next-auth/jwt';
 
 export const SESSION_COOKIE = 'authjs.session-token';
 
+// Round 4 (2026-11-21): every whole link an admin page shows once (one-to-one lessons, blocks and
+// the schedule import, fixed rooms) is masked in every picture a check takes, so no screenshot left
+// behind holds a link. Every classroom check takes its pictures through screenshotSafely.
+export const LINK_ON_SCREEN = '.classroom-link code, [data-student-link] code, [data-room-link] code';
+export const screenshotSafely = (page, options = {}) => page.screenshot({ ...options, mask: [...(options.mask ?? []), page.locator(LINK_ON_SCREEN)] });
+
 export async function startAcademyServer({ port, secret, owners, name }) {
   const origin = `http://localhost:${port}`;
   await mkdir('output/playwright', { recursive: true });

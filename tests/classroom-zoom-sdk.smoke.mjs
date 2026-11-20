@@ -8,7 +8,7 @@
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { chromium, expect } from '@playwright/test';
-import { setSession, startAcademyServer } from './helpers/academy-smoke.mjs';
+import { screenshotSafely, setSession, startAcademyServer } from './helpers/academy-smoke.mjs';
 
 const secret = 'classroom-zoom-sdk-local-only-not-production';
 const owner = 'zoom-owner@example.test', tutor = 'zoom-tutor@example.test';
@@ -117,7 +117,7 @@ try {
     await expect(tutorPage.locator('[data-tool="whiteboard"]')).toHaveAccessibleName('開啟白板');
     await expect(tutorPage.locator('[data-tool="whiteboard"]')).toBeDisabled();
     await expect(tutorPage.locator('.classroom-room-tools')).toContainText('先在這台電腦打開檔案');
-    await tutorPage.screenshot({ path: path.join(directory, 'zoom-sdk-tutor-room.png'), fullPage: true });
+    await screenshotSafely(tutorPage, { path: path.join(directory, 'zoom-sdk-tutor-room.png'), fullPage: true });
   });
 
   report.status = 'passed';

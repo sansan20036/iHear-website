@@ -11,7 +11,7 @@ import { existsSync } from 'node:fs';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { chromium, expect as playwrightExpect } from '@playwright/test';
-import { localContext, startAcademyServer } from './helpers/academy-smoke.mjs';
+import { screenshotSafely, localContext, startAcademyServer } from './helpers/academy-smoke.mjs';
 
 const expect = playwrightExpect.configure({ timeout: 15_000 });
 const secret = 'classroom-rooms-bulk-local-acceptance-only';
@@ -42,7 +42,7 @@ function watch(page, who) {
   page.on('dialog', dialog => { asked.push(dialog.message()); return dialog.accept(); });
   return page;
 }
-const shot = (page, name) => page.screenshot({ path: path.join(directory, `${name}.png`), fullPage: true });
+const shot = (page, name) => screenshotSafely(page, { path: path.join(directory, `${name}.png`), fullPage: true });
 const LINE = new RegExp(`^"((?:Room|Hall|Desk|Seat)\\d+)","(${origin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/classroom/r/FR-[0-9a-f]{32}#k=[A-Za-z0-9_-]{43})"$`);
 // Every link key handed out in a file during the run (round 4: none may be found anywhere after).
 const handedOut = new Set();

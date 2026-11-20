@@ -7,7 +7,7 @@
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { chromium, expect as playwrightExpect } from '@playwright/test';
-import { localContext, startAcademyServer } from './helpers/academy-smoke.mjs';
+import { screenshotSafely, localContext, startAcademyServer } from './helpers/academy-smoke.mjs';
 
 const expect = playwrightExpect.configure({ timeout: 15_000 });
 const secret = 'classroom-rooms-local-acceptance-only';
@@ -34,7 +34,7 @@ function watch(page, who) {
   page.on('dialog', dialog => dialog.accept());
   return page;
 }
-const shot = (page, name) => page.screenshot({ path: path.join(directory, `${name}.png`), fullPage: true });
+const shot = (page, name) => screenshotSafely(page, { path: path.join(directory, `${name}.png`), fullPage: true });
 
 try {
   browser = await chromium.launch({ headless: process.env.IHEAR_HEADED !== '1' });

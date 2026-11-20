@@ -7,7 +7,7 @@
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { chromium, devices, expect as playwrightExpect, webkit } from '@playwright/test';
-import { localContext, startAcademyServer } from './helpers/academy-smoke.mjs';
+import { screenshotSafely, localContext, startAcademyServer } from './helpers/academy-smoke.mjs';
 
 const expect = playwrightExpect.configure({ timeout: 20_000 });
 const secret = 'classroom-devices-local-acceptance-only';
@@ -84,7 +84,7 @@ try {
       await expect(page.locator('.room2-top .classroom-room-connection')).toHaveText('已連線');
       expect(await noSideways(page), 'no sideways scrolling in the room').toBe(true);
       await expect(page.getByRole('button', { name: /^麥克風：/ })).toBeVisible();
-      await page.screenshot({ path: path.join(directory, `v${n}-${profile.replace(/[^A-Za-z0-9]+/g, '-')}.png`) });
+      await screenshotSafely(page, { path: path.join(directory, `v${n}-${profile.replace(/[^A-Za-z0-9]+/g, '-')}.png`) });
       await context.close();
     });
   }

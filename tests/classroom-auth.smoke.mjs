@@ -9,7 +9,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { chromium, expect } from '@playwright/test';
-import { localContext, startAcademyServer } from './helpers/academy-smoke.mjs';
+import { screenshotSafely, localContext, startAcademyServer } from './helpers/academy-smoke.mjs';
 
 const secret = 'classroom-auth-browser-acceptance-only';
 const owner = 'auth-owner@example.test', tutor = 'auth-tutor@example.test';
@@ -27,7 +27,7 @@ async function check(name, action) {
   try { await action(); report.checks.push({ name, status: 'passed' }); console.log(`PASS ${name}`); }
   catch (error) { report.checks.push({ name, status: 'failed', error: error.message }); throw error; }
 }
-const shot = (page, name) => page.screenshot({ path: path.join(directory, `${name}.png`), fullPage: true });
+const shot = (page, name) => screenshotSafely(page, { path: path.join(directory, `${name}.png`), fullPage: true });
 const context = options => localContext(browser, origin, { external: report.externalRequests, secret, ...options });
 // Refusals and failures this test causes on purpose show as resource errors in the console.
 const expected = text => /Failed to load resource: (the server responded with a status of (401|403|429|500|503)|net::ERR_(INTERNET_DISCONNECTED|FAILED))/.test(text);

@@ -7,7 +7,7 @@
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { chromium, expect } from '@playwright/test';
-import { localContext, startAcademyServer } from './helpers/academy-smoke.mjs';
+import { screenshotSafely, localContext, startAcademyServer } from './helpers/academy-smoke.mjs';
 
 const secret = 'classroom-ratelimit-smoke-key-never-use-in-production';
 const owner = 'ratelimit-owner@example.test', tutor = 'ratelimit-tutor@example.test';
@@ -86,13 +86,13 @@ try {
     expect(await press('取消課程')).toBe(200);
     await expect(row()).toContainText('已取消');
     expect(Date.now() - burstAt).toBeLessThan(45_000); // all inside the minute the tick was spent
-    await admin.screenshot({ path: path.join(directory, 'ratelimit-1-changes-while-limited.png'), fullPage: true });
+    await screenshotSafely(admin, { path: path.join(directory, 'ratelimit-1-changes-while-limited.png'), fullPage: true });
   });
 
   await check('once the minute is over, the overview\'s own refresh runs again and the lag notice goes by itself', async () => {
     await expect(lagging).toBeHidden({ timeout: 100_000 });
     report.timings.recoveredAfterSeconds = Math.round((Date.now() - burstAt) / 1000);
-    await admin.screenshot({ path: path.join(directory, 'ratelimit-2-recovered.png'), fullPage: true });
+    await screenshotSafely(admin, { path: path.join(directory, 'ratelimit-2-recovered.png'), fullPage: true });
   });
 
   await check('only the tick was ever refused; nothing left this computer, and the page reported no other errors', async () => {
