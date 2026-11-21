@@ -89,6 +89,44 @@ try {
     await shot(kyle, 'r3-in-room');
   });
 
+  // D-14 (2026-11-21): the teacher's rule, "the same teaching tools for everyone, management kept
+  // apart". The test classroom plays Zoom's answers; real Zoom's own answers without a host are
+  // still to be seen in a real session.
+  await check('R3b', 'D-14：教學功能大家一樣：電腦上每個人都有「分享畫面」，別人分享時不能搶；白板只在 Zoom 允許時出現，自己開的白板一定能關；教室頁沒有任何管理按鈕', async () => {
+    const shareButton = kyle.locator('[data-tool="share"]');
+    const boardButton = kyle.locator('[data-tool="whiteboard"]');
+    await expect(shareButton).toBeEnabled();
+    await expect(boardButton).toHaveCount(0);
+    const panel = kyle.locator('details.classroom-room-simulator');
+    await panel.locator('summary').click();
+    const play = name => panel.getByRole('button', { name, exact: true }).click();
+    await play('對方分享畫面');
+    await expect(shareButton).toBeDisabled();
+    await expect(shareButton).toHaveAttribute('aria-label', '其他人正在分享畫面；等對方停止分享後，才能分享你的畫面。');
+    await play('對方停止分享');
+    await expect(shareButton).toBeEnabled();
+    await shareButton.click();
+    await expect(shareButton).toHaveAttribute('aria-pressed', 'true');
+    await shareButton.click();
+    await expect(shareButton).toHaveAttribute('aria-pressed', 'false');
+    await play('Zoom 讓所有人開白板');
+    await expect(boardButton).toBeEnabled();
+    await play('對方開啟白板');
+    await expect(boardButton).toBeDisabled();
+    await play('對方關閉白板');
+    await boardButton.click();
+    await expect(boardButton).toHaveAttribute('aria-pressed', 'true');
+    await shot(kyle, 'r3b-whiteboard');
+    await play('Zoom 只讓主持人開白板');
+    await expect(boardButton).toHaveAttribute('aria-pressed', 'true');
+    await boardButton.click();
+    await expect(boardButton).toHaveCount(0);
+    // Management stays on the owner's admin page: nothing here lowers hands, takes anyone out or ends
+    // the lesson (the simulation panel, which names such cases, is closed first).
+    await panel.locator('summary').click();
+    await expect(kyle.getByRole('button', { name: /放下|請出|結束|移除/ })).toHaveCount(0);
+  });
+
   await check('R4', '另一個人輸入同一個名字：只是另一位等待中的人（老師看到 kyle B），被婉拒後看到說明，進不了教室', async () => {
     const other = watch(await (await context({})).newPage(), 'student-impostor');
     await other.goto(link);

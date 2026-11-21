@@ -471,7 +471,9 @@ describe("browser adapters", () => {
   }
   // `audioError`: what Zoom's startAudio rejects with (the first time); `ignoresMute`: a Zoom that
   // joins the audio unmuted although asked to mute (2026-11-20, "Turn on sound").
-  function fakeZoom({ joinError = null, videoError = null, shareError = null, canBoard = true, boardEnabled = true, boardError = null, boardViewError = null, presenter = null, sharingAtJoin = 0, videoHangs = 0, slowVideo = 0, audioHangs = 0, audioError = null, ignoresMute = false, slowJoin = false, failedJoins = 0, sessionId = "", chatAnswer = null, commandAnswer = null, others = [] } = {}) {
+  // `sharePrivilege` (D-14, 2026-11-21): Zoom's SharePrivilege now (0 one at a time, 1 host only, 3
+  // several); setSharePrivilege and setCanBoard change Zoom's answers after joining.
+  function fakeZoom({ joinError = null, videoError = null, shareError = null, canBoard = true, boardEnabled = true, boardError = null, boardViewError = null, presenter = null, sharingAtJoin = 0, videoHangs = 0, slowVideo = 0, audioHangs = 0, audioError = null, ignoresMute = false, slowJoin = false, failedJoins = 0, sessionId = "", chatAnswer = null, commandAnswer = null, others = [], sharePrivilege = 0 } = {}) {
     const calls = [];
     // In-class chat and the command channel (2026-11-12), recorded apart from `calls` so the older
     // checks of the call order stay as they were. A *Answer option stands for Zoom's failure answer.
@@ -539,6 +541,7 @@ describe("browser adapters", () => {
       getActiveShareUserId: () => sharingAtJoin,
       attachShareView: async (userId) => { calls.push(`shareView:${userId}`); return { nodeType: 1, tag: `shared:${userId}` }; },
       detachShareView: async (userId) => calls.push(`shareViewOff:${userId}`),
+      getSharePrivilege: () => sharePrivilege,
     };
     // Changed after joining by the reconnect tests (2026-11-18): setPresenter, setSharer, failViews, holdNextView.
     let viewFailures = 0, failingView = null, heldView = null;
@@ -593,7 +596,9 @@ describe("browser adapters", () => {
     const setPresenter = value => { presenter = value; };
     const setSharer = userId => { sharingAtJoin = userId; };
     const failViews = (error, times) => { failingView = error; viewFailures = times; };
-    return { calls, handlers, users, sdk, created, listening, holdNextJoin, holdNextView, holdNextAudio, failNextAudio, isMuted: () => audioMuted, setPresenter, setSharer, failViews, releaseJoin: () => releaseJoin(), releaseVideo: () => releaseVideo(), qualities, chatSent, privileges, commandsSent };
+    const setSharePrivilege = value => { sharePrivilege = value; };
+    const setCanBoard = value => { canBoard = value; };
+    return { calls, handlers, users, sdk, created, listening, holdNextJoin, holdNextView, holdNextAudio, failNextAudio, isMuted: () => audioMuted, setPresenter, setSharer, failViews, setSharePrivilege, setCanBoard, releaseJoin: () => releaseJoin(), releaseVideo: () => releaseVideo(), qualities, chatSent, privileges, commandsSent };
   }
   const zoomJoin = { sessionToken: "synthetic.jwt.token", sessionName: "ihear-l-test-v01", lessonCode: "TEST-V01", participantCode: "TEST-T01", role: "tutor" };
   // Zoom calls its handlers without waiting; let their asynchronous work finish.
@@ -1433,6 +1438,68 @@ describe("browser adapters", () => {
 
   // Zoom's whiteboard error codes (2026-11-18): kept as numbers, so a failure is never a guess, and
   // nothing else of Zoom's answer (its words, a link, a token) reaches the page or the console.
+  // D-14 (2026-11-21): a fixed room, where nobody is the host and everyone joins as an ordinary
+  // participant. Against the stand-in only: which answers real Zoom gives without a host (its share
+  // privilege, its whiteboard check) is still to be seen in a real session.
+  test("D-14 Zoom: in a fixed room the page is told what Zoom lets this person start: sharing by Zoom's share privilege, the whiteboard by Zoom's own check asked only while nothing is on the stage; no host setting is tried; a lesson's page is told nothing", async () => {
+    const lessonPage = await joined();
+    lessonPage.zoom.handlers.get("active-share-change")({ state: "Active", userId: 2 }); await settle();
+    lessonPage.zoom.handlers.get("share-privilege-change")({ privilege: 1 });
+    expect(lessonPage.events.some(event => event.type === "tools")).toBe(false);
+
+    const zoom = fakeZoom({ canBoard: false }), dom = fakeDom();
+    const adapter = new ZoomVideoSdkMediaAdapter(async () => zoom.sdk, () => 1);
+    const events = recorded(adapter);
+    adapter.mount(dom.root);
+    await adapter.join({ ...zoomJoin, role: "student", participantCode: "TEST-S01", equalTools: true });
+    const tools = () => events.filter(event => event.type === "tools").map(({ share, whiteboard }) => ({ share, whiteboard }));
+    expect(tools()).toEqual([{ share: true, whiteboard: false }]);
+    // An ordinary participant's page never tries the host's chat setting.
+    expect(zoom.privileges).toEqual([]);
+    expect(await adapter.setWhiteboard(true)).toBe(false);
+    // Someone else shares, one at a time: no share for this person until it ends. Zoom's whiteboard
+    // check is not asked meanwhile (it says no during any share), so its last answer stands.
+    zoom.setCanBoard(true);
+    zoom.setSharer(2);
+    zoom.handlers.get("active-share-change")({ state: "Active", userId: 2 }); await settle();
+    expect(tools().at(-1)).toEqual({ share: false, whiteboard: false });
+    expect(await adapter.setScreenShare(true)).toBe(false);
+    zoom.setSharer(0);
+    zoom.handlers.get("active-share-change")({ state: "Inactive", userId: 2 }); await settle();
+    expect(tools().at(-1)).toEqual({ share: true, whiteboard: true });
+    // This person opens the whiteboard; while it is open Zoom's check would say no, and the answer stands.
+    expect(await adapter.setWhiteboard(true)).toBe(true);
+    zoom.setCanBoard(false);
+    zoom.handlers.get("user-updated")([{ userId: 1 }]);
+    expect(tools().at(-1)).toEqual({ share: true, whiteboard: true });
+    // Closed: Zoom is asked again (now no).
+    expect(await adapter.setWhiteboard(false)).toBe(false);
+    expect(tools().at(-1)).toEqual({ share: true, whiteboard: false });
+    // Zoom's share privilege: host only (1) is no; several at once (3) is yes even during another's
+    // share; no answer from Zoom is "not known".
+    zoom.setSharePrivilege(1);
+    zoom.handlers.get("share-privilege-change")({ privilege: 1 });
+    expect(tools().at(-1)).toEqual({ share: false, whiteboard: false });
+    zoom.setSharePrivilege(3);
+    zoom.setSharer(2);
+    zoom.handlers.get("active-share-change")({ state: "Active", userId: 2 }); await settle();
+    expect(tools().at(-1)).toEqual({ share: true, whiteboard: false });
+    zoom.setSharePrivilege(undefined);
+    zoom.handlers.get("share-privilege-change")({});
+    expect(tools().at(-1)).toEqual({ share: null, whiteboard: false });
+    // Leaving: nothing is known any more.
+    await adapter.leave();
+    expect(tools().at(-1)).toEqual({ share: null, whiteboard: null });
+
+    // An account without Zoom's whiteboard: no, without asking further.
+    const noBoard = fakeZoom({ boardEnabled: false });
+    const other = new ZoomVideoSdkMediaAdapter(async () => noBoard.sdk, () => 1);
+    const otherEvents = recorded(other);
+    other.mount(fakeDom().root);
+    await other.join({ ...zoomJoin, role: "student", participantCode: "TEST-S01", equalTools: true });
+    expect(otherEvents.filter(event => event.type === "tools").at(-1)).toMatchObject({ share: true, whiteboard: false });
+  });
+
   test("Zoom whiteboard: a start Zoom refuses keeps only Zoom's code (8000–8006), never Zoom's words, links or tokens", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {

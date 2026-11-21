@@ -1,7 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
 
 import {
-  createMediaAdapter, hostReportFor, MEDIA_PROVIDERS, MediaAdapterUnavailableError, SYNTHETIC_SCENARIOS, SyntheticMediaAdapter,
+  createMediaAdapter, FIXED_ROOM_SCENARIOS, hostReportFor, MEDIA_PROVIDERS, MediaAdapterUnavailableError, SYNTHETIC_SCENARIOS, SyntheticMediaAdapter,
 } from "../lib/classroom-media";
 import { entryEndedBy, rejoinRoom, requestJoin } from "../lib/classroom-join-client";
 
@@ -412,6 +412,82 @@ describe("reconnecting asks the join check again", () => {
     expect(await rejoinRoom(adapter, ask, room)).toEqual({ ok: false, code: "CONNECT_FAILED" });
     expect((await rejoinRoom(adapter, ask, room)).ok).toBe(true);
     expect(joins.map(join => join.sessionToken)).toEqual(["token-1", "token-2"]);
+  });
+
+  test("D-14: a fixed room's reconnect joins again as a fixed room, with the same teaching tools as on entering", async () => {
+    const { joins, adapter } = roomAdapter();
+    expect((await rejoinRoom(adapter, async () => answer("fresh.jwt.token"), { ...room, equalTools: true })).ok).toBe(true);
+    expect(joins).toEqual([{ sessionToken: "fresh.jwt.token", sessionName: "ihear-l-test-m1", embedUrl: undefined, ...room, equalTools: true }]);
+  });
+});
+
+// D-14 (2026-11-21): a fixed room has no host, and everyone in it gets the same teaching tools as
+// far as Zoom allows an ordinary participant. The test classroom plays Zoom's answers; which of them
+// real Zoom gives without a host is still to be seen in a real session.
+describe("D-14: a fixed room's teaching tools in the test classroom", () => {
+  const roomJoin = { ...joinInput, role: "student", participantCode: "TEST-MS1", equalTools: true };
+  const toolsOf = events => events.filter(event => event.type === "tools").map(({ share, whiteboard }) => ({ share, whiteboard }));
+  const boardOf = events => events.filter(event => event.type === "whiteboard").at(-1)?.state ?? "none";
+
+  test("everyone may share, one at a time; the whiteboard opens only with Zoom's yes and never over someone else's; one's own board can always be closed; leaving makes it unknown again", async () => {
+    const adapter = new SyntheticMediaAdapter({ connectDelayMs: 0 });
+    const events = recorded(adapter);
+    await adapter.join(roomJoin);
+    expect(toolsOf(events)).toEqual([{ share: true, whiteboard: false }]);
+    expect(await adapter.setWhiteboard(true)).toBe(false);
+    // Someone else shares: nobody takes it over; it ends, and this person shares.
+    adapter.simulate("remote-shares-screen");
+    expect(toolsOf(events).at(-1)).toEqual({ share: false, whiteboard: false });
+    expect(await adapter.setScreenShare(true)).toBe(false);
+    adapter.simulate("remote-stops-sharing");
+    expect(toolsOf(events).at(-1)).toEqual({ share: true, whiteboard: false });
+    expect(await adapter.setScreenShare(true)).toBe(true);
+    expect(toolsOf(events).at(-1)).toEqual({ share: true, whiteboard: false });
+    expect(await adapter.setScreenShare(false)).toBe(false);
+    // Zoom says yes to everyone: the whiteboard opens, but not over someone else's.
+    adapter.simulate("board-for-everyone");
+    expect(toolsOf(events).at(-1)).toEqual({ share: true, whiteboard: true });
+    adapter.simulate("remote-opens-whiteboard");
+    expect(await adapter.setWhiteboard(true)).toBe(false);
+    expect(boardOf(events)).toBe("viewing");
+    adapter.simulate("remote-closes-whiteboard");
+    expect(await adapter.setWhiteboard(true)).toBe(true);
+    expect(boardOf(events)).toBe("presenting");
+    // A reconnect keeps the last answer (nothing is told meanwhile).
+    const told = toolsOf(events).length;
+    adapter.simulate("network-drop");
+    adapter.simulate("network-restore");
+    expect(toolsOf(events).length).toBe(told);
+    // Zoom now says host only: this person's own board still closes.
+    adapter.simulate("board-host-only");
+    expect(toolsOf(events).at(-1)).toEqual({ share: true, whiteboard: false });
+    expect(await adapter.setWhiteboard(false)).toBe(false);
+    expect(boardOf(events)).toBe("none");
+    await adapter.leave();
+    expect(toolsOf(events).at(-1)).toEqual({ share: null, whiteboard: null });
+    // What the page is told about the tools is never reported to iHear.
+    expect(hostReportFor({ type: "tools", share: true, whiteboard: true, at: 1 })).toBeNull();
+  });
+
+  test("a lesson's room is told nothing about tools and keeps its rules: a student opens no whiteboard even after the played yes; the tutor presents as before", async () => {
+    const adapter = new SyntheticMediaAdapter({ connectDelayMs: 0 });
+    const events = recorded(adapter);
+    await adapter.join({ ...joinInput, role: "student", participantCode: "TEST-MS2" });
+    adapter.simulate("board-for-everyone");
+    expect(await adapter.setWhiteboard(true)).toBe(false);
+    expect(events.some(event => event.type === "tools")).toBe(false);
+    const tutor = new SyntheticMediaAdapter({ connectDelayMs: 0 });
+    const tutorEvents = recorded(tutor);
+    await tutor.join(joinInput);
+    expect(await tutor.setWhiteboard(true)).toBe(true);
+    tutor.simulate("remote-shares-screen");
+    expect(await tutor.setScreenShare(true)).toBe(true);
+    expect(tutorEvents.some(event => event.type === "tools")).toBe(false);
+  });
+
+  test("the two played answers are scenarios of the fixed rooms' test classroom only", () => {
+    expect([...FIXED_ROOM_SCENARIOS].sort()).toEqual(["board-for-everyone", "board-host-only"]);
+    expect([...FIXED_ROOM_SCENARIOS].every(scenario => SYNTHETIC_SCENARIOS.includes(scenario))).toBe(true);
   });
 });
 

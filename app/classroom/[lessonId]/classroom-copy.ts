@@ -29,6 +29,9 @@ export const vendorCopy = {
     boardDisabled: "白板無法開啟：這個 Zoom 帳號沒有開啟白板功能，請聯絡 iHear。",
     boardUnsupported: "白板無法開啟：這台裝置或瀏覽器不支援 Zoom 白板（例如手機），請改用電腦。",
     boardHostOnly: "白板無法開啟：只有小老師（主持人）可以開啟白板。",
+    // D-14 (2026-11-21), fixed rooms: everyone shares and opens the whiteboard, one share at a time.
+    shareBusy: "其他人正在分享畫面；等對方停止分享後，才能分享你的畫面。",
+    boardViewFailedAny: "有人開了白板，但這台裝置沒有成功顯示。請告訴開白板的人，改用「分享畫面」展示。",
     zoomCode: (code: number) => `（Zoom 錯誤代碼 ${code}）`,
     sdkCheck: (check: MediaSystemCheck) => `Zoom 視訊 ${check.sdkVersion}：音訊${check.audio ? "可用" : "不可用"}、視訊${check.video ? "可用" : "不可用"}、分享畫面${check.screenShare ? "可用" : "不可用"}`,
   },
@@ -56,6 +59,8 @@ export const vendorCopy = {
     boardDisabled: "The whiteboard could not open: the whiteboard is not enabled for this Zoom account. Please contact iHear.",
     boardUnsupported: "The whiteboard could not open: this device or browser does not support Zoom’s whiteboard (a phone, for example). Please use a computer.",
     boardHostOnly: "The whiteboard could not open: only the tutor (the host) can open the whiteboard.",
+    shareBusy: "Someone else is sharing. You can share your screen once they stop.",
+    boardViewFailedAny: "Someone opened the whiteboard, but this device could not show it. Tell them, so they can share their screen instead.",
     zoomCode: (code: number) => ` (Zoom error code ${code})`,
     sdkCheck: (check: MediaSystemCheck) => `Zoom video ${check.sdkVersion}: audio ${check.audio ? "supported" : "not supported"}, video ${check.video ? "supported" : "not supported"}, screen sharing ${check.screenShare ? "supported" : "not supported"}`,
   },
@@ -83,6 +88,8 @@ export const vendorCopy = {
     boardDisabled: "白板无法打开：这个 Zoom 账号没有开启白板功能，请联系 iHear。",
     boardUnsupported: "白板无法打开：这台设备或浏览器不支持 Zoom 白板（例如手机），请改用电脑。",
     boardHostOnly: "白板无法打开：只有小老师（主持人）可以打开白板。",
+    shareBusy: "其他人正在共享屏幕；等对方停止共享后，才能共享你的屏幕。",
+    boardViewFailedAny: "有人打开了白板，但这台设备没有成功显示。请告诉打开白板的人，改用“共享屏幕”展示。",
     zoomCode: (code: number) => `（Zoom 错误代码 ${code}）`,
     sdkCheck: (check: MediaSystemCheck) => `Zoom 视频 ${check.sdkVersion}：音频${check.audio ? "可用" : "不可用"}、视频${check.video ? "可用" : "不可用"}、共享屏幕${check.screenShare ? "可用" : "不可用"}`,
   },
@@ -189,6 +196,7 @@ export const roomCopy = {
       "remote-speaks": "They speak", "group-joins": "5 test students enter", "group-leaves": "The test students leave",
       "self-elsewhere": "You also enter elsewhere", "self-elsewhere-ends": "The other place leaves",
       "sound-blocked": "The browser blocks sound",
+      "board-for-everyone": "Zoom lets everyone open the whiteboard", "board-host-only": "Zoom lets only the host open the whiteboard",
     } as Record<SyntheticScenario, string>,
     reasons: {
       LESSON_NOT_FOUND: "This lesson could not be found. Check that the link is complete, or contact iHear.",
@@ -301,6 +309,7 @@ export const roomCopy = {
       "remote-speaks": "對方說話", "group-joins": "5 位測試學生進入", "group-leaves": "測試學生離開",
       "self-elsewhere": "你也在另一處進入", "self-elsewhere-ends": "另一處已離開",
       "sound-blocked": "瀏覽器擋住聲音",
+      "board-for-everyone": "Zoom 讓所有人開白板", "board-host-only": "Zoom 只讓主持人開白板",
     } as Record<SyntheticScenario, string>,
     reasons: {
       LESSON_NOT_FOUND: "找不到這堂課。請確認連結是否完整，或聯絡 iHear。",
@@ -413,6 +422,7 @@ export const roomCopy = {
       "remote-speaks": "对方说话", "group-joins": "5 位测试学生进入", "group-leaves": "测试学生离开",
       "self-elsewhere": "你也在另一处进入", "self-elsewhere-ends": "另一处已离开",
       "sound-blocked": "浏览器挡住声音",
+      "board-for-everyone": "Zoom 让所有人打开白板", "board-host-only": "Zoom 只让主持人打开白板",
     } as Record<SyntheticScenario, string>,
     reasons: {
       LESSON_NOT_FOUND: "找不到这堂课。请确认链接是否完整，或联系 iHear。",

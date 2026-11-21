@@ -69,7 +69,8 @@ const rejoining = new WeakMap<ClassroomMediaAdapter, Promise<RejoinResult>>();
 export function rejoinRoom(
   adapter: Pick<ClassroomMediaAdapter, "join">,
   ask: () => Promise<JoinAnswer>,
-  room: { lessonCode: string; participantCode: string; role: MediaRole },
+  // equalTools: a fixed room (D-14), passed on to the adapter as on entering.
+  room: { lessonCode: string; participantCode: string; role: MediaRole; equalTools?: boolean },
 ): Promise<RejoinResult> {
   const key = adapter as ClassroomMediaAdapter;
   const running = rejoining.get(key);

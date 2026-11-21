@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 
 import { appendChat, CHAT_MAX_LENGTH, chatTextOf, type ChatLine, type RaisedHand } from "../../../lib/classroom-chat";
 import {
-  createMediaAdapter, hostReportFor, MAX_REMOTE_VIDEOS, MediaAdapterUnavailableError, SYNTHETIC_SCENARIOS, SyntheticMediaAdapter,
+  createMediaAdapter, FIXED_ROOM_SCENARIOS, hostReportFor, MAX_REMOTE_VIDEOS, MediaAdapterUnavailableError, SYNTHETIC_SCENARIOS, SyntheticMediaAdapter,
   ZOOM_WHITEBOARD_ACCOUNT_DISABLE, ZOOM_WHITEBOARD_HOST_PRIVILEGE_REQUIRED, ZOOM_WHITEBOARD_SCREEN_SHARE_CONFLICT, ZOOM_WHITEBOARD_UNSUPPORTED,
   type ClassroomMediaAdapter, type ConnectionState, type DeviceKind, type DeviceProblem, type DeviceState, type MediaEvent, type MediaSystemCheck, type RoomPerson, type SoundProblem, type SoundState, type SyntheticScenario,
 } from "../../../lib/classroom-media";
@@ -46,9 +46,10 @@ type Locale = ClassroomLocale;
 // What the room says when Zoom's whiteboard did not start ("board") or could not be shown here
 // ("boardView"), by Zoom's code (2026-11-18). The code is added for support, except where the words
 // already say everything (a screen share in progress, 8002).
-function boardProblemText(v: (typeof vendorCopy)[keyof typeof vendorCopy], problem: "board" | "boardView", code: number | null) {
+// `anyone`: a fixed room (D-14), where the board may have been opened by anyone, not the tutor.
+function boardProblemText(v: (typeof vendorCopy)[keyof typeof vendorCopy], problem: "board" | "boardView", code: number | null, anyone = false) {
   const number = code == null ? "" : v.zoomCode(code);
-  if (problem === "boardView") return `${v.boardViewFailed}${number}`;
+  if (problem === "boardView") return `${anyone ? v.boardViewFailedAny : v.boardViewFailed}${number}`;
   if (code === ZOOM_WHITEBOARD_SCREEN_SHARE_CONFLICT) return v.boardShareConflict;
   const words = code === ZOOM_WHITEBOARD_ACCOUNT_DISABLE ? v.boardDisabled
     : code === ZOOM_WHITEBOARD_UNSUPPORTED ? v.boardUnsupported
@@ -56,6 +57,9 @@ function boardProblemText(v: (typeof vendorCopy)[keyof typeof vendorCopy], probl
         : v.boardFailed;
   return `${words}${number}`;
 }
+
+// Nothing known yet about what Zoom lets this person start (fixed rooms, D-14).
+const NO_TOOLS = { share: null, whiteboard: null } as const;
 
 const HEARTBEAT_MS = 30_000;
 const RECORDING_HEARTBEAT_MS = 10_000;
@@ -69,7 +73,8 @@ const AUTO_RECONNECT_MS = [3000, 8000, 20000];
 
 type Phase = "ready" | "joining" | "joined" | "blocked" | "left";
 // sessionReports: the join answer asked this (tutor's) page to report the vendor's session id.
-// fixedRoom: a fixed room's lesson (round 3): no host, so no chat or raised hands until D-14.
+// fixedRoom: a fixed room's lesson (round 3): no host. Everyone gets the same teaching tools as far
+// as Zoom allows an ordinary participant (D-14, 2026-11-21); chat and raised hands stay off.
 type Joined = { provider: string; lesson: { code: string; startsAt: string; endsAt: string }; role: "tutor" | "student"; participantCode: string; sessionReports: boolean; fixedRoom: boolean };
 type Recording = { decided: boolean; allowed: boolean; status: string; basis: string };
 type Media = {
@@ -189,6 +194,8 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   const [toolProblem, setToolProblem] = useState<"" | "share" | "board" | "boardView">("");
   // Zoom's numeric error code for the whiteboard problem now shown, if Zoom gave one (2026-11-18).
   const [boardCode, setBoardCode] = useState<number | null>(null);
+  // D-14 (2026-11-21), fixed rooms: what Zoom lets this person start now (the adapter's "tools").
+  const [tools, setTools] = useState<{ share: boolean | null; whiteboard: boolean | null }>(NO_TOOLS);
   // In-class chat and raised hands (2026-11-12): on this page only and never saved (the owner's
   // decision); leaving the room clears them. The unread count shows on the chat button while the
   // chat is closed: a sign to see, not a sound.
@@ -380,7 +387,9 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
     }
     adapter.current = current;
     setSimulator(current instanceof SyntheticMediaAdapter ? current : null);
-    // A fixed room has no host to keep chat public (D-14): no chat and no raised hands there for now.
+    setTools(NO_TOOLS);
+    // A fixed room has no host to keep chat public: no chat and no raised hands there (D-14 settled
+    // the teaching tools only; chat waits for its own decision).
     setFeatures({ chat: current.capabilities.chat && !joined.fixedRoom, raiseHand: current.capabilities.raiseHand && !joined.fixedRoom, sound: typeof current.joinSound === "function" });
     // A new room starts with both devices off and nothing pressed yet.
     wanted.current = { camera: false, microphone: false };
@@ -424,6 +433,8 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
         setSpeaking(event.ids);
       } else if (event.type === "duplicate") {
         setElsewhere(event.count);
+      } else if (event.type === "tools") {
+        setTools({ share: event.share, whiteboard: event.whiteboard });
       }
       // A session id changes nothing on screen; it is reported only when the join answer asked.
       if (joined.role === "tutor") {
@@ -438,7 +449,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
     if (session.current) {
       current.join({
         sessionToken: session.current.token ?? "", sessionName: session.current.sessionName, embedUrl: session.current.embedUrl,
-        lessonCode: joined.lesson.code, participantCode: joined.participantCode, role: joined.role,
+        lessonCode: joined.lesson.code, participantCode: joined.participantCode, role: joined.role, equalTools: joined.fixedRoom,
       }).catch((error: unknown) => {
         // A vendor that cannot load (the Zoom package before the trial) says "not connected".
         if (error instanceof MediaAdapterUnavailableError) setMedia((state) => ({ ...state, available: false }));
@@ -826,7 +837,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
     setRejoining(true);
     setRejoinProblem("");
     const result = await rejoinRoom(current, () => requestJoin(lessonId, joinKey), {
-      lessonCode: joined.lesson.code, participantCode: joined.participantCode, role: joined.role,
+      lessonCode: joined.lesson.code, participantCode: joined.participantCode, role: joined.role, equalTools: joined.fixedRoom,
     });
     setRejoining(false);
     // Left (or entered anew) meanwhile: this answer belongs to a room that is gone.
@@ -979,8 +990,16 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   const words = { tutor: text.tutor, student: text.student };
   const labelOf = (person: RoomPerson) => personLabel(person, words);
   const raised = (id: string) => hands.some((hand) => hand.id === id);
-  const shareTools = isTutor && !!adapter.current?.setScreenShare && (zoom || !!simulator);
-  const boardTools = isTutor && !!adapter.current?.setWhiteboard && (zoom || !!simulator);
+  // D-14 (2026-11-21): a fixed room has no host, and everyone in it gets the same teaching tools:
+  // sharing on a computer (not while someone else shares: Zoom lets one person share at a time),
+  // and the whiteboard when Zoom says this person may open one (and to close one's own). Managing
+  // the room (letting people in, taking them out, ending the lesson) stays with its owner on the
+  // admin page: nothing on this page does it, and Zoom gives nobody here the host's powers.
+  const equalTools = joined.fixedRoom;
+  const shareTools = (isTutor || equalTools) && !!adapter.current?.setScreenShare && (zoom || !!simulator);
+  const boardTools = (isTutor || (equalTools && (tools.whiteboard === true || media.whiteboard === "presenting"))) && !!adapter.current?.setWhiteboard && (zoom || !!simulator);
+  const shareBusy = !isTutor && equalTools && tools.share === false && media.share !== "sending";
+  const boardBusy = !isTutor && equalTools && media.whiteboard === "viewing";
   const canExport = media.whiteboard === "presenting" && !!adapter.current?.exportWhiteboard;
   const stageLabel = mode === "share" ? (media.share === "sending" ? text.stageLabel.ownShare : text.stageLabel.share) : text.stageLabel[mode];
   // Someone else's screen on this page (2026-11-19): the material comes first (the videos go to a
@@ -1136,7 +1155,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
             const help = text.deviceHelp[kind][media.devices[kind]];
             return help ? <p key={kind} className="classroom-room-problem" role="alert">{help}</p> : null;
           })}
-          {toolProblem && <p className="classroom-room-problem" role="alert" data-board-code={toolProblem === "share" ? undefined : boardCode ?? undefined}>{toolProblem === "share" ? v.shareFailed : boardProblemText(v, toolProblem, boardCode)}</p>}
+          {toolProblem && <p className="classroom-room-problem" role="alert" data-board-code={toolProblem === "share" ? undefined : boardCode ?? undefined}>{toolProblem === "share" ? v.shareFailed : boardProblemText(v, toolProblem, boardCode, joined.fixedRoom)}</p>}
           {handProblem && <p className="classroom-room-problem" role="alert">{text.handFailed}</p>}
           {elsewhere > 0 && <p className="classroom-room-problem" role="alert" data-elsewhere={elsewhere}>{text.elsewhere}</p>}
           {isTutor && recording?.status === "FAILED" && <p className="classroom-room-problem" role="alert">{text.failedRecording}</p>}
@@ -1305,7 +1324,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
                 </section>
               )}
               {lcic && <p className="classroom-room-note" role="note">{v.lcicNote}{session.current?.recordingDisabled ? ` ${v.lcicRecordingOff}` : ""}</p>}
-              {zoom && isTutor && (
+              {zoom && (isTutor || equalTools) && (
                 <div className="classroom-room-tools">
                   <p className="classroom-room-muted">{device === "desktop" && sdkCheck?.screenShare !== false ? v.shareHint : v.noShareHere}</p>
                 </div>
@@ -1350,12 +1369,12 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
           {(shareTools || boardTools || (features.raiseHand && isStudent)) && (
             <div className="room2-group" role="group" aria-label={text.groups.teach}>
               {shareTools && device === "desktop" && toolButton({
-                tool: "share", icon: "share", label: media.share === "sending" ? v.shareStopShort : v.shareShort, name: media.share === "sending" ? v.shareStop : v.share,
-                pressed: media.share === "sending", disabled: !connected || device !== "desktop" || sdkCheck?.screenShare === false, onClick: () => void toggleShare(),
+                tool: "share", icon: "share", label: media.share === "sending" ? v.shareStopShort : v.shareShort, name: media.share === "sending" ? v.shareStop : shareBusy ? v.shareBusy : v.share,
+                pressed: media.share === "sending", disabled: !connected || device !== "desktop" || sdkCheck?.screenShare === false || shareBusy, onClick: () => void toggleShare(),
               })}
               {boardTools && toolButton({
                 tool: "whiteboard", icon: "whiteboard", label: v.whiteboardShort, name: media.whiteboard === "presenting" ? v.whiteboardStop : v.whiteboard,
-                pressed: media.whiteboard === "presenting", disabled: !connected, onClick: () => void toggleBoard(),
+                pressed: media.whiteboard === "presenting", disabled: !connected || boardBusy, onClick: () => void toggleBoard(),
               })}
               {features.raiseHand && isStudent && (
                 <button type="button" className={`classroom-room-control classroom-room-iconbutton room2-tool${handUp ? " is-hand" : ""}`} data-control="hand" data-tip={handUp ? text.handDown : text.handUp} aria-pressed={handUp}
@@ -1419,7 +1438,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
           <summary>{text.simulate}</summary>
           <p className="classroom-room-muted">{text.simulateNote}</p>
           <div className="classroom-room-simulator-buttons">
-            {SYNTHETIC_SCENARIOS.map((scenario: SyntheticScenario) => (
+            {SYNTHETIC_SCENARIOS.filter((scenario) => joined.fixedRoom || !FIXED_ROOM_SCENARIOS.has(scenario)).map((scenario: SyntheticScenario) => (
               <button key={scenario} type="button" className="classroom-room-secondary" onClick={() => simulator.simulate(scenario)}>{text.scenario[scenario]}</button>
             ))}
           </div>

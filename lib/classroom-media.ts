@@ -50,6 +50,10 @@ export type MediaEvent =
   // page could not show ("view"): told, never swallowed, with Zoom's numeric error code when there is
   // one (8000–8006 for the whiteboard). Nothing else of Zoom's answer is kept (2026-11-18).
   | { type: "whiteboard"; state: "none" | "presenting" | "viewing"; problem?: "start" | "view"; code?: number | null; at: number }
+  // D-14 (2026-11-21), fixed rooms only (MediaJoin.equalTools): what this page's person may start
+  // now by the vendor's own answer, told when it changes. Sharing a screen, and opening the
+  // whiteboard; null: not known (not connected yet, or the vendor gave no answer).
+  | { type: "tools"; share: boolean | null; whiteboard: boolean | null; at: number }
   // This page's person is in the room from `count` other pages or devices as well (2026-11-19: on
   // the production site the tutor was in one lesson up to three times at once, and the student saw
   // and heard a different one than the tutor was using). Told when the count changes; 0 when gone.
@@ -91,6 +95,10 @@ export type MediaJoin = {
   sessionToken: string; lessonCode: string; participantCode: string; role: MediaRole;
   // Zoom: the topic the join token names. LCIC: Tencent's classroom address with its login.
   sessionName?: string; embedUrl?: string;
+  // D-14 (2026-11-21): a fixed room, where nobody is the host and everyone gets the same teaching
+  // tools as far as the vendor allows an ordinary participant; the adapter then tells the page what
+  // that is (the "tools" event). Management stays off the page: everyone joins as a participant.
+  equalTools?: boolean;
 };
 
 export interface ClassroomMediaAdapter {
@@ -141,7 +149,10 @@ export type SyntheticScenario =
   // 2026-11-19: this page's person in the room from another page or device too, and that ending.
   | "self-elsewhere" | "self-elsewhere-ends"
   // 2026-11-20: the browser will not play the room's sound yet (cleared by "devices-restored").
-  | "sound-blocked";
+  | "sound-blocked"
+  // D-14 (2026-11-21), fixed rooms: the two answers Zoom may give an ordinary participant who asks
+  // to open its whiteboard (which of them real Zoom gives without a host is still to be seen).
+  | "board-for-everyone" | "board-host-only";
 
 export const SYNTHETIC_SCENARIOS: readonly SyntheticScenario[] = [
   "remote-joins", "remote-leaves", "remote-camera-off", "remote-camera-on",
@@ -151,7 +162,10 @@ export const SYNTHETIC_SCENARIOS: readonly SyntheticScenario[] = [
   "remote-shares-screen", "remote-stops-sharing", "remote-opens-whiteboard", "remote-closes-whiteboard",
   "remote-speaks", "group-joins", "group-leaves",
   "self-elsewhere", "self-elsewhere-ends", "sound-blocked",
+  "board-for-everyone", "board-host-only",
 ];
+// Played only in a fixed room's test classroom; any other room has nothing they would change.
+export const FIXED_ROOM_SCENARIOS: ReadonlySet<SyntheticScenario> = new Set(["board-for-everyone", "board-host-only"]);
 // The other person's line in the synthetic room: no real person writes it.
 const SYNTHETIC_CHAT = "TEST: Hello / 你好 / 你好";
 // Five more students for a group room in the test classroom (P3-Multi rooms hold up to 10): test
@@ -239,6 +253,11 @@ export class SyntheticMediaAdapter implements ClassroomMediaAdapter {
   private speaking = "";
   private speakingTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly speakingMs: number;
+  // D-14 (2026-11-21): a fixed room (equal tools), the played answer of Zoom on its whiteboard for an
+  // ordinary participant (no until "board-for-everyone"), and the tools last told to the page.
+  private equalTools = false;
+  private boardForEveryone = false;
+  private toolsKey = "null|null";
 
   constructor(options: SyntheticOptions = {}) {
     this.connectDelayMs = options.connectDelayMs ?? 300;
@@ -272,6 +291,7 @@ export class SyntheticMediaAdapter implements ClassroomMediaAdapter {
     if (this.connection === "connected" || this.connection === "connecting") return;
     this.role = input.role;
     this.participantCode = input.participantCode;
+    this.equalTools = input.equalTools === true;
     // Joining again (after a failure) starts with the camera and microphone off, as Zoom's does: its
     // old client is released first and a new one joins (ZoomVideoSdkMediaAdapter.teardown). A
     // blocked device stays blocked.
@@ -326,25 +346,47 @@ export class SyntheticMediaAdapter implements ClassroomMediaAdapter {
     this.emit({ type: "sound", state, ...(problem ? { problem } : {}), at: this.now() });
   }
 
-  // The tutor's own share and whiteboard, played as states only: nothing is captured or sent.
+  // The tutor's own share and whiteboard, played as states only: nothing is captured or sent. In a
+  // fixed room (D-14) everyone has them, with the answers Zoom gives an ordinary participant: one
+  // person shares at a time (nobody takes over someone else's share), and the whiteboard opens only
+  // after "board-for-everyone" and not over someone else's. A board of one's own can always be closed.
   async setScreenShare(on: boolean) {
     if (this.connection !== "connected") return false;
     if (!on) {
       if (this.sharing === "sending") this.setShare("none");
       return false;
     }
+    if (this.participantOnly() && this.sharing === "receiving") return false;
     this.setShare("sending");
     return true;
   }
 
   async setWhiteboard(on: boolean) {
-    if (this.connection !== "connected" || this.role !== "tutor") return false;
+    if (this.connection !== "connected") return false;
     if (!on) {
       if (this.board === "presenting") this.setBoard("none");
       return false;
     }
+    if (this.role !== "tutor" && !(this.equalTools && this.boardForEveryone && this.board !== "viewing")) return false;
     this.setBoard("presenting");
     return true;
+  }
+
+  private participantOnly() {
+    return this.equalTools && this.role !== "tutor";
+  }
+
+  // D-14: the page is told what this person may start (fixed rooms only), as Zoom's adapter does.
+  // While reconnecting, the last answer stands (the buttons are disabled meanwhile anyway).
+  private reportTools() {
+    if (!this.equalTools || this.connection === "reconnecting") return;
+    const connected = this.connection === "connected";
+    const share = connected ? !this.participantOnly() || this.sharing !== "receiving" : null;
+    const whiteboard = connected ? !this.participantOnly() || this.boardForEveryone : null;
+    const key = `${share}|${whiteboard}`;
+    if (key === this.toolsKey) return;
+    this.toolsKey = key;
+    this.emit({ type: "tools", share, whiteboard, at: this.now() });
   }
 
   // This page's own line, shown back to it; there is nobody real to send it to.
@@ -471,6 +513,11 @@ export class SyntheticMediaAdapter implements ClassroomMediaAdapter {
         this.emitRemote();
         break;
       }
+      case "board-for-everyone":
+      case "board-host-only":
+        this.boardForEveryone = scenario === "board-for-everyone";
+        this.reportTools();
+        break;
     }
   }
 
@@ -484,6 +531,7 @@ export class SyntheticMediaAdapter implements ClassroomMediaAdapter {
   private setConnection(state: ConnectionState) {
     if (this.connection === state) return;
     this.connection = state;
+    this.reportTools();
     this.emit({ type: "connection", state, at: this.now() });
     this.reportPeople();
   }
@@ -529,12 +577,14 @@ export class SyntheticMediaAdapter implements ClassroomMediaAdapter {
   private setShare(state: "none" | "sending" | "receiving") {
     if (this.sharing === state) return;
     this.sharing = state;
+    this.reportTools();
     this.emit({ type: "share", state, at: this.now() });
   }
 
   private setBoard(state: "none" | "presenting" | "viewing") {
     if (this.board === state) return;
     this.board = state;
+    this.reportTools();
     this.emit({ type: "whiteboard", state, at: this.now() });
   }
 
@@ -587,6 +637,8 @@ export type ZoomStream = {
   getActiveShareUserId(): number;
   attachShareView(userId: number): Promise<unknown>;
   detachShareView(userId: number): Promise<unknown>;
+  // SDK 2.6.0 SharePrivilege: who may share now (see ZOOM_SHARE_* below); read in fixed rooms (D-14).
+  getSharePrivilege?(): number;
 };
 export type ZoomWhiteboard = {
   isWhiteboardEnabled(): boolean;
@@ -691,6 +743,13 @@ const ZOOM_IN_SESSION = new Set<ConnectionState>(["connecting", "connected", "re
 let zoomReleased: Promise<void> = Promise.resolve();
 // ChatPrivilege.EveryonePublicly in @zoom/videosdk 2.6.0: no private messages between participants.
 const CHAT_PUBLIC_ONLY = 5;
+// SharePrivilege in @zoom/videosdk 2.6.0 (media.d.ts): one participant shares at a time and only the
+// host or a manager may start while someone else shares (0); only the host or a manager shares (1);
+// several share at once (3). Only the host or a manager can change it, so a fixed room (no host) keeps
+// what the session started with; which value that is without a host is still to be seen on real Zoom.
+export const ZOOM_SHARE_ONE_AT_A_TIME = 0;
+export const ZOOM_SHARE_HOST_ONLY = 1;
+export const ZOOM_SHARE_SEVERAL = 3;
 // How many chat ids a page remembers, so a line Zoom delivers twice is shown once.
 const CHAT_IDS_KEPT = 500;
 // Zoom answers a call that did not go through with { type, reason, errorCode } rather than throwing.
@@ -785,6 +844,12 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
   private videosTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly videoCheckMs: number;
   private elsewhere = 0;
+  // D-14 (2026-11-21): a fixed room (equal tools); Zoom's last answer on whether this person may
+  // open its whiteboard, asked while nothing was on the stage (null: not asked yet in this session);
+  // and the tools last told to the page.
+  private equalTools = false;
+  private boardAllowed: boolean | null = null;
+  private toolsKey = "null|null";
 
   constructor(private readonly load: () => Promise<ZoomVideoSdk> = loadZoomVideoSdkPackage, private readonly now: () => number = Date.now, options: { deviceStartMs?: number; maxVideos?: number; speakingMs?: number; resyncRetryMs?: number; videoCheckMs?: number } = {}) {
     this.deviceStartMs = options.deviceStartMs ?? DEVICE_START_MS;
@@ -858,6 +923,8 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     if (this.client) await this.teardown();
     if (attempt !== this.attempt) return;
     this.role = input.role;
+    this.equalTools = input.equalTools === true;
+    this.boardAllowed = null;
     this.setConnection("connecting");
     let client: ZoomClient | null = null;
     const listening: ZoomHandler[] = [];
@@ -906,7 +973,10 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
       listen("user-updated", () => {
         this.reportRemote();
         this.scheduleVideoCheck();
+        this.reportTools();
       });
+      // A host or manager changed who may share (none in a fixed room, but Zoom's answer counts).
+      listen("share-privilege-change", () => this.reportTools());
       listen("user-removed", (payload) => {
         this.reportRemote();
         this.dropHands(payload);
@@ -1056,7 +1126,44 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
 
   private setConnection(state: ConnectionState) {
     this.connection = state;
+    this.reportTools();
     this.emit({ type: "connection", state, at: this.now() });
+  }
+
+  // D-14 (2026-11-21), fixed rooms only: everyone there is an ordinary participant (nobody is the
+  // host or a manager, so nobody can take anyone out or end the session), and the page offers each
+  // person the teaching tools Zoom itself allows them. Sharing follows Zoom's share privilege; the
+  // whiteboard follows Zoom's canStartWhiteboard(), which also says no while a screen is shared or a
+  // whiteboard is open, so it is asked only while nothing is on the stage and its last such answer
+  // stands meanwhile. While reconnecting, the last answer stands (the buttons are disabled anyway).
+  private reportTools() {
+    if (!this.equalTools || this.connection === "reconnecting") return;
+    let share: boolean | null = null, whiteboard: boolean | null = null;
+    const stream = this.stream, board = this.client?.getWhiteboardClient();
+    if (this.connection === "connected" && stream && board) {
+      try {
+        share = this.shareAllowed(stream);
+        if (!board.isWhiteboardEnabled()) this.boardAllowed = false;
+        else if (this.sharing === "none" && this.board === "none" && !stream.getActiveShareUserId() && !board.getWhiteboardPresenter?.()?.userId) this.boardAllowed = board.canStartWhiteboard();
+      } catch {
+        // Zoom not ready to say (its whiteboard can throw while starting): the last answers stand.
+      }
+      whiteboard = this.boardAllowed;
+    } else {
+      this.boardAllowed = null;
+    }
+    const key = `${share}|${whiteboard}`;
+    if (key === this.toolsKey) return;
+    this.toolsKey = key;
+    this.emit({ type: "tools", share, whiteboard, at: this.now() });
+  }
+
+  // Whether Zoom lets this ordinary participant share now, by its share privilege; null: no answer.
+  private shareAllowed(stream: ZoomStream): boolean | null {
+    const privilege = stream.getSharePrivilege?.();
+    return privilege === ZOOM_SHARE_HOST_ONLY ? false
+      : privilege === ZOOM_SHARE_SEVERAL ? true
+        : privilege === ZOOM_SHARE_ONE_AT_A_TIME ? this.sharing !== "receiving" : null;
   }
 
   // A press of the camera or microphone, always from the person's own click, as browsers require.
@@ -1278,6 +1385,9 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
       if (this.sharing === "sending") { await stream.stopShareScreen().catch(() => undefined); this.endOwnShare(); }
       return false;
     }
+    // A fixed room (D-14): not tried when Zoom's share privilege says no to this ordinary participant
+    // (someone else shares, one at a time; or host only). The browser's picker is not even opened.
+    if (this.equalTools && this.role !== "tutor" && this.shareAllowed(stream) === false) return false;
     const target = stage.ownShare.ownerDocument.createElement(stream.isStartShareScreenWithVideoElement() ? "video" : "canvas");
     stage.ownShare.replaceChildren(target);
     stage.ownShare.hidden = false;
@@ -1292,8 +1402,9 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     return true;
   }
 
-  // Zoom's whiteboard: only the host (the tutor's token) starts it; the other person sees it and,
-  // on a computer, can draw. Zoom keeps nothing afterwards, so the tutor exports a PDF if needed.
+  // Zoom's whiteboard: in a lesson the host (the tutor's token) starts it; the other person sees it
+  // and, on a computer, can draw. In a fixed room (D-14) everyone may try, and Zoom's own check
+  // (canStartWhiteboard) decides. Zoom keeps nothing afterwards, so the presenter exports a PDF if needed.
   async setWhiteboard(on: boolean) {
     const board = this.client?.getWhiteboardClient(), stage = this.stage;
     if (!board || !stage) return false;
@@ -1840,12 +1951,14 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
   private setShare(state: "none" | "sending" | "receiving") {
     if (this.sharing === state) return;
     this.sharing = state;
+    this.reportTools();
     this.emit({ type: "share", state, at: this.now() });
   }
 
   private setBoard(state: "none" | "presenting" | "viewing") {
     if (this.board === state) return;
     this.board = state;
+    this.reportTools();
     this.emit({ type: "whiteboard", state, at: this.now() });
   }
 
