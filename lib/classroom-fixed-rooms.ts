@@ -181,11 +181,13 @@ async function createRoom({ store, label, actor, now }: { store: ClassroomStore;
   if ((await definitions(store)).some((event) => String(event.label).toLowerCase() === clean.toLowerCase())) return refused(409, "LABEL_TAKEN", "A room with this name exists");
   const roomId = `FR-${randomUUID().replace(/-/g, "")}`;
   const key = randomBytes(32).toString("base64url");
-  // The name decides the definition's key, so two rooms of the same name never both exist.
-  const made = await remember(store, [
-    { source: "server", type: "server.room_defined", lessonId: REGISTRY, roomId, label: clean, actor, occurredAt: now, receivedAt: now, key: `server.room_defined:${clean.toLowerCase()}` },
-    { source: "server", type: "server.room_link", lessonId: roomId, roomId, generation: 1, keyHash: hashKey(key), actor, occurredAt: now, receivedAt: now, key: `server.room_link:${roomId}:1` },
-  ]);
+  // The name decides the definition's key, so two rooms of the same name never both exist. The link
+  // is written only when the definition was new (round 9: a request that lost the race for the name
+  // left a link of a room that never existed).
+  const made = await store.transaction(async (tx) => {
+    if (!(await tx.insertEvent({ source: "server", type: "server.room_defined", lessonId: REGISTRY, roomId, label: clean, actor, occurredAt: now, receivedAt: now, key: `server.room_defined:${clean.toLowerCase()}` }))) return false;
+    return tx.insertEvent({ source: "server", type: "server.room_link", lessonId: roomId, roomId, generation: 1, keyHash: hashKey(key), actor, occurredAt: now, receivedAt: now, key: `server.room_link:${roomId}:1` });
+  });
   if (!made) return refused(409, "LABEL_TAKEN", "A room with this name exists");
   return { status: 201, body: { ok: true, room: { id: roomId, label: clean }, link: linkOf(roomId, key) } };
 }

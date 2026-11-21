@@ -536,11 +536,27 @@ describe("recording in a fixed room", () => {
 
     made += 1;
     const label = `Twin ${made}`;
-    const [c, d] = readAllBeforeWriting([store, store]);
+    // Every fact the two requests write, as written (round 9: the loser used to leave a link behind).
+    const written = [];
+    const recording = inner => new Proxy(inner, {
+      get(target, property) {
+        if (property !== "transaction") { const value = target[property]; return typeof value === "function" ? value.bind(target) : value; }
+        return fn => target.transaction(tx => fn(new Proxy(tx, {
+          get(t, p) {
+            if (p === "insertEvent") return async event => { const made = await t.insertEvent(event); written.push({ type: event.type, roomId: event.roomId, made }); return made; };
+            const value = t[p];
+            return typeof value === "function" ? value.bind(t) : value;
+          },
+        })));
+      },
+    });
+    const [c, d] = readAllBeforeWriting([recording(store), recording(store)]);
     const pair = await Promise.all([act(c, "create", { label }), act(d, "create", { label })]);
     expect(pair.map(answer => answer.status).sort()).toEqual([201, 409]);
     expect(pair.find(answer => answer.status === 409).body.code).toBe("LABEL_TAKEN");
     expect((await rooms.fixedRoomsView({ store, now: START })).filter(entry => entry.label === label)).toHaveLength(1);
+    const namedRoom = pair.find(answer => answer.status === 201).body.room.id;
+    expect(written.filter(entry => entry.type === "server.room_link" && entry.made).map(entry => entry.roomId)).toEqual([namedRoom]);
 
     const many = await bulk(store, "create_many", { prefix: `Pair${made}x`, from: 1, to: 6 });
     expect(many.status).toBe(201);
@@ -649,6 +665,68 @@ describe("recording in a fixed room", () => {
       expect(await lastDecision(both.lessonId)).toMatchObject({ eligible: false, reason: "CONSENT_VERSION_MISMATCH" });
     } finally {
       vi.stubEnv("CLASSROOM_CONSENT_VERSION", "");
+      vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "");
+    }
+  });
+
+  // Round 9 (2026-11-22), from the independent review of d43aaf1: the gate shuts the door only while
+  // the lesson may be capturing. GB-4 and GB-5 are the two cases where round 8's gate shut out a
+  // person for nothing; GB-6 the room's own switch.
+  test("GB-4: decided (recording allowed) but not recording yet: someone let in without consent enters, and the room then never starts (the start's own check refuses while anyone let in lacks consent)", async () => {
+    vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "on");
+    try {
+      const waiting = await inRoom(["Ann", "Kyle"], { present: ["Ann"] });
+      await manage("set_recording", { room: waiting.r.id, on: true });
+      for (const at of [2, 3]) await tick(waiting.lessonId, at);
+      expect(await lastDecision(waiting.lessonId)).toMatchObject({ eligible: true });
+      expect(starts.filter(([id]) => id === waiting.lessonId)).toEqual([]);
+      const bo = await ask(waiting.r, "Bo", { now: START + 4 * MIN });
+      expect((await manage("admit", { room: waiting.r.id, request: bo.body.requestId }, { now: START + 4 * MIN })).status).toBe(200);
+      expect((await join(waiting.lessonId, bo.body.ticket, START + 4 * MIN)).status).toBe(200);
+      const lesson = await store.lesson(waiting.lessonId);
+      await fact(waiting.lessonId, "session.user_joined", START + 5 * MIN, { providerSessionId: waiting.sessionId, participantId: waiting.rowOf("Kyle").id });
+      await fact(waiting.lessonId, "session.user_joined", START + 5 * MIN, { providerSessionId: waiting.sessionId, participantId: lesson.participants.find(entry => entry.code !== waiting.rowOf("Ann").code && entry.code !== waiting.rowOf("Kyle").code).id });
+      for (const at of [6, 7, 8]) await tick(waiting.lessonId, at);
+      expect(starts.filter(([id]) => id === waiting.lessonId)).toEqual([]);
+    } finally {
+      vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "");
+    }
+  });
+
+  test("GB-5: once Zoom confirmed the stop (a consent withdrawn), someone let in without consent enters, and nothing starts again", async () => {
+    vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "on");
+    try {
+      const both = await inRoom(["Ann", "Kyle"]);
+      await manage("set_recording", { room: both.r.id, on: true });
+      for (const at of [2, 3]) await tick(both.lessonId, at);
+      await fact(both.lessonId, "session.recording_started", START + 4 * MIN, { providerSessionId: both.sessionId, status: "Recording" });
+      const early = await ask(both.r, "Bo", { now: START + 4 * MIN });
+      expect((await manage("admit", { room: both.r.id, request: early.body.requestId }, { now: START + 4 * MIN })).status).toBe(200);
+      expect((await join(both.lessonId, early.body.ticket, START + 4 * MIN)).body.code).toBe("CONSENT_REQUIRED_FOR_RECORDING_ROOM");
+      await setSyntheticConsent({ store, personCode: both.rowOf("Kyle").code, role: "student", status: "withdrawn", actor: OWNER.email, now: START + 5 * MIN });
+      await tick(both.lessonId, 6);
+      expect(stops.filter(([id]) => id === both.lessonId).map(([, sessionId]) => sessionId)).toContain(both.sessionId);
+      // Asked to stop, not yet confirmed by Zoom: it may still be recording, so still no token.
+      expect((await join(both.lessonId, early.body.ticket, START + 6.5 * MIN)).body.code).toBe("CONSENT_REQUIRED_FOR_RECORDING_ROOM");
+      await fact(both.lessonId, "session.recording_stopped", START + 7 * MIN, { providerSessionId: both.sessionId, status: "Stopped" });
+      expect((await join(both.lessonId, early.body.ticket, START + 8 * MIN)).status).toBe(200);
+      for (const at of [9, 10]) await tick(both.lessonId, at);
+      expect(starts.filter(([id]) => id === both.lessonId)).toHaveLength(1);
+    } finally {
+      vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "");
+    }
+  });
+
+  test("GB-6: the site's switch on and the room's own switch off: nobody is shut out and nothing records", async () => {
+    vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "on");
+    try {
+      const room = await inRoom(["Ann", "Kyle"], { consented: [] });
+      for (const at of [2, 3]) await tick(room.lessonId, at);
+      const cy = await ask(room.r, "Cy", { now: START + 4 * MIN });
+      expect((await manage("admit", { room: room.r.id, request: cy.body.requestId }, { now: START + 4 * MIN })).status).toBe(200);
+      for (const ticket of [room.asked.Ann.body.ticket, cy.body.ticket]) expect((await join(room.lessonId, ticket, START + 5 * MIN)).status).toBe(200);
+      expect(starts.filter(([id]) => id === room.lessonId)).toEqual([]);
+    } finally {
       vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "");
     }
   });

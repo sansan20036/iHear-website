@@ -355,16 +355,27 @@ export async function roomMayRecordNow(store: ClassroomStore, room: ClassroomLes
   return active || (roomMayRecordByMode(room, facts) && recordingDecision(facts).allowed);
 }
 
-// Gate B (round 8, 2026-11-21): whether a fixed room's lesson may be recording now or may start any
-// moment: Zoom's recording is or may be on, or the lesson's decision allows it with the site's and
-// the room's switches on (the plan starts it at its next tick). Then a student without a valid
-// consent of their own does not enter; null when they may (or when it cannot record).
+// Gate B (round 8, 2026-11-21; narrowed in round 9 after an independent review): while a fixed
+// room's lesson may be capturing, a student without a valid consent of their own does not enter;
+// null when they may. Only a recording that is on, starting or not known to have stopped counts.
+// Before a start nothing is needed here: the start's own check (consentNow) refuses while anyone let
+// in lacks consent, so a newcomer is never recorded and still attends (round 8 shut them out on the
+// decision alone, for nothing). After Zoom confirmed the stop (STOPPED, ENDED) the room cannot record
+// them either: a restart is refused the same way (round 8 kept the door shut for the whole lesson).
 async function fixedRoomRecordingGate(store: ClassroomStore, lesson: ClassroomLesson, code: string, now: number, events: ClassroomEvent[]) {
-  const mayRecord = (fixedRoomRecordingEnabled() && roomRecordingOn(events) && recordingDecision(events).allowed)
-    || await roomMayRecordNow(store, lesson, now, events);
-  if (!mayRecord) return null;
+  if (!fixedRoomMayBeCapturing(lesson, now, events)) return null;
   const [record] = await store.listConsents([code]);
   return personConsentProblem(record ?? null, consentPolicy(), now) ? "CONSENT_REQUIRED_FOR_RECORDING_ROOM" : null;
+}
+
+// The lesson's recording as the plan derives it: asked to start, on, paused or possibly still on; or
+// a session whose capture Zoom has not said stopped. A block room keeps its own rule (roomMayRecordNow).
+const CAPTURING_STATUS = new Set(["START_REQUESTED", "RECORDING", "PAUSED", "POSSIBLY_STOPPED"]);
+const CAPTURING_SESSION = new Set(["RECORDING", "STOP_REQUESTED", "PAUSED"]);
+function fixedRoomMayBeCapturing(lesson: ClassroomLesson, now: number, events: ClassroomEvent[]) {
+  const state = deriveLesson(forRules(lesson, events), events, now);
+  return CAPTURING_STATUS.has(String(state.recording.status))
+    || (state.sessions ?? []).some((entry: { capture?: string }) => CAPTURING_SESSION.has(String(entry.capture)));
 }
 
 // 18.2 step 7: someone without a valid consent (a student) or notice (staff) never enters a room
