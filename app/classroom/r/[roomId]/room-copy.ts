@@ -15,6 +15,7 @@ export const ROOM_COPY = {
       expired: "等了太久，這次的申請已經失效。請重新輸入名字。",
       replaced: "這個教室連結已經更換。請向老師要新的連結。",
       ended: "這次上課已經結束。",
+      closed: "這間教室目前停用，這次的申請已經結束。請向老師確認。",
     } as Record<string, string>,
     reasons: {
       NOT_FOUND: "找不到這間教室。請確認你用的是老師給你的完整連結。",
@@ -23,6 +24,7 @@ export const ROOM_COPY = {
       ROOM_FULL: "教室已經滿了（最多 10 人）。請聯絡老師。",
       TOO_MANY_WAITING: "等待的人很多，請過一會兒再試。",
       NAME_TAKEN: "同名的人太多了，請在名字後面加上姓氏的第一個字母。",
+      ROOM_DISABLED: "這間教室目前停用。請向老師確認。",
     } as Record<string, string>,
   },
   en: {
@@ -38,6 +40,7 @@ export const ROOM_COPY = {
       expired: "You waited too long and this request has lapsed. Please enter your name again.",
       replaced: "This classroom link has been replaced. Please ask your teacher for the new link.",
       ended: "This lesson has ended.",
+      closed: "This classroom is not in use right now, so this request has ended. Please check with your teacher.",
     } as Record<string, string>,
     reasons: {
       NOT_FOUND: "This classroom cannot be found. Please check that you used the full link your teacher gave you.",
@@ -46,6 +49,7 @@ export const ROOM_COPY = {
       ROOM_FULL: "The classroom is full (10 people at most). Please contact your teacher.",
       TOO_MANY_WAITING: "Many people are waiting; please try again in a moment.",
       NAME_TAKEN: "Too many people have this name; add the first letter of your family name.",
+      ROOM_DISABLED: "This classroom is not in use right now. Please check with your teacher.",
     } as Record<string, string>,
   },
   zhHans: {
@@ -61,6 +65,7 @@ export const ROOM_COPY = {
       expired: "等了太久，这次的申请已经失效。请重新输入名字。",
       replaced: "这个教室链接已经更换。请向老师要新的链接。",
       ended: "这次上课已经结束。",
+      closed: "这间教室目前停用，这次的申请已经结束。请向老师确认。",
     } as Record<string, string>,
     reasons: {
       NOT_FOUND: "找不到这间教室。请确认你用的是老师给你的完整链接。",
@@ -69,6 +74,7 @@ export const ROOM_COPY = {
       ROOM_FULL: "教室已经满了（最多 10 人）。请联系老师。",
       TOO_MANY_WAITING: "等待的人很多，请过一会儿再试。",
       NAME_TAKEN: "同名的人太多了，请在名字后面加上姓氏的第一个字母。",
+      ROOM_DISABLED: "这间教室目前停用。请向老师确认。",
     } as Record<string, string>,
   },
 };

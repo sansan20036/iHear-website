@@ -25,7 +25,7 @@ import {
 // that are the rooms' links now.
 
 type Person = { request: string; name: string; at: string; code?: string | null; presence?: "in" | "out" | null };
-type Room = { id: string; label: string; linkGeneration: number; capacity: number; recording?: { on: boolean; available: boolean }; lesson: { lessonId: string; endsAt: string } | null; waiting: Person[]; inRoom: Person[] };
+type Room = { id: string; label: string; linkGeneration: number; capacity: number; recording?: { on: boolean; available: boolean }; disabled?: boolean; lesson: { lessonId: string; endsAt: string } | null; waiting: Person[]; inRoom: Person[] };
 type Shown = { room: string; link: string } | null;
 // One list of links being gathered: the rooms it is about (asked, by name), each link's version
 // before the first change (baseline), the newest link received per room (made), where each room
@@ -57,6 +57,8 @@ const ERRORS: Record<string, string> = {
   INVALID_SWITCH: "請選擇開啟或關閉。",
   RECORDING_NOT_AVAILABLE: "這個網站目前沒有開啟固定教室的錄影。",
   RECORDING_MAY_BE_ON: "這間教室可能正在錄影：請先結束這次上課，再關閉錄影。",
+  ROOM_DISABLED: "這間教室停用中，不能讓人進來。要使用請先重新啟用。",
+  LESSON_IN_PROGRESS: "這間教室正在上課：請先結束這次上課，再停用。",
   NOT_SENT: "無法連線到伺服器，沒有送出任何變更。請確認網路後再試一次。",
   OUTCOME_UNKNOWN: "沒有收到伺服器的結果（連線中斷、逾時或伺服器錯誤）。伺服器可能已經改了其中一部分：請看下面每間教室的狀態。系統不會自己再送一次。",
   CHECK_FAILED: "無法連線到伺服器，還不能確認每間教室的狀態。請確認網路後再按一次「重新確認狀態」。",
@@ -365,12 +367,16 @@ export default function FixedRoomsPage() {
         </p>
       )}
       {rooms === null ? <p>載入中…</p> : rooms.length === 0 ? <p>還沒有固定教室。</p> : visible.length === 0 ? <p data-rooms-none>沒有符合的教室。</p> : visible.map((room) => (
-        <article key={room.id} className="admin-card" data-room={room.label}>
-          <h2>{room.label}</h2>
+        <article key={room.id} className="admin-card" data-room={room.label} data-room-in-use={room.disabled ? "no" : "yes"}>
+          <h2>{room.label}{room.disabled ? "（停用中）" : ""}</h2>
           <p>{room.lesson ? `上課中，最晚到 ${time(room.lesson.endsAt)}` : "目前沒有在上課"}・教室裡 {room.inRoom.length}/{room.capacity} 人・連結第 {room.linkGeneration} 版</p>
+          {room.disabled && <p role="note" data-room-disabled>這間教室停用中：拿連結的人不能申請進入，也不能讓人進來。連結沒有改變，重新啟用後原本的連結可以再用。</p>}
           <p>
             <button type="button" disabled={busy} onClick={() => void act("replace_link", { room: room.id }, `更換「${room.label}」的連結？舊連結立刻不能再用來進教室；已經在教室裡的人不受影響。新連結只顯示一次。`)}>更換連結</button>
             {room.lesson && <button type="button" disabled={busy} onClick={() => void act("end_lesson", { room: room.id }, `結束「${room.label}」這次上課？所有人會離開，Session 會結束。`)}>結束這次上課</button>}
+            {room.disabled
+              ? <button type="button" disabled={busy} onClick={() => void act("enable", { room: room.id }, `重新啟用「${room.label}」？原本的連結會再次可以申請進入。`)}>重新啟用</button>
+              : <button type="button" disabled={busy} onClick={() => void act("disable", { room: room.id }, `停用「${room.label}」？停用後拿連結的人不能申請進入，正在等待的申請會結束，也不能讓人進來。連結不會改變，重新啟用後原本的連結可以再用。正在上課的教室不能停用：請先結束這次上課。`)}>停用這間教室</button>}
           </p>
           {room.recording?.available && (
             <p data-room-recording={room.recording.on ? "on" : "off"}>

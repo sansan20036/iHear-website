@@ -65,8 +65,9 @@ type DecisionKind = "admitted" | "declined" | "removed";
 type Decision = { kind: DecisionKind; at: number; actor: string; classLessonId: string | null; code: string | null };
 type RoomRequest = { id: string; name: string; shown: string; ticketHash: string; at: number; generation: number; decisions: Decision[] };
 type RoomLesson = { classLessonId: string; n: number; endsAt: number; ended: boolean };
-export type FixedRoom = { id: string; label: string; createdAt: number; recording: boolean; links: { generation: number; keyHash: string }[]; lessons: RoomLesson[]; requests: RoomRequest[] };
-export type RequestState = "waiting" | "admitted" | "declined" | "removed" | "expired" | "replaced" | "ended";
+export type FixedRoom = { id: string; label: string; createdAt: number; recording: boolean; disabled: boolean; lastDisabledAt: number | null; links: { generation: number; keyHash: string }[]; lessons: RoomLesson[]; requests: RoomRequest[] };
+// "closed": the person was waiting when the room was taken out of use (2026-11-21, round 7).
+export type RequestState = "waiting" | "admitted" | "declined" | "removed" | "expired" | "replaced" | "ended" | "closed";
 
 // Of decisions made at the same moment, the stricter one stands.
 const STRICTNESS: Record<DecisionKind, number> = { admitted: 0, declined: 1, removed: 2 };
@@ -82,8 +83,14 @@ function roomFrom(definition: ClassroomEvent, events: readonly ClassroomEvent[])
     list.push({ kind: event.decision as DecisionKind, at: event.occurredAt, actor: String(event.actor ?? ""), classLessonId: event.classLessonId == null ? null : String(event.classLessonId), code: event.code == null ? null : String(event.code) });
     decisions.set(String(event.requestId), list);
   }
+  // In use or not (round 7): the latest of the server's own facts; at the same moment, not in use stands.
+  const uses = [
+    ...serverFacts(own, "server.room_enabled").map((event) => ({ inUse: true, at: event.occurredAt })),
+    ...serverFacts(own, "server.room_disabled").map((event) => ({ inUse: false, at: event.occurredAt })),
+  ].sort((a, b) => a.at - b.at || Number(b.inUse) - Number(a.inUse));
   return {
-    id, label: String(definition.label), createdAt: definition.occurredAt, recording: roomRecordingOn(own),
+    id, label: String(definition.label), createdAt: definition.occurredAt, recording: roomRecordingOn(own), disabled: uses.length > 0 && !uses.at(-1)!.inUse,
+    lastDisabledAt: uses.filter((use) => !use.inUse).at(-1)?.at ?? null,
     links: serverFacts(own, "server.room_link").map((event) => ({ generation: Number(event.generation), keyHash: String(event.keyHash) })).sort((a, b) => a.generation - b.generation),
     lessons: serverFacts(own, "server.room_lesson").map((event) => ({ classLessonId: String(event.classLessonId), n: Number(event.n), endsAt: Number(event.endsAt), ended: ended.has(String(event.classLessonId)) })).sort((a, b) => a.n - b.n),
     requests: serverFacts(own, "server.room_request").map((event) => ({
@@ -108,6 +115,9 @@ export function requestState(room: FixedRoom, request: RoomRequest, now: number)
     const lesson = room.lessons.find((entry) => entry.classLessonId === decision.classLessonId);
     return lesson && !lesson.ended && now < lesson.endsAt ? "admitted" : "ended";
   }
+  // Waiting when the room was taken out of use: closed, and still closed once it is back in use (their
+  // page has said so and stopped waiting; letting them in later would let in nobody).
+  if (room.disabled || (room.lastDisabledAt != null && request.at <= room.lastDisabledAt)) return "closed";
   if (request.generation !== room.links.at(-1)?.generation) return "replaced";
   return now - request.at < REQUEST_TTL_MS ? "waiting" : "expired";
 }
@@ -135,6 +145,9 @@ export async function requestEntry({ store, roomId, key, name, now }: { store: C
     // no link of this room is the same as no room at all.
     return room.links.some((link) => link.keyHash === keyHash) ? refused(410, "LINK_REPLACED", "This link was replaced; ask your teacher for the new one") : refused(404, "NOT_FOUND", "Not found");
   }
+  // Only someone holding the room's current link learns that it is out of use; anyone else still
+  // gets "not found" above.
+  if (room.disabled) return refused(409, "ROOM_DISABLED", "This classroom is not in use now; please check with your teacher");
   const clean = entryNameOf(name);
   if (!clean) return refused(400, "INVALID_NAME", "Enter your first name in English letters");
   const present = inRoom(room, now), queued = waiting(room, now);
@@ -215,6 +228,7 @@ async function admit({ store, roomId, requestId, actor, now }: { store: Classroo
     const room = await readRoom(store, roomId);
     const request = room?.requests.find((entry) => entry.id === requestId);
     if (!room || !request) return refused(404, "NO_SUCH_REQUEST", "No such person");
+    if (room.disabled) return refused(409, "ROOM_DISABLED", "This room is not in use: nobody is let in");
     const state = requestState(room, request, now);
     if (state !== "waiting") return refused(409, "NOT_WAITING", `This person is not waiting (${state})`);
     if (inRoom(room, now).length >= FIXED_ROOM_CAPACITY) return refused(409, "ROOM_FULL", `The room is full (${FIXED_ROOM_CAPACITY})`);
@@ -305,7 +319,21 @@ async function endLesson({ store, provider, drive, room, actor, now }: { store: 
   return { status: 200, body: { ok: true, ended: last.classLessonId } };
 }
 
-export const FIXED_ROOM_ACTIONS = ["create", "replace_link", "admit", "decline", "remove", "end_lesson", "set_recording"] as const;
+// A room taken out of use, or back into use (round 7, 2026-11-21). Out of use: its link stays the
+// same, but nobody can ask to come in (the holder of its current link is told it is not in use),
+// people waiting are closed out, and nobody is let in. Refused while a lesson is open: the iHear
+// teacher ends that lesson first (what should happen to people in class is a decision not made
+// here). Back in use: the same link works again. A lesson opened at the very moment the room is taken
+// out of use is not ended by it: those people stay until it ends; nobody new comes in.
+async function setInUse({ store, room, inUse, actor, now }: { store: ClassroomStore; room: FixedRoom; inUse: boolean; actor: string; now: number }) {
+  if (inUse === !room.disabled) return { status: 200, body: { ok: true, inUse, unchanged: true } };
+  if (!inUse && currentLesson(room, now)) return refused(409, "LESSON_IN_PROGRESS", "A lesson is open in this room: end it first, then take the room out of use");
+  const type = inUse ? "server.room_enabled" : "server.room_disabled";
+  await remember(store, [{ source: "server", type, lessonId: room.id, roomId: room.id, actor, occurredAt: now, receivedAt: now, key: `${type}:${room.id}:${now}:${randomUUID()}` }]);
+  return { status: 200, body: { ok: true, inUse } };
+}
+
+export const FIXED_ROOM_ACTIONS = ["create", "replace_link", "admit", "decline", "remove", "end_lesson", "set_recording", "disable", "enable"] as const;
 export type FixedRoomAction = (typeof FIXED_ROOM_ACTIONS)[number];
 
 // What an owner does with the fixed rooms (the iHear teacher, signed in). The route checks the
@@ -324,6 +352,7 @@ export async function manageFixedRoom({ store, provider, drive, principal, actio
   if (action === "replace_link") return replaceLink({ store, room, actor, now });
   if (action === "end_lesson") return endLesson({ store, provider, drive, room, actor, now });
   if (action === "set_recording") return setRecording({ store, room, on: input.on, actor, now });
+  if (action === "disable" || action === "enable") return setInUse({ store, room, inUse: action === "enable", actor, now });
   const requestId = String(input.request ?? "");
   if (action === "admit") return admit({ store, roomId: room.id, requestId, actor, now });
   return decide({ store, roomId: room.id, requestId, kind: action === "decline" ? "declined" : "removed", actor, now });
@@ -356,6 +385,7 @@ export async function fixedRoomsView({ store, now }: { store: ClassroomStore; no
     return {
       id: room.id, label: room.label, createdAt: iso(room.createdAt), linkGeneration: room.links.at(-1)?.generation ?? 0, capacity: FIXED_ROOM_CAPACITY,
       recording: { on: room.recording, available: fixedRoomRecordingEnabled() },
+      disabled: room.disabled,
       lesson: lesson ? { lessonId: lesson.classLessonId, endsAt: iso(lesson.endsAt) } : null,
       waiting: waiting(room, now).map((request) => ({ request: request.id, name: request.shown, at: iso(request.at) })),
       inRoom: inRoom(room, now).map((request) => {

@@ -471,4 +471,48 @@ describe("recording in a fixed room", () => {
     const folder = fake.ensureFolder(fake.ensureFolder(fake.rootFolderId, Core.monthlyFolderName(lesson.date)), r.label);
     expect((await fake.listNames(folder)).sort()).toEqual([`${r.label}_2026-12-10 1002_Ann-Kyle.mp4`, `${r.label}_2026-12-10 1035_Ann-Kyle.mp4`]);
   });
+// Round 7 (2026-11-21): a room taken out of use and back.
+  test("FR-D1: only an owner takes a room out of use or back; the holder of its current link is told it is not in use, anyone else still gets not found; people waiting are closed out for good and nobody is let in; back in use, the same link works for new requests; the page says it in three languages", async () => {
+    const r = await room();
+    const before = await ask(r, "Ann");
+    expect(before.status).toBe(200);
+    expect((await manage("disable", { room: r.id }, { principal: { email: "staff@example.test", owner: false } })).body.code).toBe("OWNER_REQUIRED");
+    expect((await manage("disable", { room: r.id }, { principal: null })).body.code).toBe("OWNER_REQUIRED");
+    expect((await view(r)).disabled).toBe(false);
+    expect((await manage("disable", { room: r.id })).body).toMatchObject({ ok: true, inUse: false });
+    expect((await manage("disable", { room: r.id })).body).toMatchObject({ ok: true, inUse: false, unchanged: true });
+    expect((await view(r)).disabled).toBe(true);
+    expect((await ask(r, "Bo")).body.code).toBe("ROOM_DISABLED");
+    expect((await ask(r, "Bo", { key: "not-this-rooms-key" })).status).toBe(404);
+    expect((await status(r, before)).body.state).toBe("closed");
+    expect((await manage("admit", { room: r.id, request: before.body.requestId })).body.code).toBe("ROOM_DISABLED");
+    expect((await view(r)).waiting).toEqual([]);
+    const later = START + MIN;
+    expect((await manage("enable", { room: r.id }, { now: later })).body).toMatchObject({ ok: true, inUse: true });
+    expect((await view(r, later)).disabled).toBe(false);
+    // The request from before stays closed (its page has stopped waiting); a new one waits and enters.
+    expect((await status(r, before, later)).body.state).toBe("closed");
+    expect((await manage("admit", { room: r.id, request: before.body.requestId }, { now: later })).body.code).toBe("NOT_WAITING");
+    const again = await ask(r, "Ann", { now: later });
+    expect(again.status).toBe(200);
+    expect((await manage("admit", { room: r.id, request: again.body.requestId }, { now: later })).status).toBe(200);
+    expect((await status(r, again, later)).body.state).toBe("admitted");
+    const { ROOM_COPY } = await import("../app/classroom/r/[roomId]/room-copy");
+    for (const [language, text] of Object.entries(ROOM_COPY)) {
+      expect(text.states.closed, language).toBeTruthy();
+      expect(text.reasons.ROOM_DISABLED, language).toBeTruthy();
+    }
+  });
+
+  test("FR-D2: a room with a lesson open is not taken out of use (the teacher ends the lesson first) and nobody in it is moved; once the lesson has ended it is; a room that does not exist is said so", async () => {
+    const r = await room();
+    const asked = await ask(r, "Cy");
+    expect((await manage("admit", { room: r.id, request: asked.body.requestId })).status).toBe(200);
+    expect((await manage("disable", { room: r.id })).body.code).toBe("LESSON_IN_PROGRESS");
+    expect((await view(r)).disabled).toBe(false);
+    expect((await status(r, asked)).body.state).toBe("admitted");
+    expect((await manage("end_lesson", { room: r.id }, { now: START + MIN })).status).toBe(200);
+    expect((await manage("disable", { room: r.id }, { now: START + 2 * MIN })).body).toMatchObject({ ok: true, inUse: false });
+    expect((await manage("enable", { room: `FR-${"0".repeat(32)}` })).body.code).toBe("NO_SUCH_ROOM");
+  });
 });
