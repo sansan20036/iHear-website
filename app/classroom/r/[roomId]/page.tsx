@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { fixedRoomsEnabled, ROOM_ID } from "../../../../lib/classroom-fixed-rooms";
 import RoomDoor from "./room-door";
 import "../../[lessonId]/classroom.css";
-import "../../join/join.css";
+import "./room-door.css";
 
 export const dynamic = "force-dynamic";
 
