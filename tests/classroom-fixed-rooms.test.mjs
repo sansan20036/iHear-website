@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { readAllBeforeWriting } from "./helpers/read-before-write.mjs";
 
 // Classroom 3.0 round 3 (2026-11-21): fixed classroom links on the server, with the file store and a
 // scripted stand-in for Zoom. A link and a typed name never let anyone in by themselves: a person
@@ -514,5 +515,44 @@ describe("recording in a fixed room", () => {
     expect((await manage("end_lesson", { room: r.id }, { now: START + MIN })).status).toBe(200);
     expect((await manage("disable", { room: r.id }, { now: START + 2 * MIN })).body).toMatchObject({ ok: true, inUse: false });
     expect((await manage("enable", { room: `FR-${"0".repeat(32)}` })).body.code).toBe("NO_SUCH_ROOM");
+  });
+
+  // Round 8 (2026-11-21): two owners pressing at the same moment, made so: both read before either
+  // writes (tests/helpers/read-before-write.mjs). Before, nothing tested this path on its own: the
+  // PostgreSQL case only hoped two calls would overlap, and on 11/21 they did not.
+  test("FR-C1: two link replacements that both read before either writes give one new link, the other told it changed; two rooms of one name made together give one room; two bulk link lists at once give each room one new link and the other told it changed", async () => {
+    const act = (on, action, input) => rooms.manageFixedRoom({ store: on, provider, drive, principal: OWNER, action, input, now: START });
+    const bulk = (on, action, input) => rooms.manageFixedRoomsBulk({ store: on, principal: OWNER, action, input, now: START });
+    const r = await room();
+    const [a, b] = readAllBeforeWriting([store, store]);
+    const twice = await Promise.all([act(a, "replace_link", { room: r.id }), act(b, "replace_link", { room: r.id })]);
+    expect(twice.map(answer => answer.status).sort()).toEqual([200, 409]);
+    expect(twice.find(answer => answer.status === 409).body.code).toBe("CHANGED_CONCURRENTLY");
+    const winner = twice.find(answer => answer.status === 200).body;
+    expect(winner.generation).toBe(2);
+    expect((await ask(r, "Hal", { key: keyOf(winner.link) })).status).toBe(200);
+    expect((await ask(r, "Ida")).body.code).toBe("LINK_REPLACED");
+    expect((await view(r)).linkGeneration).toBe(2);
+
+    made += 1;
+    const label = `Twin ${made}`;
+    const [c, d] = readAllBeforeWriting([store, store]);
+    const pair = await Promise.all([act(c, "create", { label }), act(d, "create", { label })]);
+    expect(pair.map(answer => answer.status).sort()).toEqual([201, 409]);
+    expect(pair.find(answer => answer.status === 409).body.code).toBe("LABEL_TAKEN");
+    expect((await rooms.fixedRoomsView({ store, now: START })).filter(entry => entry.label === label)).toHaveLength(1);
+
+    const many = await bulk(store, "create_many", { prefix: `Pair${made}x`, from: 1, to: 6 });
+    expect(many.status).toBe(201);
+    const ids = many.body.rooms.map(entry => entry.id);
+    const [e, f] = readAllBeforeWriting([store, store]);
+    const both = await Promise.all([bulk(e, "export_links", { rooms: ids }), bulk(f, "export_links", { rooms: ids })]);
+    for (const answer of both) expect(answer.status).toBe(200);
+    const links = both.flatMap(answer => answer.body.links);
+    const failed = both.flatMap(answer => answer.body.failed);
+    expect([links.length, failed.length]).toEqual([6, 6]);
+    expect(new Set(links.map(entry => entry.room)).size).toBe(6);
+    expect(new Set(links.map(entry => entry.generation))).toEqual(new Set([2]));
+    expect(new Set(failed.map(entry => entry.code))).toEqual(new Set(["CHANGED_CONCURRENTLY"]));
   });
 });

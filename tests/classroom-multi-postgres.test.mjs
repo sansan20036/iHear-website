@@ -10,6 +10,7 @@ import { createClassroomLesson, joinClassroom } from '../lib/classroom-service';
 import { manageFixedRoom, manageFixedRoomsBulk, requestEntry, requestStatus } from '../lib/classroom-fixed-rooms';
 import { createPostgresClassroomStore } from '../lib/classroom-store';
 import { buildSessionTokenClaims, signSessionToken } from '../tools/recording-pathway/classroom/eligibility.mjs';
+import { readAllBeforeWriting } from './helpers/read-before-write.mjs';
 
 // P3-Multi (2026-11-09): 029 (db/migrations) applied on top of migration 028, on a localhost-only
 // disposable PostgreSQL created and removed by this test. It never loads .env, uses an inherited
@@ -206,8 +207,11 @@ describe('draft 029 on PostgreSQL', () => {
 
   // Round 7 (2026-11-21): a room taken out of use and back, the same room changed twice at the same
   // moment from separate connections, and rooms made and their links given again in bulk, at once
-  // from two connections.
-  test('FR-PG2: on PostgreSQL a room out of use closes its waiting requests for good and takes new ones once back; two link replacements at once give one link; 30 rooms made in bulk, then all their links given twice at once: each room one new link, the other told it changed', async () => {
+  // from two connections. Round 8: "at the same moment" is made so (both read before either
+  // writes): two calls started together on PostgreSQL ran one after the other on 11/21, which is two
+  // replacements, both rightly made; the case then also runs without the gate and holds what must
+  // hold whatever the timing (never two links of one generation).
+  test('FR-PG2: on PostgreSQL a room out of use closes its waiting requests for good and takes new ones once back; two link replacements that both read before either writes give one link, the other told it changed; whatever the timing, never two links of one generation; 30 rooms in bulk, then all their links given twice at once (both read first): each room one new link, the other told it changed', async () => {
     vi.stubEnv('CLASSROOM_FIXED_ROOMS', 'on');
     try {
       const now = Date.parse('2026-12-24T08:00:00Z');
@@ -231,13 +235,27 @@ describe('draft 029 on PostgreSQL', () => {
       const [{ count: uses }] = await sql`SELECT count(*)::int AS count FROM public.classroom_events WHERE lesson_id = ${roomId} AND type IN ('server.room_disabled', 'server.room_enabled')`;
       expect(uses).toBe(2);
 
-      // Two replacements of one room's link at the same moment, from two connections.
-      const twice = await Promise.all([act('replace_link', { room: roomId }, now + 2 * MIN, parallel), act('replace_link', { room: roomId }, now + 2 * MIN)]);
+      // Two replacements of one room's link at the same moment, from two connections: both read the
+      // room before either writes, as two owners pressing together.
+      const [first, second] = readAllBeforeWriting([parallel, store]);
+      const twice = await Promise.all([act('replace_link', { room: roomId }, now + 2 * MIN, first), act('replace_link', { room: roomId }, now + 2 * MIN, second)]);
       expect(twice.map(answer => answer.status).sort()).toEqual([200, 409]);
       expect(twice.find(answer => answer.status === 409).body.code).toBe('CHANGED_CONCURRENTLY');
       const winner = twice.find(answer => answer.status === 200).body.link;
       expect((await requestEntry({ store, roomId, key: keyOf(winner), name: 'Cy', now: now + 2 * MIN })).status).toBe(200);
       expect((await requestEntry({ store, roomId, key: keyOf(made.body.link), name: 'Di', now: now + 2 * MIN })).body.code).toBe('LINK_REPLACED');
+      // The same without the gate, whatever the timing: two made are two replacements one after the
+      // other (different generations); a refusal is only "changed"; the newest link is the one that works.
+      const loose = await Promise.all([act('replace_link', { room: roomId }, now + 3 * MIN, parallel), act('replace_link', { room: roomId }, now + 3 * MIN)]);
+      const madeNow = loose.filter(answer => answer.status === 200);
+      expect(madeNow.length).toBeGreaterThanOrEqual(1);
+      expect(new Set(madeNow.map(answer => answer.body.generation)).size).toBe(madeNow.length);
+      for (const answer of loose.filter(entry => entry.status !== 200)) expect(answer.body.code).toBe('CHANGED_CONCURRENTLY');
+      const newest = madeNow.reduce((a, b) => (a.body.generation > b.body.generation ? a : b));
+      expect((await requestEntry({ store, roomId, key: keyOf(newest.body.link), name: 'Eve', now: now + 3 * MIN })).status).toBe(200);
+      for (const older of [winner, ...madeNow.filter(answer => answer !== newest).map(answer => answer.body.link)]) {
+        expect((await requestEntry({ store, roomId, key: keyOf(older), name: 'Gus', now: now + 3 * MIN })).body.code).toBe('LINK_REPLACED');
+      }
 
       // 30 rooms in bulk; then every link given again twice at once, from two connections.
       const bulk = (action, input, on = store) => manageFixedRoomsBulk({ store: on, principal: owner, action, input, now: now + 3 * MIN });
@@ -246,7 +264,8 @@ describe('draft 029 on PostgreSQL', () => {
       expect(many.body.rooms).toHaveLength(30);
       expect([many.body.failed, many.body.unknown, many.body.notAttempted]).toEqual([[], [], []]);
       const ids = many.body.rooms.map(room => room.id);
-      const both = await Promise.all([bulk('export_links', { rooms: ids }, parallel), bulk('export_links', { rooms: ids })]);
+      const [one, other] = readAllBeforeWriting([parallel, store]);
+      const both = await Promise.all([bulk('export_links', { rooms: ids }, one), bulk('export_links', { rooms: ids }, other)]);
       for (const answer of both) expect(answer.status).toBe(200);
       const links = both.flatMap(answer => answer.body.links);
       const failed = both.flatMap(answer => answer.body.failed);
