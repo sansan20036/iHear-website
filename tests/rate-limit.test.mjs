@@ -79,3 +79,22 @@ describe("rate-limit privacy and responses", () => {
     expect(response.headers.get("retry-after")).toBeNull();
   });
 });
+
+// Hotfix (2026-11-21): the counting statements on PostgreSQL never set updated_at before the window's
+// start (migration 009 checks updated_at >= window_started_at; a refused row was answered 503 although
+// within its allowance). The verification script runs the same statement as the site.
+describe("rate-limit counting statements keep the table's timestamp order", () => {
+  test("every ON CONFLICT ... DO UPDATE sets updated_at = GREATEST(NOW(), window_started_at), never NOW() alone, in the limiter and in the verification script", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const limiter = await readFile("lib/rate-limit.ts", "utf8");
+    const verifier = await readFile("scripts/verify-rate-limit.mjs", "utf8");
+    const kept = /updated_at = GREATEST\(NOW\(\), public\.api_rate_limits\.window_started_at\)/g;
+    expect(limiter.match(kept)).toHaveLength(2);
+    expect(verifier.match(kept)).toHaveLength(1);
+    for (const [name, text] of [["lib/rate-limit.ts", limiter], ["scripts/verify-rate-limit.mjs", verifier]]) {
+      const updates = text.split("ON CONFLICT (bucket_key) DO UPDATE SET").slice(1);
+      expect(updates.length, name).toBeGreaterThan(0);
+      for (const update of updates) expect(update.slice(0, update.indexOf("RETURNING")), name).not.toMatch(/updated_at = NOW\(\)/);
+    }
+  });
+});

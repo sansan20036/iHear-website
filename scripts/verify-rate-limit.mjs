@@ -46,7 +46,8 @@ async function consume(client) {
         THEN 1
         ELSE public.api_rate_limits.request_count + 1
       END,
-      updated_at = NOW()
+      -- The same statement as lib/rate-limit.ts: never before the window's start.
+      updated_at = GREATEST(NOW(), public.api_rate_limits.window_started_at)
     RETURNING
       request_count,
       window_started_at + (${windowSeconds} * INTERVAL '1 second') AS reset_at

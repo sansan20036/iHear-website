@@ -147,7 +147,11 @@ async function consumeShared(bucketKey: string, options: RateLimitOptions) {
         THEN 1
         ELSE public.api_rate_limits.request_count + 1
       END,
-      updated_at = NOW()
+      -- NOW() is when this statement's transaction began. Server instances counting one bucket at
+      -- once (each with its own connection), or a database clock that steps back, can leave the
+      -- window starting after that moment; updated_at never goes before the window's start (the
+      -- table's timestamp-order check), or a request within its allowance would be refused (503).
+      updated_at = GREATEST(NOW(), public.api_rate_limits.window_started_at)
     RETURNING
       request_count,
       window_started_at + (${options.windowSeconds} * INTERVAL '1 second') AS reset_at
@@ -270,7 +274,8 @@ export async function enforceRateLimits(request: Request, buckets: RateLimitOpti
             THEN 1
             ELSE public.api_rate_limits.request_count + 1
           END,
-          updated_at = NOW()
+          -- Never before the window's start (see consumeShared).
+          updated_at = GREATEST(NOW(), public.api_rate_limits.window_started_at)
         RETURNING
           bucket_key,
           request_count,
