@@ -26,6 +26,29 @@ describe("whole links never end up in test pictures or in the repository", () =>
     expect(shown).toEqual(["app/admin/classrooms/blocks/page.tsx", "app/admin/classrooms/page.tsx", "app/admin/classrooms/rooms/page.tsx", "app/admin/classrooms/schedule/page.tsx", "app/auth-error/auth-error-client.tsx"]);
   });
 
+  test("TA-3: a check that fails while a link is in an error message leaves no key: every classroom check writes its report through redactLinks and ends a failure through withoutLinkKeys", async () => {
+    const { redactLinks, withoutLinkKeys } = await import("./helpers/academy-smoke.mjs");
+    const key = "mPSwoqLycXbmNDYCtoJjEBMM0dZYCtIrNb0fbASP_rY";
+    expect(redactLinks(`navigating to "http://localhost:3242/classroom/L-1#k=${key}"`)).toBe('navigating to "http://localhost:3242/classroom/L-1#k=[redacted]"');
+    expect(redactLinks(`/classroom/r/FR-1?k=${key}&k=${key} ticket=${key}`)).toBe("/classroom/r/FR-1?k=[redacted]&k=[redacted] ticket=[redacted]");
+    expect(redactLinks("a test word #k=new stays")).toBe("a test word #k=new stays");
+    // What Playwright throws when a page does not load: the address in the message, the call log apart.
+    const timeout = Object.assign(new Error(`page.goto: Timeout 15000ms exceeded.\n  - navigating to "http://localhost:3242/classroom/L-1#k=${key}"`), { name: "TimeoutError", log: [`  - navigating to "http://localhost:3242/classroom/L-1#k=${key}"`] });
+    const clean = withoutLinkKeys(timeout);
+    expect(clean.message).toContain("#k=[redacted]");
+    expect(clean.message).not.toContain(key);
+    expect(clean.stack).not.toContain(key);
+    expect(Object.keys(clean)).toEqual([]);
+    const checks = (await readdir("tests")).filter((name) => /^classroom.*\.smoke\.mjs$/.test(name));
+    for (const name of checks) {
+      const text = await readFile(`tests/${name}`, "utf8");
+      const writes = (text.match(/JSON\.stringify\(report, null, 2\)/g) ?? []).length;
+      expect(writes, name).toBeGreaterThan(0);
+      expect((text.match(/redactLinks\(JSON\.stringify\(report, null, 2\)\)/g) ?? []).length, name).toBe(writes);
+      expect(text, name).not.toMatch(/throw failure\b|console\.error\(failure\)/);
+    }
+  });
+
   test("TA-2: no file the repository holds carries a whole link's key (behind #k= or ?k=)", () => {
     let found = "";
     try {

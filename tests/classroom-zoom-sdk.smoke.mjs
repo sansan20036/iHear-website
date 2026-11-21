@@ -8,7 +8,7 @@
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { chromium, expect } from '@playwright/test';
-import { screenshotSafely, setSession, startAcademyServer } from './helpers/academy-smoke.mjs';
+import { redactLinks, withoutLinkKeys, screenshotSafely, setSession, startAcademyServer } from './helpers/academy-smoke.mjs';
 
 const secret = 'classroom-zoom-sdk-local-only-not-production';
 const owner = 'zoom-owner@example.test', tutor = 'zoom-tutor@example.test';
@@ -129,9 +129,9 @@ try {
   await browser?.close();
   server.child.kill();
   report.finishedAt = new Date().toISOString();
-  await writeFile(path.join(directory, 'report.json'), `${JSON.stringify(report, null, 2)}\n`);
+  await writeFile(path.join(directory, 'report.json'), `${redactLinks(JSON.stringify(report, null, 2))}\n`);
   console.log(`Zoom files requested from ${ZOOM_FILES}: ${report.zoomFiles.length}; outside requests refused: ${report.blocked.length}`);
   for (const url of [...new Set(report.blocked.map(url => new URL(url).origin))]) console.log(`  refused: ${url}`);
   console.log(`Report: ${path.join(directory, 'report.json')}`);
 }
-if (failure) { console.error(failure); process.exit(1); }
+if (failure) { console.error(withoutLinkKeys(failure)); process.exit(1); }

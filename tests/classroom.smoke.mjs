@@ -7,7 +7,7 @@ import { createHmac } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { chromium, expect } from '@playwright/test';
-import { screenshotSafely, localContext, noHorizontalOverflow, startAcademyServer } from './helpers/academy-smoke.mjs';
+import { redactLinks, withoutLinkKeys, screenshotSafely, localContext, noHorizontalOverflow, startAcademyServer } from './helpers/academy-smoke.mjs';
 
 const secret = 'classroom-local-acceptance-only-not-production';
 const webhookSecret = 'classroom-webhook-local-acceptance-only';
@@ -789,9 +789,9 @@ try {
   console.error(server.logs().slice(-4000));
 } finally {
   report.finishedAt = new Date().toISOString();
-  await writeFile(path.join(directory, 'report.json'), `${JSON.stringify(report, null, 2)}\n`);
+  await writeFile(path.join(directory, 'report.json'), `${redactLinks(JSON.stringify(report, null, 2))}\n`);
   await browser?.close();
   server.child.kill();
   console.log(`Classroom evidence (synthetic): ${directory}`);
 }
-if (failure) throw failure;
+if (failure) throw withoutLinkKeys(failure);

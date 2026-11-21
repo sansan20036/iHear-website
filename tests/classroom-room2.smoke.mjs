@@ -9,7 +9,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { chromium, devices, expect } from '@playwright/test';
-import { screenshotSafely, localContext, startAcademyServer } from './helpers/academy-smoke.mjs';
+import { redactLinks, withoutLinkKeys, screenshotSafely, localContext, startAcademyServer } from './helpers/academy-smoke.mjs';
 
 const secret = 'classroom-room2-local-only-not-production';
 const owner = 'room2-owner@example.test', tutor = 'room2-tutor@example.test';
@@ -580,9 +580,9 @@ try {
   report.error = error.message;
 } finally {
   report.finishedAt = new Date().toISOString();
-  await writeFile(path.join(shots, 'report.json'), `${JSON.stringify(report, null, 2)}\n`);
+  await writeFile(path.join(shots, 'report.json'), `${redactLinks(JSON.stringify(report, null, 2))}\n`);
   await browser?.close();
   server.child.kill();
   console.log(`Report and screenshots: ${shots}`);
 }
-if (failure) throw failure;
+if (failure) throw withoutLinkKeys(failure);

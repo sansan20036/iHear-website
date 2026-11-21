@@ -8,7 +8,7 @@ import { createHmac } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { chromium, expect as playwrightExpect } from '@playwright/test';
-import { screenshotSafely, localContext, setSession, startAcademyServer } from './helpers/academy-smoke.mjs';
+import { redactLinks, withoutLinkKeys, screenshotSafely, localContext, setSession, startAcademyServer } from './helpers/academy-smoke.mjs';
 
 // A member's page learns of a move, a recall, a revoke or the end of the block on its next
 // question to the server: up to 8 s (waiting) plus 0.5 s of jitter plus the request itself
@@ -345,9 +345,9 @@ try {
   console.error(server.logs().slice(-4000));
 } finally {
   report.finishedAt = new Date().toISOString();
-  await writeFile(path.join(directory, 'report.json'), `${JSON.stringify(report, null, 2)}\n`);
+  await writeFile(path.join(directory, 'report.json'), `${redactLinks(JSON.stringify(report, null, 2))}\n`);
   await browser?.close();
   server.child.kill();
   console.log(`Classroom multi evidence (synthetic): ${directory}`);
 }
-if (failure) throw failure;
+if (failure) throw withoutLinkKeys(failure);

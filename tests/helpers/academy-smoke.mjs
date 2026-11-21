@@ -14,6 +14,17 @@ export const SESSION_COOKIE = 'authjs.session-token';
 export const LINK_ON_SCREEN = '.classroom-link code, [data-student-link] code, [data-room-link] code';
 export const screenshotSafely = (page, options = {}) => page.screenshot({ ...options, mask: [...(options.mask ?? []), page.locator(LINK_ON_SCREEN)] });
 
+// Round 4 (2026-11-21): a check that fails while a link is in an error message (Playwright prints the
+// address it was going to) never leaves the link's key in its report or on the console: keys behind
+// #k=, ?k=, &k= or ticket= become [redacted]. withoutLinkKeys gives a plain error with the message and
+// the stack redacted and nothing else (a Playwright error also carries its call log).
+export const redactLinks = text => String(text).replace(/([#?&]k=|\bticket=)[A-Za-z0-9_-]{8,}/g, '$1[redacted]');
+export function withoutLinkKeys(error) {
+  const clean = new Error(redactLinks(error?.message ?? error));
+  clean.stack = redactLinks(error?.stack ?? clean.stack);
+  return clean;
+}
+
 export async function startAcademyServer({ port, secret, owners, name }) {
   const origin = `http://localhost:${port}`;
   await mkdir('output/playwright', { recursive: true });

@@ -6,7 +6,7 @@ import { createHmac } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { chromium, expect } from '@playwright/test';
-import { screenshotSafely, localContext, startAcademyServer } from './helpers/academy-smoke.mjs';
+import { redactLinks, screenshotSafely, localContext, startAcademyServer } from './helpers/academy-smoke.mjs';
 
 const secret = 'classroom-controls-smoke-key-never-use-in-production';
 const webhookSecret = 'classroom-controls-webhook-local-only';
@@ -204,6 +204,6 @@ try {
   await browser?.close();
   server.child.kill();
   report.finishedAt = new Date().toISOString();
-  await writeFile(path.join(directory, 'report.json'), `${JSON.stringify(report, null, 2)}\n`);
+  await writeFile(path.join(directory, 'report.json'), `${redactLinks(JSON.stringify(report, null, 2))}\n`);
   console.log(`${report.status.toUpperCase()}: ${report.checks.filter(item => item.status === 'passed').length}/${report.checks.length} checks. Screenshots and report: ${directory}`);
 }

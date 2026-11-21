@@ -7,7 +7,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { chromium, expect } from '@playwright/test';
-import { screenshotSafely, localContext, noHorizontalOverflow, startAcademyServer } from './helpers/academy-smoke.mjs';
+import { redactLinks, withoutLinkKeys, screenshotSafely, localContext, noHorizontalOverflow, startAcademyServer } from './helpers/academy-smoke.mjs';
 
 // The release's name, read from its one source (lib/classroom-release.ts), as the pages must show it.
 const releaseSource = await readFile('lib/classroom-release.ts', 'utf8');
@@ -416,12 +416,12 @@ try {
   report.error = error.message;
 } finally {
   report.finishedAt = new Date().toISOString();
-  await writeFile(path.join(directory, 'classroom-lobby-browser-report.json'), `${JSON.stringify(report, null, 2)}\n`);
+  await writeFile(path.join(directory, 'classroom-lobby-browser-report.json'), `${redactLinks(JSON.stringify(report, null, 2))}\n`);
   await browser?.close();
   server.child.kill();
   console.log(`Report: ${path.join(directory, 'classroom-lobby-browser-report.json')}`);
 }
 if (failure) {
   console.error(server.logs().slice(-4000));
-  throw failure;
+  throw withoutLinkKeys(failure);
 }

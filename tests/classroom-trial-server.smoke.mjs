@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { chromium, expect } from '@playwright/test';
+import { redactLinks, withoutLinkKeys } from './helpers/academy-smoke.mjs';
 
 const pub = 3312, loc = 3313;
 // Browsers use "localhost", the name Next gives this computer in a request's address.
@@ -271,7 +272,7 @@ console.error(new Error('failed with ${secretValue}'));`;
   await browser?.close();
   if (child && child.exitCode === null) child.kill();
   report.finishedAt = new Date().toISOString();
-  await writeFile(path.join(work, 'report.json'), `${JSON.stringify(report, null, 2)}\n`);
+  await writeFile(path.join(work, 'report.json'), `${redactLinks(JSON.stringify(report, null, 2))}\n`);
   console.log(`Report: ${path.join(work, 'report.json')}`);
 }
-if (failure) { console.error(failure); process.exit(1); }
+if (failure) { console.error(withoutLinkKeys(failure)); process.exit(1); }

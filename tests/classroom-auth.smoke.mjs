@@ -9,7 +9,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { chromium, expect } from '@playwright/test';
-import { screenshotSafely, localContext, startAcademyServer } from './helpers/academy-smoke.mjs';
+import { redactLinks, withoutLinkKeys, screenshotSafely, localContext, startAcademyServer } from './helpers/academy-smoke.mjs';
 
 const secret = 'classroom-auth-browser-acceptance-only';
 const owner = 'auth-owner@example.test', tutor = 'auth-tutor@example.test';
@@ -300,10 +300,10 @@ try {
 } finally {
   report.finishedAt = new Date().toISOString();
   report.consoleProblems = consoleProblems;
-  await writeFile(path.join(directory, 'report.json'), `${JSON.stringify(report, null, 2)}\n`);
+  await writeFile(path.join(directory, 'report.json'), `${redactLinks(JSON.stringify(report, null, 2))}\n`);
   console.log(`timings: ${JSON.stringify(report.timings)}`);
   console.log(`report: ${path.join(directory, 'report.json')}`);
   await browser?.close();
   server.child.kill();
 }
-if (failure) throw failure;
+if (failure) throw withoutLinkKeys(failure);
