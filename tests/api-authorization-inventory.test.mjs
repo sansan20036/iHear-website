@@ -20,9 +20,7 @@ const OWN_PROTECTION = {
   'classroom/[lessonId]/status/route.ts POST': [/isSameOrigin\(/, 'classroom (closed): participant session'],
   // Classroom 2.1 (2026-11-13): the pre-class screen's read-only look at its lesson (changes nothing).
   'classroom/[lessonId]/preview/route.ts POST': [/isSameOrigin\(/, 'classroom: read-only preview by personal link or tutor session'],
-  // Classroom 3.0 (2026-11-20): the permanent entry, off unless CLASSROOM_PERMANENT_ENTRY=on; a name
-  // makes a student member in the open entry block's Lobby only (never a room).
-  'classroom/door/join/route.ts POST': [/isSameOrigin\(/, 'permanent entry (off by default): same origin, rate limit, Lobby only'],
+  // (The permanent entry's routes are not in this release: the fixed rooms replace it.)
   // Classroom 3.0 round 3 (2026-11-21): a fixed room's link, off unless CLASSROOM_FIXED_ROOMS=on. A
   // request only waits (an owner lets the person in); its status is read with the person's ticket.
   'classroom/rooms/[roomId]/door/route.ts POST': [/isSameOrigin\(/, 'fixed room (off by default): same origin, rate limit, a request that waits for an owner'],
@@ -36,8 +34,6 @@ const OWN_PROTECTION = {
 // Reads that anyone may make (published content, health, bootstraps), or that check their own caller.
 const PUBLIC_READS = new Set([
   'academy-content/route.ts GET', 'classroom/blocks/[blockId]/manage/route.ts GET', 'classroom/entry/route.ts GET',
-  // The permanent entry's state only (closed, waiting, open, locked): no block id, names or counts.
-  'classroom/door/route.ts GET',
   'classroom/my-lessons/route.ts GET', 'classroom/scheduled-tick/route.ts GET', 'content/get/route.ts GET', 'health/route.ts GET',
   'home-calendar/route.ts GET', 'live-revisions/route.ts GET', 'resource-topics/[id]/route.ts GET',
   'resource-topics/route.ts GET', 'resources/[id]/route.ts GET', 'resources/route.ts GET', 'site-layout/bootstrap/route.ts GET',
