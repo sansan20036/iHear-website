@@ -154,10 +154,13 @@ describe('hotfix on PostgreSQL: a window that starts after the counting statemen
     return instances.slice(0, count);
   };
   // Each call is counted through one instance in turn (the limiter takes its connection before its
-  // first await), all at the same moment.
+  // first await), all at the same moment. The instances are connected first, so that opening a
+  // connection on a busy computer is never part of the burst (a connection that times out is
+  // refused as unavailable, by design, and would hide what is tested here).
   const viaInstances = async (count, calls) => {
     const own = globalThis.ihearRateLimitSql;
     const pool = instancesFor(count);
+    await Promise.all(pool.map(client => client`SELECT 1`));
     try {
       return await Promise.all(calls.map((call, index) => { globalThis.ihearRateLimitSql = pool[index % count]; return call(); }));
     } finally {
