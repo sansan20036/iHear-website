@@ -63,7 +63,32 @@ const ERRORS: Record<string, string> = {
   OUTCOME_UNKNOWN: "沒有收到伺服器的結果（連線中斷、逾時或伺服器錯誤）。伺服器可能已經改了其中一部分：請看下面每間教室的狀態。系統不會自己再送一次。",
   CHECK_FAILED: "無法連線到伺服器，還不能確認每間教室的狀態。請確認網路後再按一次「重新確認狀態」。",
   RECORDING_UNKNOWN:"沒有收到伺服器的結果：錄影開關可能已經改了一部分。下面是重新讀取的每間教室的實際狀態。",
+  // Round 7 (2026-11-21): one room's change without an answer, and an activity record not written.
+  SINGLE_UNKNOWN: "沒有收到伺服器的結果（連線中斷、逾時或伺服器錯誤）：這個變更可能已經完成，也可能沒有。下面是重新讀取的狀態，請確認後再決定是否重做。系統不會自己再送一次。",
+  SINGLE_UNREAD: "沒有收到伺服器的結果，也還無法重新讀取教室的狀態：這個變更可能已經完成，也可能沒有。請確認網路後重新整理頁面，看過狀態再決定是否重做。",
+  CREATE_UNKNOWN: "沒有收到伺服器的結果。目前的清單裡沒有這間新教室：伺服器沒有建立，或還在處理。請稍等一下再看清單，確認沒有之後再建立一次。",
+  REPLACE_UNKNOWN: "沒有收到伺服器的結果。目前看來連結沒有更換（或伺服器還在處理）：請稍等一下再看一次；如果拿舊連結的人進不來，請再按一次「更換連結」。",
+  REPLACED_UNSEEN: "連結已經更換，但新的連結沒有送到這個頁面；舊連結已經不能用。請再按一次「更換連結」，取得新的連結。",
+  ACTIVITY_NOT_RECORDED: "變更已經完成，但這次操作沒有寫進操作紀錄。請通知 iHear 的技術人員：操作紀錄暫時無法寫入。",
 };
+// A room's name as the server keeps it (lib/classroom-fixed-rooms.ts), to find a room just made.
+const labelKey = (value: unknown) => String(value ?? "").normalize("NFC").trim().replace(/\s+/g, " ");
+// What one room's change without an answer turns out to be, from the rooms read again (null: they
+// could not be read). A room or link the server made but never sent is said, with what to do.
+function unknownOutcome(action: string, input: Record<string, unknown>, before: Room[] | null, now: Room[] | null): string {
+  if (!now) return ERRORS.SINGLE_UNREAD;
+  if (action === "create" && before) {
+    const known = new Set(before.map((room) => room.id));
+    const made = now.find((room) => !known.has(room.id) && labelKey(room.label) === labelKey(input.label));
+    return made ? `教室「${made.label}」已經建立，但它的連結沒有送到這個頁面（沒有人看過這個連結）。請在這間教室按「更換連結」，取得新的連結。` : ERRORS.CREATE_UNKNOWN;
+  }
+  if (action === "replace_link") {
+    const was = before?.find((room) => room.id === input.room)?.linkGeneration;
+    const is = now.find((room) => room.id === input.room)?.linkGeneration;
+    return was != null && is != null && is > was ? ERRORS.REPLACED_UNSEEN : ERRORS.REPLACE_UNKNOWN;
+  }
+  return ERRORS.SINGLE_UNKNOWN;
+}
 const PRESENCE: Record<string, string> = { in: "在教室裡（Zoom 回報）", out: "已離開（Zoom 回報）" };
 const time = (value: string) => new Date(value).toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit" });
 const problemOf = (data: { code?: string; error?: string; labels?: unknown }) => {
@@ -122,16 +147,40 @@ export default function FixedRoomsPage() {
     return () => window.removeEventListener("beforeunload", warn);
   }, [list]);
 
-  async function act(action: string, input: Record<string, unknown>, confirmText?: string) {
-    if (confirmText && !window.confirm(confirmText)) return;
+  // One change to one room; true when the server answered that it was made. No answer (the connection
+  // dropped, the time ran out) or a server error means it may or may not have been made: the rooms are
+  // read again and the page says what it finds, never sending it again by itself (round 7). A refusal
+  // (4xx) changed nothing.
+  async function act(action: string, input: Record<string, unknown>, confirmText?: string): Promise<boolean> {
+    if (confirmText && !window.confirm(confirmText)) return false;
     setBusy(true);
     setProblem("");
+    const before = rooms;
     try {
-      const response = await fetch("/api/admin/classrooms/rooms", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, ...input }) });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) setProblem(ERRORS[data?.code] ?? data?.error ?? "操作失敗。");
-      if (response.ok && typeof data?.link === "string") setShown({ room: data.room?.label ?? String(input.room ?? ""), link: data.link });
+      let response: Response | null = null;
+      let data: Record<string, unknown> = {};
+      try {
+        response = await fetch("/api/admin/classrooms/rooms", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, ...input }), signal: AbortSignal.timeout(ANSWER_WITHIN_MS) });
+        data = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+      } catch {
+        response = null;
+      }
+      if (!response || response.status >= 500) {
+        setProblem(unknownOutcome(action, input, before, await readRooms()));
+        return false;
+      }
+      if (!response.ok) {
+        setProblem(ERRORS[String(data.code ?? "")] ?? (typeof data.error === "string" ? data.error : "操作失敗。"));
+        await load();
+        return false;
+      }
+      if (typeof data.link === "string") {
+        const room = (data.room as { label?: string } | undefined)?.label ?? before?.find((entry) => entry.id === input.room)?.label ?? String(input.room ?? "");
+        setShown({ room, link: data.link });
+      }
+      if (data.activity === "not_recorded") setProblem(ERRORS.ACTIVITY_NOT_RECORDED);
       await load();
+      return true;
     } finally {
       setBusy(false);
     }
@@ -303,7 +352,7 @@ export default function FixedRoomsPage() {
     <section className="admin-panel" data-fixed-rooms>
       <h1>固定教室</h1>
       <p role="note">每間教室一個固定連結，每間最多 10 人。打開連結的人輸入英文名字後會在這裡等待，由您讓他進入。名字是自己填的，不是身分：請先用畫面、聲音或詢問認出本人。Zoom 裡顯示的是代碼，不會拿到名字。</p>
-      <form onSubmit={(event) => { event.preventDefault(); void act("create", { label }).then(() => setLabel("")); }} aria-label="建立固定教室">
+      <form onSubmit={(event) => { event.preventDefault(); void act("create", { label }).then((done) => { if (done) setLabel(""); }); }} aria-label="建立固定教室">
         <label className="admin-field"><span>教室名稱（例如 Room 1）</span><input value={label} onChange={(event) => setLabel(event.target.value)} maxLength={40} /></label>
         <button type="submit" disabled={busy || !label.trim()}>建立教室</button>
       </form>

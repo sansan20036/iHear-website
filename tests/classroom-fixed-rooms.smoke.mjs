@@ -26,8 +26,11 @@ async function check(id, name, action) {
   catch (error) { report.checks.push({ id, name, status: 'FAIL', error: error.message }); throw error; }
 }
 const context = options => localContext(browser, origin, { external: report.externalRequests, secret, locale: 'zh-TW', ...options });
-// Refusals the checks provoke on purpose (a replaced link, a revoked key) are not page problems.
-const expectedRefusal = text => /Failed to load resource: the server responded with a status of (403|409|410)/.test(text);
+// Refusals the checks provoke on purpose (a replaced link, a revoked key) are not page problems, and
+// neither is the connection R1b cuts on purpose, while it does.
+let cuttingAnswers = false;
+const expectedRefusal = text => /Failed to load resource: the server responded with a status of (403|409|410)/.test(text)
+  || (cuttingAnswers && /net::ERR_CONNECTION_FAILED/.test(text));
 function watch(page, who) {
   page.on('console', message => { if (message.type() === 'error' && !expectedRefusal(message.text())) report.pageProblems.push(`${who}: ${message.text()}`); });
   page.on('pageerror', error => report.pageProblems.push(`${who}: ${error.message}`));
@@ -56,6 +59,35 @@ try {
     await admin.reload();
     await expect(roomCard()).toBeVisible();
     await expect(admin.locator('[data-room-link]')).toHaveCount(0);
+  });
+
+  // Round 7 (2026-11-21): one room's change whose answer never arrives (the server made it).
+  await check('R1b', '建立教室時連線中斷（伺服器已經建立，頁面沒收到結果）：頁面說教室已經建立、連結沒有送到，請按「更換連結」；名稱保留、不會自己再送一次；更換後拿到新連結', async () => {
+    const api = '**/api/admin/classrooms/rooms';
+    const posts = [];
+    await admin.route(api, async route => {
+      if (route.request().method() !== 'POST') return route.continue();
+      posts.push(route.request().postDataJSON()?.action);
+      await route.fetch();
+      return route.abort('connectionfailed');
+    });
+    cuttingAnswers = true;
+    try {
+      await admin.getByLabel('教室名稱（例如 Room 1）').fill('Room 2');
+      await admin.getByRole('button', { name: '建立教室' }).click();
+      await expect(admin.getByText('教室「Room 2」已經建立，但它的連結沒有送到這個頁面（沒有人看過這個連結）。請在這間教室按「更換連結」，取得新的連結。')).toBeVisible();
+      await expect(admin.getByLabel('教室名稱（例如 Room 1）')).toHaveValue('Room 2');
+      await expect(admin.locator('[data-room="Room 2"]')).toHaveCount(1);
+      await expect(admin.locator('[data-room-link]')).toHaveCount(0);
+      expect(posts).toEqual(['create']);
+    } finally {
+      cuttingAnswers = false;
+      await admin.unroute(api);
+    }
+    await admin.locator('[data-room="Room 2"]').getByRole('button', { name: '更換連結' }).click();
+    await expect(admin.locator('[data-room-link] code')).toContainText('/classroom/r/FR-');
+    await admin.getByRole('button', { name: '我已經記下連結' }).click();
+    await admin.getByLabel('教室名稱（例如 Room 1）').fill('');
   });
 
   const kyle = watch(await (await context({})).newPage(), 'student-kyle');

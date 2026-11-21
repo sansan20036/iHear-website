@@ -50,10 +50,18 @@ export async function POST(request: Request) {
       ? await manageFixedRoomsBulk({ store: classroomStore(), principal, action, input, now: Date.now() })
       : await manageFixedRoom({ store: classroomStore(), provider, drive: classroomDrive(), principal, action, input, now: Date.now() });
     if (result.status === 200 || result.status === 201) {
-      await appendAdminActivity({
+      // Round 7 (2026-11-21): the change is made by now. An activity record that cannot be written
+      // does not hide it: the answer (which may hold a link shown this once) still goes back and says
+      // the record is missing, and the server's log names the action (never the answer). Before, the
+      // owner was told it failed, and a new room's link was lost.
+      const recorded = await appendAdminActivity({
         actorEmail: access.principal.email, actorRole: access.principal.role, action: `classroom.fixed_room_${String(action)}`, entityType: "classroom",
         entityId: String((result.body as { room?: { id?: string } }).room?.id ?? input.room ?? ""), changedFields: Object.keys(input), entityStatus: "updated", entityVersion: null,
-      });
+      }).then(() => true, () => false);
+      if (!recorded) {
+        console.error(`[classroom] fixed room change classroom.fixed_room_${String(action)} made, but its activity record could not be written`);
+        return respond({ ...(result.body as Record<string, unknown>), activity: "not_recorded" }, result.status);
+      }
     }
     return respond(result.body, result.status);
   } catch {
