@@ -9,6 +9,16 @@ export function fixedRoomOf(events: readonly ClassroomEvent[]): string | null {
   return scheduled ? String(scheduled.fixedRoomId) : null;
 }
 
+// Gate B round 10 (2026-11-22): the name a student let in as themselves shows by in Zoom and on their
+// page (one of this lesson only), never their code, which is their consent's. The latest given for
+// this code in this lesson; none: the code itself (anyone let in with a code of their own).
+export const PARTICIPANT_ALIAS = "server.participant_alias";
+export function shownCodeOf(events: readonly ClassroomEvent[], code: string): string {
+  const given = events.filter((event) => event.source === "server" && event.type === PARTICIPANT_ALIAS && event.participantCode === code && typeof event.alias === "string")
+    .sort((a, b) => a.occurredAt - b.occurredAt || String(a.key).localeCompare(String(b.key))).at(-1);
+  return given ? String(given.alias) : code;
+}
+
 // The room's own recording switch as the lesson knows it (the iHear teacher's latest choice, written
 // to the room's lesson): off unless turned on. The site's switch is checked apart.
 // The copy a new lesson starts with (copied: true) gives way to the teacher's own choice made at the

@@ -29,7 +29,7 @@ import { hashKey } from "./classroom-block-rules";
 import type { ClassroomDrive } from "./classroom-drive";
 import { distinctName, entryNameOf } from "./classroom-names";
 import type { ClassroomProvider } from "./classroom-provider";
-import { roomRecordingOn } from "./classroom-fixed-room-facts";
+import { PARTICIPANT_ALIAS, roomRecordingOn } from "./classroom-fixed-room-facts";
 import { changeLessonAccess, consentPolicy, forRules, PERSON_CODE, roomMayRecordNow, stopRecordingForCancelledLesson } from "./classroom-service";
 // @ts-ignore - shared classroom logic, plain JavaScript tested with node --test.
 import { personConsentProblem } from "../tools/recording-pathway/classroom/eligibility.mjs";
@@ -181,7 +181,9 @@ const waiting = (room: FixedRoom, now: number) => room.requests.filter((request)
 // personal key to the room's lesson. Nothing in the answer says who else is there.
 export async function requestEntry({ store, roomId, key, name, pass, now }: { store: ClassroomStore; roomId: unknown; key: unknown; name: unknown; pass?: unknown; now: number }) {
   if (!fixedRoomsEnabled()) return refused(404, "NOT_FOUND", "Not found");
-  if (typeof pass === "string" && pass) return requestWithPass({ store, roomId, pass, now });
+  // A pass counts only while the site may record fixed rooms; otherwise it is ignored and the request
+  // is what it was before Gate B (round 10 review: the same answers with the switch off).
+  if (typeof pass === "string" && pass && fixedRoomRecordingEnabled()) return requestWithPass({ store, roomId, pass, now });
   const room = await readRoom(store, roomId);
   if (!room || typeof key !== "string" || !key || !room.links.length) return refused(404, "NOT_FOUND", "Not found");
   const keyHash = hashKey(key);
@@ -316,6 +318,10 @@ async function admit({ store, roomId, requestId, bindTo, actor, now }: { store: 
     if (member && room.requests.some((entry) => entry.id !== request.id && requestState(room, entry, now) === "admitted" && latestDecision(entry)?.code === member.code)) {
       return refused(409, "ALREADY_IN_LESSON", "This student is already in the room");
     }
+    // Round 10 review: one student, one room at a time (their consent is one; their files are named once).
+    if (member && (await admissionsElsewhere(store, room.id, member.code, now)).length) {
+      return refused(409, "ALREADY_IN_ANOTHER_ROOM", "This student is in another room's lesson now");
+    }
     const classLessonId = await lessonToFill({ store, room, actor, now });
     if (!classLessonId) { await pause(100); continue; }
     const ofLesson = room.requests.filter((entry) => entry.decisions.some((decision) => decision.kind === "admitted" && decision.classLessonId === classLessonId));
@@ -323,6 +329,10 @@ async function admit({ store, roomId, requestId, bindTo, actor, now }: { store: 
     // A code of its own (random, so people let in at the same moment never take each other's).
     const code = member ? member.code : `R${room.id.slice(3, 11)}-${randomBytes(3).toString("hex")}`;
     const participant: ClassroomParticipant = { id: shortId("P"), code, role: "student", staffEmail: null, joinKeyHash: request.ticketHash };
+    // Round 10 review: in Zoom everyone shows by code, and a student's code is their consent's: a
+    // student let in as themselves shows by a name of this lesson only (the same shape as anyone's),
+    // so the others in the room never see the student's code.
+    const alias = member ? `R${room.id.slice(3, 11)}-${randomBytes(3).toString("hex")}` : null;
     // The person's row and the decision in one step: never let in without the record of who did it.
     const result = await store.addLessonParticipant({
       lessonId: classLessonId, participant, max: FIXED_ROOM_CAPACITY + removed,
@@ -330,9 +340,18 @@ async function admit({ store, roomId, requestId, bindTo, actor, now }: { store: 
         source: "server", type: "server.room_decision", lessonId: room.id, roomId: room.id, requestId, decision: "admitted", classLessonId, code, actor,
         ...(member ? { personCode: member.code, boundName: member.name, boundBy: request.personCode ? "pass" : "owner" } : {}),
         occurredAt: now, receivedAt: now, key: `server.room_decision:${room.id}:${requestId}:admitted`,
-      }],
+      }, ...(member && alias ? [{
+        source: "server", type: PARTICIPANT_ALIAS, lessonId: classLessonId, participantCode: member.code, alias,
+        occurredAt: now, receivedAt: now, key: `${PARTICIPANT_ALIAS}:${classLessonId}:${member.code}:${requestId}`,
+      }] : [])],
     });
-    if (result.ok) return { status: 200, body: { ok: true, admitted: requestId, code, ...(member ? { student: member.code } : {}) } };
+    if (result.ok) {
+      if (member) {
+        const undone = await settleBinding({ store, roomId: room.id, requestId, request, member, now });
+        if (undone) return undone;
+      }
+      return { status: 200, body: { ok: true, admitted: requestId, code, ...(member ? { student: member.code } : {}) } };
+    }
     if (result.reason === "ROOM_FULL") return refused(409, "ROOM_FULL", `The room is full (${FIXED_ROOM_CAPACITY})`);
     // A student's own code taken: let in just now by another press (the next look says so), or they
     // already have a place in this lesson (also when taken out earlier: the next lesson can let them in).
@@ -353,16 +372,47 @@ async function admit({ store, roomId, requestId, bindTo, actor, now }: { store: 
 function boundMember(room: FixedRoom, request: RoomRequest, bindTo: unknown): { member: RoomMember | null } | { refusal: ReturnType<typeof refused> } {
   const asked = typeof bindTo === "string" && bindTo ? bindTo : null;
   if (!request.personCode && !asked) return { member: null };
-  if (!fixedRoomRecordingEnabled()) {
-    // The site's switch turned off since: nothing can record, so a pass's request is let in as anyone is.
-    if (!asked) return { member: null };
-    return { refusal: refused(409, "RECORDING_NOT_AVAILABLE", "Students are bound to the room's list only where the site may record fixed rooms") };
-  }
+  // With the site's switch off nothing records: the owner's word and a pass are both ignored and the
+  // person is let in as anyone is, as before Gate B (round 10 review).
+  if (!fixedRoomRecordingEnabled()) return { member: null };
   if (request.personCode && asked && asked !== request.personCode) return { refusal: refused(409, "ALREADY_BOUND", "This request was made with another student's own pass") };
   const code = request.personCode ?? asked!;
   const member = room.members.find((entry) => entry.code === code) ?? null;
   if (!member) return { refusal: refused(request.personCode ? 409 : 404, request.personCode ? "NOT_ON_ROSTER" : "NO_SUCH_MEMBER", "This student is not on the room's list") };
   return { member };
+}
+
+// Round 10 review: the people let in as this student in other rooms' lessons now (at most one should be).
+async function admissionsElsewhere(store: ClassroomStore, roomId: string, code: string, now: number) {
+  return (await allRooms(store)).filter((other) => other.id !== roomId).flatMap((other) => other.requests
+    .filter((entry) => requestState(other, entry, now) === "admitted" && latestDecision(entry)?.code === code)
+    .map((entry) => ({ roomId: other.id, requestId: entry.id, at: latestDecision(entry)!.at })));
+}
+
+// Round 10 review: a student let in as themselves is let in on what the list said when the owner
+// pressed. Meanwhile their pass may have been reissued or they taken off the list, or another room may
+// have let the same student in at the same moment: then this admission is undone (as a decline that
+// raced an admission is) and said. Of two rooms, the earlier admission stays (the same moment: the
+// smaller request id), so exactly one does whatever the timing.
+async function settleBinding({ store, roomId, requestId, request, member, now }: { store: ClassroomStore; roomId: string; requestId: string; request: RoomRequest; member: RoomMember; now: number }) {
+  const again = await readRoom(store, roomId);
+  const mine = again?.requests.find((entry) => entry.id === requestId);
+  const decision = mine ? latestDecision(mine) : null;
+  if (!again || !mine || decision?.kind !== "admitted") return null;
+  const listed = again.members.find((entry) => entry.code === member.code);
+  let reason: "BINDING_CHANGED" | "ALREADY_IN_ANOTHER_ROOM" | null = null;
+  if (!listed || (request.personCode && listed.passHash !== request.passHash)) reason = "BINDING_CHANGED";
+  else {
+    const others = await admissionsElsewhere(store, roomId, member.code, now);
+    if (others.some((other) => other.at < decision.at || (other.at === decision.at && other.requestId < requestId))) reason = "ALREADY_IN_ANOTHER_ROOM";
+  }
+  if (!reason) return null;
+  const out = await takeOut({ store, room: again, request: mine }, now);
+  if (out && out.status !== 200) return refused(409, `${reason}_NOT_UNDONE`, "Let in on a list that changed meanwhile, and could not be taken out again: take this person out of the room");
+  await remember(store, [{ source: "server", type: "server.room_decision", lessonId: again.id, roomId: again.id, requestId, decision: "removed", actor: "server:binding-check", reason, occurredAt: now, receivedAt: now, key: `server.room_decision:${again.id}:${requestId}:removed` }]);
+  return refused(409, reason, reason === "BINDING_CHANGED"
+    ? "The student's pass was replaced, or they left the room's list, while they were let in: not let in"
+    : "The same student was let in to another room at the same moment: not let in here");
 }
 
 // Out of the room: their row gets a new id and key nobody has, and the lesson moves to a new Zoom
@@ -470,9 +520,14 @@ async function addMember({ store, room, code, name, actor, now }: { store: Class
   if (!first) return refused(400, "INVALID_NAME", "Enter the student's first name in English letters");
   if (room.members.some((entry) => entry.code.toLowerCase() === clean.toLowerCase())) return refused(409, "MEMBER_EXISTS", "This student is on the room's list already");
   if (room.members.length >= ROSTER_MAX) return refused(409, "ROSTER_FULL", `At most ${ROSTER_MAX} students on a room's list`);
+  // Round 10 review: one code is one student across the rooms (one consent, one name on files): on
+  // another room's list it must be the very same code with the same name.
+  const elsewhere = (await allRooms(store)).filter((other) => other.id !== room.id).flatMap((other) => other.members.map((entry) => ({ entry, label: other.label })))
+    .find(({ entry }) => entry.code.toLowerCase() === clean.toLowerCase() && (entry.code !== clean || entry.name !== first));
+  if (elsewhere) return refused(409, "CODE_NAME_MISMATCH", `This code is on the list of ${elsewhere.label} as ${elsewhere.entry.code} ${elsewhere.entry.name}: one code is one student`);
   const pass = randomBytes(32).toString("base64url");
   if (!(await changeRoster({ store, room, fact: { type: "server.room_member", code: clean, name: first, passHash: hashKey(pass) }, actor, now }))) {
-    return refused(409, "CHANGED_CONCURRENTLY", "The room's list just changed; look again");
+    return refused(409, "ROSTER_CHANGED", "The room's list just changed; look again");
   }
   return { status: 201, body: { ok: true, member: { code: clean, name: first }, passLink: passLinkOf(room.id, pass) } };
 }
@@ -486,7 +541,7 @@ async function reissuePass({ store, room, code, actor, now }: { store: Classroom
   if (!member) return refused(404, "NO_SUCH_MEMBER", "This student is not on the room's list");
   const pass = randomBytes(32).toString("base64url");
   if (!(await changeRoster({ store, room, fact: { type: "server.room_member", code: member.code, name: member.name, passHash: hashKey(pass) }, actor, now }))) {
-    return refused(409, "CHANGED_CONCURRENTLY", "The room's list just changed; look again");
+    return refused(409, "ROSTER_CHANGED", "The room's list just changed; look again");
   }
   return { status: 200, body: { ok: true, member: { code: member.code, name: member.name }, passLink: passLinkOf(room.id, pass) } };
 }
@@ -498,13 +553,17 @@ async function removeMember({ store, room, code, actor, now }: { store: Classroo
   const member = memberOf(room, code);
   if (!member) return refused(404, "NO_SUCH_MEMBER", "This student is not on the room's list");
   if (!(await changeRoster({ store, room, fact: { type: "server.room_member_removed", code: member.code }, actor, now }))) {
-    return refused(409, "CHANGED_CONCURRENTLY", "The room's list just changed; look again");
+    return refused(409, "ROSTER_CHANGED", "The room's list just changed; look again");
   }
   return { status: 200, body: { ok: true, removedMember: member.code } };
 }
 
 export const FIXED_ROOM_ACTIONS = ["create", "replace_link", "admit", "decline", "remove", "end_lesson", "set_recording", "disable", "enable", "add_member", "reissue_pass", "remove_member"] as const;
 export type FixedRoomAction = (typeof FIXED_ROOM_ACTIONS)[number];
+// The list's actions exist only while the site may record fixed rooms; otherwise they are unknown, as
+// before Gate B (round 10 review).
+const ROSTER_ACTIONS: readonly string[] = ["add_member", "reissue_pass", "remove_member"];
+const actionsNow = (): string[] => (fixedRoomRecordingEnabled() ? [...FIXED_ROOM_ACTIONS] : FIXED_ROOM_ACTIONS.filter((entry) => !ROSTER_ACTIONS.includes(entry)));
 
 // What an owner does with the fixed rooms (the iHear teacher, signed in). The route checks the
 // owner first; this checks again.
@@ -514,7 +573,7 @@ export async function manageFixedRoom({ store, provider, drive, principal, actio
 }) {
   if (!fixedRoomsEnabled()) return refused(404, "NOT_FOUND", "Not found");
   if (!principal?.owner || !principal.email) return refused(403, "OWNER_REQUIRED", "Only an owner manages the fixed rooms");
-  if (!FIXED_ROOM_ACTIONS.includes(action as FixedRoomAction)) return refused(400, "INVALID_ACTION", `Use one of: ${FIXED_ROOM_ACTIONS.join(", ")}`);
+  if (!actionsNow().includes(String(action))) return refused(400, "INVALID_ACTION", `Use one of: ${actionsNow().join(", ")}`);
   const actor = principal.email;
   if (action === "create") return createRoom({ store, label: input.label, actor, now });
   const room = await readRoom(store, input.room);
@@ -556,8 +615,11 @@ export async function fixedRoomsView({ store, now }: { store: ClassroomStore; no
   // and each person let in is on it, each person's consent as the recording rule reads it, and the
   // room's recording now (status prompts for the iHear teacher). Nothing of it with Gate B closed.
   const available = fixedRoomRecordingEnabled();
-  const admittedCodes = available ? [...new Set(rooms.flatMap((room) => inRoom(room, now).map((request) => latestDecision(request)!.code).filter((code): code is string => Boolean(code))))] : [];
-  const consents = admittedCodes.length ? await store.listConsents(admittedCodes) : [];
+  // Round 10 review: consent is read for the same people the recording rule counts: every student row
+  // of the lesson (someone taken out keeps theirs and still counts), not only who is in the room now.
+  const studentRows = (row: ClassroomLesson | null) => (row ? row.participants.filter((entry) => entry.role === "student" && entry.active !== false) : []);
+  const lessonCodes = available ? [...new Set([...lessons.values()].flatMap((row) => studentRows(row).map((entry) => entry.code)))] : [];
+  const consents = lessonCodes.length ? await store.listConsents(lessonCodes) : [];
   const policy = consentPolicy();
   const consentOf = (code: string | null) => (code ? personConsentProblem(consents.find((record) => record.personCode === code) ?? null, policy, now) ?? "CONSENTED" : "CONSENT_MISSING");
   return rooms.map((room) => {
@@ -565,6 +627,8 @@ export async function fixedRoomsView({ store, now }: { store: ClassroomStore; no
     const row = lesson ? lessons.get(lesson.classLessonId) ?? null : null;
     const facts = row ? lessonEvents.filter((event) => event.lessonId === row.id) : [];
     const state = available && row ? deriveLesson(forRules(row, facts), facts, now) : null;
+    const presentCodes = new Set(inRoom(room, now).map((request) => latestDecision(request)!.code));
+    const lacking = available ? [...new Set(studentRows(row).map((entry) => entry.code))].filter((code) => consentOf(code) !== "CONSENTED") : [];
     return {
       id: room.id, label: room.label, createdAt: iso(room.createdAt), linkGeneration: room.links.at(-1)?.generation ?? 0, capacity: FIXED_ROOM_CAPACITY,
       recording: {
@@ -572,6 +636,8 @@ export async function fixedRoomsView({ store, now }: { store: ClassroomStore; no
         ...(state ? {
           status: String(state.recording.status), label: RECORDING_LABELS[state.recording.status] ?? String(state.recording.status),
           anomalies: (state.anomalies ?? []).map((entry: { code: string; severity: string }) => ({ code: entry.code, severity: entry.severity })),
+          // Without a valid consent: in the room now, and taken out but still counted in this lesson.
+          consentLacking: { inRoom: lacking.filter((code) => presentCodes.has(code)).length, takenOut: lacking.filter((code) => !presentCodes.has(code)) },
         } : {}),
       },
       disabled: room.disabled,
@@ -584,7 +650,8 @@ export async function fixedRoomsView({ store, now }: { store: ClassroomStore; no
           ...(available ? { student: decision.personCode, boundBy: decision.boundBy, consent: consentOf(decision.code) } : {}),
         };
       }),
-      ...(available ? { members: room.members.map((member) => ({ code: member.code, name: member.name })) } : {}),
+      // passIssuedAt: when the student's current pass was made (a pass replaced shows a new time).
+      ...(available ? { members: room.members.map((member) => ({ code: member.code, name: member.name, passIssuedAt: iso(member.at) })) } : {}),
     };
   }).sort((a, b) => a.label.localeCompare(b.label));
 }

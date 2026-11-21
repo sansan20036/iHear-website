@@ -267,9 +267,12 @@ export type ClassroomStore = {
   changeBlock(change: BlockChange): Promise<BlockChangeResult>;
   // 18.5 (P3-Multi): the recordings of these lessons with their filing job, for the owners' list.
   filings(lessonIds: string[]): Promise<FilingRow[]>;
-  // Gate B (round 10): filed copies (STORED) filed before this time, oldest first, at most limit:
-  // what a retention plan looks at (nothing is deleted by reading).
-  storedRecordingsFiledBefore(cutoff: number, limit: number): Promise<RecordingFile[]>;
+  // Gate B (round 10): what a retention plan looks at, oldest first, at most limit: filed copies
+  // (STORED, with a Drive file, of a lesson, not held) filed before this time whose deletion is not
+  // recorded (server.recording_deleted:<id>), so a deleted copy never fills a later batch;
+  // retentionBlocked: a person must look first (server.recording_delete_blocked:<id>). Reading
+  // deletes nothing.
+  retentionCandidates(cutoff: number, limit: number): Promise<(RecordingFile & { retentionBlocked: boolean })[]>;
   // An owner's retry of a failed filing, in one step: only a FAILED recording that is not held
   // (never one held for consent, withdrawal or an unknown person) gets its job back in the queue,
   // with the facts stored; anything else changes nothing. Two retries at once: one is made.
@@ -750,9 +753,11 @@ export function createFileClassroomStore(filePath: string): ClassroomStore {
       .filter((block) => Date.parse(block.startsAt) < to && Date.parse(block.endsAt) > from)
       .filter((block) => block.members.some((member) => member.role !== "student" && member.staffEmail === email))
       .sort((a, b) => Date.parse(a.startsAt) - Date.parse(b.startsAt) || a.code.localeCompare(b.code)) : []), false),
-    storedRecordingsFiledBefore: (cutoff, limit) => run((state) => clone(Object.values(state.files)
-      .filter((file) => file.status === "STORED" && typeof file.filedAt === "number" && file.filedAt <= cutoff)
-      .sort((a, b) => Number(a.filedAt) - Number(b.filedAt) || a.providerFileId.localeCompare(b.providerFileId)).slice(0, limit)), false),
+    retentionCandidates: (cutoff, limit) => run((state) => clone(Object.values(state.files)
+      .filter((file) => file.status === "STORED" && typeof file.filedAt === "number" && file.filedAt <= cutoff && !file.hold && Boolean(file.lessonId) && Boolean(file.driveFileId)
+        && !state.events[`server.recording_deleted:${file.providerFileId}`])
+      .sort((a, b) => Number(a.filedAt) - Number(b.filedAt) || a.providerFileId.localeCompare(b.providerFileId)).slice(0, Math.max(1, Math.min(1000, Math.trunc(limit))))
+      .map((file) => ({ ...file, retentionBlocked: Boolean(state.events[`server.recording_delete_blocked:${file.providerFileId}`]) }))), false),
     filings: (lessonIds) => run((state) => clone(Object.values(state.files).filter((file) => lessonIds.includes(String(file.lessonId))).map((record) => {
       const job = state.jobs[`file:${record.providerFileId}`];
       return { record, job: job ? { status: job.status, attempts: job.attempts, error: job.error ?? null, blockedReason: job.blockedReason ?? null } : null };
@@ -1589,12 +1594,18 @@ export function createPostgresClassroomStore(sql: postgres.Sql): ClassroomStore 
         ORDER BY b.starts_at, b.code
       `), []);
     },
-    async storedRecordingsFiledBefore(cutoff, limit) {
-      return (await sql`
-        SELECT * FROM public.classroom_recording_files
-        WHERE status = 'STORED' AND filed_at IS NOT NULL AND filed_at <= ${new Date(cutoff)}
-        ORDER BY filed_at, provider_file_id LIMIT ${Math.max(1, Math.min(1000, Math.trunc(limit)))}
-      `).map(fromFileRow);
+    // The deletion and the "needs a person" facts are found by their keys (unique), never by reading
+    // every event of the lessons.
+    async retentionCandidates(cutoff, limit) {
+      const rows = await sql`
+        SELECT f.*, EXISTS (SELECT 1 FROM public.classroom_events b WHERE b.key = 'server.recording_delete_blocked:' || f.provider_file_id) AS retention_blocked
+        FROM public.classroom_recording_files f
+        WHERE f.status = 'STORED' AND f.filed_at IS NOT NULL AND f.filed_at <= ${new Date(cutoff)}
+          AND f.hold IS NULL AND f.lesson_id IS NOT NULL AND f.drive_file_id IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM public.classroom_events d WHERE d.key = 'server.recording_deleted:' || f.provider_file_id)
+        ORDER BY f.filed_at, f.provider_file_id LIMIT ${Math.max(1, Math.min(1000, Math.trunc(limit)))}
+      `;
+      return rows.map((row) => ({ ...fromFileRow(row), retentionBlocked: row.retention_blocked === true }));
     },
     async filings(lessonIds) {
       if (!lessonIds.length) return [];

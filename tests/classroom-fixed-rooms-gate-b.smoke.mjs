@@ -87,9 +87,14 @@ try {
     await expect(student.locator('[data-room-waiting]')).toBeVisible();
     const waiting = roomCard().locator('[data-waiting-person="Ann"]');
     await expect(waiting).toContainText('個人連結：代碼 ST-G1');
-    await waiting.getByRole('button', { name: '讓他進入' }).click();
+    await waiting.getByRole('button', { name: '讓他進入', exact: true }).click();
     await expect(student).toHaveURL(/\/classroom\/L-[0-9a-f]+$/, { timeout: 30_000 });
     await expect(student.locator('.room2-top .classroom-room-connection')).toHaveText('已連線', { timeout: 30_000 });
+    // In the room (and so in Zoom) the student shows by a name of this lesson only, never their code.
+    await expect(student.locator('body')).not.toContainText('ST-G1');
+    // Let in, the tab no longer keeps the student's own pass.
+    const passValue = new URL(annPass).hash.slice(3);
+    expect(await student.evaluate(() => Object.values(sessionStorage).join('\n'))).not.toContain(passValue);
     const inRoom = roomCard().locator('[data-in-room-person="Ann"]');
     await expect(inRoom).toContainText('代碼 ST-G1・個人連結');
     await expect(inRoom.locator('[data-consent]')).toHaveAttribute('data-consent', 'CONSENT_MISSING');
@@ -105,7 +110,7 @@ try {
     await expect(bo.locator('[data-room-waiting]')).toBeVisible();
     const waiting = roomCard().locator('[data-waiting-person="Bo"]');
     await waiting.locator('[data-bind-to] select').selectOption('ST-G2');
-    await waiting.getByRole('button', { name: '讓他進入' }).click();
+    await waiting.getByRole('button', { name: '讓他進入', exact: true }).click();
     const inRoom = roomCard().locator('[data-in-room-person="Bo"]');
     await expect(inRoom).toContainText('代碼 ST-G2・您指定的名單學生');
     await expect(bo).toHaveURL(/\/classroom\/L-[0-9a-f]+$/, { timeout: 30_000 });

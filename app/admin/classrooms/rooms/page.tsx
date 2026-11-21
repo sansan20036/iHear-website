@@ -26,10 +26,10 @@ import {
 
 // student/boundBy/consent and members (Gate B, round 10): only where the site may record fixed rooms.
 type Person = { request: string; name: string; at: string; code?: string | null; presence?: "in" | "out" | null; student?: string | null; boundBy?: string | null; consent?: string };
-type Member = { code: string; name: string };
+type Member = { code: string; name: string; passIssuedAt?: string };
 type Room = {
   id: string; label: string; linkGeneration: number; capacity: number; disabled?: boolean; lesson: { lessonId: string; endsAt: string } | null; waiting: Person[]; inRoom: Person[];
-  recording?: { on: boolean; available: boolean; status?: string; label?: string; anomalies?: { code: string; severity: string }[] }; members?: Member[];
+  recording?: { on: boolean; available: boolean; status?: string; label?: string; anomalies?: { code: string; severity: string }[]; consentLacking?: { inRoom: number; takenOut: string[] } }; members?: Member[];
 };
 // A room's link, or (Gate B) one student's own link: shown once.
 type Shown = { room: string; link: string; student?: string } | null;
@@ -85,6 +85,12 @@ const ERRORS: Record<string, string> = {
   NOT_ON_ROSTER: "這位學生已經不在名單上，不能用他的個人連結進入。",
   ALREADY_BOUND: "這個申請是用另一位學生的個人連結送出的。",
   ALREADY_IN_LESSON: "這位學生這次上課已經有位子（已經在教室裡，或這次上課被請出過）。",
+  ALREADY_IN_ANOTHER_ROOM: "這位學生現在在另一間教室上課，同一個學生一次只能在一間教室。",
+  BINDING_CHANGED: "讓他進入的同時，這位學生的個人連結被更換或被移出名單：沒有讓他進入。請重新確認。",
+  BINDING_CHANGED_NOT_UNDONE: "名單在讓他進入的同時改變了，系統沒能把他請出：請在「已讓進入」按「請出教室」。",
+  ALREADY_IN_ANOTHER_ROOM_NOT_UNDONE: "同一個學生同時被讓進兩間教室，系統沒能把這一間的請出：請在「已讓進入」按「請出教室」。",
+  CODE_NAME_MISMATCH: "這個代碼已經在另一間教室的名單上，名字或大小寫不同：同一個代碼就是同一位學生，請用一樣的代碼和名字。",
+  ROSTER_CHANGED: "名單剛剛被別人改過了，畫面已重新整理，請再看一次。",
 };
 const CONSENT: Record<string, string> = {
   CONSENTED: "錄影同意有效", CONSENT_MISSING: "沒有錄影同意", CONSENT_WITHDRAWN: "錄影同意已撤回", CONSENT_EXPIRED: "錄影同意已過期", CONSENT_VERSION_MISMATCH: "錄影同意版本不符",
@@ -104,6 +110,17 @@ function unknownOutcome(action: string, input: Record<string, unknown>, before: 
     const was = before?.find((room) => room.id === input.room)?.linkGeneration;
     const is = now.find((room) => room.id === input.room)?.linkGeneration;
     return was != null && is != null && is > was ? ERRORS.REPLACED_UNSEEN : ERRORS.REPLACE_UNKNOWN;
+  }
+  if (action === "add_member") {
+    const listed = now.find((room) => room.id === input.room)?.members?.some((member) => member.code === String(input.code ?? "").trim());
+    return listed ? `「${String(input.code ?? "").trim()}」已經加入名單，但個人連結沒有送到這個頁面（沒有人看過這個連結）。請按這位學生的「重發個人連結」，取得新的連結。` : ERRORS.SINGLE_UNKNOWN;
+  }
+  if (action === "reissue_pass") {
+    const issued = (rooms: Room[] | null) => rooms?.find((room) => room.id === input.room)?.members?.find((member) => member.code === input.code)?.passIssuedAt ?? null;
+    const was = issued(before), is = issued(now);
+    return was && is && is !== was
+      ? "個人連結已經更換，但新的連結沒有送到這個頁面；舊的個人連結已經不能用。請再按一次「重發個人連結」。"
+      : "沒有收到伺服器的結果。名單上這位學生的個人連結發出時間沒有變（或伺服器還在處理）：請稍等再看一次；時間變了，就再按一次「重發個人連結」。";
   }
   return ERRORS.SINGLE_UNKNOWN;
 }
@@ -138,6 +155,12 @@ export default function FixedRoomsPage() {
   // Gate B (round 10): which student on the list each waiting request is said to be (by request), and
   // the student to add to a room's list (by room).
   const [bindings, setBindings] = useState<Record<string, string>>({});
+  // The student chosen for a waiting person, only while the choice is shown and that student is still
+  // on the list (the switch turned off, or the student taken off the list, clears it).
+  const bindChoice = (room: Room, person: Person) => {
+    const chosen = bindings[person.request];
+    return chosen && room.recording?.available && !person.student && (room.members ?? []).some((member) => member.code === chosen) ? chosen : null;
+  };
   const [newMember, setNewMember] = useState<Record<string, { code: string; name: string }>>({});
 
   // The rooms as the server lists them now; null when they could not be read. The page's only read.
@@ -465,8 +488,8 @@ export default function FixedRoomsPage() {
           {room.recording?.available && room.lesson && (
             <div data-room-recording-now={room.recording.status ?? "unknown"}>
               <p>這次上課的錄影：{room.recording.label ?? "還不知道"}</p>
-              {room.inRoom.some((person) => person.consent && person.consent !== "CONSENTED") && (
-                <p role="note" data-room-consent-missing>教室裡有 {room.inRoom.filter((person) => person.consent && person.consent !== "CONSENTED").length} 位沒有有效的錄影同意：只要他們在教室裡，這次上課就不會錄影；錄影中時他們不能進入。</p>
+              {((room.recording.consentLacking?.inRoom ?? 0) > 0 || (room.recording.consentLacking?.takenOut ?? []).length > 0) && (
+                <p role="note" data-room-consent-missing>這次上課有人沒有有效的錄影同意：教室裡 {room.recording.consentLacking?.inRoom ?? 0} 位{(room.recording.consentLacking?.takenOut ?? []).length ? `，已請出但仍算在這次上課裡的 ${room.recording.consentLacking!.takenOut.length} 位（代碼 ${room.recording.consentLacking!.takenOut.join("、")}）` : ""}。所以這次上課不會錄影；錄影中時，沒有同意的人不能進入。</p>
               )}
               {(room.recording.anomalies ?? []).length > 0 && <p role="alert" data-room-anomalies>需要處理的異常：{room.recording.anomalies!.map((entry) => entry.code).join("、")}（請到課堂異常頁面查看）。</p>}
             </div>
@@ -479,7 +502,7 @@ export default function FixedRoomsPage() {
                 <ul data-roster>
                   {(room.members ?? []).map((member) => (
                     <li key={member.code} data-roster-member={member.code}>
-                      {member.name}（代碼 {member.code}）
+                      {member.name}（代碼 {member.code}）{member.passIssuedAt ? `・個人連結 ${time(member.passIssuedAt)} 發出` : ""}
                       <button type="button" disabled={busy} onClick={() => void act("reissue_pass", { room: room.id, code: member.code }, `重發 ${member.name}（${member.code}）的個人連結？舊的個人連結立刻不能再用來申請；用舊連結正在等待的申請會失效。已經在教室裡的人不受影響。新連結只顯示一次。`)}>重發個人連結</button>
                       <button type="button" disabled={busy} onClick={() => void act("remove_member", { room: room.id, code: member.code }, `把 ${member.name}（${member.code}）移出這間教室的名單？他的個人連結會失效。已經在教室裡的人不受影響；他的錄影同意紀錄不會改變。`)}>移出名單</button>
                     </li>
@@ -501,13 +524,13 @@ export default function FixedRoomsPage() {
                   {person.name}（{time(person.at)}）{person.student ? `・個人連結：代碼 ${person.student}` : ""}
                   {room.recording?.available && !person.student && (room.members ?? []).length > 0 && (
                     <label data-bind-to>　是名單上的：
-                      <select value={bindings[person.request] ?? ""} onChange={(event) => setBindings((all) => ({ ...all, [person.request]: event.target.value }))}>
+                      <select value={bindChoice(room, person) ?? ""} onChange={(event) => setBindings((all) => ({ ...all, [person.request]: event.target.value }))}>
                         <option value="">不指定（用教室產生的代碼，不能錄影）</option>
                         {(room.members ?? []).map((member) => <option key={member.code} value={member.code}>{member.name}（{member.code}）</option>)}
                       </select>
                     </label>
                   )}
-                  <button type="button" disabled={busy} onClick={() => void act("admit", { room: room.id, request: person.request, ...(bindings[person.request] ? { bindTo: bindings[person.request] } : {}) }, bindings[person.request] ? `讓「${person.name}」以名單上的 ${bindings[person.request]} 進入？請先確認他就是這位學生：錄影同意依這個代碼判斷。` : undefined)}>讓他進入</button>
+                  <button type="button" disabled={busy} onClick={() => { const chosen = bindChoice(room, person); void act("admit", { room: room.id, request: person.request, ...(chosen ? { bindTo: chosen } : {}) }, chosen ? `讓「${person.name}」以名單上的 ${chosen} 進入？請先確認他就是這位學生：錄影同意依這個代碼判斷。` : undefined); }}>讓他進入</button>
                   <button type="button" disabled={busy} onClick={() => void act("decline", { room: room.id, request: person.request }, `不讓「${person.name}」進入？`)}>不讓他進入</button>
                 </li>
               ))}

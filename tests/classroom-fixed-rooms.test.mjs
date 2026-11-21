@@ -780,8 +780,13 @@ describe("recording in a fixed room", () => {
   test("GB-7: a student's own pass (option A): nothing of it with the site's switch off; made once and kept as its hash; the request carries the list's name, none typed; let in, the person's code is the student's code, under which their consent is kept, so two consented students record; files are named by the list's names, or by codes where the site says so", async () => {
     vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "");
     const closed = await room();
-    expect((await manage("add_member", { room: closed.id, code: "ST-closed", name: "Ann" })).body.code).toBe("RECORDING_NOT_AVAILABLE");
+    // With Gate B closed the list's actions are unknown, as before round 10 (review finding 6).
+    const unknown = await manage("add_member", { room: closed.id, code: "ST-closed", name: "Ann" });
+    expect(unknown.body.code).toBe("INVALID_ACTION");
+    expect(unknown.body.error).toBe("Use one of: create, replace_link, admit, decline, remove, end_lesson, set_recording, disable, enable");
     expect((await askWithPass(closed, "a".repeat(43))).status).toBe(404);
+    // A pass sent with the room's current link is ignored: the request is what it was before Gate B.
+    expect((await rooms.requestEntry({ store, roomId: closed.id, key: closed.key, name: "Ann", pass: "a".repeat(43), now: START })).body).toMatchObject({ ok: true, name: "Ann" });
     expect((await view(closed)).members).toBeUndefined();
     vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "on");
     try {
@@ -791,7 +796,8 @@ describe("recording in a fixed room", () => {
       const roomFacts = JSON.stringify(await store.eventsFor([both.r.id]));
       for (const pass of Object.values(both.passes)) expect(roomFacts).not.toContain(pass);
       expect(both.asked[ann.code].body.name).toBe("Ann");
-      expect((await view(both.r)).members).toEqual([ann, bo].sort((a, b) => a.code.localeCompare(b.code)));
+      expect((await view(both.r)).members.map(({ code, name }) => ({ code, name }))).toEqual([ann, bo].sort((a, b) => a.code.localeCompare(b.code)));
+      expect((await view(both.r)).members.every(member => member.passIssuedAt === new Date(START).toISOString())).toBe(true);
       const decisions = (await store.eventsFor([both.r.id])).filter(event => event.type === "server.room_decision");
       expect(sortedPairs(decisions.map(event => [event.code, event.personCode, event.boundName, event.boundBy]))).toEqual(sortedPairs([[ann.code, ann.code, "Ann", "pass"], [bo.code, bo.code, "Bo", "pass"]]));
       expect(sortedPairs((await view(both.r)).inRoom.map(person => [person.code, person.student, person.boundBy, person.consent]))).toEqual(sortedPairs([[ann.code, ann.code, "pass", "CONSENTED"], [bo.code, bo.code, "pass", "CONSENTED"]]));
@@ -826,8 +832,13 @@ describe("recording in a fixed room", () => {
       const typed = await ask(r, "Kyle");
       expect((await view(r)).waiting.find(person => person.request === typed.body.requestId).student).toBeNull();
       expect((await manage("admit", { room: r.id, request: typed.body.requestId, bindTo: "ST-nobody" })).body.code).toBe("NO_SUCH_MEMBER");
+      // The site's switch off: the owner's word is ignored (nothing records), and the person is let in
+      // with a code of their own, as before Gate B (review finding 6).
+      const other = await ask(r, "Lu");
       vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "");
-      expect((await manage("admit", { room: r.id, request: typed.body.requestId, bindTo: kyle.code })).body.code).toBe("RECORDING_NOT_AVAILABLE");
+      const ignored = await manage("admit", { room: r.id, request: other.body.requestId, bindTo: kyle.code });
+      expect(ignored.body.code).toMatch(/^R[0-9a-f]{8}-[0-9a-f]{6}$/);
+      expect(ignored.body.student).toBeUndefined();
       vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "on");
       expect((await manage("admit", { room: r.id, request: typed.body.requestId, bindTo: kyle.code })).body).toMatchObject({ ok: true, code: kyle.code, student: kyle.code });
       const ownerFact = (await store.eventsFor([r.id])).find(event => event.type === "server.room_decision" && event.requestId === typed.body.requestId);
@@ -882,7 +893,7 @@ describe("recording in a fixed room", () => {
       const boAdded = await manage("add_member", { room: r.id, ...bo });
       expect(annAdded.body.passLink).toMatch(new RegExp(`^/classroom/r/${r.id}#p=[A-Za-z0-9_-]{43}$`));
       expect((await manage("add_member", { room: r.id, code: ann.code.toLowerCase(), name: "Ann" })).body.code).toBe("MEMBER_EXISTS");
-      for (const bad of ["", "R0123abcd-0a1b2c", "has space", "x".repeat(21), "小明", "a/b"]) expect((await manage("add_member", { room: r.id, code: bad, name: "Ann" })).body.code, bad).toBe("INVALID_CODE");
+      for (const bad of ["", "R0123abcd-0a1b2c", "R0123ABCD-0A1B2C", "has space", "x".repeat(21), "小明", "a/b"]) expect((await manage("add_member", { room: r.id, code: bad, name: "Ann" })).body.code, bad).toBe("INVALID_CODE");
       expect((await manage("add_member", { room: r.id, code: studentCode(), name: "小明" })).body.code).toBe("INVALID_NAME");
       const oldPass = passOf(annAdded.body.passLink);
       const waitingOld = await askWithPass(r, oldPass);
@@ -913,13 +924,21 @@ describe("recording in a fixed room", () => {
         rooms.manageFixedRoom({ store: y, provider, drive, principal: OWNER, action: "add_member", input: { room: r.id, code: studentCode(), name: "Di" }, now: START }),
       ]);
       expect(raced.map(answer => answer.status).sort()).toEqual([201, 409]);
-      expect(raced.find(answer => answer.status === 409).body.code).toBe("CHANGED_CONCURRENTLY");
+      expect(raced.find(answer => answer.status === 409).body.code).toBe("ROSTER_CHANGED");
+      // A pass request made while the switch was on, let in after it went off: a code of its own.
+      const waitingThen = await askWithPass(r, passOf(back.body.passLink));
+      expect(waitingThen.status).toBe(200);
       vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "");
-      for (const action of ["add_member", "reissue_pass", "remove_member"]) expect((await manage(action, { room: r.id, code: bo.code, name: "Bo" })).body.code, action).toBe("RECORDING_NOT_AVAILABLE");
+      for (const action of ["add_member", "reissue_pass", "remove_member"]) expect((await manage(action, { room: r.id, code: bo.code, name: "Bo" })).body.code, action).toBe("INVALID_ACTION");
       expect((await askWithPass(r, passOf(back.body.passLink))).status).toBe(404);
       const shown = await view(r);
       expect(shown.members).toBeUndefined();
-      expect(shown.inRoom.every(person => !("student" in person) && !("consent" in person))).toBe(true);
+      expect(shown.inRoom.every(person => !("student" in person) && !("consent" in person) && !("boundBy" in person))).toBe(true);
+      expect(shown.waiting.every(person => !("student" in person))).toBe(true);
+      expect(Object.keys(shown.recording).sort()).toEqual(["available", "on"]);
+      const lateLetIn = await manage("admit", { room: r.id, request: waitingThen.body.requestId });
+      expect(lateLetIn.body.code).toMatch(/^R[0-9a-f]{8}-[0-9a-f]{6}$/);
+      expect(lateLetIn.body.student).toBeUndefined();
     } finally {
       vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "");
     }
@@ -1009,6 +1028,120 @@ describe("recording in a fixed room", () => {
       expect((await store.fileRecord(shared)).status).not.toBe("STORED");
       const [row] = (await store.filings([other.lessonId])).filter(entry => entry.record.providerFileId === shared);
       expect(row.job.blockedReason).toBe("DRIVE_SHARING");
+    } finally {
+      vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "");
+    }
+  });
+
+  // Round 10, after the independent review of 500d20b.
+  // A store whose addLessonParticipant first lets another owner change the list (the race the review found).
+  const listChangedMeanwhile = change => new Proxy(store, {
+    get(target, property) {
+      if (property === "addLessonParticipant") return async input => { await change(); return target.addLessonParticipant(input); };
+      const value = target[property];
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  const admitWith = (on, r, request, extra = {}) => rooms.manageFixedRoom({ store: on, provider, drive, principal: OWNER, action: "admit", input: { room: r.id, request, ...extra }, now: START });
+
+  test("GB-13: let in on a list that changed at the same moment (the student's pass reissued, or the student taken off the list): the admission is undone and said, the person is out and their key leads nowhere", async () => {
+    vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "on");
+    try {
+      const r = await room();
+      const kyle = { code: studentCode(), name: "Kyle" }, ann = { code: studentCode(), name: "Ann" };
+      const passes = {};
+      for (const student of [kyle, ann]) passes[student.code] = passOf((await manage("add_member", { room: r.id, ...student })).body.passLink);
+      const leaked = await askWithPass(r, passes[kyle.code]);
+      const reissued = await admitWith(listChangedMeanwhile(() => manage("reissue_pass", { room: r.id, code: kyle.code })), r, leaked.body.requestId);
+      expect(reissued.body.code).toBe("BINDING_CHANGED");
+      expect((await status(r, leaked)).body.state).toBe("removed");
+      expect((await view(r)).inRoom.map(person => person.code)).not.toContain(kyle.code);
+      const lessonId = (await view(r)).lesson?.lessonId;
+      if (lessonId) expect((await join(lessonId, leaked.body.ticket)).status).not.toBe(200);
+      // Option B racing a removal from the list.
+      const typed = await ask(r, "Ann");
+      const removed = await admitWith(listChangedMeanwhile(() => manage("remove_member", { room: r.id, code: ann.code })), r, typed.body.requestId, { bindTo: ann.code });
+      expect(removed.body.code).toBe("BINDING_CHANGED");
+      expect((await status(r, typed)).body.state).toBe("removed");
+      expect((await view(r)).inRoom).toEqual([]);
+    } finally {
+      vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "");
+    }
+  });
+
+  test("GB-14: one code is one student across the rooms: on another room's list only the same code with the same name; let in to one room's lesson at a time; let in to two rooms at the same moment, exactly one stays", async () => {
+    vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "on");
+    try {
+      const a = await room(), b = await room();
+      const code = studentCode();
+      const inA = await manage("add_member", { room: a.id, code, name: "Ann" });
+      expect(inA.status).toBe(201);
+      expect((await manage("add_member", { room: b.id, code, name: "Bo" })).body.code).toBe("CODE_NAME_MISMATCH");
+      expect((await manage("add_member", { room: b.id, code: code.toLowerCase(), name: "Ann" })).body.code).toBe("CODE_NAME_MISMATCH");
+      const inB = await manage("add_member", { room: b.id, code, name: "Ann" });
+      expect(inB.status).toBe(201);
+      const askA = await askWithPass(a, passOf(inA.body.passLink));
+      expect((await manage("admit", { room: a.id, request: askA.body.requestId })).body).toMatchObject({ ok: true, code });
+      const askB = await askWithPass(b, passOf(inB.body.passLink));
+      expect((await manage("admit", { room: b.id, request: askB.body.requestId })).body.code).toBe("ALREADY_IN_ANOTHER_ROOM");
+      expect((await status(b, askB)).body.state).toBe("waiting");
+      // Two other rooms let the same student in at the same moment (both looked before either wrote).
+      const c = await room(), d = await room();
+      const both = studentCode();
+      const passC = passOf((await manage("add_member", { room: c.id, code: both, name: "Cy" })).body.passLink);
+      const passD = passOf((await manage("add_member", { room: d.id, code: both, name: "Cy" })).body.passLink);
+      const askC = await askWithPass(c, passC), askD = await askWithPass(d, passD);
+      const [x, y] = readAllBeforeWriting([store, store]);
+      const answers = await Promise.all([admitWith(x, c, askC.body.requestId), admitWith(y, d, askD.body.requestId)]);
+      expect(answers.map(answer => answer.status).sort()).toEqual([200, 409]);
+      expect(answers.find(answer => answer.status === 409).body.code).toBe("ALREADY_IN_ANOTHER_ROOM");
+      const seated = [await view(c), await view(d)].filter(entry => entry.inRoom.some(person => person.code === both));
+      expect(seated).toHaveLength(1);
+      // The one kept is the earlier admission (the same moment: the smaller request id).
+      expect(seated[0].id).toBe(askC.body.requestId < askD.body.requestId ? c.id : d.id);
+    } finally {
+      vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "");
+    }
+  });
+
+  test("GB-15: in Zoom and on their page a student let in as themselves shows by a name of this lesson only, never their code (their consent's); the same name every time they enter; anyone let in with a code of their own shows by that code", async () => {
+    vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "on");
+    try {
+      const ann = { code: studentCode(), name: "Ann" }, bo = { code: studentCode(), name: "Bo" };
+      const both = await boundRoom([ann, bo]);
+      const first = await join(both.lessonId, both.asked[ann.code].body.ticket, START + MIN);
+      expect(first.status).toBe(200);
+      expect(first.body.participantCode).toMatch(/^R[0-9a-f]{8}-[0-9a-f]{6}$/);
+      expect(first.body.participantCode).not.toBe(ann.code);
+      expect((await join(both.lessonId, both.asked[ann.code].body.ticket, START + 2 * MIN)).body.participantCode).toBe(first.body.participantCode);
+      const boShown = (await join(both.lessonId, both.asked[bo.code].body.ticket, START + MIN)).body.participantCode;
+      expect(boShown).not.toBe(first.body.participantCode);
+      expect(JSON.stringify(first.body)).not.toContain(ann.code);
+      // The owner still sees the student's code; a guest shows by their own code everywhere.
+      expect((await view(both.r)).inRoom.map(person => person.code).sort()).toEqual([ann.code, bo.code].sort());
+      const guest = await ask(both.r, "Cy");
+      const plain = await manage("admit", { room: both.r.id, request: guest.body.requestId });
+      expect((await join(both.lessonId, guest.body.ticket, START + MIN)).body.participantCode).toBe(plain.body.code);
+    } finally {
+      vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "");
+    }
+  });
+
+  test("GB-16: someone without consent let in and then taken out still counts for this lesson's recording rule, and the owners' view says so (not only the people in the room now)", async () => {
+    vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "on");
+    try {
+      const ann = { code: studentCode(), name: "Ann" }, bo = { code: studentCode(), name: "Bo" };
+      const both = await boundRoom([ann, bo]);
+      await manage("set_recording", { room: both.r.id, on: true });
+      const cy = await ask(both.r, "Cy");
+      const cyCode = (await manage("admit", { room: both.r.id, request: cy.body.requestId })).body.code;
+      expect((await view(both.r)).recording.consentLacking).toEqual({ inRoom: 1, takenOut: [] });
+      expect((await manage("remove", { room: both.r.id, request: cy.body.requestId })).status).toBe(200);
+      for (const at of [2, 3]) await tick(both.lessonId, at);
+      expect(await lastDecision(both.lessonId)).toMatchObject({ eligible: false, reason: "CONSENT_MISSING" });
+      const shown = await view(both.r, START + 4 * MIN);
+      expect(shown.inRoom.map(person => person.code).sort()).toEqual([ann.code, bo.code].sort());
+      expect(shown.recording.consentLacking).toEqual({ inRoom: 0, takenOut: [cyCode] });
     } finally {
       vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "");
     }

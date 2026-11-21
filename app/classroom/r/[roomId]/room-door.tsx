@@ -63,7 +63,9 @@ export default function RoomDoor({ roomId }: { roomId: string }) {
     if (phase !== "waiting") return;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const forget = () => { saved.current = { key: saved.current.key, pass: saved.current.pass ?? null }; keep(roomId, saved.current); };
+    // A student's own pass is kept only while it may be needed to ask again (expired, ended); after
+    // being let in or a final answer this tab forgets it (round 10 review).
+    const forget = (dropPass = false) => { saved.current = { key: saved.current.key, pass: dropPass ? null : saved.current.pass ?? null }; keep(roomId, saved.current); };
     const ask = async () => {
       if (document.hidden) { timer = setTimeout(ask, POLL_MS); return; }
       const { requestId, ticket } = saved.current;
@@ -74,14 +76,17 @@ export default function RoomDoor({ roomId }: { roomId: string }) {
         const data = await response.json().catch(() => null);
         if (stopped) return;
         if (response.ok && data?.ok && data.state === "admitted" && typeof data.lessonId === "string" && ticket) {
+          if (saved.current.pass) keep(roomId, { key: saved.current.key, requestId, ticket, at: saved.current.at });
           setPhase("admitted");
           window.location.assign(`/classroom/${encodeURIComponent(data.lessonId)}#k=${ticket}`);
           return;
         }
         if (response.ok && data?.ok && data.state !== "waiting") {
-          forget();
-          if (ASK_AGAIN.has(data.state)) { setProblem(text.states[data.state] ?? text.error); setPhase("form"); }
-          else { setFinal((saved.current.pass && data.state === "replaced" ? text.passReplaced : text.states[data.state]) ?? text.error); setPhase("done"); }
+          const withPass = Boolean(saved.current.pass);
+          const again = ASK_AGAIN.has(data.state);
+          forget(!again);
+          if (again) { setProblem(text.states[data.state] ?? text.error); setPhase("form"); }
+          else { setFinal((withPass && data.state === "replaced" ? text.passReplaced : text.states[data.state]) ?? text.error); setPhase("done"); }
           return;
         }
         if (response.status === 404) { forget(); setProblem(text.reasons.NOT_FOUND); setPhase("form"); return; }

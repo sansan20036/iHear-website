@@ -12,7 +12,7 @@ import { buildDashboard, LABELS } from "../tools/recording-pathway/classroom/liv
 // @ts-ignore - shared classroom logic, plain JavaScript.
 import { answerLost, mayHaveReachedZoom, OPERATED } from "../tools/recording-pathway/classroom/operations.mjs";
 import type { ClassroomDrive } from "./classroom-drive";
-import { fixedRoomOf, roomRecordingOn } from "./classroom-fixed-room-facts";
+import { fixedRoomOf, roomRecordingOn, shownCodeOf } from "./classroom-fixed-room-facts";
 import type { ClassroomProvider } from "./classroom-provider";
 import type { ClassroomBlock, ClassroomBlockMember, ClassroomEvent, ClassroomLesson, ClassroomStore, OperationState, RecordingFile } from "./classroom-store";
 import { fixedRoomRecordingEnabled, sessionReportsEnabled, vendorDeletionEnabled } from "./classroom-switches";
@@ -456,7 +456,9 @@ export async function joinClassroom({ store, provider, lessonId, key, sessionEma
       // An observer (a manager's visit, a tutor waiting in the Lobby) takes part as a participant
       // does: no host controls, no reports (P3-Multi). Their block role is named apart.
       role: participant!.role === "observer" ? "student" : participant!.role,
-      participantCode: participant!.code,
+      // Gate B round 10: in a fixed room a student let in as themselves shows by a name of this lesson
+      // only (their code is their consent's, never shown to the others in Zoom).
+      participantCode: fixedRoomOf(events) ? shownCodeOf(events, participant!.code) : participant!.code,
       ...(lesson.blockId ? { block: { roomKind: lesson.roomKind, roomLabel: lesson.roomLabel, memberRole: member?.role ?? null } } : {}),
       // The token goes only to the media adapter. LCIC's address carries its own login.
       session: token.kind === "embed"

@@ -4,7 +4,7 @@ import { authorizeAdminRequest } from "../../../../../lib/admin-auth";
 import { appendAdminActivity } from "../../../../../lib/admin-store";
 import { listBlockFilings, retryBlockFiling } from "../../../../../lib/classroom-blocks";
 import { classroomDrive } from "../../../../../lib/classroom-drive";
-import { previewRetention, runRetention } from "../../../../../lib/classroom-retention";
+import { previewRetention, retentionConfigured, runRetention } from "../../../../../lib/classroom-retention";
 import { classroomStore } from "../../../../../lib/classroom-store";
 import { withRateLimitHeaders } from "../../../../../lib/rate-limit";
 import { NO_STORE_HEADERS } from "../../../../../lib/response-headers";
@@ -27,15 +27,18 @@ export async function POST(request: Request) {
   const access = await authorizeAdminRequest(request, { owner: true, mutation: true });
   if ("response" in access) return access.response;
   const respond = (body: unknown, status: number) => withRateLimitHeaders(NextResponse.json(body, { status, headers: NO_STORE_HEADERS }), access.decision!);
+  let retention = false;
   try {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     // Gate B (round 10): the recordings' retention, off unless the site sets a period (iHear's
-    // decision). A preview changes nothing; an apply deletes exactly the plan previewed (its digest).
-    if (body.action === "retention_preview") {
+    // decision): until then its actions are unknown here, as before. A preview changes nothing; an
+    // apply deletes exactly the plan previewed (its digest).
+    retention = retentionConfigured() && (body.action === "retention_preview" || body.action === "retention_apply");
+    if (retention && body.action === "retention_preview") {
       const preview = await previewRetention({ store: classroomStore(), now: Date.now() });
       return respond(preview.body, preview.status);
     }
-    if (body.action === "retention_apply") {
+    if (retention && body.action === "retention_apply") {
       const applied = await runRetention({ store: classroomStore(), drive: classroomDrive(), now: Date.now(), actor: access.principal.email, confirm: body.confirm });
       if (applied.status === 200) {
         const recorded = await appendAdminActivity({
@@ -46,7 +49,7 @@ export async function POST(request: Request) {
       }
       return respond(applied.body, applied.status);
     }
-    if (body.action !== "retry") return respond({ error: "Use action: retry, retention_preview or retention_apply", code: "INVALID_ACTION" }, 400);
+    if (body.action !== "retry") return respond({ error: retentionConfigured() ? "Use action: retry, retention_preview or retention_apply" : "Use action: retry", code: "INVALID_ACTION" }, 400);
     const result = await retryBlockFiling({ store: classroomStore(), providerFileId: body.recording, actor: access.principal.email, reason: body.reason, now: Date.now() });
     if (result.status === 200) {
       await appendAdminActivity({
@@ -56,6 +59,8 @@ export async function POST(request: Request) {
     }
     return respond(result.body, result.status);
   } catch {
-    return respond({ error: "The filing could not be retried" }, 503);
+    // An apply never throws for one copy's trouble (each is said in its answer); this is the store or
+    // Drive unavailable before anything was deleted.
+    return respond({ error: retention ? "The retention could not be read; nothing more was deleted" : "The filing could not be retried" }, 503);
   }
 }
