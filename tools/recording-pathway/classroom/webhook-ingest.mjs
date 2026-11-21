@@ -473,9 +473,11 @@ async function planName(tx, lesson, record, generation = null) {
 // in as that student, otherwise their code. It never fails for want of a tutor: without the room's
 // facts its parts fall back to "Room" and the people's codes.
 const NEW_YORK_PARTS = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
-// 'names' (the room's list's names, as a one-to-one lesson's recordings carry names) unless set to 'codes'.
+// 'names' (the room's list's names, as a one-to-one lesson's recordings carry names; the user's default
+// of 2026-11-21), unless set to 'codes' (people by code only) or 'none' (the room, date and time only).
 export function fixedRoomFileNames(env = process.env) {
-  return env.CLASSROOM_FIXED_ROOM_FILE_NAMES === 'codes' ? 'codes' : 'names';
+  const mode = env.CLASSROOM_FIXED_ROOM_FILE_NAMES;
+  return mode === 'codes' || mode === 'none' ? mode : 'names';
 }
 async function planFixedRoomName(tx, lesson, record) {
   const own = await tx.eventsOf(lesson.id);
@@ -486,8 +488,10 @@ async function planFixedRoomName(tx, lesson, record) {
   // Gate B (round 10, 2026-11-22): a person's part is the name the room's list gives a student let in
   // as that student (by their own pass, or the owner's word), never a name someone typed (a typed name
   // is not an identity, and would put any text into the file's name); anyone else is said by code.
-  // CLASSROOM_FIXED_ROOM_FILE_NAMES=codes keeps names out of the files' names (a decision for iHear).
-  const nameOfCode = new Map(fixedRoomFileNames() === 'codes' ? [] : roomEvents
+  // CLASSROOM_FIXED_ROOM_FILE_NAMES=codes keeps names out of the files' names, =none people too (a
+  // decision for iHear: who a recording holds is then only in the system's records).
+  const mode = fixedRoomFileNames();
+  const nameOfCode = new Map(mode !== 'names' ? [] : roomEvents
     .filter(event => event.source === 'server' && event.type === 'server.room_decision' && event.decision === 'admitted' && event.classLessonId === lesson.id
       && typeof event.boundName === 'string' && typeof event.personCode === 'string' && event.personCode === event.code)
     .map(event => [String(event.code), String(event.boundName)]));
@@ -495,7 +499,8 @@ async function planFixedRoomName(tx, lesson, record) {
     .map(entry => String(nameOfCode.get(entry.code) ?? entry.code).replace(/[^A-Za-z0-9 .']/g, '').trim() || 'Guest').sort((a, b) => a.localeCompare(b));
   const started = Number.isFinite(record.recordingStart) ? record.recordingStart : Date.parse(lesson.startsAt);
   const parts = Object.fromEntries(NEW_YORK_PARTS.formatToParts(started).map(part => [part.type, part.value]));
-  const base = `${label}_${parts.year}-${parts.month}-${parts.day} ${parts.hour}${parts.minute}_${names.join('-') || 'Guest'}`;
+  const when = `${label}_${parts.year}-${parts.month}-${parts.day} ${parts.hour}${parts.minute}`;
+  const base = mode === 'none' ? when : `${when}_${names.join('-') || 'Guest'}`;
   const planned = (await tx.fileRecordsForLesson(lesson.id)).map(entry => entry.plannedName).filter(Boolean);
   const taken = planned.filter(name => name === `${base}.${record.extension}` || String(name).startsWith(`${base}_P`));
   return { name: taken.length ? Core.fileName(base, taken.length + 1, record.extension) : `${base}.${record.extension}` };

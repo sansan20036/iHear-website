@@ -806,6 +806,10 @@ describe("recording in a fixed room", () => {
       await completed(both, coded, START + 35 * MIN, START + 50 * MIN);
       const codes = [ann.code, bo.code].map(code => code.replace(/[^A-Za-z0-9 .']/g, "")).sort((a, b) => a.localeCompare(b)).join("-");
       expect((await store.fileRecord(coded)).plannedName).toBe(`${both.r.label}_2026-12-10 1035_${codes}.mp4`);
+      vi.stubEnv("CLASSROOM_FIXED_ROOM_FILE_NAMES", "none");
+      const bare = `GB7-${made}-C`;
+      await completed(both, bare, START + 55 * MIN, START + 58 * MIN);
+      expect((await store.fileRecord(bare)).plannedName).toBe(`${both.r.label}_2026-12-10 1055.mp4`);
     } finally {
       vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "");
       vi.stubEnv("CLASSROOM_FIXED_ROOM_FILE_NAMES", "");
@@ -843,6 +847,27 @@ describe("recording in a fixed room", () => {
       expect(plain.body.code).toMatch(/^R[0-9a-f]{8}-[0-9a-f]{6}$/);
       expect(plain.body.student).toBeUndefined();
       expect((await view(r)).inRoom.find(person => person.request === guest.body.requestId)).toMatchObject({ student: null, consent: "CONSENT_MISSING" });
+    } finally {
+      vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "");
+    }
+  });
+
+  test("GB-8b: a student taken out of the room cannot come back into the same lesson with their pass or by the owner's word (their place in it is gone); the room's next lesson lets them in", async () => {
+    vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "on");
+    try {
+      const r = await room();
+      const kyle = { code: studentCode(), name: "Kyle" };
+      const pass = passOf((await manage("add_member", { room: r.id, ...kyle })).body.passLink);
+      const first = await askWithPass(r, pass);
+      expect((await manage("admit", { room: r.id, request: first.body.requestId })).body).toMatchObject({ ok: true, code: kyle.code });
+      expect((await manage("remove", { room: r.id, request: first.body.requestId })).status).toBe(200);
+      const again = await askWithPass(r, pass, START + MIN);
+      expect((await manage("admit", { room: r.id, request: again.body.requestId }, { now: START + MIN })).body.code).toBe("ALREADY_IN_LESSON");
+      const typed = await ask(r, "Kyle", { now: START + MIN });
+      expect((await manage("admit", { room: r.id, request: typed.body.requestId, bindTo: kyle.code }, { now: START + MIN })).body.code).toBe("ALREADY_IN_LESSON");
+      expect((await manage("end_lesson", { room: r.id }, { now: START + 2 * MIN })).status).toBe(200);
+      const next = await askWithPass(r, pass, START + 3 * MIN);
+      expect((await manage("admit", { room: r.id, request: next.body.requestId }, { now: START + 3 * MIN })).body).toMatchObject({ ok: true, code: kyle.code });
     } finally {
       vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "");
     }
