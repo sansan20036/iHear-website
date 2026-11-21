@@ -355,6 +355,18 @@ export async function roomMayRecordNow(store: ClassroomStore, room: ClassroomLes
   return active || (roomMayRecordByMode(room, facts) && recordingDecision(facts).allowed);
 }
 
+// Gate B (round 8, 2026-11-21): whether a fixed room's lesson may be recording now or may start any
+// moment: Zoom's recording is or may be on, or the lesson's decision allows it with the site's and
+// the room's switches on (the plan starts it at its next tick). Then a student without a valid
+// consent of their own does not enter; null when they may (or when it cannot record).
+async function fixedRoomRecordingGate(store: ClassroomStore, lesson: ClassroomLesson, code: string, now: number, events: ClassroomEvent[]) {
+  const mayRecord = (fixedRoomRecordingEnabled() && roomRecordingOn(events) && recordingDecision(events).allowed)
+    || await roomMayRecordNow(store, lesson, now, events);
+  if (!mayRecord) return null;
+  const [record] = await store.listConsents([code]);
+  return personConsentProblem(record ?? null, consentPolicy(), now) ? "CONSENT_REQUIRED_FOR_RECORDING_ROOM" : null;
+}
+
 // 18.2 step 7: someone without a valid consent (a student) or notice (staff) never enters a room
 // that may be recording; null when they may.
 export async function recordingRoomGate(store: ClassroomStore, room: ClassroomLesson, member: { code: string; role: string }, now: number, roomEvents?: ClassroomEvent[]) {
@@ -403,6 +415,17 @@ export async function joinClassroom({ store, provider, lessonId, key, sessionEma
     const blockedIn = lesson.id;
     await store.transaction((tx) => storeEvent(tx, blockedEvent(blockedIn, decision.reason, now)));
     return { status: 403, body: { error: "You cannot enter this classroom", code: decision.reason } };
+  }
+  // Gate B (round 8, 2026-11-21): 18.2 step 7 in a fixed room too. A live lesson keeps its decision,
+  // so a person let in later without a valid consent of their own would be recorded: they get no
+  // token while the lesson may be recording. With the switches off (as on the site) nothing changes.
+  if (participant?.role === "student" && fixedRoomOf(events)) {
+    const gate = await fixedRoomRecordingGate(store, lesson, participant.code, now, events);
+    if (gate) {
+      const blockedIn = lesson.id;
+      await store.transaction((tx) => storeEvent(tx, blockedEvent(blockedIn, gate, now)));
+      return { status: 403, body: { error: "This classroom may be recording, and no valid recording consent of yours is on file", code: gate } };
+    }
   }
   const rules = forRules(lesson) as ClassroomLesson;
   // New tokens lead to the room's current generation (D-1).

@@ -322,7 +322,7 @@ describe("recording in a fixed room", () => {
     const sessionId = `ZS-${lessonId.slice(2, 10)}`;
     await fact(lessonId, "session.started", START + MIN, { providerSessionId: sessionId, sessionName: roomNameOf(lessonId, 0) });
     for (const name of present) await fact(lessonId, "session.user_joined", START + MIN, { providerSessionId: sessionId, participantId: rowOf(name).id });
-    return { r, lessonId, sessionId, rowOf };
+    return { r, lessonId, sessionId, rowOf, asked };
   }
   const tick = (lessonId, at) => runClassroomTick({ store, provider: recorder, drive, now: START + at * MIN, lessonIds: [lessonId], workerId: "fr-rec" });
   const lastDecision = async lessonId => (await store.eventsFor([lessonId])).filter(event => event.type === "server.recording_eligibility").at(-1);
@@ -554,5 +554,75 @@ describe("recording in a fixed room", () => {
     expect(new Set(links.map(entry => entry.room)).size).toBe(6);
     expect(new Set(links.map(entry => entry.generation))).toEqual(new Set([2]));
     expect(new Set(failed.map(entry => entry.code))).toEqual(new Set(["CHANGED_CONCURRENTLY"]));
+  });
+
+  // Round 8 (2026-11-21), Gate B: simulation and security checks of how a person's identity, their
+  // consent, the Zoom session and the filing are bound (planning/2026-11-21-gate-b-recording-binding.md).
+  // Recording stays off on the site; the switches are turned on inside these tests only. Today a
+  // consent belongs to the code a person was let in with (the stand-in for a bound student code).
+  test("GB-1: a typed name never carries a consent: another person typing the same names, here or in another room, is a new code without consent and that lesson is not recorded; someone let in without consent while a lesson records gets no token (18.2 step 7), and the recording goes on for the people who consented", async () => {
+    vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "on");
+    try {
+      const both = await inRoom(["Ann", "Kyle"]);
+      await manage("set_recording", { room: both.r.id, on: true });
+      const copies = await inRoom(["Ann", "Kyle"], { consented: [] });
+      await manage("set_recording", { room: copies.r.id, on: true });
+      for (const at of [2, 3]) { await tick(both.lessonId, at); await tick(copies.lessonId, at); }
+      expect(starts.filter(([id]) => id === both.lessonId)).toEqual([[both.lessonId, both.sessionId]]);
+      expect(starts.filter(([id]) => id === copies.lessonId)).toEqual([]);
+      expect(await lastDecision(copies.lessonId)).toMatchObject({ eligible: false, reason: "CONSENT_MISSING" });
+      expect(new Set([both.rowOf("Ann").code, copies.rowOf("Ann").code, both.rowOf("Kyle").code, copies.rowOf("Kyle").code]).size).toBe(4);
+      // While it records, a third person types "Ann" at the same room and is let in: no consent.
+      await fact(both.lessonId, "session.recording_started", START + 4 * MIN, { providerSessionId: both.sessionId, status: "Recording" });
+      const third = await ask(both.r, "Ann", { now: START + 5 * MIN });
+      expect(third.status).toBe(200);
+      expect((await manage("admit", { room: both.r.id, request: third.body.requestId }, { now: START + 5 * MIN })).status).toBe(200);
+      const refused = await join(both.lessonId, third.body.ticket, START + 5 * MIN);
+      expect(refused).toMatchObject({ status: 403, body: { code: "CONSENT_REQUIRED_FOR_RECORDING_ROOM" } });
+      expect(JSON.stringify(refused.body)).not.toMatch(/token/i);
+      // The people who consented still enter, and their recording is not stopped for it.
+      expect((await join(both.lessonId, both.asked.Kyle.body.ticket, START + 5 * MIN)).status).toBe(200);
+      for (const at of [6, 7]) await tick(both.lessonId, at);
+      expect(stops.filter(([id]) => id === both.lessonId)).toEqual([]);
+      // The site switch turned off while Zoom still says it records: still no token (a recording that
+      // may be on keeps the door shut; the switch itself stops nothing already running, see the report).
+      vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "");
+      expect((await join(both.lessonId, third.body.ticket, START + 8 * MIN)).body.code).toBe("CONSENT_REQUIRED_FOR_RECORDING_ROOM");
+    } finally {
+      vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "");
+    }
+  });
+
+  test("GB-2: a consent withdrawn while the lesson records makes it decide again and stop", async () => {
+    vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "on");
+    try {
+      const both = await inRoom(["Ann", "Kyle"]);
+      await manage("set_recording", { room: both.r.id, on: true });
+      for (const at of [2, 3]) await tick(both.lessonId, at);
+      expect(starts.filter(([id]) => id === both.lessonId)).toHaveLength(1);
+      await fact(both.lessonId, "session.recording_started", START + 4 * MIN, { providerSessionId: both.sessionId, status: "Recording" });
+      await setSyntheticConsent({ store, personCode: both.rowOf("Kyle").code, role: "student", status: "withdrawn", actor: OWNER.email, now: START + 5 * MIN });
+      for (const at of [6, 7]) await tick(both.lessonId, at);
+      // A live lesson keeps its decision; the withdrawal is written to it and stops the recording.
+      expect((await store.eventsFor([both.lessonId])).filter(event => event.type === "server.consent_withdrawn")).toHaveLength(1);
+      expect(stops.filter(([id]) => id === both.lessonId).map(([, sessionId]) => sessionId)).toContain(both.sessionId);
+    } finally {
+      vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "");
+    }
+  });
+
+  test("GB-3: consents given under an older policy version do not count once a new version is in force: nothing records", async () => {
+    vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "on");
+    try {
+      const both = await inRoom(["Ann", "Kyle"]);
+      vi.stubEnv("CLASSROOM_CONSENT_VERSION", "test-consent-version-next");
+      await manage("set_recording", { room: both.r.id, on: true });
+      for (const at of [2, 3]) await tick(both.lessonId, at);
+      expect(starts.filter(([id]) => id === both.lessonId)).toEqual([]);
+      expect(await lastDecision(both.lessonId)).toMatchObject({ eligible: false, reason: "CONSENT_VERSION_MISMATCH" });
+    } finally {
+      vi.stubEnv("CLASSROOM_CONSENT_VERSION", "");
+      vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "");
+    }
   });
 });
