@@ -265,5 +265,25 @@ export function classroomStoreContract(name, getStore) {
       expect(await record()).toMatchObject({ severity: 'error', openedAt: 7000, lastSeenAt: 8000 });
       expect(await store.acknowledgeAnomaly({ lessonId: A, code: 'NOT_RECORDED', actor: OWNER, note: 'x', now: 9000 })).toBeNull();
     });
+
+    // Gate B round 10 (2026-11-22): what a retention plan reads. Reading deletes nothing.
+    test('filed copies filed before a time are listed oldest first, at most as many as asked; copies not filed, failed or quarantined never are', async () => {
+      const store = getStore();
+      const at = Date.parse('2026-12-20T10:00:00Z');
+      await store.transaction(async tx => {
+        for (const [id, status, filedAt] of [['SYN-R-1', 'STORED', at - 3000], ['SYN-R-2', 'STORED', at - 1000], ['SYN-R-3', 'STORED', at + 1000], ['SYN-R-4', 'FAILED', at - 5000], ['SYN-R-5', 'QUARANTINED', at - 5000], ['SYN-R-6', 'STORED', at - 2000], ['SYN-R-7', 'STORED', at]]) {
+          await tx.insertFileRecord({ providerFileId: id, lessonId: A, status: 'PENDING', provider: 'synthetic', extension: 'mp4', size: 10 });
+          await tx.updateFileRecord(id, { status, driveFileId: `drive-${id}`, filedAt });
+        }
+      });
+      const all = await store.storedRecordingsFiledBefore(at, 1000);
+      const ours = all.filter(record => record.providerFileId.startsWith('SYN-R-'));
+      expect(ours.map(record => record.providerFileId)).toEqual(['SYN-R-1', 'SYN-R-6', 'SYN-R-2', 'SYN-R-7']);
+      expect(ours[0]).toMatchObject({ status: 'STORED', driveFileId: 'drive-SYN-R-1', filedAt: at - 3000, lessonId: A });
+      expect(all.every(record => record.status === 'STORED' && record.filedAt <= at)).toBe(true);
+      const two = await store.storedRecordingsFiledBefore(at, 2);
+      expect(two.map(record => record.providerFileId)).toEqual(all.slice(0, 2).map(record => record.providerFileId));
+      expect((await store.fileRecord('SYN-R-1')).status).toBe('STORED');
+    });
   });
 }

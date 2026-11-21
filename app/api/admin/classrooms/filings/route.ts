@@ -3,6 +3,8 @@ import { NextResponse } from "next/server";
 import { authorizeAdminRequest } from "../../../../../lib/admin-auth";
 import { appendAdminActivity } from "../../../../../lib/admin-store";
 import { listBlockFilings, retryBlockFiling } from "../../../../../lib/classroom-blocks";
+import { classroomDrive } from "../../../../../lib/classroom-drive";
+import { previewRetention, runRetention } from "../../../../../lib/classroom-retention";
 import { classroomStore } from "../../../../../lib/classroom-store";
 import { withRateLimitHeaders } from "../../../../../lib/rate-limit";
 import { NO_STORE_HEADERS } from "../../../../../lib/response-headers";
@@ -27,7 +29,24 @@ export async function POST(request: Request) {
   const respond = (body: unknown, status: number) => withRateLimitHeaders(NextResponse.json(body, { status, headers: NO_STORE_HEADERS }), access.decision!);
   try {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
-    if (body.action !== "retry") return respond({ error: "Use action: retry", code: "INVALID_ACTION" }, 400);
+    // Gate B (round 10): the recordings' retention, off unless the site sets a period (iHear's
+    // decision). A preview changes nothing; an apply deletes exactly the plan previewed (its digest).
+    if (body.action === "retention_preview") {
+      const preview = await previewRetention({ store: classroomStore(), now: Date.now() });
+      return respond(preview.body, preview.status);
+    }
+    if (body.action === "retention_apply") {
+      const applied = await runRetention({ store: classroomStore(), drive: classroomDrive(), now: Date.now(), actor: access.principal.email, confirm: body.confirm });
+      if (applied.status === 200) {
+        const recorded = await appendAdminActivity({
+          actorEmail: access.principal.email, actorRole: access.principal.role, action: "classroom.recording_retention", entityType: "classroom",
+          entityId: String((applied.body as { digest?: string }).digest ?? ""), changedFields: ["recordings"], entityStatus: "deleted", entityVersion: null,
+        }).then(() => true, () => false);
+        if (!recorded) return respond({ ...(applied.body as Record<string, unknown>), activity: "not_recorded" }, applied.status);
+      }
+      return respond(applied.body, applied.status);
+    }
+    if (body.action !== "retry") return respond({ error: "Use action: retry, retention_preview or retention_apply", code: "INVALID_ACTION" }, 400);
     const result = await retryBlockFiling({ store: classroomStore(), providerFileId: body.recording, actor: access.principal.email, reason: body.reason, now: Date.now() });
     if (result.status === 200) {
       await appendAdminActivity({

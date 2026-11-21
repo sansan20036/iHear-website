@@ -267,6 +267,9 @@ export type ClassroomStore = {
   changeBlock(change: BlockChange): Promise<BlockChangeResult>;
   // 18.5 (P3-Multi): the recordings of these lessons with their filing job, for the owners' list.
   filings(lessonIds: string[]): Promise<FilingRow[]>;
+  // Gate B (round 10): filed copies (STORED) filed before this time, oldest first, at most limit:
+  // what a retention plan looks at (nothing is deleted by reading).
+  storedRecordingsFiledBefore(cutoff: number, limit: number): Promise<RecordingFile[]>;
   // An owner's retry of a failed filing, in one step: only a FAILED recording that is not held
   // (never one held for consent, withdrawal or an unknown person) gets its job back in the queue,
   // with the facts stored; anything else changes nothing. Two retries at once: one is made.
@@ -747,6 +750,9 @@ export function createFileClassroomStore(filePath: string): ClassroomStore {
       .filter((block) => Date.parse(block.startsAt) < to && Date.parse(block.endsAt) > from)
       .filter((block) => block.members.some((member) => member.role !== "student" && member.staffEmail === email))
       .sort((a, b) => Date.parse(a.startsAt) - Date.parse(b.startsAt) || a.code.localeCompare(b.code)) : []), false),
+    storedRecordingsFiledBefore: (cutoff, limit) => run((state) => clone(Object.values(state.files)
+      .filter((file) => file.status === "STORED" && typeof file.filedAt === "number" && file.filedAt <= cutoff)
+      .sort((a, b) => Number(a.filedAt) - Number(b.filedAt) || a.providerFileId.localeCompare(b.providerFileId)).slice(0, limit)), false),
     filings: (lessonIds) => run((state) => clone(Object.values(state.files).filter((file) => lessonIds.includes(String(file.lessonId))).map((record) => {
       const job = state.jobs[`file:${record.providerFileId}`];
       return { record, job: job ? { status: job.status, attempts: job.attempts, error: job.error ?? null, blockedReason: job.blockedReason ?? null } : null };
@@ -1582,6 +1588,13 @@ export function createPostgresClassroomStore(sql: postgres.Sql): ClassroomStore 
           AND EXISTS (SELECT 1 FROM public.classroom_block_members m WHERE m.block_id = b.id AND m.role <> 'student' AND m.staff_email = ${email})
         ORDER BY b.starts_at, b.code
       `), []);
+    },
+    async storedRecordingsFiledBefore(cutoff, limit) {
+      return (await sql`
+        SELECT * FROM public.classroom_recording_files
+        WHERE status = 'STORED' AND filed_at IS NOT NULL AND filed_at <= ${new Date(cutoff)}
+        ORDER BY filed_at, provider_file_id LIMIT ${Math.max(1, Math.min(1000, Math.trunc(limit)))}
+      `).map(fromFileRow);
     },
     async filings(lessonIds) {
       if (!lessonIds.length) return [];

@@ -445,8 +445,12 @@ describe("recording in a fixed room", () => {
     }
   });
 
-  test("FR-REC-4: a fixed room's recording is named room_New-York-date-time_names and filed in <month>/<room>; no tutor never breaks its naming", async () => {
+  // Gate B round 10 (2026-11-22): a typed name never goes into a file's name (it is not an identity):
+  // people let in with a code of their own are named by that code (GB-9 has the list's names).
+  test("FR-REC-4: a fixed room's recording is named room_New-York-date-time_people and filed in <month>/<room>; people let in by a typed name are said by their codes, never the typed names; no tutor never breaks its naming", async () => {
     const { r, lessonId, sessionId } = await inRoom(["Kyle", "Ann"]);
+    const people = (await store.lesson(lessonId)).participants.filter(entry => entry.role === "student").map(entry => entry.code.replace(/[^A-Za-z0-9 .']/g, "")).sort((a, b) => a.localeCompare(b)).join("-");
+    expect(people).toMatch(/^R[0-9a-f]{14}-R[0-9a-f]{14}$/);
     // The lesson's own decision allowed recording at its start (as its consent check would).
     await store.transaction(tx => storeEvent(tx, { source: "server", type: "server.recording_eligibility", lessonId, eligible: true, reason: "ALL_CONSENTED", count: 0, occurredAt: START, receivedAt: START, key: `server.recording_eligibility:${lessonId}:fr4` }));
     const recorded = (id, from, to) => store.transaction(tx => storeEvent(tx, {
@@ -458,8 +462,9 @@ describe("recording in a fixed room", () => {
     const first = `FR4-${made}-A`, second = `FR4-${made}-B`;
     await recorded(first, START + 2 * MIN, START + 30 * MIN);
     await recorded(second, START + 35 * MIN, START + 50 * MIN);
-    expect((await store.fileRecord(first)).plannedName).toBe(`${r.label}_2026-12-10 1002_Ann-Kyle.mp4`);
-    expect((await store.fileRecord(second)).plannedName).toBe(`${r.label}_2026-12-10 1035_Ann-Kyle.mp4`);
+    expect((await store.fileRecord(first)).plannedName).toBe(`${r.label}_2026-12-10 1002_${people}.mp4`);
+    expect((await store.fileRecord(second)).plannedName).toBe(`${r.label}_2026-12-10 1035_${people}.mp4`);
+    for (const id of [first, second]) expect((await store.fileRecord(id)).plannedName).not.toMatch(/Ann|Kyle/);
     const fake = createDrive();
     const results = await processJobs({
       store, now: START + 60 * MIN, workerId: "fr-filing", handlers: {
@@ -470,7 +475,7 @@ describe("recording in a fixed room", () => {
     expect(results.filter(result => String(result.jobId).startsWith("file:FR4")).map(result => result.status)).toEqual(["STORED", "STORED"]);
     const lesson = await store.lesson(lessonId);
     const folder = fake.ensureFolder(fake.ensureFolder(fake.rootFolderId, Core.monthlyFolderName(lesson.date)), r.label);
-    expect((await fake.listNames(folder)).sort()).toEqual([`${r.label}_2026-12-10 1002_Ann-Kyle.mp4`, `${r.label}_2026-12-10 1035_Ann-Kyle.mp4`]);
+    expect((await fake.listNames(folder)).sort()).toEqual([`${r.label}_2026-12-10 1002_${people}.mp4`, `${r.label}_2026-12-10 1035_${people}.mp4`]);
   });
 // Round 7 (2026-11-21): a room taken out of use and back.
   test("FR-D1: only an owner takes a room out of use or back; the holder of its current link is told it is not in use, anyone else still gets not found; people waiting are closed out for good and nobody is let in; back in use, the same link works for new requests; the page says it in three languages", async () => {
@@ -726,6 +731,259 @@ describe("recording in a fixed room", () => {
       expect((await manage("admit", { room: room.r.id, request: cy.body.requestId }, { now: START + 4 * MIN })).status).toBe(200);
       for (const ticket of [room.asked.Ann.body.ticket, cy.body.ticket]) expect((await join(room.lessonId, ticket, START + 5 * MIN)).status).toBe(200);
       expect(starts.filter(([id]) => id === room.lessonId)).toEqual([]);
+    } finally {
+      vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "");
+    }
+  });
+
+  // Round 10 (2026-11-22), Gate B engineering, policy neutral and off on the site: a student on a
+  // room's list is let in as that student, by their own pass (option A) or the owner's word (option B),
+  // so their code in the lesson is the code their consent is kept under. Which option, who is on a
+  // list and how a pass reaches a student are the Gate B decision's; the switches go on in tests only.
+  let studentsMade = 0;
+  const studentCode = () => `ST-${made}-${++studentsMade}`;
+  const passOf = link => new URLSearchParams(link.split("#")[1]).get("p");
+  const askWithPass = (r, pass, now = START) => rooms.requestEntry({ store, roomId: r.id, key: null, name: null, pass, now });
+  const sortedPairs = rows => rows.map(row => JSON.stringify(row)).sort();
+  // A room whose students are on its list, each let in as that student, those named consented, and
+  // its lesson's Zoom session live with everyone in it.
+  async function boundRoom(students, { consented = students.map(student => student.code), by = "pass" } = {}) {
+    const r = await room();
+    const passes = {};
+    for (const student of students) {
+      const added = await manage("add_member", { room: r.id, code: student.code, name: student.name });
+      expect(added.status, JSON.stringify(added.body)).toBe(201);
+      passes[student.code] = passOf(added.body.passLink);
+    }
+    const asked = {};
+    for (const student of students) {
+      asked[student.code] = by === "pass" ? await askWithPass(r, passes[student.code]) : await ask(r, student.name);
+      expect(asked[student.code].status, JSON.stringify(asked[student.code].body)).toBe(200);
+      const admitted = await manage("admit", { room: r.id, request: asked[student.code].body.requestId, ...(by === "owner" ? { bindTo: student.code } : {}) });
+      expect(admitted.body, JSON.stringify(admitted.body)).toMatchObject({ ok: true, code: student.code, student: student.code });
+    }
+    const lessonId = (await status(r, asked[students[0].code])).body.lessonId;
+    const lesson = await store.lesson(lessonId);
+    const rowOf = code => lesson.participants.find(entry => entry.code === code);
+    for (const code of consented) await setSyntheticConsent({ store, personCode: code, role: "student", status: "granted", actor: OWNER.email, now: START - 30 * MIN });
+    const sessionId = `ZS-${lessonId.slice(2, 10)}`;
+    await fact(lessonId, "session.started", START + MIN, { providerSessionId: sessionId, sessionName: roomNameOf(lessonId, 0) });
+    for (const student of students) await fact(lessonId, "session.user_joined", START + MIN, { providerSessionId: sessionId, participantId: rowOf(student.code).id });
+    return { r, lessonId, sessionId, rowOf, asked, passes };
+  }
+  const completed = (both, id, from, to) => store.transaction(tx => storeEvent(tx, {
+    source: "zoom_api", type: "session.recording_completed", lessonId: both.lessonId, provider: "synthetic", providerSessionId: both.sessionId, sessionName: roomNameOf(both.lessonId, 0),
+    occurredAt: to + 5 * MIN, receivedAt: to + 5 * MIN, key: `session.recording_completed:${id}`,
+    files: [{ providerFileId: id, kind: "composite", extension: "mp4", size: 1000, status: "completed", recordingStart: from, recordingEnd: to }],
+  }));
+
+  test("GB-7: a student's own pass (option A): nothing of it with the site's switch off; made once and kept as its hash; the request carries the list's name, none typed; let in, the person's code is the student's code, under which their consent is kept, so two consented students record; files are named by the list's names, or by codes where the site says so", async () => {
+    vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "");
+    const closed = await room();
+    expect((await manage("add_member", { room: closed.id, code: "ST-closed", name: "Ann" })).body.code).toBe("RECORDING_NOT_AVAILABLE");
+    expect((await askWithPass(closed, "a".repeat(43))).status).toBe(404);
+    expect((await view(closed)).members).toBeUndefined();
+    vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "on");
+    try {
+      const ann = { code: studentCode(), name: "Ann" }, bo = { code: studentCode(), name: "Bo" };
+      const both = await boundRoom([ann, bo]);
+      for (const pass of Object.values(both.passes)) expect(pass).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      const roomFacts = JSON.stringify(await store.eventsFor([both.r.id]));
+      for (const pass of Object.values(both.passes)) expect(roomFacts).not.toContain(pass);
+      expect(both.asked[ann.code].body.name).toBe("Ann");
+      expect((await view(both.r)).members).toEqual([ann, bo].sort((a, b) => a.code.localeCompare(b.code)));
+      const decisions = (await store.eventsFor([both.r.id])).filter(event => event.type === "server.room_decision");
+      expect(sortedPairs(decisions.map(event => [event.code, event.personCode, event.boundName, event.boundBy]))).toEqual(sortedPairs([[ann.code, ann.code, "Ann", "pass"], [bo.code, bo.code, "Bo", "pass"]]));
+      expect(sortedPairs((await view(both.r)).inRoom.map(person => [person.code, person.student, person.boundBy, person.consent]))).toEqual(sortedPairs([[ann.code, ann.code, "pass", "CONSENTED"], [bo.code, bo.code, "pass", "CONSENTED"]]));
+      await manage("set_recording", { room: both.r.id, on: true });
+      for (const at of [2, 3]) await tick(both.lessonId, at);
+      expect(starts.filter(([id]) => id === both.lessonId)).toEqual([[both.lessonId, both.sessionId]]);
+      expect(await lastDecision(both.lessonId)).toMatchObject({ eligible: true, reason: "ALL_CONSENTED" });
+      const named = `GB7-${made}-A`, coded = `GB7-${made}-B`;
+      await completed(both, named, START + 4 * MIN, START + 30 * MIN);
+      expect((await store.fileRecord(named)).plannedName).toBe(`${both.r.label}_2026-12-10 1004_Ann-Bo.mp4`);
+      vi.stubEnv("CLASSROOM_FIXED_ROOM_FILE_NAMES", "codes");
+      await completed(both, coded, START + 35 * MIN, START + 50 * MIN);
+      const codes = [ann.code, bo.code].map(code => code.replace(/[^A-Za-z0-9 .']/g, "")).sort((a, b) => a.localeCompare(b)).join("-");
+      expect((await store.fileRecord(coded)).plannedName).toBe(`${both.r.label}_2026-12-10 1035_${codes}.mp4`);
+    } finally {
+      vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "");
+      vi.stubEnv("CLASSROOM_FIXED_ROOM_FILE_NAMES", "");
+    }
+  });
+
+  test("GB-8: the owner says which student on the list a person asking with the room's link is (option B): only a student on the list, only with the site's switch on; a pass's request is never bound to another student; one student never has two places in a lesson; not bound, a code of its own as before", async () => {
+    vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "on");
+    try {
+      const r = await room();
+      const kyle = { code: studentCode(), name: "Kyle" }, ann = { code: studentCode(), name: "Ann" };
+      const passes = {};
+      for (const student of [kyle, ann]) passes[student.code] = passOf((await manage("add_member", { room: r.id, ...student })).body.passLink);
+      const typed = await ask(r, "Kyle");
+      expect((await view(r)).waiting.find(person => person.request === typed.body.requestId).student).toBeNull();
+      expect((await manage("admit", { room: r.id, request: typed.body.requestId, bindTo: "ST-nobody" })).body.code).toBe("NO_SUCH_MEMBER");
+      vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "");
+      expect((await manage("admit", { room: r.id, request: typed.body.requestId, bindTo: kyle.code })).body.code).toBe("RECORDING_NOT_AVAILABLE");
+      vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "on");
+      expect((await manage("admit", { room: r.id, request: typed.body.requestId, bindTo: kyle.code })).body).toMatchObject({ ok: true, code: kyle.code, student: kyle.code });
+      const ownerFact = (await store.eventsFor([r.id])).find(event => event.type === "server.room_decision" && event.requestId === typed.body.requestId);
+      expect(ownerFact).toMatchObject({ personCode: kyle.code, boundName: "Kyle", boundBy: "owner", actor: OWNER.email });
+      // Kyle again: by another typed request, or by his own pass: he already has a place.
+      const again = await ask(r, "Kyle");
+      expect((await manage("admit", { room: r.id, request: again.body.requestId, bindTo: kyle.code })).body.code).toBe("ALREADY_IN_LESSON");
+      const ownPass = await askWithPass(r, passes[kyle.code]);
+      expect((await manage("admit", { room: r.id, request: ownPass.body.requestId })).body.code).toBe("ALREADY_IN_LESSON");
+      // Ann's own pass is Ann: never bound to another student.
+      const annAsked = await askWithPass(r, passes[ann.code]);
+      expect((await view(r)).waiting.find(person => person.request === annAsked.body.requestId).student).toBe(ann.code);
+      expect((await manage("admit", { room: r.id, request: annAsked.body.requestId, bindTo: kyle.code })).body.code).toBe("ALREADY_BOUND");
+      expect((await manage("admit", { room: r.id, request: annAsked.body.requestId, bindTo: ann.code })).body).toMatchObject({ ok: true, code: ann.code });
+      const guest = await ask(r, "Cy");
+      const plain = await manage("admit", { room: r.id, request: guest.body.requestId });
+      expect(plain.body.code).toMatch(/^R[0-9a-f]{8}-[0-9a-f]{6}$/);
+      expect(plain.body.student).toBeUndefined();
+      expect((await view(r)).inRoom.find(person => person.request === guest.body.requestId)).toMatchObject({ student: null, consent: "CONSENT_MISSING" });
+    } finally {
+      vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "");
+    }
+  });
+
+  test("GB-9: a pass reissued, or a student taken off the list: the old pass is the same as no room, a request made with it and still waiting is no longer valid, someone let in stays; two changes to the list at the same moment: one made, the other said; codes and names are checked; with the site's switch off nothing of the list answers", async () => {
+    vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "on");
+    try {
+      const r = await room();
+      const ann = { code: studentCode(), name: "Ann" }, bo = { code: studentCode(), name: "Bo" };
+      const annAdded = await manage("add_member", { room: r.id, ...ann });
+      const boAdded = await manage("add_member", { room: r.id, ...bo });
+      expect(annAdded.body.passLink).toMatch(new RegExp(`^/classroom/r/${r.id}#p=[A-Za-z0-9_-]{43}$`));
+      expect((await manage("add_member", { room: r.id, code: ann.code.toLowerCase(), name: "Ann" })).body.code).toBe("MEMBER_EXISTS");
+      for (const bad of ["", "R0123abcd-0a1b2c", "has space", "x".repeat(21), "小明", "a/b"]) expect((await manage("add_member", { room: r.id, code: bad, name: "Ann" })).body.code, bad).toBe("INVALID_CODE");
+      expect((await manage("add_member", { room: r.id, code: studentCode(), name: "小明" })).body.code).toBe("INVALID_NAME");
+      const oldPass = passOf(annAdded.body.passLink);
+      const waitingOld = await askWithPass(r, oldPass);
+      expect((await status(r, waitingOld)).body.state).toBe("waiting");
+      const reissued = await manage("reissue_pass", { room: r.id, code: ann.code });
+      expect(reissued.status).toBe(200);
+      const newPass = passOf(reissued.body.passLink);
+      expect(newPass).not.toBe(oldPass);
+      expect((await askWithPass(r, oldPass)).status).toBe(404);
+      expect((await status(r, waitingOld)).body.state).toBe("replaced");
+      expect((await manage("admit", { room: r.id, request: waitingOld.body.requestId })).body.code).toBe("NOT_WAITING");
+      const fresh = await askWithPass(r, newPass);
+      expect((await manage("admit", { room: r.id, request: fresh.body.requestId })).body).toMatchObject({ ok: true, code: ann.code });
+      const boWaiting = await askWithPass(r, passOf(boAdded.body.passLink));
+      for (const code of [ann.code, bo.code]) expect((await manage("remove_member", { room: r.id, code })).status).toBe(200);
+      expect((await askWithPass(r, newPass)).status).toBe(404);
+      expect((await status(r, fresh)).body.state).toBe("admitted");
+      expect((await status(r, boWaiting)).body.state).toBe("replaced");
+      for (const action of ["remove_member", "reissue_pass"]) expect((await manage(action, { room: r.id, code: bo.code })).body.code, action).toBe("NO_SUCH_MEMBER");
+      // Taken off and put back: a new pass; the old one stays dead.
+      const back = await manage("add_member", { room: r.id, ...bo });
+      expect(back.status).toBe(201);
+      expect((await askWithPass(r, passOf(boAdded.body.passLink))).status).toBe(404);
+      expect((await askWithPass(r, passOf(back.body.passLink))).status).toBe(200);
+      const [x, y] = readAllBeforeWriting([store, store]);
+      const raced = await Promise.all([
+        rooms.manageFixedRoom({ store: x, provider, drive, principal: OWNER, action: "add_member", input: { room: r.id, code: studentCode(), name: "Cy" }, now: START }),
+        rooms.manageFixedRoom({ store: y, provider, drive, principal: OWNER, action: "add_member", input: { room: r.id, code: studentCode(), name: "Di" }, now: START }),
+      ]);
+      expect(raced.map(answer => answer.status).sort()).toEqual([201, 409]);
+      expect(raced.find(answer => answer.status === 409).body.code).toBe("CHANGED_CONCURRENTLY");
+      vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "");
+      for (const action of ["add_member", "reissue_pass", "remove_member"]) expect((await manage(action, { room: r.id, code: bo.code, name: "Bo" })).body.code, action).toBe("RECORDING_NOT_AVAILABLE");
+      expect((await askWithPass(r, passOf(back.body.passLink))).status).toBe(404);
+      const shown = await view(r);
+      expect(shown.members).toBeUndefined();
+      expect(shown.inRoom.every(person => !("student" in person) && !("consent" in person))).toBe(true);
+    } finally {
+      vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "");
+    }
+  });
+
+  test("GB-10: a room's list holds at most 100 students", { timeout: 120_000 }, async () => {
+    vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "on");
+    try {
+      const r = await room();
+      for (let n = 0; n < rooms.ROSTER_MAX; n += 1) expect((await manage("add_member", { room: r.id, code: `${r.id.slice(3, 9)}-${n}`, name: "Ann" })).status).toBe(201);
+      expect((await manage("add_member", { room: r.id, code: `${r.id.slice(3, 9)}-x`, name: "Ann" })).body.code).toBe("ROSTER_FULL");
+    } finally {
+      vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "");
+    }
+  });
+
+  test("GB-11: a bound student's consent withdrawn while the room records: the room stops; when Zoom never confirms the stop, the session is ended and, still unconfirmed, an error is raised for the owners (WITHDRAWAL_STOP_UNCONFIRMED, noted as their notice) and shown on the room; Zoom's confirmation clears it", async () => {
+    vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "on");
+    try {
+      const ann = { code: studentCode(), name: "Ann" }, bo = { code: studentCode(), name: "Bo" };
+      const both = await boundRoom([ann, bo], { by: "owner" });
+      await manage("set_recording", { room: both.r.id, on: true });
+      for (const at of [2, 3]) await tick(both.lessonId, at);
+      await fact(both.lessonId, "session.recording_started", START + 4 * MIN, { providerSessionId: both.sessionId, status: "Recording" });
+      expect((await view(both.r, START + 4.5 * MIN)).recording).toMatchObject({ on: true, available: true, status: "RECORDING" });
+      await setSyntheticConsent({ store, personCode: bo.code, role: "student", status: "withdrawn", actor: OWNER.email, now: START + 5 * MIN });
+      expect((await view(both.r, START + 5 * MIN)).inRoom.find(person => person.code === bo.code).consent).toBe("CONSENT_WITHDRAWN");
+      for (const at of [6, 7, 8, 9, 10]) await tick(both.lessonId, at);
+      expect(stops.filter(([id]) => id === both.lessonId).map(([, sessionId]) => sessionId)).toContain(both.sessionId);
+      expect(calls.filter(([kind, id]) => kind === "end" && id === both.lessonId).length).toBeGreaterThan(0);
+      const notices = (await store.eventsFor([both.lessonId])).filter(event => event.type === "server.admin_notified").map(event => event.code);
+      expect(notices).toContain("WITHDRAWAL_STOP_UNCONFIRMED");
+      expect((await view(both.r, START + 10 * MIN)).recording.anomalies.map(entry => entry.code)).toContain("WITHDRAWAL_STOP_UNCONFIRMED");
+      await fact(both.lessonId, "session.recording_stopped", START + 11 * MIN, { providerSessionId: both.sessionId, status: "Stopped" });
+      expect((await view(both.r, START + 11.5 * MIN)).recording.anomalies.map(entry => entry.code)).not.toContain("WITHDRAWAL_STOP_UNCONFIRMED");
+    } finally {
+      vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "");
+    }
+  });
+
+  test("GB-12: a fixed room's recording told twice (the same notice again, and once more under another key) is one recording, filed once; a Drive failure is tried again and then filed; a destination shared beyond the policy is refused before anything is uploaded", async () => {
+    vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "on");
+    try {
+      const ann = { code: studentCode(), name: "Ann" }, bo = { code: studentCode(), name: "Bo" };
+      const both = await boundRoom([ann, bo]);
+      await manage("set_recording", { room: both.r.id, on: true });
+      for (const at of [2, 3]) await tick(both.lessonId, at);
+      const id = `GB12-${made}`;
+      await completed(both, id, START + 4 * MIN, START + 30 * MIN);
+      await completed(both, id, START + 4 * MIN, START + 30 * MIN);
+      await store.transaction(tx => storeEvent(tx, {
+        source: "zoom_webhook", type: "session.recording_completed", lessonId: both.lessonId, provider: "synthetic", providerSessionId: both.sessionId, sessionName: roomNameOf(both.lessonId, 0),
+        occurredAt: START + 36 * MIN, receivedAt: START + 36 * MIN, key: `session.recording_completed:${id}:again`,
+        files: [{ providerFileId: id, kind: "composite", extension: "mp4", size: 1000, status: "completed", recordingStart: START + 4 * MIN, recordingEnd: START + 30 * MIN }],
+      }));
+      expect((await store.filings([both.lessonId])).map(row => row.record.providerFileId)).toEqual([id]);
+      const fake = createDrive();
+      fake.failNext("startUpload", "TRANSIENT");
+      const run = now => processJobs({
+        store, now, workerId: "gb12", handlers: {
+          file_recording: input => fileRecording({ store, drive: fake, download: async (record, { start, end }) => syntheticContent(record.providerFileId, start, end), rootFolderId: fake.rootFolderId, ...input }),
+          delete_vendor_copy: async ({ job, leaseVersion }) => ({ status: (await store.completeJob({ jobId: job.id, leaseVersion })) ? "DONE" : "LEASE_LOST" }),
+        },
+      });
+      await run(START + 60 * MIN);
+      expect((await store.fileRecord(id)).status).not.toBe("STORED");
+      await run(START + 70 * MIN);
+      expect((await store.fileRecord(id)).status).toBe("STORED");
+      const lesson = await store.lesson(both.lessonId);
+      const folder = fake.ensureFolder(fake.ensureFolder(fake.rootFolderId, Core.monthlyFolderName(lesson.date)), both.r.label);
+      expect(await fake.listNames(folder)).toEqual([`${both.r.label}_2026-12-10 1004_Ann-Bo.mp4`]);
+      // Another room's recording, its month folder shared with anyone who has the link: nothing uploaded.
+      const other = await boundRoom([{ code: studentCode(), name: "Cy" }, { code: studentCode(), name: "Di" }]);
+      await manage("set_recording", { room: other.r.id, on: true });
+      for (const at of [2, 3]) await tick(other.lessonId, at);
+      const shared = `GB12-${made}-shared`;
+      await completed(other, shared, START + 4 * MIN, START + 30 * MIN);
+      const sharedDrive = createDrive();
+      sharedDrive.share(sharedDrive.ensureFolder(sharedDrive.rootFolderId, Core.monthlyFolderName((await store.lesson(other.lessonId)).date)), { type: "anyone", role: "reader" });
+      await processJobs({
+        store, now: START + 80 * MIN, workerId: "gb12-shared", handlers: {
+          file_recording: input => fileRecording({ store, drive: sharedDrive, download: async (record, { start, end }) => syntheticContent(record.providerFileId, start, end), rootFolderId: sharedDrive.rootFolderId, ...input }),
+          delete_vendor_copy: async ({ job, leaseVersion }) => ({ status: (await store.completeJob({ jobId: job.id, leaseVersion })) ? "DONE" : "LEASE_LOST" }),
+        },
+      });
+      expect(sharedDrive.counters.sessionsStarted).toBe(0);
+      expect((await store.fileRecord(shared)).status).not.toBe("STORED");
+      const [row] = (await store.filings([other.lessonId])).filter(entry => entry.record.providerFileId === shared);
+      expect(row.job.blockedReason).toBe("DRIVE_SHARING");
     } finally {
       vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "");
     }

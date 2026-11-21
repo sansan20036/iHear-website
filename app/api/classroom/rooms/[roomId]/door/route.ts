@@ -23,6 +23,9 @@ export async function POST(request: Request, context: { params: Promise<{ roomId
       store: classroomStore(), roomId,
       key: typeof body?.key === "string" ? body.key.slice(0, 200) : null,
       name: typeof body?.name === "string" ? body.name.slice(0, 200) : null,
+      // Gate B (round 10): a student's own pass instead of the room's link (answered only while the
+      // site may record fixed rooms; otherwise the same as no room).
+      pass: typeof body?.pass === "string" ? body.pass.slice(0, 200) : null,
       now: Date.now(),
     });
     return withRateLimitHeaders(NextResponse.json(result.body, { status: result.status, headers: NO_STORE_HEADERS }), decision);

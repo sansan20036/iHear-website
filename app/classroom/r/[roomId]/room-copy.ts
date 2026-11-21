@@ -9,6 +9,10 @@ export const ROOM_COPY = {
     admitted: "老師已經讓你進入，正在帶你進教室…",
     error: "暫時連不上教室，稍後會自動再試。", other: "用另一個名字重新輸入",
     noLink: "這個網址少了教室的連結。請用老師給你的完整連結再打開一次。",
+    // Gate B (round 10): a student's own link (#p=), only where the site may record fixed rooms.
+    passNote: "這是你自己的上課連結，請不要給別人。按下按鈕後，老師會讓你進入。", passEnter: "請老師讓我進入",
+    passReplaced: "這個個人連結已經更換或停用。請向老師要新的連結。",
+    passNameTaken: "教室裡同名的人太多了。請聯絡老師。",
     states: {
       declined: "老師沒有讓你進入這間教室。如果有問題，請聯絡老師。",
       removed: "你已經離開這間教室。如果有問題，請聯絡老師。",
@@ -34,6 +38,10 @@ export const ROOM_COPY = {
     admitted: "Your teacher let you in; taking you to the classroom…",
     error: "The classroom cannot be reached right now; trying again shortly.", other: "Enter another name",
     noLink: "This address is missing the classroom's link. Please open the full link your teacher gave you.",
+    // Gate B (round 10): a student's own link (#p=), only where the site may record fixed rooms.
+    passNote: "This is your own link for class; please do not share it. Press the button and your teacher will let you in.", passEnter: "Ask to come in",
+    passReplaced: "This personal link has been replaced or is no longer in use. Please ask your teacher for a new link.",
+    passNameTaken: "Too many people in the classroom have this name. Please contact your teacher.",
     states: {
       declined: "Your teacher did not let you into this classroom. Please contact your teacher if you need help.",
       removed: "You have left this classroom. Please contact your teacher if you need help.",
@@ -59,6 +67,10 @@ export const ROOM_COPY = {
     admitted: "老师已经让你进入，正在带你进教室…",
     error: "暂时连不上教室，稍后会自动再试。", other: "用另一个名字重新输入",
     noLink: "这个网址少了教室的链接。请用老师给你的完整链接再打开一次。",
+    // Gate B (round 10): a student's own link (#p=), only where the site may record fixed rooms.
+    passNote: "这是你自己的上课链接，请不要给别人。按下按钮后，老师会让你进入。", passEnter: "请老师让我进入",
+    passReplaced: "这个个人链接已经更换或停用。请向老师要新的链接。",
+    passNameTaken: "教室里同名的人太多了。请联系老师。",
     states: {
       declined: "老师没有让你进入这间教室。如果有问题，请联系老师。",
       removed: "你已经离开这间教室。如果有问题，请联系老师。",
