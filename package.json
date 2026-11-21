@@ -43,6 +43,7 @@
     "test:classroom:rooms": "node tests/classroom-fixed-rooms.smoke.mjs",
     "test:classroom:rooms-bulk": "node tests/classroom-fixed-rooms-bulk.smoke.mjs",
     "test:classroom:devices": "node tests/classroom-devices.smoke.mjs",
+    "test:classroom:browsers": "node tests/classroom-fixed-rooms-browsers.smoke.mjs",
     "test:classroom:lobby": "node tests/classroom-lobby.smoke.mjs",
     "test:classroom:controls": "node tests/classroom-controls.smoke.mjs",
     "test:classroom:rate-limit": "node tests/classroom-ratelimit.smoke.mjs",

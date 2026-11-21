@@ -168,6 +168,32 @@ try {
     await shot(kyle, 'r6-taken-out');
   });
 
+  // Round 7 (2026-11-21): a room taken out of use and back (lib/classroom-fixed-rooms.ts setInUse).
+  await check('R6b', '停用與重新啟用：上課中不能停用（先結束這次上課）；停用後拿連結的人看到「這間教室目前停用」，等待中的申請結束；重新啟用後同一個連結可以申請，舊的申請不會回來', async () => {
+    await roomCard().getByRole('button', { name: '停用這間教室' }).click();
+    await expect(admin.getByText('這間教室正在上課：請先結束這次上課，再停用。')).toBeVisible();
+    await expect(roomCard()).toHaveAttribute('data-room-in-use', 'yes');
+    await roomCard().getByRole('button', { name: '結束這次上課' }).click();
+    await expect(roomCard().getByRole('button', { name: '結束這次上課' })).toHaveCount(0);
+    await roomCard().getByRole('button', { name: '停用這間教室' }).click();
+    await expect(roomCard()).toHaveAttribute('data-room-in-use', 'no');
+    await expect(roomCard().locator('[data-room-disabled]')).toBeVisible();
+    await expect(roomCard().locator('[data-waiting-person]')).toHaveCount(0);
+    const bea = watch(await (await context({})).newPage(), 'student-room-disabled');
+    await bea.goto(link);
+    await bea.getByLabel(/Please enter your first name/).fill('Bea');
+    await bea.getByRole('button', { name: '進入教室' }).click();
+    await expect(bea.locator('[data-room-problem]')).toHaveText('這間教室目前停用。請向老師確認。');
+    await shot(admin, 'r6b-disabled');
+    await roomCard().getByRole('button', { name: '重新啟用' }).click();
+    await expect(roomCard()).toHaveAttribute('data-room-in-use', 'yes');
+    await bea.getByRole('button', { name: '進入教室' }).click();
+    await expect(bea.locator('[data-room-waiting]')).toBeVisible();
+    // Only the new request waits: Ann's, closed by the disabling, does not come back.
+    await expect(roomCard().locator('[data-waiting-person]')).toHaveCount(1);
+    await expect(roomCard().locator('[data-waiting-person="Bea"]')).toBeVisible();
+  });
+
   await check('R7', '沒有對外請求，頁面沒有非預期的錯誤', async () => {
     if (report.externalRequests.length) throw new Error(`external requests: ${report.externalRequests.join(', ')}`);
     if (report.pageProblems.length) throw new Error(`page problems: ${report.pageProblems.join(' | ')}`);
