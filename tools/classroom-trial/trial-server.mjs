@@ -19,6 +19,8 @@
 //   node tools/classroom-trial/trial-server.mjs --provider synthetic        (local rehearsal only)
 //   node tools/classroom-trial/trial-server.mjs --env <file> --check        (is the file ready? names only; starts nothing)
 // Options: --data <folder> --public-port 3310 --local-port 3311
+//   --fixed-rooms (2026-11-22): also the fixed rooms (their door page and APIs; POST /trial/rooms on
+//   the local port makes one and returns its link once); their recording is never on.
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer, request as httpRequest } from 'node:http';
@@ -65,11 +67,17 @@ if (!path.relative(root, dataDir).startsWith('..')) throw new Error('The data fo
 mkdirSync(dataDir, { recursive: true });
 const secret = randomBytes(32).toString('base64url');
 const OWNER = 'trial-owner@trial.invalid';
+// Classroom 3.0 round 9 (2026-11-22): --fixed-rooms serves the fixed rooms (W1). Their recording
+// switch (CLASSROOM_FIXED_ROOM_RECORDING) is never set: the shell's was cleared above and the env
+// file cannot hold it, so a trial room can never record.
+const FIXED_ROOMS = args['fixed-rooms'] === 'true';
 Object.assign(process.env, vendor, {
   NODE_ENV: 'production', IHEAR_FORCE_FILE_STORE: '1', IHEAR_TEST_DATA_DIR: dataDir,
   AUTH_SECRET: secret, AUTH_TRUST_HOST: 'true', AUTH_OWNER_EMAILS: OWNER, AUTH_ADMIN_EMAILS: '',
   CLASSROOM_DRIVE: 'local', ...(vendor.CLASSROOM_PROVIDER === 'synthetic' ? { CLASSROOM_SYNTHETIC_SECRET: randomBytes(32).toString('base64url') } : {}),
+  ...(FIXED_ROOMS ? { CLASSROOM_FIXED_ROOMS: 'on' } : {}),
 });
+if (process.env.CLASSROOM_FIXED_ROOM_RECORDING) throw new Error('A trial never records: CLASSROOM_FIXED_ROOM_RECORDING must not be set');
 
 const { default: next } = await import('next');
 const { encode } = await import('next-auth/jwt');
@@ -154,6 +162,15 @@ const PUBLIC_ROUTES = [
   { methods: ['GET', 'HEAD'], pattern: /^\/assets\/[A-Za-z0-9_./-]+\.(css|js|json|png|svg|webp|jpe?g|woff2?|ico)$/ },
   { methods: ['GET', 'HEAD'], pattern: /^\/api\/site-theme\/bootstrap$/ },
 ];
+// Fixed rooms (--fixed-rooms): a room's door page and its two APIs. The room's key stays behind #
+// (never sent to a server), so a room link from /trial/rooms also carries an access token (?a=)
+// that this gateway checks once, as it checks a student's ?k= for a lesson.
+const ROOM = 'FR-[0-9a-f]{32}';
+if (FIXED_ROOMS) PUBLIC_ROUTES.push(
+  { methods: ['GET', 'HEAD'], pattern: new RegExp(`^/classroom/r/${ROOM}$`) },
+  { methods: ['POST'], pattern: new RegExp(`^/api/classroom/rooms/${ROOM}/door(/status)?$`) },
+);
+const roomInvites = new Map();
 const publicServer = createServer(async (request, response) => {
   const url = new URL(request.url, 'http://trial.invalid');
   const { pathname } = url;
@@ -175,8 +192,12 @@ const publicServer = createServer(async (request, response) => {
     // The student's personal link opens access for this browser; every other request needs it.
     const lessonId = /^\/classroom\/([^/]+)$/.exec(pathname)?.[1];
     const invite = lessonId ? invites.get(lessonId) : null;
+    const roomId = new RegExp(`^/classroom/r/(${ROOM})$`).exec(pathname)?.[1];
+    const roomInvite = roomId ? roomInvites.get(roomId) : null;
     if (!hasAccess(request)) {
-      if (!invite || invite.expiresAt < Date.now() || !sameHash(url.searchParams.get('k'), invite.studentKeyHash)) return notFound(publicPort, request, response);
+      const byLesson = invite && invite.expiresAt >= Date.now() && sameHash(url.searchParams.get('k'), invite.studentKeyHash);
+      const byRoom = roomInvite && roomInvite.expiresAt >= Date.now() && sameHash(url.searchParams.get('a'), roomInvite.accessHash);
+      if (!byLesson && !byRoom) return notFound(publicPort, request, response);
       response.setHeader('set-cookie', cookie(request, ACCESS_COOKIE, accessId(), ACCESS_HOURS * 3600));
     }
     // A browser's Origin must be this tunnel's own address; Next is then given its own origin.
@@ -256,6 +277,33 @@ const localServer = createServer(async (request, response) => {
       }));
       return log(localPort, request, 201);
     }
+    // Fixed rooms (--fixed-rooms): a room for the W1 check, made as the owner. Its link is given
+    // once, here, with the gateway's access token; only the token's hash is kept.
+    if (FIXED_ROOMS && url.pathname === '/trial/rooms' && request.method === 'POST') {
+      const body = JSON.parse(await new Promise((resolve, reject) => {
+        let text = '';
+        request.on('data', chunk => { text += chunk; if (text.length > 4096) reject(new Error('too large')); });
+        request.on('end', () => resolve(text || '{}'));
+        request.on('error', reject);
+      }));
+      const publicOrigin = new URL(String(body.publicOrigin ?? '')).origin;
+      if (!/^Trial [A-Za-z0-9 ]{1,30}$/.test(String(body.label ?? ''))) throw new Error('Trial rooms are named "Trial …" (letters, digits and spaces)');
+      const ownerCookie = (await sessionCookie({ headers: {} }, OWNER, 300)).split(';')[0];
+      const created = await localRequest('POST', '/api/admin/classrooms/rooms', { 'content-type': 'application/json', origin: `http://localhost:${localPort}`, cookie: ownerCookie },
+        JSON.stringify({ action: 'create', label: body.label }));
+      const result = JSON.parse(created.text);
+      if (created.status !== 201) {
+        response.writeHead(created.status, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ error: result.error, code: result.code }));
+        return log(localPort, request, created.status);
+      }
+      const made = new URL(result.link, publicOrigin);
+      const accessToken = randomBytes(32).toString('base64url');
+      roomInvites.set(result.room.id, { accessHash: hash(accessToken), expiresAt: Date.now() + ACCESS_HOURS * 3600_000 });
+      response.writeHead(201, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      response.end(JSON.stringify({ room: result.room, roomLink: `${publicOrigin}${made.pathname}?a=${accessToken}${made.hash}` }));
+      return log(localPort, request, 201);
+    }
     // Same-origin requests from the owner's page on this port; Next is then given its own origin.
     const origin = request.headers.origin;
     if (origin && ![`http://localhost:${localPort}`, `http://127.0.0.1:${localPort}`].includes(origin)) return notFound(localPort, request, response);
@@ -272,7 +320,7 @@ await Promise.all([
   new Promise((resolve, reject) => { publicServer.once('error', reject); publicServer.listen(publicPort, '127.0.0.1', resolve); }),
   new Promise((resolve, reject) => { localServer.once('error', reject); localServer.listen(localPort, '127.0.0.1', resolve); }),
 ]);
-console.log(`iHear classroom trial server (${vendor.CLASSROOM_PROVIDER}); round 1: no recording.`);
+console.log(`iHear classroom trial server (${vendor.CLASSROOM_PROVIDER}); round 1: no recording.${FIXED_ROOMS ? ' Fixed rooms on (POST /trial/rooms); their recording off.' : ''}`);
 console.log(`  public, for the tunnel only: http://127.0.0.1:${publicPort} (classroom pages and their APIs only)`);
 console.log(`  local, this computer only:   http://127.0.0.1:${localPort}/trial/owner (overview) and POST /trial/lessons`);
 console.log(`  data: ${dataDir}`);
