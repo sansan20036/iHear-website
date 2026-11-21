@@ -7,7 +7,7 @@ import path from 'node:path';
 import postgres from 'postgres';
 import { createClassroomBlock, manageBlock } from '../lib/classroom-blocks';
 import { createClassroomLesson, joinClassroom } from '../lib/classroom-service';
-import { manageFixedRoom, requestEntry, requestStatus } from '../lib/classroom-fixed-rooms';
+import { manageFixedRoom, manageFixedRoomsBulk, requestEntry, requestStatus } from '../lib/classroom-fixed-rooms';
 import { createPostgresClassroomStore } from '../lib/classroom-store';
 import { buildSessionTokenClaims, signSessionToken } from '../tools/recording-pathway/classroom/eligibility.mjs';
 
@@ -199,6 +199,68 @@ describe('draft 029 on PostgreSQL', () => {
       expect((await act('admit', { room: roomId, request: waited.requestId }, now + 2 * MIN)).status).toBe(200);
       const [{ count: after }] = await sql`SELECT count(*)::int AS count FROM public.classroom_participants WHERE lesson_id = ${lessonId} AND role = 'student'`;
       expect(after).toBe(11);
+    } finally {
+      vi.stubEnv('CLASSROOM_FIXED_ROOMS', '');
+    }
+  });
+
+  // Round 7 (2026-11-21): a room taken out of use and back, the same room changed twice at the same
+  // moment from separate connections, and rooms made and their links given again in bulk, at once
+  // from two connections.
+  test('FR-PG2: on PostgreSQL a room out of use closes its waiting requests for good and takes new ones once back; two link replacements at once give one link; 30 rooms made in bulk, then all their links given twice at once: each room one new link, the other told it changed', async () => {
+    vi.stubEnv('CLASSROOM_FIXED_ROOMS', 'on');
+    try {
+      const now = Date.parse('2026-12-24T08:00:00Z');
+      const owner = { email: 'pg-rooms-owner@example.test', owner: true };
+      const pool = connect('classroom_multi', 8);
+      const parallel = createPostgresClassroomStore(pool);
+      const act = (action, input, at = now, on = store) => manageFixedRoom({ store: on, provider, drive, principal: owner, action, input, now: at });
+      const keyOf = link => new URLSearchParams(link.split('#')[1]).get('k');
+      const made = await act('create', { label: 'PG Use Room' });
+      expect(made.status).toBe(201);
+      const roomId = made.body.room.id;
+      const waiting = await requestEntry({ store, roomId, key: keyOf(made.body.link), name: 'Ann', now });
+      expect(waiting.status).toBe(200);
+      const stateOf = async at => (await requestStatus({ store, roomId, requestId: waiting.body.requestId, ticket: waiting.body.ticket, now: at })).body.state;
+      expect((await act('disable', { room: roomId }, now + 1)).body).toMatchObject({ ok: true, inUse: false });
+      expect((await requestEntry({ store, roomId, key: keyOf(made.body.link), name: 'Bo', now: now + 2 })).body.code).toBe('ROOM_DISABLED');
+      expect(await stateOf(now + 2)).toBe('closed');
+      expect((await act('enable', { room: roomId }, now + MIN)).body).toMatchObject({ ok: true, inUse: true });
+      expect(await stateOf(now + MIN)).toBe('closed');
+      expect((await requestEntry({ store, roomId, key: keyOf(made.body.link), name: 'Ann', now: now + MIN })).status).toBe(200);
+      const [{ count: uses }] = await sql`SELECT count(*)::int AS count FROM public.classroom_events WHERE lesson_id = ${roomId} AND type IN ('server.room_disabled', 'server.room_enabled')`;
+      expect(uses).toBe(2);
+
+      // Two replacements of one room's link at the same moment, from two connections.
+      const twice = await Promise.all([act('replace_link', { room: roomId }, now + 2 * MIN, parallel), act('replace_link', { room: roomId }, now + 2 * MIN)]);
+      expect(twice.map(answer => answer.status).sort()).toEqual([200, 409]);
+      expect(twice.find(answer => answer.status === 409).body.code).toBe('CHANGED_CONCURRENTLY');
+      const winner = twice.find(answer => answer.status === 200).body.link;
+      expect((await requestEntry({ store, roomId, key: keyOf(winner), name: 'Cy', now: now + 2 * MIN })).status).toBe(200);
+      expect((await requestEntry({ store, roomId, key: keyOf(made.body.link), name: 'Di', now: now + 2 * MIN })).body.code).toBe('LINK_REPLACED');
+
+      // 30 rooms in bulk; then every link given again twice at once, from two connections.
+      const bulk = (action, input, on = store) => manageFixedRoomsBulk({ store: on, principal: owner, action, input, now: now + 3 * MIN });
+      const many = await bulk('create_many', { prefix: 'PGB', from: 1, to: 30 });
+      expect(many.status).toBe(201);
+      expect(many.body.rooms).toHaveLength(30);
+      expect([many.body.failed, many.body.unknown, many.body.notAttempted]).toEqual([[], [], []]);
+      const ids = many.body.rooms.map(room => room.id);
+      const both = await Promise.all([bulk('export_links', { rooms: ids }, parallel), bulk('export_links', { rooms: ids })]);
+      for (const answer of both) expect(answer.status).toBe(200);
+      const links = both.flatMap(answer => answer.body.links);
+      const failed = both.flatMap(answer => answer.body.failed);
+      expect(links).toHaveLength(30);
+      expect(new Set(links.map(entry => entry.room)).size).toBe(30);
+      expect(failed).toHaveLength(30);
+      expect(new Set(failed.map(entry => entry.code))).toEqual(new Set(['CHANGED_CONCURRENTLY']));
+      expect(new Set(links.map(entry => entry.generation))).toEqual(new Set([2]));
+      // Each room's link given out works; each room's first link lets nobody new in.
+      for (const entry of links.slice(0, 5)) {
+        expect((await requestEntry({ store, roomId: entry.room, key: keyOf(entry.link), name: 'Ed', now: now + 4 * MIN })).status).toBe(200);
+        const first = many.body.rooms.find(room => room.id === entry.room).link;
+        expect((await requestEntry({ store, roomId: entry.room, key: keyOf(first), name: 'Fay', now: now + 4 * MIN })).body.code).toBe('LINK_REPLACED');
+      }
     } finally {
       vi.stubEnv('CLASSROOM_FIXED_ROOMS', '');
     }
