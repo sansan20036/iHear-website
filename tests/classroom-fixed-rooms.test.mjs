@@ -560,6 +560,33 @@ describe("recording in a fixed room", () => {
   // consent, the Zoom session and the filing are bound (planning/2026-11-21-gate-b-recording-binding.md).
   // Recording stays off on the site; the switches are turned on inside these tests only. Today a
   // consent belongs to the code a person was let in with (the stand-in for a bound student code).
+  // Round 9 (2026-11-22): GB-0 holds the gate to its purpose: with Gate B closed it never shuts out anyone.
+  test("GB-0: with Gate B closed the consent gate shuts out nobody: the site's switch off (as on the site), students without any consent enter, before and after a decision and when let in late; a room whose own switch was turned on while the site allowed it, the site's switch then off before anything recorded, lets a late arrival in too", async () => {
+    vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "");
+    const off = await inRoom(["Ann", "Kyle"], { consented: [] });
+    expect((await manage("set_recording", { room: off.r.id, on: true })).body.code).toBe("RECORDING_NOT_AVAILABLE");
+    for (const name of ["Ann", "Kyle"]) expect((await join(off.lessonId, off.asked[name].body.ticket, START + MIN)).status).toBe(200);
+    for (const at of [2, 3]) await tick(off.lessonId, at);
+    for (const name of ["Ann", "Kyle"]) expect((await join(off.lessonId, off.asked[name].body.ticket, START + 4 * MIN)).status).toBe(200);
+    const late = await ask(off.r, "Bo", { now: START + 5 * MIN });
+    expect((await manage("admit", { room: off.r.id, request: late.body.requestId }, { now: START + 5 * MIN })).status).toBe(200);
+    expect((await join(off.lessonId, late.body.ticket, START + 6 * MIN)).status).toBe(200);
+    expect(starts.filter(([id]) => id === off.lessonId)).toEqual([]);
+    vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "on");
+    try {
+      const turned = await inRoom(["Ann", "Kyle"], { consented: [] });
+      expect((await manage("set_recording", { room: turned.r.id, on: true })).status).toBe(200);
+      vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "");
+      for (const at of [2, 3]) await tick(turned.lessonId, at);
+      const later = await ask(turned.r, "Cy", { now: START + 5 * MIN });
+      expect((await manage("admit", { room: turned.r.id, request: later.body.requestId }, { now: START + 5 * MIN })).status).toBe(200);
+      expect((await join(turned.lessonId, later.body.ticket, START + 6 * MIN)).status).toBe(200);
+      expect(starts.filter(([id]) => id === turned.lessonId)).toEqual([]);
+    } finally {
+      vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "");
+    }
+  });
+
   test("GB-1: a typed name never carries a consent: another person typing the same names, here or in another room, is a new code without consent and that lesson is not recorded; someone let in without consent while a lesson records gets no token (18.2 step 7), and the recording goes on for the people who consented", async () => {
     vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "on");
     try {
