@@ -54,11 +54,12 @@ describe("whole links never end up in test pictures or in the repository", () =>
     }
   });
 
-  test("TA-2: no file the repository holds carries a whole link's key (behind #k= or ?k=)", () => {
+  test("TA-2: no file the repository holds carries a whole link's key (behind #k= or ?k=) or a student's whole pass (behind #p= or ?p=)", () => {
     let found = "";
     try {
-      // safe.directory: see TA-1 (GitHub CI's container).
-      found = execFileSync("git", ["-c", "safe.directory=*", "grep", "-nIE", "[#?]k=[A-Za-z0-9_-]{43}"], { encoding: "utf8" });
+      // safe.directory: see TA-1 (GitHub CI's container). Gate B round 12: a student's own pass
+      // (#p=, 32 random bytes like a room's key) is a key too.
+      found = execFileSync("git", ["-c", "safe.directory=*", "grep", "-nIE", "[#?][kp]=[A-Za-z0-9_-]{43}"], { encoding: "utf8" });
     } catch (error) {
       // git grep answers 1 when nothing matches.
       if (error.status !== 1) throw error;
