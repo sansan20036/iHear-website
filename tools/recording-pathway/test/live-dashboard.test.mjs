@@ -340,6 +340,41 @@ test('a late recording file: a warning at 30 minutes, an error at 6 hours, then 
   assert.equal(stored.dataState.value, 'REALTIME');
 });
 
+// Round 12 (Gate B, 2026-11-22): a filed copy deleted under the retention period reads as deleted on
+// the dashboard, never as stored; one whose deletion needs a person is not called stored; a page
+// cannot say a copy was deleted; without retention facts every card is exactly as before.
+test('round 12: a copy deleted under the retention period reads as deleted, never stored; one needing a person is not called stored; a page cannot say it; without retention facts nothing changes', () => {
+  const base = [
+    ...recordingLesson(),
+    recording('Stopped', T + 60 * MIN),
+    leftFact(STUDENT, T + 60 * MIN + 10 * SEC, 'LEFT', 'u-s'),
+    leftFact(TUTOR, T + 60 * MIN + 20 * SEC, 'LEFT', 'u-t'),
+    endedFact(T + 60 * MIN + 20 * SEC),
+    completedFact(T + 70 * MIN),
+    filed('STORED', T + 71 * MIN),
+  ];
+  const now = T + 40 * 24 * 60 * MIN;
+  const before = lessonCard(deriveLesson(lesson, base, now), now);
+  assert.equal(before.filing.label, '已歸檔');
+  assert.equal('deleted' in before.filing, false);
+  assert.equal('retention' in before.filing.items[0], false);
+  const retentionFact = (type, fields = {}) => fact(type, now - MIN, { providerFileId: 'f-video', key: `${type}:f-video`, ...fields }, 'server');
+  const deleted = deriveLesson(lesson, [...base, retentionFact('server.recording_delete_started'), retentionFact('server.recording_deleted', { outcome: 'TRASHED', mode: 'trash' })], now);
+  assert.deepEqual([deleted.filing.status, deleted.filing.stored, deleted.filing.deleted], ['DELETED', 0, 1]);
+  const card = lessonCard(deleted, now);
+  assert.equal(card.filing.label, '已依保存期限刪除');
+  assert.equal(card.filing.items[0].status, 'DELETED');
+  assert.equal(card.filing.items[0].label, '已依保存期限刪除（在 Google Drive 垃圾桶，一段時間內還能救回）');
+  // Drive could not confirm the copy: a person looks, and the copy is not called stored.
+  const blocked = [...base, retentionFact('server.recording_delete_started'), retentionFact('server.recording_delete_failed', { reason: 'NOT_VISIBLE' }), retentionFact('server.recording_delete_blocked', { reason: 'NOT_VISIBLE' })];
+  const needs = lessonCard(deriveLesson(lesson, blocked, now), now);
+  assert.equal(needs.filing.items[0].status, 'STORED');
+  assert.match(needs.filing.items[0].label, /^需要人工確認/);
+  // A page never says a copy was deleted.
+  const forged = [...base, fact('server.recording_deleted', now - MIN, { providerFileId: 'f-video', outcome: 'REMOVED', key: 'forged-deletion' }, 'host_sdk')];
+  assert.deepEqual(lessonCard(deriveLesson(lesson, forged, now), now).filing, before.filing);
+});
+
 test('a tutor whose computer is switched off: possibly offline, confirmed gone, recording stopped, session ended, filed', () => {
   let events = [...recordingLesson(), beat(T + 29 * MIN + 50 * SEC)];
   const tutorAt = now => deriveLesson(lesson, events, now).attendance.find(entry => entry.role === 'tutor');

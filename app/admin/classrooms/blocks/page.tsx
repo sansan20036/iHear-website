@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { filingLabel } from "../../../../lib/classroom-filing-labels";
 import { useAdmin } from "../../admin-context";
 
 // P3-Multi (2026-11-09): owners add a block (班次): a Lobby, teaching rooms, the people (with the
@@ -11,6 +12,8 @@ import { useAdmin } from "../../admin-context";
 type BlockRow = { blockId: string; code: string; startsAt: string; endsAt: string; cancelled: boolean; rooms: number; members: number };
 type Filing = {
   recordingId: string; block: string; room: string | null; date: string; name: string | null; status: string; hold: string | null;
+  // Round 12 (Gate B): what the retention period did to the copy (null: nothing).
+  retention?: { state: string; outcome: string | null; reason: string | null; at: string | null } | null;
   job: { status: string; attempts: number; error: string | null; blockedReason: string | null } | null; retryable: boolean;
 };
 type Created = { block: { blockId: string; code: string }; studentLinks: { code: string; link: string }[] };
@@ -129,7 +132,7 @@ export default function ClassroomBlocksPage() {
             {filings.map((entry) => (
               <tr key={entry.recordingId} data-filing={entry.recordingId} data-status={entry.status}>
                 <td>{entry.date}</td><td>{entry.block}</td><td>{entry.room}</td><td>{entry.name ?? "—"}</td>
-                <td>{entry.status === "ARCHIVED" ? "ARCHIVED 歸檔完成" : entry.status}</td>
+                <td data-filing-status={entry.status}>{filingLabel(entry)}</td>
                 <td>{entry.hold ?? entry.job?.error ?? entry.job?.blockedReason ?? ""}</td>
                 <td>{entry.retryable && <button type="button" onClick={() => void retry(entry.recordingId)}>重新處理</button>}</td>
               </tr>

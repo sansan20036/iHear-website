@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { filingLabel } from "../../../../../lib/classroom-filing-labels";
 
 // P3-Multi (2026-11-09): the manager's page for a block. Everything here asks the server, which
 // checks again who is asking, the block's phase and version, the rooms' seats and recording: the
@@ -13,7 +14,7 @@ type Room = {
   label: string; kind: string; lessonId: string; capacity: number | null; occupied: number;
   people: { code: string; role: string; seat: string | null }[]; sessions: { id: string; live: boolean | null; generation: number | null; capture: string | null }[];
   recording: { status: string; label: string; basis: string; allowed: boolean }; operations: Operation[]; advice: string | null;
-  files: { name: string | null; status: string; hold: string | null }[]; anomalies: { code: string; severity: string }[];
+  files: { name: string | null; status: string; hold: string | null; retention?: { state: string; outcome: string | null; reason: string | null } | null }[]; anomalies: { code: string; severity: string }[];
 };
 type View = {
   block: { id: string; code: string; startsAt: string; endsAt: string; cancelled: boolean; phase: string; version: number; recordingMode: string; recordingAvailable: boolean; capacity: number };
@@ -116,7 +117,7 @@ export default function BlockManage({ blockId }: { blockId: string }) {
         <p key={index} className="block-manage-alert" data-operation={entry.state}>錄影操作 {entry.action}：{entry.state}（嘗試 {entry.attempts} 次；Session {entry.sessions.join("、") || "未知"}）</p>
       ))}
       {room.advice && <p className="block-manage-note" role="note">{room.advice}</p>}
-      {room.files.length > 0 && <ul>{room.files.map((file, index) => <li key={index}>{file.name ?? "（未命名）"}：{file.status === "STORED" ? "ARCHIVED 歸檔完成" : file.status}{file.hold ? `（${file.hold}）` : ""}</li>)}</ul>}
+      {room.files.length > 0 && <ul>{room.files.map((file, index) => <li key={index} data-filing-status={file.status}>{file.name ?? "（未命名）"}：{filingLabel(file)}{file.hold ? `（${file.hold}）` : ""}</li>)}</ul>}
       {room.anomalies.length > 0 && <p className="block-manage-alert">異常：{room.anomalies.map((entry) => entry.code).join("、")}</p>}
       {room.kind === "room" && (
         <div className="block-manage-bar">

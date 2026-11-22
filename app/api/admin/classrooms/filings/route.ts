@@ -4,7 +4,7 @@ import { authorizeAdminRequest } from "../../../../../lib/admin-auth";
 import { appendAdminActivity } from "../../../../../lib/admin-store";
 import { listBlockFilings, retryBlockFiling } from "../../../../../lib/classroom-blocks";
 import { classroomDrive } from "../../../../../lib/classroom-drive";
-import { previewRetention, retentionConfigured, runRetention } from "../../../../../lib/classroom-retention";
+import { previewRetention, retentionActivityStatus, retentionConfigured, runRetention } from "../../../../../lib/classroom-retention";
 import { classroomStore } from "../../../../../lib/classroom-store";
 import { withRateLimitHeaders } from "../../../../../lib/rate-limit";
 import { NO_STORE_HEADERS } from "../../../../../lib/response-headers";
@@ -32,18 +32,21 @@ export async function POST(request: Request) {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     // Gate B (round 10): the recordings' retention, off unless the site sets a period (iHear's
     // decision): until then its actions are unknown here, as before. A preview changes nothing; an
-    // apply deletes exactly the plan previewed (its digest).
+    // apply deletes exactly the plan previewed (its digest). Round 12: only the kinds of recording the
+    // site names; applying only by a person the site names, a permanent deletion only with
+    // permanent: true; the activity record says whether every copy, some or none were deleted.
     retention = retentionConfigured() && (body.action === "retention_preview" || body.action === "retention_apply");
     if (retention && body.action === "retention_preview") {
-      const preview = await previewRetention({ store: classroomStore(), now: Date.now() });
+      const preview = await previewRetention({ store: classroomStore(), now: Date.now(), actor: access.principal.email });
       return respond(preview.body, preview.status);
     }
     if (retention && body.action === "retention_apply") {
-      const applied = await runRetention({ store: classroomStore(), drive: classroomDrive(), now: Date.now(), actor: access.principal.email, confirm: body.confirm });
+      const applied = await runRetention({ store: classroomStore(), drive: classroomDrive(), now: Date.now(), actor: access.principal.email, confirm: body.confirm, permanent: body.permanent === true });
       if (applied.status === 200) {
+        const outcomes = ((applied.body as { results?: { outcome: string; note?: string }[] }).results ?? []);
         const recorded = await appendAdminActivity({
           actorEmail: access.principal.email, actorRole: access.principal.role, action: "classroom.recording_retention", entityType: "classroom",
-          entityId: String((applied.body as { digest?: string }).digest ?? ""), changedFields: ["recordings"], entityStatus: "deleted", entityVersion: null,
+          entityId: String((applied.body as { digest?: string }).digest ?? ""), changedFields: ["recordings"], entityStatus: retentionActivityStatus(outcomes), entityVersion: null,
         }).then(() => true, () => false);
         if (!recorded) return respond({ ...(applied.body as Record<string, unknown>), activity: "not_recorded" }, applied.status);
       }

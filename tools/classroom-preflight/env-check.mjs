@@ -65,9 +65,11 @@ const PROFILES = {
 // recording test), the fixed rooms and the site-wide permanent entry (D-16, D-14). Each leaves this
 // list only by its own approval. Gate B round 10 (2026-11-22): the recordings' retention and
 // deletion mode, and the fixed rooms' file-name rule (iHear's decisions: 保存期限, file names).
+// Round 12: which kinds of recording a period covers, and who may apply it (保存期限, who may delete).
 export const FORBIDDEN = [
   'CLASSROOM_FIXED_ROOM_RECORDING', 'CLASSROOM_FIXED_ROOMS', 'CLASSROOM_PERMANENT_ENTRY',
   'CLASSROOM_RECORDING_RETENTION_DAYS', 'CLASSROOM_RECORDING_RETENTION_MODE', 'CLASSROOM_FIXED_ROOM_FILE_NAMES',
+  'CLASSROOM_RECORDING_RETENTION_SCOPE', 'CLASSROOM_RECORDING_RETENTION_DELETERS',
   'CLASSROOM_VENDOR_DELETION', 'CLASSROOM_MULTI_RECORDING', 'CLASSROOM_TRIAL_CONSENT',
   'CLASSROOM_SYNTHETIC_SECRET', 'CLASSROOM_WEBHOOK_SECRET', 'CLASSROOM_DRIVE_ROOT_NAME',
   'CLASSROOM_GOOGLE_CLIENT_FILE', 'CLASSROOM_GOOGLE_TOKEN_FILE', 'CLASSROOM_GOOGLE_API_BASE',

@@ -10,6 +10,8 @@ import { FILE_NAME_SAFE } from "../tools/recording-pathway/classroom/block-namin
 import { OPERATION_EVENT } from "../tools/recording-pathway/classroom/operations.mjs";
 // @ts-ignore - shared classroom logic, plain JavaScript tested with node --test.
 import { storeEvent } from "../tools/recording-pathway/classroom/webhook-ingest.mjs";
+// @ts-ignore - shared classroom logic, plain JavaScript tested with node --test.
+import { retentionStateOf } from "../tools/recording-pathway/classroom/retention.mjs";
 import {
   blockPhase, hashKey, inBlockWindow, isStaff, MAX_MEMBERS, MAX_ROOMS, memberOf, memberState, newYorkDate, openConnections, presenceIn, recordingModeOf, ROOM_CAPACITY, seatOf, STALE_PRESENCE_MS,
   type BlockPhase, type BlockTarget, type RecordingMode,
@@ -517,7 +519,10 @@ export async function blockView({ store, blockId, now }: { store: ClassroomStore
       }).map((lesson) => (lesson.roomKind === "lobby" ? "Lobby" : lesson.roomLabel)),
     });
   }
-  const files = (await store.filings(lessons.map((lesson) => lesson.id))).map(({ record: file }) => ({ lessonId: String(file.lessonId), name: file.plannedName ?? null, status: file.status, hold: file.hold ?? null }));
+  const files = (await store.filings(lessons.map((lesson) => lesson.id))).map(({ record: file, retention }) => {
+    const shown = filingStateOf(file, retention);
+    return { lessonId: String(file.lessonId), name: file.plannedName ?? null, status: shown.status, hold: file.hold ?? null, ...(shown.retention ? { retention: shown.retention } : {}) };
+  });
   const roomCard = (lesson: ClassroomLesson) => {
     const facts = byLesson.get(lesson.id) ?? [];
     const state = deriveLesson(forRules(lesson, facts), facts, now);
@@ -594,15 +599,29 @@ export async function listBlockFilings({ store, now }: { store: ClassroomStore; 
     }
   }
   const rows = await store.filings([...rooms.keys()]);
-  return rows.map(({ record, job }) => {
+  return rows.map(({ record, job, retention }) => {
     const place = rooms.get(String(record.lessonId))!;
+    const shown = filingStateOf(record, retention);
     return {
       recordingId: record.providerFileId, block: place.block.code, room: place.lesson.roomLabel, date: newYorkDate(place.lesson.startsAt),
       recordingStart: (record.recordingStart as number | null | undefined) ?? null, name: (record.plannedName as string | null | undefined) ?? null,
-      status: record.status === "STORED" ? "ARCHIVED" : record.status, hold: (record.hold as string | null | undefined) ?? null,
+      status: shown.status === "STORED" ? "ARCHIVED" : shown.status, hold: (record.hold as string | null | undefined) ?? null, ...(shown.retention ? { retention: shown.retention } : {}),
       job, retryable: record.status === "FAILED" && !record.hold,
     };
   }).sort((a, b) => b.date.localeCompare(a.date) || (b.recordingStart ?? 0) - (a.recordingStart ?? 0) || a.recordingId.localeCompare(b.recordingId));
+}
+
+// Round 12 (Gate B): what a list shows for one recording, from its row and its retention facts, the
+// one rule for every list (retentionStateOf). A copy deleted under the retention period is DELETED,
+// never ARCHIVED; one whose deletion needs a person, is under way or failed says so with it. The row
+// keeps its filing status; the deletion's own record (its facts, written only after Drive confirmed)
+// is what says the copy is gone.
+export type FilingRetention = { state: "DELETED" | "NEEDS_PERSON" | "DELETING" | "DELETE_FAILED"; outcome: "TRASHED" | "REMOVED" | null; reason: string | null; at: string | null } | null;
+export function filingStateOf(record: { status: string }, facts: ClassroomEvent[] = []): { status: string; retention: FilingRetention } {
+  const found = retentionStateOf(facts) as { state: NonNullable<FilingRetention>["state"] | null; outcome?: "TRASHED" | "REMOVED"; reason?: string | null; at?: number };
+  if (!found.state) return { status: record.status, retention: null };
+  const retention = { state: found.state, outcome: found.outcome ?? null, reason: found.reason ?? null, at: Number.isFinite(found.at) ? new Date(Number(found.at)).toISOString() : null };
+  return { status: found.state === "DELETED" ? "DELETED" : record.status, retention };
 }
 
 // An owner sends a failed filing back to the queue, with a reason (18.7: who, when, why). Only a
@@ -617,6 +636,9 @@ export async function retryBlockFiling({ store, providerFileId, actor, reason, n
   const record = await store.fileRecord(id);
   const lesson = record?.lessonId ? await store.lesson(String(record.lessonId)) : null;
   if (!record || !lesson?.blockId) return refused(404, "NOT_FOUND", "No such recording in a block");
+  // Round 12: a copy deleted under the retention period is said as such, and never filed again.
+  const facts = (await store.filings([lesson.id])).find((row) => row.record.providerFileId === id)?.retention ?? [];
+  if (filingStateOf(record, facts).status === "DELETED") return refused(409, "DELETED_BY_RETENTION", "This recording's copy was deleted under the retention period: it is never filed again");
   const result = await store.requeueFiling({
     providerFileId: id, now,
     events: [{ source: "server", type: "p1.filing_retry", lessonId: lesson.id, providerFileId: id, actor, reason: why, occurredAt: now, receivedAt: now, key: `p1.filing_retry:${id}:${now}:${randomUUID()}` }],

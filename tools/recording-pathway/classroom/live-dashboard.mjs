@@ -54,11 +54,19 @@ export const LABELS = Object.freeze({
     ALLOWED: '已換到新教室：重新確認通過，可以在新教室錄影',
     BLOCKED: '已換到新教室：這堂課不再錄影',
   },
-  filing: { NONE: '', PENDING: '歸檔中', STORED: '已歸檔', HELD: '已隔離或暫緩，待管理員處理', BLOCKED: '歸檔暫停，待管理員處理', FAILED: '歸檔失敗' },
+  filing: { NONE: '', PENDING: '歸檔中', STORED: '已歸檔', HELD: '已隔離或暫緩，待管理員處理', BLOCKED: '歸檔暫停，待管理員處理', FAILED: '歸檔失敗', DELETED: '已依保存期限刪除' },
   // One recording file's outcome.
   filingItem: {
     PENDING: '等待歸檔', STORED: '已存入雲端硬碟', QUARANTINED: '已隔離到 _待確認', HOLD: '保留在視訊服務，不歸檔',
-    SKIPPED: '不需歸檔', BLOCKED: '歸檔暫停', FAILED: '歸檔失敗',
+    SKIPPED: '不需歸檔', BLOCKED: '歸檔暫停', FAILED: '歸檔失敗', DELETED: '已依保存期限刪除',
+  },
+  // Round 12 (Gate B): what the retention period did to a filed copy (the same words as the lists,
+  // lib/classroom-filing-labels.ts).
+  retentionOutcome: { TRASHED: '在 Google Drive 垃圾桶，一段時間內還能救回', REMOVED: '已永久刪除' },
+  retentionState: {
+    NEEDS_PERSON: '需要人工確認：保存期限刪除時無法確認檔案，檔案現況不明',
+    DELETING: '保存期限刪除進行中，尚未確認結果，檔案現況不明',
+    DELETE_FAILED: '上次保存期限刪除沒有完成',
   },
   filingBlocked: {
     DRIVE_QUOTA: '雲端硬碟空間不足',
@@ -148,6 +156,13 @@ function filingItemCard(item) {
   let text = LABELS.filingItem[item.status] ?? item.status;
   if (item.status === 'STORED') text = LABELS.storedIn[item.destination] ?? '已存入雲端硬碟';
   else if (item.status === 'QUARANTINED' && item.destination === 'local') text += `（${where}）`;
+  // Round 12 (Gate B): deleted under the retention period: where the copy went; a deletion that needs
+  // a person or is under way: the copy's state is not known, so it is not called stored; one that
+  // failed: still stored, with that said.
+  const retention = item.retention ?? null;
+  if (item.status === 'DELETED' && LABELS.retentionOutcome[retention?.outcome]) text += `（${LABELS.retentionOutcome[retention.outcome]}）`;
+  else if (retention?.state === 'NEEDS_PERSON' || retention?.state === 'DELETING') text = LABELS.retentionState[retention.state];
+  else if (retention?.state === 'DELETE_FAILED') text += `（${LABELS.retentionState.DELETE_FAILED}）`;
   return {
     // Which room (generation) the file was recorded in: 0 the lesson's first room.
     generation: item.generation ?? null,
@@ -165,6 +180,7 @@ function filingItemCard(item) {
     size: item.size,
     md5: item.md5,
     driveFileId: item.driveFileId,
+    ...(retention ? { retention } : {}),
   };
 }
 
@@ -194,6 +210,7 @@ export function lessonCard(state, now) {
       label: LABELS.filing[state.filing.status],
       files: state.filing.files,
       stored: state.filing.stored,
+      ...(state.filing.deleted ? { deleted: state.filing.deleted } : {}),
       reason: state.filing.reason ?? null,
       reasonLabel: LABELS.filingBlocked[state.filing.reason] ?? null,
       items: (state.filing.items ?? []).map(filingItemCard),

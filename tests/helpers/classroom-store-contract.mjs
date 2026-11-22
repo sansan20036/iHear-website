@@ -285,14 +285,47 @@ export function classroomStoreContract(name, getStore) {
         await tx.insertEvent(event('server.recording_deleted:SYN-R-10', 'server.recording_deleted', { source: 'server', providerFileId: 'SYN-R-10' }));
         await tx.insertEvent(event('server.recording_delete_blocked:SYN-R-11', 'server.recording_delete_blocked', { source: 'server', providerFileId: 'SYN-R-11' }));
       });
-      const all = await store.retentionCandidates(at, 1000);
+      // Lesson A has no scheduling fact naming a fixed room and no block: one-to-one (round 12: the kind
+      // is named, or nothing is read).
+      const all = await store.retentionCandidates(at, 1000, ['one-to-one']);
       const ours = all.filter(record => record.providerFileId.startsWith('SYN-R-'));
       expect(ours.map(record => [record.providerFileId, record.retentionBlocked])).toEqual([['SYN-R-11', true], ['SYN-R-1', false], ['SYN-R-6', false], ['SYN-R-2', false], ['SYN-R-7', false]]);
-      expect(ours[1]).toMatchObject({ status: 'STORED', driveFileId: 'drive-SYN-R-1', filedAt: at - 3000, lessonId: A });
+      expect(ours[1]).toMatchObject({ status: 'STORED', driveFileId: 'drive-SYN-R-1', filedAt: at - 3000, lessonId: A, kind: 'one-to-one' });
       expect(all.every(record => record.status === 'STORED' && record.filedAt <= at && record.driveFileId && !record.hold)).toBe(true);
-      const two = await store.retentionCandidates(at, 2);
+      const two = await store.retentionCandidates(at, 2, ['one-to-one']);
       expect(two.map(record => record.providerFileId)).toEqual(all.slice(0, 2).map(record => record.providerFileId));
       expect((await store.fileRecord('SYN-R-10')).status).toBe('STORED');
+      expect(await store.retentionCandidates(at, 1000, [])).toEqual([]);
+    });
+
+    // Round 12 (2026-11-22): each copy's kind comes from the server's record of its lesson (a fixed
+    // room's lesson by its scheduling fact, a block room by its block, any other lesson one-to-one); a
+    // period reads only the kinds it names, so the original one-to-one lessons are read only when named.
+    // A lesson's filings come with each recording's retention facts and nothing else.
+    test('retention candidates by kind: only the kinds named; a fixed room\'s lesson by its scheduling fact, any other lesson one-to-one; filings carry each recording\'s retention facts', async () => {
+      const store = getStore();
+      const at = Date.parse('2026-12-21T10:00:00Z');
+      const F = 'L-contract-fixed-room';
+      await store.createLesson(contractLesson(F, 'TEST-CFR12', '2026-11-26T08:00:00.000Z'), [
+        { key: `server.lesson_scheduled:${F}`, type: 'server.lesson_scheduled', source: 'server', lessonId: F, fixedRoomId: 'FR-0123456789abcdef0123456789abcdef', occurredAt: 1000, receivedAt: 1000 },
+      ]);
+      await store.transaction(async tx => {
+        for (const [id, lessonId] of [['SYN-K-ONE', A], ['SYN-K-FIXED', F]]) {
+          await tx.insertFileRecord({ providerFileId: id, lessonId, status: 'PENDING', provider: 'synthetic', extension: 'mp4', size: 10 });
+          await tx.updateFileRecord(id, { status: 'STORED', driveFileId: `drive-${id}`, filedAt: at - 1000 });
+        }
+        await tx.insertEvent({ key: 'p1.filing:SYN-K-FIXED:contract', type: 'p1.filing', source: 'p1', lessonId: F, providerFileId: 'SYN-K-FIXED', status: 'STORED', occurredAt: 1500, receivedAt: 1500 });
+        await tx.insertEvent({ key: 'server.recording_delete_started:SYN-K-FIXED:contract', type: 'server.recording_delete_started', source: 'server', lessonId: F, providerFileId: 'SYN-K-FIXED', occurredAt: 2000, receivedAt: 2000 });
+      });
+      const ours = list => list.filter(record => record.providerFileId.startsWith('SYN-K-')).map(record => [record.providerFileId, record.kind]).sort();
+      expect(ours(await store.retentionCandidates(at, 1000, ['fixed-room']))).toEqual([['SYN-K-FIXED', 'fixed-room']]);
+      expect(ours(await store.retentionCandidates(at, 1000, ['one-to-one']))).toEqual([['SYN-K-ONE', 'one-to-one']]);
+      expect(ours(await store.retentionCandidates(at, 1000, ['block']))).toEqual([]);
+      expect(ours(await store.retentionCandidates(at, 1000, ['fixed-room', 'one-to-one']))).toEqual([['SYN-K-FIXED', 'fixed-room'], ['SYN-K-ONE', 'one-to-one']]);
+      expect(ours(await store.retentionCandidates(at, 1000, ['not-a-kind']))).toEqual([]);
+      const rows = await store.filings([F]);
+      expect(rows.map(row => [row.record.providerFileId, row.retention.map(fact => fact.type)])).toEqual([['SYN-K-FIXED', ['server.recording_delete_started']]]);
+      expect((await store.filings([A])).find(row => row.record.providerFileId === 'SYN-K-ONE').retention).toEqual([]);
     });
   });
 }

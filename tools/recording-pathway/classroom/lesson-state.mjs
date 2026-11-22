@@ -11,6 +11,7 @@
 import { generationOfRoom } from './eligibility.mjs';
 import { OPERATION, OPERATION_EVENT } from './operations.mjs';
 import { isKeptRecording } from './webhook-ingest.mjs';
+import { RETENTION_EVENTS, retentionStateOf } from './retention.mjs';
 
 export const TIMING = Object.freeze({
   waitingFromMs: 15 * 60_000,
@@ -125,7 +126,8 @@ function analyze(lesson, events, now) {
   const f = {
     sessions: new Map(), lastConfirmedAt: null, recording: [], startRequests: [], startResponses: [], stopRequests: [],
     endRequests: [], eligibility: null, consentChangedAt: null, withdrawal: null, emergency: null, unknown: [], joinBlocked: 0, alerts: [], completed: new Map(),
-    completedAt: null, filings: new Map(), partOrderAt: null, refusedAt: null, sessionRejectedAt: null, lastSnapshotAt: null, snapshotPresent: new Set(), performed: new Set(),
+    // Round 12 (Gate B): each filed copy's retention facts, by recording (retentionStateOf reads them).
+    completedAt: null, filings: new Map(), retention: new Map(), partOrderAt: null, refusedAt: null, sessionRejectedAt: null, lastSnapshotAt: null, snapshotPresent: new Set(), performed: new Set(),
     // Cancelled: the lesson's own flag, and the recorded cancellation (with its time) once stored.
     cancelledFlag: lesson.cancelled === true, cancellation: null,
     // The vendor sessions this lesson is known to have run in (trusted facts only), by id: when
@@ -293,6 +295,15 @@ function analyze(lesson, events, now) {
         break;
       case 'server.join_blocked':
         f.joinBlocked += 1;
+        break;
+      // Round 12 (Gate B): what a retention attempt did to a filed copy, the server's facts only.
+      case 'server.recording_delete_started':
+      case 'server.recording_delete_failed':
+      case 'server.recording_delete_blocked':
+      case 'server.recording_deleted':
+        if (event.source === 'server' && RETENTION_EVENTS.includes(event.type) && typeof event.providerFileId === 'string') {
+          f.retention.set(event.providerFileId, [...(f.retention.get(event.providerFileId) ?? []), event]);
+        }
         break;
       case 'p1.filing': {
         // A resumed filing is simply pending again. Where a copy went (its name, folder, size,
@@ -683,13 +694,22 @@ function recordingOf(f, phase, now) {
 function filingOf(f) {
   const kept = [...f.completed.values()].filter(isKeptRecording);
   if (!kept.length) return { status: 'NONE', files: 0, stored: 0, items: [] };
-  const entries = kept.map(file => f.filings.get(file.providerFileId) ?? { status: 'PENDING' });
+  // Round 12 (Gate B): a copy deleted under the retention period is DELETED (its deletion's own
+  // record), never STORED; a deletion that needs a person, is under way or failed is said with it.
+  // Without retention facts every entry is exactly as before.
+  const entries = kept.map(file => {
+    const entry = f.filings.get(file.providerFileId) ?? { status: 'PENDING' };
+    const retention = retentionStateOf(f.retention.get(file.providerFileId) ?? []);
+    if (!retention.state) return entry;
+    return { ...entry, ...(retention.state === 'DELETED' ? { status: 'DELETED' } : {}), retention };
+  });
   const statuses = entries.map(entry => entry.status);
   const stored = statuses.filter(status => status === 'STORED').length;
+  const deleted = statuses.filter(status => status === 'DELETED').length;
   let status = 'PENDING';
   if (statuses.includes('FAILED')) status = 'FAILED';
   else if (statuses.includes('BLOCKED')) status = 'BLOCKED';
-  else if (stored === kept.length) status = 'STORED';
+  else if (stored + deleted === kept.length) status = deleted === kept.length ? 'DELETED' : 'STORED';
   else if (!statuses.includes('PENDING')) status = 'HELD';
   // Each kept file and what became of it, oldest recording first.
   const items = kept
@@ -711,8 +731,9 @@ function filingOf(f) {
       md5: entry.md5 ?? null,
       driveFileId: entry.driveFileId ?? null,
       destination: entry.destination ?? null,
+      ...(entry.retention ? { retention: { state: entry.retention.state, outcome: entry.retention.outcome ?? null, reason: entry.retention.reason ?? null, at: entry.retention.at ?? null } } : {}),
     }));
-  const filing = { status, files: kept.length, stored, basis: status === 'PENDING' ? 'requested' : 'confirmed', items };
+  const filing = { status, files: kept.length, stored, ...(deleted ? { deleted } : {}), basis: status === 'PENDING' ? 'requested' : 'confirmed', items };
   // Why filing is paused (Drive full, access revoked...) or failed for good (the file is gone, or
   // not the size the vendor said), and since when.
   if (status === 'BLOCKED' || status === 'FAILED') {

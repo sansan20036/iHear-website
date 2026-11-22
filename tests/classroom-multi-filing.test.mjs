@@ -15,7 +15,9 @@ vi.stubEnv("IHEAR_FORCE_FILE_STORE", "1");
 vi.stubEnv("IHEAR_TEST_DATA_DIR", directory);
 vi.stubEnv("VERCEL_ENV", "");
 const { createFileClassroomStore } = await import("../lib/classroom-store");
-const { createClassroomBlock, listBlockFilings, retryBlockFiling } = await import("../lib/classroom-blocks");
+const { blockView, createClassroomBlock, listBlockFilings, retryBlockFiling } = await import("../lib/classroom-blocks");
+// @ts-ignore
+const { applyRetention, readRetentionPlan } = await import("../tools/recording-pathway/classroom/retention.mjs");
 const { setSyntheticConsent } = await import("../lib/classroom-service");
 // @ts-ignore
 const { storeEvent } = await import("../tools/recording-pathway/classroom/webhook-ingest.mjs");
@@ -278,5 +280,37 @@ describe("18.5: archived only when everything holds; failures listed and retried
     const second = await fileWith(ctx, drive, good)(START + 120 * MIN);
     expect(second.filter(result => result.jobId === `file:${ctx.code}-D1`).map(result => result.status)).toEqual(["STORED"]);
     expect(drive.activeFiles().filter(entry => entry.appProperties.providerFileId === `${ctx.code}-D1`)).toHaveLength(1);
+  });
+
+  // Round 12 (Gate B, 2026-11-22): a block room's copy deleted under the retention period (a period
+  // naming the block rooms) is DELETED in the owners' list and on the block's own page, never
+  // "ARCHIVED"; asking to file it again is refused as deleted; a copy only filed is ARCHIVED, its
+  // answer exactly as before (no retention field).
+  test("MF-R12: deleted under the retention period: DELETED in the owners' list and on the block's page, never ARCHIVED; a retry is refused as deleted; a copy only filed stays ARCHIVED, as before", async () => {
+    const ctx = await room();
+    const drive = createDrive();
+    const DAY = 24 * 60 * MIN;
+    const filedOld = START + 60 * MIN, filedRecent = filedOld + 20 * DAY, now = filedOld + 31 * DAY;
+    await completed(ctx, `${ctx.code}-G1`, START + 2 * MIN, START + 20 * MIN);
+    expect((await file(ctx, drive)(filedOld)).map(result => result.status)).toEqual(["STORED"]);
+    await completed(ctx, `${ctx.code}-G2`, START + 22 * MIN, START + 40 * MIN);
+    expect((await file(ctx, drive)(filedRecent)).map(result => result.status)).toEqual(["STORED"]);
+    const policy = { days: 30, mode: "trash", scope: ["block"], deleters: ["owner@example.test"], problem: null };
+    const plan = await readRetentionPlan({ store: ctx.store, policy, now });
+    expect(plan.due.map(item => [item.providerFileId, item.kind])).toEqual([[`${ctx.code}-G1`, "block"]]);
+    const applied = await applyRetention({ store: ctx.store, drive, policy, now, actor: "owner@example.test", confirm: plan.digest });
+    expect(applied.results).toEqual([{ providerFileId: `${ctx.code}-G1`, outcome: "TRASHED" }]);
+    const listed = Object.fromEntries((await listBlockFilings({ store: ctx.store, now })).filter(entry => entry.recordingId.startsWith(`${ctx.code}-`)).map(entry => [entry.recordingId.slice(ctx.code.length + 1), entry]));
+    expect(listed.G1).toMatchObject({ status: "DELETED", retryable: false, retention: { state: "DELETED", outcome: "TRASHED" } });
+    expect(listed.G2).toMatchObject({ status: "ARCHIVED" });
+    expect("retention" in listed.G2).toBe(false);
+    const view = await blockView({ store: ctx.store, blockId: ctx.block.id, now });
+    const files = view.rooms.find(entry => entry.lessonId === ctx.lesson.id).files;
+    expect(files.map(entry => entry.status).sort()).toEqual(["DELETED", "STORED"]);
+    expect(files.find(entry => entry.status === "DELETED").retention).toMatchObject({ state: "DELETED", outcome: "TRASHED" });
+    expect((await retryBlockFiling({ store: ctx.store, providerFileId: `${ctx.code}-G1`, actor: "owner@example.test", reason: "file it again", now })).body).toMatchObject({ code: "DELETED_BY_RETENTION" });
+    // The row keeps its filing status; Drive's copy is in its trash; the other copy is untouched.
+    expect((await recordOf(ctx, `${ctx.code}-G1`)).status).toBe("STORED");
+    expect(drive.activeFiles().map(entry => entry.appProperties.providerFileId).filter(id => id.startsWith(`${ctx.code}-`))).toEqual([`${ctx.code}-G2`]);
   });
 });
