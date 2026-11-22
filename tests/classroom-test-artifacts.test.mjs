@@ -22,7 +22,10 @@ describe("whole links never end up in test pictures or in the repository", () =>
     expect(await readFile("app/admin/classrooms/blocks/page.tsx", "utf8")).toMatch(/data-student-link=\{entry\.code\}>\{entry\.code\}：<code>/);
     expect(await readFile("app/admin/classrooms/schedule/page.tsx", "utf8")).toMatch(/data-student-link=\{entry\.code\}>\{entry\.code\}：<code>/);
     expect(await readFile("app/admin/classrooms/rooms/page.tsx", "utf8")).toMatch(/<div role="status" data-room-link>[\s\S]{0,300}<code>/);
-    const shown = execFileSync("git", ["grep", "-lE", "<code>", "--", "app/*.tsx"], { encoding: "utf8" }).trim().split("\n").map((line) => line.replace(/\\/g, "/")).sort();
+    // GitHub CI runs this in a container where the checkout belongs to another user: git then refuses
+    // the repository ("dubious ownership") unless told it is safe, which only the command line or the
+    // global settings may say. Only this read of our own checkout is told so.
+    const shown = execFileSync("git", ["-c", "safe.directory=*", "grep", "-lE", "<code>", "--", "app/*.tsx"], { encoding: "utf8" }).trim().split("\n").map((line) => line.replace(/\\/g, "/")).sort();
     expect(shown).toEqual(["app/admin/classrooms/blocks/page.tsx", "app/admin/classrooms/page.tsx", "app/admin/classrooms/rooms/page.tsx", "app/admin/classrooms/schedule/page.tsx", "app/auth-error/auth-error-client.tsx"]);
   });
 
@@ -52,7 +55,8 @@ describe("whole links never end up in test pictures or in the repository", () =>
   test("TA-2: no file the repository holds carries a whole link's key (behind #k= or ?k=)", () => {
     let found = "";
     try {
-      found = execFileSync("git", ["grep", "-nIE", "[#?]k=[A-Za-z0-9_-]{43}"], { encoding: "utf8" });
+      // safe.directory: see TA-1 (GitHub CI's container).
+      found = execFileSync("git", ["-c", "safe.directory=*", "grep", "-nIE", "[#?]k=[A-Za-z0-9_-]{43}"], { encoding: "utf8" });
     } catch (error) {
       // git grep answers 1 when nothing matches.
       if (error.status !== 1) throw error;
