@@ -302,4 +302,23 @@ describe('draft 029 on PostgreSQL', () => {
     expect(cancelled[0].count).toBe(3);
     expect((await joinClassroom({ store, provider, lessonId: stored.roomIds[0], key, now: START + MIN })).status).toBe(403);
   });
+
+  // Round 12 (Gate B, 2026-11-22): with 029 applied, the retention period reads a block room's filed
+  // copy as a block's and a one-to-one lesson's as one-to-one, each only when the period names it
+  // (without 029 the same query finds no blocks: the store contract on 028 only).
+  test('retention reads a block room\'s copy as a block\'s and a one-to-one lesson\'s as one-to-one, each only when named', async () => {
+    const { block: stored } = await block();
+    const { lesson } = await createClassroomLesson({ store, actor: 'pg-owner@example.test', now: START, input: { code: 'TEST-PG-L9', date: '2026-12-01', time: '16:00', minutes: 60, tutorCode: 'TEST-PG-LT9', tutorEmail: 'pg-lt9@example.test', studentCode: 'TEST-PG-LS9' } });
+    const at = START + 400 * 24 * 60 * MIN;
+    await store.transaction(async tx => {
+      for (const [id, lessonId] of [['SYN-PGK-BLOCK', stored.roomIds[0]], ['SYN-PGK-ONE', lesson.id]]) {
+        await tx.insertFileRecord({ providerFileId: id, lessonId, status: 'PENDING', provider: 'synthetic', extension: 'mp4', size: 10 });
+        await tx.updateFileRecord(id, { status: 'STORED', driveFileId: `drive-${id}`, filedAt: at - 1000 });
+      }
+    });
+    const ours = list => list.filter(record => record.providerFileId.startsWith('SYN-PGK-')).map(record => [record.providerFileId, record.kind]).sort();
+    expect(ours(await store.retentionCandidates(at, 1000, ['block']))).toEqual([['SYN-PGK-BLOCK', 'block']]);
+    expect(ours(await store.retentionCandidates(at, 1000, ['one-to-one']))).toEqual([['SYN-PGK-ONE', 'one-to-one']]);
+    expect(ours(await store.retentionCandidates(at, 1000, ['fixed-room']))).toEqual([]);
+  });
 });

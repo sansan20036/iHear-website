@@ -1632,6 +1632,8 @@ export function createPostgresClassroomStore(sql: postgres.Sql): ClassroomStore 
     // Round 12: the lesson's kind from the server's own records, the same rule as the file store: a
     // block room (block_id), a fixed room's lesson (its scheduling fact, found by its key, names the
     // room), any other lesson one-to-one. A copy of a lesson that no longer exists is never read.
+    // block_id comes with draft 029 (blocks), which a database may not have (028 only, as production
+    // may be): it is read from the row as JSON, so without the column there are simply no blocks.
     async retentionCandidates(cutoff, limit, kinds) {
       const named = (kinds ?? []).filter((kind) => (RECORDING_KIND_NAMES as readonly string[]).includes(kind));
       if (!named.length) return [];
@@ -1641,7 +1643,7 @@ export function createPostgresClassroomStore(sql: postgres.Sql): ClassroomStore 
         JOIN public.classroom_lessons l ON l.id = f.lesson_id
         LEFT JOIN public.classroom_events s ON s.key = 'server.lesson_scheduled:' || f.lesson_id AND s.source = 'server' AND s.type = 'server.lesson_scheduled'
         CROSS JOIN LATERAL (SELECT CASE
-          WHEN l.block_id IS NOT NULL THEN 'block'
+          WHEN (to_jsonb(l) ->> 'block_id') IS NOT NULL THEN 'block'
           WHEN jsonb_typeof(s.data -> 'fixedRoomId') = 'string' THEN 'fixed-room'
           ELSE 'one-to-one' END AS kind) k
         WHERE f.status = 'STORED' AND f.filed_at IS NOT NULL AND f.filed_at <= ${new Date(cutoff)}
