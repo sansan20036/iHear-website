@@ -21,6 +21,11 @@
 //     The real run refuses to start unless the W0 review file exists and says "W0: PASS", and the
 //     order contains 「開始 W1 真實測試」 (the user's own words). It stops by itself at 18 minutes
 //     after the first person connects or at 55 participant-minutes, and always ends the lesson.
+//     The limits are checked every second, also in the middle of a step (round 13): at a limit the
+//     owner ends the lesson and the test people's browsers close, whatever step is running.
+//   node tools/classroom-trial/fixed-room-check.mjs --rehearsal --hard-stop-after <seconds>
+//     (rehearsal only: TestA counts as connected once the joins have failed, the time limit is those
+//      seconds, and a step that would wait 120 s must be cut short by that stop; the run then fails)
 import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
@@ -39,13 +44,18 @@ const ownerOrigin = `http://127.0.0.1:${loc}`;
 const startedAt = Date.now();
 const stamp = new Date(startedAt).toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
 const runDir = path.join(process.env.LOCALAPPDATA ?? tmpdir(), 'iHear-classroom-trial', `fixed-room-check-${stamp}`);
-const LIMIT_MS = 18 * 60_000;
+// Rehearsal only: --hard-stop-after <seconds> rehearses the watchdog's stop (see the usage above).
+const hardStopAfter = rehearsal && args['hard-stop-after'] !== undefined ? Number(args['hard-stop-after']) : null;
+if (hardStopAfter !== null && !(hardStopAfter > 0 && hardStopAfter <= 60)) throw new Error('--hard-stop-after takes 1 to 60 seconds');
+const LIMIT_MS = hardStopAfter ? hardStopAfter * 1000 : 18 * 60_000;
+const LIMIT_TEXT = LIMIT_MS % 60_000 === 0 ? `${LIMIT_MS / 60_000} minutes` : `${LIMIT_MS / 1000} seconds`;
 const LIMIT_PARTICIPANT_MINUTES = 55;
 const ROOM_LABEL = 'Trial W1 Room';
 
 // The real run's interlocks: the W0 review and the user's own order, both required, both recorded.
 if (!rehearsal) {
   const refuse = reason => { console.error(`fixed-room-check: WAITING FOR AUTHORIZATION: ${reason}. Nothing was started.`); process.exit(2); };
+  if (args['hard-stop-after'] !== undefined) refuse('--hard-stop-after is for --rehearsal only');
   if (!args.env || args.env === 'true') refuse('give --env <zoom.env outside the repository>, or --rehearsal');
   if (!args.w0 || !existsSync(args.w0) || !/W0: PASS/.test(readFileSync(args.w0, 'utf8'))) refuse('the W0 review file (--w0) must exist and say "W0: PASS" (the account holder\'s portal check: automatic recording and participants\' recording OFF)');
   if (!args.go || !String(args.go).includes('開始 W1 真實測試')) refuse('the user\'s order (--go) must contain 「開始 W1 真實測試」');
@@ -75,12 +85,14 @@ const redact = text => {
 const report = {
   mode: rehearsal ? 'rehearsal: stand-in keys, no route to Zoom session servers' : 'real: the Zoom Video SDK account', startedAt: new Date(startedAt).toISOString(),
   authorization: rehearsal ? null : { w0: path.basename(String(args.w0)), go: redact(String(args.go)).slice(0, 200) },
-  limits: { minutes: LIMIT_MS / 60_000, participantMinutes: LIMIT_PARTICIPANT_MINUTES },
+  limits: { minutes: LIMIT_MS / 60_000, participantMinutes: LIMIT_PARTICIPANT_MINUTES, checked: 'every second, also in the middle of a step' },
   checks: [], findings: {}, participantMinutes: 0, consoleProblems: [], alerts: [], status: 'running',
 };
 const pages = [];
 const found = { browserResponses: 0, requestsToOutside: 0, pageAndStorage: 0, joinAnswersStopped: 0, serverOutput: 0, runFiles: 0, filesWrittenDuringRun: 0, filesGitCouldCommit: 0 };
 let failure;
+// Set by the watchdog when a limit is reached (the promise of its lesson end and browser closes).
+let hardStop = null;
 const elapsed = () => `${Math.round((Date.now() - startedAt) / 1000)}s`;
 // Connected time per person, for the participant-minute limit (from "connected" to leaving).
 const connectedSince = new Map();
@@ -89,7 +101,7 @@ const minutesSpent = () => (spentMs + [...connectedSince.values()].reduce((sum, 
 const markConnected = who => { if (!connectedSince.has(who)) connectedSince.set(who, Date.now()); firstConnectAt ??= Date.now(); };
 const markGone = who => { const since = connectedSince.get(who); if (since != null) { spentMs += Date.now() - since; connectedSince.delete(who); } };
 const withinLimits = () => {
-  if (firstConnectAt != null && Date.now() - firstConnectAt > LIMIT_MS) throw new Error(`time limit: ${LIMIT_MS / 60_000} minutes since the first person connected`);
+  if (firstConnectAt != null && Date.now() - firstConnectAt > LIMIT_MS) throw new Error(`time limit: ${LIMIT_TEXT} since the first person connected`);
   if (minutesSpent() > LIMIT_PARTICIPANT_MINUTES) throw new Error(`participant-minute limit: ${LIMIT_PARTICIPANT_MINUTES}`);
 };
 async function check(name, action, { fatal = true } = {}) {
@@ -97,15 +109,16 @@ async function check(name, action, { fatal = true } = {}) {
   console.log(`[${elapsed()}] ${name} …`);
   try { await action(); report.checks.push({ name, status: 'passed' }); console.log(`[${elapsed()}] PASS ${name}`); }
   catch (error) {
-    report.checks.push({ name, status: 'failed', error: redact(error.message) });
-    console.log(`[${elapsed()}] FAIL ${name}: ${redact(error.message).split('\n')[0]}`);
+    const message = hardStop ? `cut short by the hard stop (${report.hardStop}): ${redact(error.message)}` : redact(error.message);
+    report.checks.push({ name, status: 'failed', error: message });
+    console.log(`[${elapsed()}] FAIL ${name}: ${message.split('\n')[0]}`);
     const slug = name.replace(/[^A-Za-z0-9]+/g, '-').slice(0, 40);
     for (const { who, page } of pages) {
       await page.screenshot({ path: path.join(runDir, `failed-${slug}-${who}.png`), fullPage: true, mask: [page.locator('[data-room-link] code')] }).catch(() => undefined);
       const alerts = await page.locator('[role="alert"]').allInnerTexts().catch(() => []);
       for (const text of alerts) report.alerts.push(`${who}, ${name}: ${redact(text).slice(0, 300)}`);
     }
-    if (fatal || /limit:/.test(error.message)) throw error;
+    if (fatal || hardStop || /limit:/.test(error.message)) throw error;
     failure ??= error;
   }
 }
@@ -117,6 +130,33 @@ const gitBefore = git('status', '--porcelain');
 let server, serverOutput = '', browser, owner, roomId = null, lessonEnded = false;
 const people = {};
 const pending = [], hosts = new Set();
+// The owner ends the lesson through the admin API (the server then ends its Zoom session). Counts
+// as ended only on a 2xx answer, so the final cleanup tries once more after a failed attempt.
+const endLesson = async () => {
+  if (!roomId || !owner || lessonEnded) return;
+  const answer = await within(owner.page.evaluate(room => fetch('/api/admin/classrooms/rooms', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'end_lesson', room }) }).then(response => response.status), roomId)
+    .then(status => ({ status }), error => ({ error: redact(error.message) })), 20_000);
+  report.cleanup = answer?.status ? `end_lesson answered ${answer.status}` : `end_lesson failed: ${answer?.error ?? 'no answer within 20 s'}`;
+  if (answer?.status >= 200 && answer.status < 300) lessonEnded = true;
+};
+// The watchdog (round 13): the limits hold at any moment, not only when a step starts. At a limit
+// the owner ends the lesson and the test people's browsers close, whatever step is running; that
+// step then fails, and the run goes straight to the cleanup below.
+const watchdog = setInterval(() => {
+  if (hardStop) return;
+  try { withinLimits(); } catch (error) {
+    failure ??= error;
+    report.hardStop = `${error.message}, at ${elapsed()}`;
+    console.log(`[${elapsed()}] HARD STOP: ${error.message}: the owner ends the lesson and the test browsers close`);
+    hardStop = (async () => {
+      await endLesson();
+      for (const who of Object.keys(people)) {
+        markGone(who);
+        await within(people[who].context.close().catch(() => undefined), 10_000);
+      }
+    })();
+  }
+}, 1000);
 try {
   server = spawn(process.execPath, ['tools/classroom-trial/trial-server.mjs', '--env', envFile, '--fixed-rooms', '--public-port', String(pub), '--local-port', String(loc), '--data', path.join(runDir, 'server-data')],
     { cwd: root, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
@@ -226,6 +266,14 @@ try {
     await check('rehearsal: with stand-in keys and no route to Zoom, every join fails safely', async () => {
       for (const who of ['TestA', 'TestB', 'TestC']) await expect(connection(who)).toHaveText('連線失敗', { timeout: 120_000 });
     });
+    if (hardStopAfter) {
+      // The watchdog's stop, rehearsed: TestA counts as connected from here, and this step would
+      // wait 120 s for something that never comes. The stop must cut it short at the limit.
+      markConnected('TestA');
+      await check(`rehearsal: a step that would wait 120 s is cut short at the ${LIMIT_TEXT} limit`, async () => {
+        await expect(people.TestA.page.locator('[data-hard-stop-rehearsal]')).toBeAttached({ timeout: 120_000 });
+      });
+    }
   } else {
     await check('the three connect to the real Zoom session', async () => {
       for (const who of ['TestA', 'TestB', 'TestC']) {
@@ -248,8 +296,12 @@ try {
       if (await problem.isVisible()) { report.findings.whiteboard = `refused, Zoom code ${await problem.getAttribute('data-board-code')}`; return; }
       const seen = {};
       for (const who of ['TestB', 'TestC']) seen[who] = await expect(people[who].page.locator('[data-mode="board"]')).toBeAttached({ timeout: 30_000 }).then(() => true, () => false);
-      report.findings.whiteboard = `opened by TestA; seen by TestB: ${seen.TestB}, TestC (emulated tablet): ${seen.TestC}`;
+      // Zoom's whiteboard guide: where the interactive whiteboard is not supported, its content
+      // arrives as a share stream instead. Say so when the emulated tablet shows a share.
+      const asShare = !seen.TestC && await people.TestC.page.locator('[data-mode="share"]').count() > 0;
+      report.findings.whiteboard = `opened by TestA; seen by TestB: ${seen.TestB}, TestC (emulated tablet): ${seen.TestC}${asShare ? ' (TestC shows a share instead)' : ''}`;
       await people.TestB.page.screenshot({ path: path.join(runDir, 'testb-whiteboard.png'), fullPage: true });
+      await people.TestC.page.screenshot({ path: path.join(runDir, 'testc-whiteboard.png'), fullPage: true }).catch(() => undefined);
       await board.click();
       await expect(board).toHaveAttribute('aria-pressed', 'false', { timeout: 30_000 });
     }, { fatal: false });
@@ -310,12 +362,12 @@ try {
 } catch (error) {
   failure ??= error;
 } finally {
-  // Cleanup, whatever happened: the lesson is ended (the server ends its Zoom session), every
-  // browser closed and the server stopped. A leftover live session is said with the command to end it.
-  if (roomId && !lessonEnded && owner) {
-    await within(owner.page.evaluate(room => fetch('/api/admin/classrooms/rooms', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'end_lesson', room }) }).then(answer => answer.status), roomId)
-      .then(status => { report.cleanup = `end_lesson answered ${status}`; }, error => { report.cleanup = `end_lesson failed: ${redact(error.message)}`; }), 20_000);
-  }
+  // Cleanup, whatever happened: the watchdog stopped (and its stop finished, if it made one), the
+  // lesson ended (the server ends its Zoom session), every browser closed and the server stopped.
+  // A leftover live session is said with the command to end it.
+  clearInterval(watchdog);
+  if (hardStop) await hardStop;
+  await endLesson();
   for (const who of Object.keys(people)) markGone(who);
   report.participantMinutes = Math.round(minutesSpent() * 10) / 10;
   await within(Promise.all(pending), 15_000);
@@ -351,6 +403,7 @@ try {
   console.log(`  secrets found: ${Object.entries(found).map(([name, value]) => `${name} ${value}`).join(', ')}`);
   console.log(`  checkout unchanged by the run (git status): ${report.gitStatusUnchanged ? 'yes' : 'NO'}`);
   if (report.leftoverCheck) console.log(`  afterwards: ${report.leftoverCheck}`);
+  if (report.hardStop) console.log(`  hard stop: ${report.hardStop}`);
   if (report.error) console.log(`  stopped at: ${report.error.split('\n')[0]}`);
   console.log(`  report and screenshots: ${runDir}`);
 }
