@@ -265,5 +265,34 @@ export function classroomStoreContract(name, getStore) {
       expect(await record()).toMatchObject({ severity: 'error', openedAt: 7000, lastSeenAt: 8000 });
       expect(await store.acknowledgeAnomaly({ lessonId: A, code: 'NOT_RECORDED', actor: OWNER, note: 'x', now: 9000 })).toBeNull();
     });
+
+    // Gate B round 10 (2026-11-22): what a retention plan reads. Reading deletes nothing. After the
+    // independent review: a copy whose deletion is recorded never comes back (else the oldest batch
+    // fills every later one), nor a held copy or one without a Drive file; one a person must look at
+    // first comes flagged.
+    test('retention candidates: filed copies filed before a time, oldest first, at most as many as asked; never one not filed, failed, quarantined, held, without a Drive file or already deleted; one needing a person flagged', async () => {
+      const store = getStore();
+      const at = Date.parse('2026-12-20T10:00:00Z');
+      await store.transaction(async tx => {
+        for (const [id, status, filedAt, extra = {}] of [
+          ['SYN-R-1', 'STORED', at - 3000], ['SYN-R-2', 'STORED', at - 1000], ['SYN-R-3', 'STORED', at + 1000], ['SYN-R-4', 'FAILED', at - 5000],
+          ['SYN-R-5', 'QUARANTINED', at - 5000], ['SYN-R-6', 'STORED', at - 2000], ['SYN-R-7', 'STORED', at], ['SYN-R-8', 'STORED', at - 4000, { hold: 'CONSENT_WITHDRAWN' }],
+          ['SYN-R-9', 'STORED', at - 4500, { driveFileId: null }], ['SYN-R-10', 'STORED', at - 6000], ['SYN-R-11', 'STORED', at - 7000],
+        ]) {
+          await tx.insertFileRecord({ providerFileId: id, lessonId: A, status: 'PENDING', provider: 'synthetic', extension: 'mp4', size: 10 });
+          await tx.updateFileRecord(id, { status, driveFileId: `drive-${id}`, filedAt, ...extra });
+        }
+        await tx.insertEvent(event('server.recording_deleted:SYN-R-10', 'server.recording_deleted', { source: 'server', providerFileId: 'SYN-R-10' }));
+        await tx.insertEvent(event('server.recording_delete_blocked:SYN-R-11', 'server.recording_delete_blocked', { source: 'server', providerFileId: 'SYN-R-11' }));
+      });
+      const all = await store.retentionCandidates(at, 1000);
+      const ours = all.filter(record => record.providerFileId.startsWith('SYN-R-'));
+      expect(ours.map(record => [record.providerFileId, record.retentionBlocked])).toEqual([['SYN-R-11', true], ['SYN-R-1', false], ['SYN-R-6', false], ['SYN-R-2', false], ['SYN-R-7', false]]);
+      expect(ours[1]).toMatchObject({ status: 'STORED', driveFileId: 'drive-SYN-R-1', filedAt: at - 3000, lessonId: A });
+      expect(all.every(record => record.status === 'STORED' && record.filedAt <= at && record.driveFileId && !record.hold)).toBe(true);
+      const two = await store.retentionCandidates(at, 2);
+      expect(two.map(record => record.providerFileId)).toEqual(all.slice(0, 2).map(record => record.providerFileId));
+      expect((await store.fileRecord('SYN-R-10')).status).toBe('STORED');
+    });
   });
 }

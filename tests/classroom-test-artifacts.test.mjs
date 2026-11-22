@@ -35,6 +35,8 @@ describe("whole links never end up in test pictures or in the repository", () =>
     expect(redactLinks(`navigating to "http://localhost:3242/classroom/L-1#k=${key}"`)).toBe('navigating to "http://localhost:3242/classroom/L-1#k=[redacted]"');
     expect(redactLinks(`/classroom/r/FR-1?k=${key}&k=${key} ticket=${key}`)).toBe("/classroom/r/FR-1?k=[redacted]&k=[redacted] ticket=[redacted]");
     expect(redactLinks("a test word #k=new stays")).toBe("a test word #k=new stays");
+    // Gate B round 10: a student's own pass (#p=) is a key too.
+    expect(redactLinks(`navigating to "http://localhost:3277/classroom/r/FR-1#p=${key}"`)).toBe('navigating to "http://localhost:3277/classroom/r/FR-1#p=[redacted]"');
     // What Playwright throws when a page does not load: the address in the message, the call log apart.
     const timeout = Object.assign(new Error(`page.goto: Timeout 15000ms exceeded.\n  - navigating to "http://localhost:3242/classroom/L-1#k=${key}"`), { name: "TimeoutError", log: [`  - navigating to "http://localhost:3242/classroom/L-1#k=${key}"`] });
     const clean = withoutLinkKeys(timeout);

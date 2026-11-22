@@ -17,8 +17,9 @@ export const screenshotSafely = (page, options = {}) => page.screenshot({ ...opt
 // Round 4 (2026-11-21): a check that fails while a link is in an error message (Playwright prints the
 // address it was going to) never leaves the link's key in its report or on the console: keys behind
 // #k=, ?k=, &k= or ticket= become [redacted]. withoutLinkKeys gives a plain error with the message and
-// the stack redacted and nothing else (a Playwright error also carries its call log).
-export const redactLinks = text => String(text).replace(/([#?&]k=|\bticket=)[A-Za-z0-9_-]{8,}/g, '$1[redacted]');
+// the stack redacted and nothing else (a Playwright error also carries its call log). Gate B round 10
+// (2026-11-22): a student's own pass behind #p= too.
+export const redactLinks = text => String(text).replace(/([#?&][kp]=|\bticket=)[A-Za-z0-9_-]{8,}/g, '$1[redacted]');
 export function withoutLinkKeys(error) {
   const clean = new Error(redactLinks(error?.message ?? error));
   clean.stack = redactLinks(error?.stack ?? clean.stack);

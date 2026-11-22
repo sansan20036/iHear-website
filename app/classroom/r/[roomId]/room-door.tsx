@@ -11,7 +11,9 @@ import { ROOM_COPY as COPY } from "./room-copy";
 // it opens the room's lesson with the person's own ticket as its key. Nothing here decides who
 // comes in: the server and the teacher do.
 
-type Saved = { key: string | null; requestId?: string; ticket?: string; at?: number };
+// pass (Gate B, round 10): a student's own link (#p=) instead of the room's (#k=): no name is typed
+// (the room's list gives it); the server answers it only where the site may record fixed rooms.
+type Saved = { key: string | null; pass?: string | null; requestId?: string; ticket?: string; at?: number };
 type Phase = "loading" | "form" | "waiting" | "admitted" | "done" | "nolink";
 const SAVED = (roomId: string) => `ihear-fixed-room:${roomId}`;
 const KEEP_MS = 4 * 60 * 60_000;
@@ -43,13 +45,16 @@ export default function RoomDoor({ roomId }: { roomId: string }) {
 
   useEffect(() => {
     setLocale(browserClassroomLocale());
-    const fromHash = new URLSearchParams(window.location.hash.slice(1)).get("k");
+    const hash = new URLSearchParams(window.location.hash.slice(1));
+    const fromHash = hash.get("k");
+    const passFromHash = fromHash ? null : hash.get("p");
     if (window.location.hash) history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
     const kept = load(roomId);
     // A link opened again is the same request; a different link (a new one) starts afresh.
-    saved.current = fromHash && kept?.key !== fromHash ? { key: fromHash } : { ...(kept ?? { key: null }), key: fromHash ?? kept?.key ?? null };
+    if (passFromHash) saved.current = kept?.pass === passFromHash ? kept : { key: null, pass: passFromHash };
+    else saved.current = fromHash && kept?.key !== fromHash ? { key: fromHash } : { ...(kept ?? { key: null }), key: fromHash ?? kept?.key ?? null };
     keep(roomId, saved.current);
-    setPhase(saved.current.requestId && saved.current.ticket ? "waiting" : saved.current.key ? "form" : "nolink");
+    setPhase(saved.current.requestId && saved.current.ticket ? "waiting" : saved.current.key || saved.current.pass ? "form" : "nolink");
   }, [roomId]);
   useEffect(() => { document.documentElement.lang = htmlLangOf(locale); }, [locale]);
 
@@ -58,7 +63,9 @@ export default function RoomDoor({ roomId }: { roomId: string }) {
     if (phase !== "waiting") return;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const forget = () => { saved.current = { key: saved.current.key }; keep(roomId, saved.current); };
+    // A student's own pass is kept only while it may be needed to ask again (expired, ended); after
+    // being let in or a final answer this tab forgets it (round 10 review).
+    const forget = (dropPass = false) => { saved.current = { key: saved.current.key, pass: dropPass ? null : saved.current.pass ?? null }; keep(roomId, saved.current); };
     const ask = async () => {
       if (document.hidden) { timer = setTimeout(ask, POLL_MS); return; }
       const { requestId, ticket } = saved.current;
@@ -69,14 +76,17 @@ export default function RoomDoor({ roomId }: { roomId: string }) {
         const data = await response.json().catch(() => null);
         if (stopped) return;
         if (response.ok && data?.ok && data.state === "admitted" && typeof data.lessonId === "string" && ticket) {
+          if (saved.current.pass) keep(roomId, { key: saved.current.key, requestId, ticket, at: saved.current.at });
           setPhase("admitted");
           window.location.assign(`/classroom/${encodeURIComponent(data.lessonId)}#k=${ticket}`);
           return;
         }
         if (response.ok && data?.ok && data.state !== "waiting") {
-          forget();
-          if (ASK_AGAIN.has(data.state)) { setProblem(text.states[data.state] ?? text.error); setPhase("form"); }
-          else { setFinal(text.states[data.state] ?? text.error); setPhase("done"); }
+          const withPass = Boolean(saved.current.pass);
+          const again = ASK_AGAIN.has(data.state);
+          forget(!again);
+          if (again) { setProblem(text.states[data.state] ?? text.error); setPhase("form"); }
+          else { setFinal((withPass && data.state === "replaced" ? text.passReplaced : text.states[data.state]) ?? text.error); setPhase("done"); }
           return;
         }
         if (response.status === 404) { forget(); setProblem(text.reasons.NOT_FOUND); setPhase("form"); return; }
@@ -92,24 +102,24 @@ export default function RoomDoor({ roomId }: { roomId: string }) {
 
   async function requestEntry(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const { key } = saved.current;
-    if (!key) { setPhase("nolink"); return; }
+    const { key, pass } = saved.current;
+    if (!key && !pass) { setPhase("nolink"); return; }
     setSending(true);
     setProblem("");
     try {
       const response = await fetch(`/api/classroom/rooms/${encodeURIComponent(roomId)}/door`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key, name }),
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(pass ? { pass } : { key, name }),
       });
       const data = await response.json().catch(() => null);
       if (response.ok && data?.ok && typeof data.requestId === "string" && typeof data.ticket === "string") {
-        saved.current = { key, requestId: data.requestId, ticket: data.ticket, at: Date.now() };
+        saved.current = { key, pass: pass ?? null, requestId: data.requestId, ticket: data.ticket, at: Date.now() };
         keep(roomId, saved.current);
         setPhase("waiting");
       } else if (data?.code === "LINK_REPLACED") {
         setFinal(text.reasons.LINK_REPLACED);
         setPhase("done");
       } else {
-        setProblem(text.reasons[String(data?.code ?? "")] ?? text.error);
+        setProblem((pass && data?.code === "NAME_TAKEN" ? text.passNameTaken : text.reasons[String(data?.code ?? "")]) ?? text.error);
       }
     } catch {
       setProblem(text.error);
@@ -122,7 +132,14 @@ export default function RoomDoor({ roomId }: { roomId: string }) {
       <section className="classroom-room-card classroom-join-card">
         <h1>{text.title}</h1>
         {phase === "nolink" && <p className="classroom-room-problem" role="alert" data-room-problem="nolink">{text.noLink}</p>}
-        {phase === "form" && (
+        {phase === "form" && saved.current.pass && (
+          <form className="classroom-join-form" onSubmit={requestEntry} data-room-form="pass">
+            <p className="classroom-join-note">{text.passNote}</p>
+            {problem && <p className="classroom-room-problem" role="alert" data-room-problem>{problem}</p>}
+            <button type="submit" className="classroom-room-primary" disabled={sending}>{sending ? text.entering : text.passEnter}</button>
+          </form>
+        )}
+        {phase === "form" && !saved.current.pass && (
           <form className="classroom-join-form" onSubmit={requestEntry} data-room-form>
             <label htmlFor="classroom-room-name">
               <span lang="en">{text.prompt}</span>

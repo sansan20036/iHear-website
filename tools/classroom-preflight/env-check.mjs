@@ -63,9 +63,11 @@ const PROFILES = {
 // Classroom 3.0 round 4 (2026-11-21): also the switches of what is not approved yet: fixed rooms'
 // recording (Gate B: consent policy, the Zoom account holder's authorization, Drive sharing, a real
 // recording test), the fixed rooms and the site-wide permanent entry (D-16, D-14). Each leaves this
-// list only by its own approval.
+// list only by its own approval. Gate B round 10 (2026-11-22): the recordings' retention and
+// deletion mode, and the fixed rooms' file-name rule (iHear's decisions: 保存期限, file names).
 export const FORBIDDEN = [
   'CLASSROOM_FIXED_ROOM_RECORDING', 'CLASSROOM_FIXED_ROOMS', 'CLASSROOM_PERMANENT_ENTRY',
+  'CLASSROOM_RECORDING_RETENTION_DAYS', 'CLASSROOM_RECORDING_RETENTION_MODE', 'CLASSROOM_FIXED_ROOM_FILE_NAMES',
   'CLASSROOM_VENDOR_DELETION', 'CLASSROOM_MULTI_RECORDING', 'CLASSROOM_TRIAL_CONSENT',
   'CLASSROOM_SYNTHETIC_SECRET', 'CLASSROOM_WEBHOOK_SECRET', 'CLASSROOM_DRIVE_ROOT_NAME',
   'CLASSROOM_GOOGLE_CLIENT_FILE', 'CLASSROOM_GOOGLE_TOKEN_FILE', 'CLASSROOM_GOOGLE_API_BASE',
