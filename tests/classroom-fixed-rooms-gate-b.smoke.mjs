@@ -89,6 +89,8 @@ try {
     await expect(waiting).toContainText('個人連結：代碼 ST-G1');
     await waiting.getByRole('button', { name: '讓他進入', exact: true }).click();
     await expect(student).toHaveURL(/\/classroom\/L-[0-9a-f]+$/, { timeout: 30_000 });
+    // The pre-class screen first, as for anyone let in (tests/classroom-fixed-rooms.smoke.mjs R3).
+    await student.getByRole('button', { name: '進入教室' }).click();
     await expect(student.locator('.room2-top .classroom-room-connection')).toHaveText('已連線', { timeout: 30_000 });
     // In the room (and so in Zoom) the student shows by a name of this lesson only, never their code.
     await expect(student.locator('body')).not.toContainText('ST-G1');
@@ -98,7 +100,7 @@ try {
     const inRoom = roomCard().locator('[data-in-room-person="Ann"]');
     await expect(inRoom).toContainText('代碼 ST-G1・個人連結');
     await expect(inRoom.locator('[data-consent]')).toHaveAttribute('data-consent', 'CONSENT_MISSING');
-    await expect(roomCard().locator('[data-room-consent-missing]')).toContainText('1 位沒有有效的錄影同意');
+    await expect(roomCard().locator('[data-room-consent-missing]')).toContainText('這次上課有人沒有有效的錄影同意：教室裡 1 位。');
     await shot(admin, 'g2-admitted-by-pass');
   });
 

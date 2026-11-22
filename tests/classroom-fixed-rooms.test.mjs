@@ -1130,13 +1130,16 @@ describe("recording in a fixed room", () => {
   test("GB-16: someone without consent let in and then taken out still counts for this lesson's recording rule, and the owners' view says so (not only the people in the room now)", async () => {
     vi.stubEnv("CLASSROOM_FIXED_ROOM_RECORDING", "on");
     try {
-      const ann = { code: studentCode(), name: "Ann" }, bo = { code: studentCode(), name: "Bo" };
-      const both = await boundRoom([ann, bo]);
+      const ann = { code: studentCode(), name: "Ann" }, bo = { code: studentCode(), name: "Bo" }, di = { code: studentCode(), name: "Di" };
+      const both = await boundRoom([ann, bo, di]);
       await manage("set_recording", { room: both.r.id, on: true });
       const cy = await ask(both.r, "Cy");
       const cyCode = (await manage("admit", { room: both.r.id, request: cy.body.requestId })).body.code;
       expect((await view(both.r)).recording.consentLacking).toEqual({ inRoom: 1, takenOut: [] });
       expect((await manage("remove", { room: both.r.id, request: cy.body.requestId })).status).toBe(200);
+      // Di, consented, taken out too: their consent is read as well, so they are never said to lack one
+      // (mutation R7 of round 10 read consent only for the people in the room now).
+      expect((await manage("remove", { room: both.r.id, request: both.asked[di.code].body.requestId })).status).toBe(200);
       for (const at of [2, 3]) await tick(both.lessonId, at);
       expect(await lastDecision(both.lessonId)).toMatchObject({ eligible: false, reason: "CONSENT_MISSING" });
       const shown = await view(both.r, START + 4 * MIN);
