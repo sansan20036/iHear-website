@@ -106,6 +106,10 @@ test('SV-3: one exchange sends and reads; a part that is switched off is neither
   assert.deepEqual([other.board.entries.length, other.chat.messages.length, other.turn.holder], [1, 1, 'P-1']);
   const again = await channel.exchange({ lesson, who: who('P-2'), on: ON, now: T0 + 900, cursors: { board: other.board.seq, chat: other.chat.seq, turn: 0 } });
   assert.deepEqual([again.board.entries.length, again.chat.messages.length], [0, 0]);
+  // Part of the way behind: only what came after the place reached, nothing already read.
+  await channel.exchange({ lesson, who: who('P-1'), on: ON, now: T0 + 950, send: [{ part: 'chat', input: { op: 'm1b', text: 'second' } }, { part: 'chat', input: { op: 'm1c', text: 'third' } }] });
+  const partly = await channel.exchange({ lesson, who: who('P-2'), on: ON, now: T0 + 990, cursors: { chat: 2 } });
+  assert.deepEqual(partly.chat.messages.map(message => [message.seq, message.text]), [[3, 'third']]);
   // Switched off: refused as not offered, and nothing is read for it.
   const off = await channel.exchange({ lesson, who: who('P-2'), on: { board: true, chat: false, turn: false }, now: T0 + 1000, cursors: { board: 0, chat: 0, turn: 0 }, send: [{ part: 'chat', input: { op: 'm2', text: 'x' } }, { part: 'turn', action: 'claim' }] });
   assert.deepEqual(off.sent, [{ ok: false, error: 'NOT_OFFERED' }, { ok: false, error: 'NOT_OFFERED' }]);

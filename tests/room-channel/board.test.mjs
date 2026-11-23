@@ -314,6 +314,8 @@ test('RB-14: someone a little behind is handed what they missed; someone far beh
   assert.deepEqual([near.fresh, near.entries.length, near.entries[0].seq], [false, BOARD_LIMITS.catchUpEntries, total - BOARD_LIMITS.catchUpEntries + 1]);
   const far = since(state, { by: 'P-1', member: true, cursor: total - BOARD_LIMITS.catchUpEntries - 1, now });
   assert.deepEqual([far.fresh, far.picture.seq, far.picture.lines.length, far.entries], [true, total, total, undefined]);
+  // The list a person may be handed is never longer than what is kept: so whoever is older than what is kept is always handed the picture.
+  assert.ok(BOARD_LIMITS.catchUpEntries <= BOARD_LIMITS.recentKept);
   // From the beginning of a long lesson: the picture, whatever the number of operations kept.
   assert.equal(since(state, { by: 'P-1', member: true, cursor: 0, now }).fresh, true);
 });
