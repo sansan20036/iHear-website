@@ -64,6 +64,10 @@ const NO_TOOLS = { share: null, whiteboard: null } as const;
 const HEARTBEAT_MS = 30_000;
 const RECORDING_HEARTBEAT_MS = 10_000;
 const STATUS_MS = 15_000;
+// A fixed room's lesson (2026-11-24): its "ends in … minutes" note shows from this many minutes before
+// its planned end; the page's clock for it moves every CLOCK_MS.
+const TIME_LEFT_NOTE_MINUTES = 10;
+const CLOCK_MS = 20_000;
 const RETRY_MS = 5_000;
 const ACTIVE = new Set(["START_REQUESTED", "RECORDING", "PAUSED"]);
 // While the video connection is down the tutor is not in class, so no heartbeat says otherwise.
@@ -255,6 +259,10 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   // check can tell "connected again in the new session" from the old session's label (W1 on real
   // Zoom, 2026-11-23: a check read 已連線 before the old session had ended).
   const [roomMoves, setRoomMoves] = useState(0);
+  // A fixed room's lesson end as the server says it now (an owner's extension moves it), and the page's
+  // clock for its "ends in … minutes" note (the user, 2026-11-24: at most 120 minutes unless extended).
+  const [lessonEndsAt, setLessonEndsAt] = useState<string | null>(null);
+  const [nowTick, setNowTick] = useState(() => Date.now());
   // "Connect again" on its way, and why the join check refused it (its code), if it did.
   const [rejoining, setRejoining] = useState(false);
   const [rejoinProblem, setRejoinProblem] = useState("");
@@ -551,6 +559,14 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
     const timer = setTimeout(() => setHandNotices([]), HAND_NOTICE_MS);
     return () => clearTimeout(timer);
   }, [handNotices]);
+  // A fixed room's lesson: the page's clock for its "ends in … minutes" note (2026-11-24).
+  const fixedRoomJoined = phase === "joined" && joined?.fixedRoom === true;
+  useEffect(() => {
+    if (!fixedRoomJoined) return;
+    setNowTick(Date.now());
+    const timer = setInterval(() => setNowTick(Date.now()), CLOCK_MS);
+    return () => clearInterval(timer);
+  }, [fixedRoomJoined]);
 
   // How many tiles are past the end of a row that scrolls sideways (phones, tablets): "N more".
   useEffect(() => {
@@ -683,6 +699,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
           setStatusProblem(false);
           setRecording({ decided: data.recordingDecided === true, allowed: data.recordingAllowed === true, status: String(data.recording?.status ?? ""), basis: String(data.recording?.basis ?? "") });
           followRoom(data.room);
+          if (typeof data.endsAt === "string" && Number.isFinite(Date.parse(data.endsAt))) setLessonEndsAt(data.endsAt);
         } else {
           setStatusProblem(true);
         }
@@ -956,6 +973,10 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   // "Turn on sound", unless an offer above already turns the microphone on again.
   const restoringMic = Boolean(blockMode && restoreDevices?.microphone && restoreOffered && media.devices.microphone !== "on");
   const offerSound = soundOffered({ connected: media.available && connected, canJoin: features.sound, sound: media.sound, microphone: media.devices.microphone, micOffered: offered.includes("microphone") || restoringMic });
+  // A fixed room's lesson near its planned end (the server's latest word, else the join answer's).
+  const endsAtMs = fixedRoomJoined ? Date.parse(lessonEndsAt ?? joined?.lesson.endsAt ?? "") : NaN;
+  const minutesLeft = Number.isFinite(endsAtMs) ? Math.ceil((endsAtMs - nowTick) / 60_000) : null;
+  const showTimeLeft = minutesLeft != null && minutesLeft > 0 && minutesLeft <= TIME_LEFT_NOTE_MINUTES;
   const soundText = media.sound === "failed" ? text.sound[media.soundProblem ?? "error"] : text.sound.off;
   const handUp = hands.some((hand) => hand.self);
   const othersHands = hands.filter((hand) => !hand.self);
@@ -1152,6 +1173,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
             </div>
           )}
           {media.available && media.connection === "reconnecting" && <p className="classroom-room-problem" role="status">{text.reconnecting}</p>}
+          {showTimeLeft && <p className="classroom-room-problem" role="status" data-time-left={minutesLeft}>{text.timeLeft(minutesLeft)}</p>}
           {media.available && media.connection === "failed" && (
             <div className="classroom-room-problem classroom-room-problem-row" role="alert">
               <span>{text.failed}{rejoinProblem && ` ${text.reasons[reasonShown(rejoinProblem, fixedRoom)] ?? text.reasons.UNAVAILABLE}`}</span>

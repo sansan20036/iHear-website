@@ -215,6 +215,29 @@ try {
     await expect(roomCard().locator('[data-waiting-person="Cy"]')).toBeVisible();
   });
 
+  // The user's decisions of 2026-11-24 (items 5 and 6): a room's settings and its lesson's extension,
+  // from the owner's page.
+  await check('R5c', '教室設定與延長：老師在「教室設定」改成一對一、2 人，卡片的說明跟著改；按「延長 30 分鐘」後，「最晚到」的時間往後 30 分鐘', async () => {
+    const settings = roomCard().locator('[data-room-settings]');
+    await settings.locator('summary').click();
+    await settings.locator('select[name="form"]').selectOption('one_to_one');
+    await settings.locator('input[name="capacity"]').fill('2');
+    await settings.getByRole('button', { name: '儲存設定' }).click();
+    await expect(roomCard().locator('[data-room-settings-now]')).toHaveAttribute('data-room-settings-now', 'one_to_one:2:120');
+    await expect(roomCard().locator('[data-room-settings-now]')).toContainText('一對一・最多 2 人・每次上課 120 分鐘');
+    // The page shows the time the zh-TW way (上午/下午 and a 12-hour clock, or 24 hours).
+    const until = async () => {
+      const text = await roomCard().getByText(/上課中，最晚到 /).innerText();
+      const [, half, hours, minutes] = text.match(/最晚到 (上午|下午)?\s*(\d{1,2}):(\d{2})/);
+      const h = Number(hours) % 12 + (half === "下午" ? 12 : half === "上午" ? 0 : Number(hours) >= 12 ? 12 : 0);
+      return h * 60 + Number(minutes);
+    };
+    const before = await until();
+    await roomCard().locator('[data-room-extend]').click();
+    await expect.poll(async () => ((await until()) - before + 1440) % 1440).toBe(30);
+    await shot(admin, 'r5c-settings-extended');
+  });
+
   // P2 (2026-11-23): the fixed room's own words, not the one-to-one lesson's ("this personal link no
   // longer works, ask iHear for a new one"): the room's shared link keeps working. And the one who
   // stays moves to the room's new session (D-4) and is connected there: data-room-moves says the

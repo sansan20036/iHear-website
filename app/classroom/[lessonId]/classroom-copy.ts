@@ -158,6 +158,8 @@ export const roomCopy = {
     connection: { idle: "Not connected", connecting: "Connecting…", connected: "Connected", reconnecting: "Reconnecting…", disconnected: "Disconnected", failed: "Connection failed" } as Record<ConnectionState, string>,
     notConnected: "Video is not connected: no video service has been chosen for this classroom yet.",
     reconnecting: "The video connection dropped. Reconnecting…",
+    // A fixed room's lesson near its end (2026-11-24: at most 120 minutes unless the teacher extends it).
+    timeLeft: (minutes: number) => `This lesson ends in ${minutes} minute${minutes === 1 ? "" : "s"}. If you need more time, ask your teacher.`,
     failed: "The video could not connect. Try connecting again.", reconnect: "Connect again",
     deviceHelp: {
       camera: { denied: "The camera is blocked. Allow the camera for this site in the browser's settings, then try again.", unavailable: "No camera was found. Check that one is connected and not used by another app." },
@@ -205,6 +207,8 @@ export const roomCopy = {
       LINK_REVOKED: "This personal link no longer works (it was revoked or replaced), so you have left the classroom. Ask iHear for the new link.",
       FIXED_ROOM_TAKEN_OUT: "Your teacher has taken you out of this classroom. If you have questions, please contact your teacher.",
       FIXED_ROOM_ENDED: "Your teacher has ended this lesson. Next time, open the same classroom link again.",
+      LESSON_TIME_UP: "This lesson's time is over.",
+      FIXED_ROOM_TIME_UP: "This lesson's time is over, so it has ended. To go on, open the same classroom link again and wait for your teacher to let you in.",
       NOT_ON_ROSTER: "Students: open the personal link from iHear. Tutors: sign in with your iHear account first.",
       IDENTITY_UNVERIFIED: "Your identity could not be confirmed. Tutors: sign in with your iHear account.",
       OBSERVER_NOT_ENABLED: "Observing lessons is not available yet.",
@@ -275,6 +279,7 @@ export const roomCopy = {
     connection: { idle: "未連線", connecting: "連線中…", connected: "已連線", reconnecting: "重新連線中…", disconnected: "已中斷", failed: "連線失敗" } as Record<ConnectionState, string>,
     notConnected: "視訊尚未接上：這間教室還沒有選定視訊服務。",
     reconnecting: "視訊連線中斷，正在重新連線…",
+    timeLeft: (minutes: number) => `這次上課再 ${minutes} 分鐘就到時間。需要延長時，請告訴老師。`,
     failed: "視訊無法連線，請再試一次。", reconnect: "重新連線",
     deviceHelp: {
       camera: { denied: "攝影機被封鎖。請在瀏覽器的網站設定允許使用攝影機，再試一次。", unavailable: "找不到攝影機。請確認攝影機已接上，而且沒有被其他程式使用。" },
@@ -321,6 +326,8 @@ export const roomCopy = {
       LINK_REVOKED: "這個個人連結已失效（已撤銷或已更換），所以已離開教室。請向 iHear 索取新的連結。",
       FIXED_ROOM_TAKEN_OUT: "老師已請你離開這間教室。如有問題，請聯絡老師。",
       FIXED_ROOM_ENDED: "老師已結束這次上課。下次上課時，請再打開同一個教室連結。",
+      LESSON_TIME_UP: "這堂課的時間已經到了。",
+      FIXED_ROOM_TIME_UP: "這次上課的時間已經到了，所以已經結束。要繼續上課，請再打開同一個教室連結，等老師讓你進入。",
       NOT_ON_ROSTER: "學生請使用 iHear 提供的個人專屬連結；小老師請先用 iHear 帳號登入。",
       IDENTITY_UNVERIFIED: "無法確認你的身分。小老師請用 iHear 帳號登入。",
       OBSERVER_NOT_ENABLED: "旁聽功能尚未開放。",
@@ -391,6 +398,7 @@ export const roomCopy = {
     connection: { idle: "未连接", connecting: "连接中…", connected: "已连接", reconnecting: "重新连接中…", disconnected: "已中断", failed: "连接失败" } as Record<ConnectionState, string>,
     notConnected: "视频尚未接上：这间教室还没有选定视频服务。",
     reconnecting: "视频连接中断，正在重新连接…",
+    timeLeft: (minutes: number) => `这次上课再 ${minutes} 分钟就到时间。需要延长时，请告诉老师。`,
     failed: "视频无法连接，请再试一次。", reconnect: "重新连接",
     deviceHelp: {
       camera: { denied: "摄像头被阻止。请在浏览器的网站设置中允许使用摄像头，再试一次。", unavailable: "找不到摄像头。请确认摄像头已接上，而且没有被其他程序使用。" },
@@ -437,6 +445,8 @@ export const roomCopy = {
       LINK_REVOKED: "这个个人链接已失效（已撤销或已更换），所以已离开教室。请向 iHear 索取新的链接。",
       FIXED_ROOM_TAKEN_OUT: "老师已请你离开这间教室。如有问题，请联系老师。",
       FIXED_ROOM_ENDED: "老师已结束这次上课。下次上课时，请再打开同一个教室链接。",
+      LESSON_TIME_UP: "这堂课的时间已经到了。",
+      FIXED_ROOM_TIME_UP: "这次上课的时间已经到了，所以已经结束。要继续上课，请再打开同一个教室链接，等老师让你进入。",
       NOT_ON_ROSTER: "学生请使用 iHear 提供的个人专属链接；小老师请先用 iHear 账号登录。",
       IDENTITY_UNVERIFIED: "无法确认你的身份。小老师请用 iHear 账号登录。",
       OBSERVER_NOT_ENABLED: "旁听功能尚未开放。",

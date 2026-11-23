@@ -808,7 +808,7 @@ describe("recording in a fixed room", () => {
     // With Gate B closed the list's actions are unknown, as before round 10 (review finding 6).
     const unknown = await manage("add_member", { room: closed.id, code: "ST-closed", name: "Ann" });
     expect(unknown.body.code).toBe("INVALID_ACTION");
-    expect(unknown.body.error).toBe("Use one of: create, replace_link, admit, decline, remove, end_lesson, set_recording, disable, enable");
+    expect(unknown.body.error).toBe("Use one of: create, replace_link, admit, decline, remove, end_lesson, extend_lesson, set_settings, set_recording, disable, enable");
     expect((await askWithPass(closed, "a".repeat(43))).status).toBe(404);
     // A pass sent with the room's current link is ignored: the request is what it was before Gate B.
     expect((await rooms.requestEntry({ store, roomId: closed.id, key: closed.key, name: "Ann", pass: "a".repeat(43), now: START })).body).toMatchObject({ ok: true, name: "Ann" });

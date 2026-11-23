@@ -32,6 +32,12 @@ export function displayNameOf(events: readonly ClassroomEvent[], code: string): 
   return SHOWN_NAME.test(name) ? name : null;
 }
 
+// A fixed room's lesson the server ended because its time was over (the user, 2026-11-24: at most 120
+// minutes unless extended). Written on the lesson before it is cancelled, so a person's page is told
+// "the time is up" rather than "cancelled".
+export const LESSON_TIME_UP = "server.lesson_time_up";
+export const timeUpOf = (events: readonly ClassroomEvent[]) => events.some((event) => event.source === "server" && event.type === LESSON_TIME_UP);
+
 // The room's own recording switch as the lesson knows it (the iHear teacher's latest choice, written
 // to the room's lesson): off unless turned on. The site's switch is checked apart.
 // The copy a new lesson starts with (copied: true) gives way to the teacher's own choice made at the

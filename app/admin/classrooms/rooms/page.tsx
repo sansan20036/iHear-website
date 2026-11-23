@@ -28,7 +28,10 @@ import {
 type Person = { request: string; name: string; at: string; code?: string | null; presence?: "in" | "out" | null; student?: string | null; boundBy?: string | null; consent?: string };
 type Member = { code: string; name: string; passIssuedAt?: string };
 type Room = {
-  id: string; label: string; linkGeneration: number; capacity: number; disabled?: boolean; lesson: { lessonId: string; endsAt: string } | null; waiting: Person[]; inRoom: Person[];
+  // form, capacity and minutes: the room's settings; the lesson's start, end and whether 30 more minutes
+  // fit (the user, 2026-11-24).
+  id: string; label: string; linkGeneration: number; capacity: number; form?: "one_to_one" | "group"; minutes?: number; disabled?: boolean;
+  lesson: { lessonId: string; startedAt?: string; endsAt: string; extendable?: boolean } | null; waiting: Person[]; inRoom: Person[];
   recording?: { on: boolean; available: boolean; status?: string; label?: string; anomalies?: { code: string; severity: string }[]; consentLacking?: { inRoom: number; takenOut: string[] } }; members?: Member[];
 };
 // A room's link, or (Gate B) one student's own link: shown once.
@@ -48,7 +51,7 @@ const ERRORS: Record<string, string> = {
   NOT_FOUND: "固定教室目前沒有開啟（CLASSROOM_FIXED_ROOMS）。",
   INVALID_LABEL: "教室名稱請用英文字母和數字（可以有空格、. 和 '），最多 40 個字，不能有 - 或 _。",
   LABEL_TAKEN: "已經有同名的教室。",
-  ROOM_FULL: "教室已經滿了（最多 10 人）。",
+  ROOM_FULL: "教室已經滿了（已到這間教室的人數上限）。",
   NOT_WAITING: "這位已經不在等待中，畫面已重新整理。",
   NOT_IN_ROOM: "這位已經不在教室裡，畫面已重新整理。",
   NO_LESSON: "這間教室現在沒有在上課。",
@@ -59,7 +62,12 @@ const ERRORS: Record<string, string> = {
   DUPLICATE_LABEL: "名稱重複了。",
   NO_ROOMS: "還沒有固定教室。",
   NO_SUCH_ROOM: "找不到這間教室，畫面已重新整理。",
-  CHANGED_CONCURRENTLY: "連結剛剛被別人更換了，請再看一次。",
+  CHANGED_CONCURRENTLY: "剛剛被別人改過了（連結、延長或教室設定），畫面已重新整理，請再看一次。",
+  // The room's settings and its lesson's time (the user, 2026-11-24).
+  INVALID_FORM: "請選擇「一對一」或「小組」。",
+  INVALID_CAPACITY: "人數上限請填 2 到 10 的整數。",
+  INVALID_MINUTES: "單堂時間請填 30 到 180 分鐘的整數。",
+  EXTEND_LIMIT: "這次上課已經到最長 180 分鐘，不能再延長。",
   INVALID_SWITCH: "請選擇開啟或關閉。",
   RECORDING_NOT_AVAILABLE: "這個網站目前沒有開啟固定教室的錄影。",
   RECORDING_MAY_BE_ON: "這間教室可能正在錄影：請先結束這次上課，再關閉錄影。",
@@ -471,14 +479,39 @@ export default function FixedRoomsPage() {
         <article key={room.id} className="admin-card" data-room={room.label} data-room-in-use={room.disabled ? "no" : "yes"}>
           <h2>{room.label}{room.disabled ? "（停用中）" : ""}</h2>
           <p>{room.lesson ? `上課中，最晚到 ${time(room.lesson.endsAt)}` : "目前沒有在上課"}・教室裡 {room.inRoom.length}/{room.capacity} 人・連結第 {room.linkGeneration} 版</p>
+          <p data-room-settings-now={`${room.form ?? "group"}:${room.capacity}:${room.minutes ?? 120}`}>{room.form === "one_to_one" ? "一對一" : "小組"}・最多 {room.capacity} 人・每次上課 {room.minutes ?? 120} 分鐘（可延長，最長 180 分鐘）</p>
           {room.disabled && <p role="note" data-room-disabled>這間教室停用中：拿連結的人不能申請進入，也不能讓人進來。連結沒有改變，重新啟用後原本的連結可以再用。</p>}
           <p>
             <button type="button" disabled={busy} onClick={() => void act("replace_link", { room: room.id }, `更換「${room.label}」的連結？舊連結立刻不能再用來進教室；已經在教室裡的人不受影響。新連結只顯示一次。`)}>更換連結</button>
             {room.lesson && <button type="button" disabled={busy} onClick={() => void act("end_lesson", { room: room.id }, `結束「${room.label}」這次上課？所有人會離開，Session 會結束。`)}>結束這次上課</button>}
+            {room.lesson && room.lesson.extendable !== false && <button type="button" data-room-extend disabled={busy} onClick={() => void act("extend_lesson", { room: room.id }, `「${room.label}」這次上課延長 30 分鐘？從開始算起最長 180 分鐘。`)}>延長 30 分鐘</button>}
+            {room.lesson && room.lesson.extendable === false && <span data-room-extend-limit>已到最長 180 分鐘，不能再延長</span>}
             {room.disabled
               ? <button type="button" disabled={busy} onClick={() => void act("enable", { room: room.id }, `重新啟用「${room.label}」？原本的連結會再次可以申請進入。`)}>重新啟用</button>
               : <button type="button" disabled={busy} onClick={() => void act("disable", { room: room.id }, `停用「${room.label}」？停用後拿連結的人不能申請進入，正在等待的申請會結束，也不能讓人進來。連結不會改變，重新啟用後原本的連結可以再用。正在上課的教室不能停用：請先結束這次上課。`)}>停用這間教室</button>}
           </p>
+          {/* The room's settings (the user, 2026-11-24): one-to-one or a group, how many it holds and how
+              long a lesson lasts. The capacity counts for the next person let in; the length, from the
+              room's next lesson. */}
+          <details data-room-settings>
+            <summary>教室設定</summary>
+            <form key={`${room.id}:${room.form ?? "group"}:${room.capacity}:${room.minutes ?? 120}`} onSubmit={(event) => {
+              event.preventDefault();
+              const data = new FormData(event.currentTarget);
+              void act("set_settings", { room: room.id, form: String(data.get("form") ?? ""), capacity: Number(data.get("capacity")), minutes: Number(data.get("minutes")) });
+            }}>
+              <label className="admin-field"><span>形式</span>
+                <select name="form" defaultValue={room.form ?? "group"}>
+                  <option value="one_to_one">一對一</option>
+                  <option value="group">小組</option>
+                </select>
+              </label>
+              <label className="admin-field"><span>人數上限（2–10）</span><input name="capacity" type="number" min={2} max={10} step={1} defaultValue={room.capacity} required /></label>
+              <label className="admin-field"><span>每次上課（30–180 分鐘）</span><input name="minutes" type="number" min={30} max={180} step={1} defaultValue={room.minutes ?? 120} required /></label>
+              <button type="submit" disabled={busy}>儲存設定</button>
+              <p>人數上限從下一位讓他進入的人開始算，已經在教室裡的人不受影響；每次上課的長度從下一次上課開始。</p>
+            </form>
+          </details>
           {room.recording?.available && (
             <p data-room-recording={room.recording.on ? "on" : "off"}>
               錄影開關：{room.recording.on ? "開啟" : "關閉"}

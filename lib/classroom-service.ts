@@ -12,7 +12,7 @@ import { buildDashboard, LABELS } from "../tools/recording-pathway/classroom/liv
 // @ts-ignore - shared classroom logic, plain JavaScript.
 import { answerLost, mayHaveReachedZoom, OPERATED } from "../tools/recording-pathway/classroom/operations.mjs";
 import type { ClassroomDrive } from "./classroom-drive";
-import { displayNameOf, fixedRoomOf, roomRecordingOn, shownCodeOf } from "./classroom-fixed-room-facts";
+import { displayNameOf, fixedRoomOf, roomRecordingOn, shownCodeOf, timeUpOf } from "./classroom-fixed-room-facts";
 import type { ClassroomProvider } from "./classroom-provider";
 import type { ClassroomBlock, ClassroomBlockMember, ClassroomEvent, ClassroomLesson, ClassroomStore, OperationState, RecordingFile } from "./classroom-store";
 import { fixedRoomRecordingEnabled, sessionReportsEnabled, vendorDeletionEnabled } from "./classroom-switches";
@@ -425,7 +425,7 @@ export async function joinClassroom({ store, provider, lessonId, key, sessionEma
   if (!decision.allowed) {
     const blockedIn = lesson.id;
     await store.transaction((tx) => storeEvent(tx, blockedEvent(blockedIn, decision.reason, now)));
-    return { status: 403, body: { error: "You cannot enter this classroom", code: decision.reason } };
+    return { status: 403, body: { error: "You cannot enter this classroom", code: await shownRefusal(store, lesson, decision.reason) } };
   }
   // Gate B (round 8, 2026-11-21): 18.2 step 7 in a fixed room too. A live lesson keeps its decision,
   // so a person let in later without a valid consent of their own would be recorded: they get no
@@ -616,7 +616,7 @@ export async function classroomStatus({ store, lessonId, key, sessionEmail, now 
   const lesson = await store.lesson(lessonId);
   if (!lesson) return { status: 404, body: { error: "Lesson not found", code: "LESSON_NOT_FOUND" } };
   const { decision } = await admitted(store, lesson, key, sessionEmail, now);
-  if (!decision.allowed) return { status: 403, body: { error: "You cannot see this classroom", code: decision.reason } };
+  if (!decision.allowed) return { status: 403, body: { error: "You cannot see this classroom", code: await shownRefusal(store, lesson, decision.reason) } };
   const events = await store.eventsFor([lessonId]);
   const state = deriveLesson(forRules(lesson), events, now);
   const recording = recordingDecision(events);
@@ -629,8 +629,17 @@ export async function classroomStatus({ store, lessonId, key, sessionEmail, now 
       recording: { status: state.recording.status, basis: state.recording.basis, label: RECORDING_LABELS[state.recording.status] ?? state.recording.status },
       // The room new tokens lead to (D-1); a page in another room moves there (D-5).
       room: roomNameOf(lesson.id, roomGeneration(events)),
+      // A fixed room (2026-11-24): the lesson's planned end now (an owner's extension moves it), for the
+      // page's "the lesson ends in … minutes" note.
+      ...(fixedRoomOf(events) ? { endsAt: lesson.endsAt } : {}),
     },
   };
+}
+
+// A fixed room's lesson the server ended at its time (2026-11-24) is refused as LESSON_TIME_UP rather
+// than LESSON_CANCELLED, so the person's page says the time is up. Every other refusal is unchanged.
+async function shownRefusal(store: ClassroomStore, lesson: ClassroomLesson, reason: string) {
+  return reason === "LESSON_CANCELLED" && timeUpOf(await store.eventsFor([lesson.id])) ? "LESSON_TIME_UP" : reason;
 }
 
 // The tutor's page reports while its room can be open: from when the door opens until an hour
@@ -1012,12 +1021,21 @@ export async function runClassroomTick({ store, provider, drive, now, lessonIds,
   const startedAt = Date.now();
   // The tick's own time: starts at `now` and moves with the real time spent.
   const clock = () => now + (Date.now() - startedAt);
+  // Fixed rooms (the user, 2026-11-24): a lesson whose time is over is ended first, so this tick's own
+  // work sees it cancelled (its recording stops, its session ends). Only the full tick, not one asked
+  // for given lessons (a webhook's); nothing while the fixed rooms are off. Loaded here rather than at
+  // the top: the fixed rooms import this module. A failure here never stops the rest of the tick.
+  const timeUp = lessonIds ? { ended: [] as string[] }
+    : await (await import("./classroom-fixed-rooms")).endLessonsPastTime({ store, provider, drive, now }).catch(() => ({ ended: [] as string[], failed: true }));
   const lessons = lessonIds
     ? (await Promise.all(lessonIds.map((id) => store.lesson(id)))).filter((lesson): lesson is ClassroomLesson => Boolean(lesson))
     : await lessonsInView(store, now);
   const ids = lessons.map((lesson) => lesson.id);
   let byLesson = groupByLesson(lessons, await store.eventsFor(ids));
-  const summary = { lessons: lessons.length, sessionsChecked: 0, actions: 0, reconciliations: 0, jobs: 0, continued: 0 };
+  const summary = {
+    lessons: lessons.length, sessionsChecked: 0, actions: 0, reconciliations: 0, jobs: 0, continued: 0,
+    ...(timeUp.ended.length ? { fixedRoomLessonsTimeUp: timeUp.ended.length } : {}), ...("failed" in timeUp ? { fixedRoomTimeUpFailed: true } : {}),
+  };
   // Reported session ids first, so a confirmed one can be used by this tick's actions.
   if (sessionReportsEnabled()) {
     for (const lesson of lessons) summary.sessionsChecked += await confirmReportedSessions({ store, provider, lesson, events: byLesson.get(lesson.id) ?? [], now });

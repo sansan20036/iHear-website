@@ -572,6 +572,20 @@ describe("the words a fixed room shows when the entry has ended", () => {
     }
   });
 
+  test("FX-7: a fixed room's page says \"ends in … minutes\" from 10 minutes before the lesson's planned end, the server's latest end (an extension moves it) over the join answer's, on a clock that moves while in the room", async () => {
+    const source = await readFile("app/classroom/[lessonId]/classroom-entry.tsx", "utf8");
+    expect(source).toContain("const TIME_LEFT_NOTE_MINUTES = 10;");
+    expect(source).toContain('if (typeof data.endsAt === "string" && Number.isFinite(Date.parse(data.endsAt))) setLessonEndsAt(data.endsAt);');
+    expect(source).toContain('const endsAtMs = fixedRoomJoined ? Date.parse(lessonEndsAt ?? joined?.lesson.endsAt ?? "") : NaN;');
+    expect(source).toContain("const showTimeLeft = minutesLeft != null && minutesLeft > 0 && minutesLeft <= TIME_LEFT_NOTE_MINUTES;");
+    expect(source).toContain("const timer = setInterval(() => setNowTick(Date.now()), CLOCK_MS);");
+    expect(source).toMatch(/\{showTimeLeft && <p className="classroom-room-problem" role="status" data-time-left=\{minutesLeft\}>\{text\.timeLeft\(minutesLeft\)\}<\/p>\}/);
+    for (const locale of ["en", "zhHant", "zhHans"]) {
+      expect(copy[locale].timeLeft(5), locale).toMatch(/5/);
+      for (const key of ["LESSON_TIME_UP", "FIXED_ROOM_TIME_UP"]) expect(typeof copy[locale].reasons[key], `${locale} ${key}`).toBe("string");
+    }
+  });
+
   test("FX-5: the page counts its moves to another session of the lesson (only a new session name counts) and shows the count on its connection state", async () => {
     const source = await readFile("app/classroom/[lessonId]/classroom-entry.tsx", "utf8");
     expect(source).toContain("if (result.session.sessionName && result.session.sessionName !== session.current?.sessionName) setRoomMoves((moves) => moves + 1);");

@@ -47,7 +47,8 @@ export async function requestJoin(lessonId: string, joinKey: string | null, fetc
 // the lesson is cancelled or the personal link was revoked or replaced (LINK_REVOKED); the tutor
 // when the lesson is cancelled. This relies on the page cooperating: it is not a disconnection the
 // server can enforce.
-const STUDENT_ENTRY_ENDED = new Set(["LESSON_CANCELLED", "LESSON_NOT_FOUND", "NOT_ON_ROSTER", "IDENTITY_UNVERIFIED"]);
+// LESSON_TIME_UP (2026-11-24): a fixed room's lesson the server ended at its time.
+const STUDENT_ENTRY_ENDED = new Set(["LESSON_CANCELLED", "LESSON_TIME_UP", "LESSON_NOT_FOUND", "NOT_ON_ROSTER", "IDENTITY_UNVERIFIED"]);
 // P3-Multi (2026-11-09): in a block, the server no longer has this person in this room (moved,
 // recalled, the block ended or cancelled, a room now recording without their consent); the
 // block's page then asks where they belong. Only blocks give these codes.
@@ -71,6 +72,7 @@ export function reasonShown(reason: string, fixedRoom: boolean): string {
   if (!fixedRoom) return reason;
   if (FIXED_ROOM_TAKEN_OUT_CODES.has(reason)) return "FIXED_ROOM_TAKEN_OUT";
   if (reason === "LESSON_CANCELLED") return "FIXED_ROOM_ENDED";
+  if (reason === "LESSON_TIME_UP") return "FIXED_ROOM_TIME_UP";
   return reason;
 }
 

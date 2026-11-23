@@ -46,6 +46,25 @@ export function classroomStoreContract(name, getStore) {
       expect(nextDay.map(entry => entry.id)).not.toContain(A);
     });
 
+    // A fixed room's lesson extended by its owner (2026-11-24): the end only moves later, never for a
+    // cancelled or missing lesson.
+    test('a lesson\'s end moves later, never earlier, and never for a cancelled or missing lesson', async () => {
+      const store = getStore();
+      const E = 'L-contract-extend';
+      await store.createLesson(contractLesson(E, 'TEST-CE'));
+      const before = Date.parse((await store.lesson(E)).endsAt);
+      const later = new Date(before + 30 * 60_000).toISOString();
+      expect(await store.setLessonEndsAt(E, later)).toBe(true);
+      expect((await store.lesson(E)).endsAt).toBe(later);
+      expect(await store.setLessonEndsAt(E, new Date(before).toISOString())).toBe(false);
+      expect(await store.setLessonEndsAt(E, later)).toBe(false);
+      expect((await store.lesson(E)).endsAt).toBe(later);
+      expect(await store.setLessonEndsAt('L-contract-missing', later)).toBe(false);
+      expect(await store.setLessonCancelled(E)).toBe(true);
+      expect(await store.setLessonEndsAt(E, new Date(before + 60 * 60_000).toISOString())).toBe(false);
+      expect((await store.lesson(E)).endsAt).toBe(later);
+    });
+
     test('a lesson can be cancelled and its student key hash replaced; only an existing student row changes', async () => {
       const store = getStore();
       const B = 'L-contract-access';

@@ -29,7 +29,7 @@ import { hashKey } from "./classroom-block-rules";
 import type { ClassroomDrive } from "./classroom-drive";
 import { distinctName, entryNameOf } from "./classroom-names";
 import type { ClassroomProvider } from "./classroom-provider";
-import { PARTICIPANT_ALIAS, PARTICIPANT_DISPLAY_NAME, roomRecordingOn } from "./classroom-fixed-room-facts";
+import { LESSON_TIME_UP, PARTICIPANT_ALIAS, PARTICIPANT_DISPLAY_NAME, roomRecordingOn } from "./classroom-fixed-room-facts";
 import { changeLessonAccess, consentPolicy, forRules, PERSON_CODE, roomMayRecordNow, stopRecordingForCancelledLesson } from "./classroom-service";
 // @ts-ignore - shared classroom logic, plain JavaScript tested with node --test.
 import { personConsentProblem } from "../tools/recording-pathway/classroom/eligibility.mjs";
@@ -41,10 +41,25 @@ import type { ClassroomEvent, ClassroomLesson, ClassroomParticipant, ClassroomSt
 import { fixedRoomRecordingEnabled } from "./classroom-switches";
 import { HOUSE_TIME_ZONE, LEGACY_LESSON_TIME_ZONE, wallIn } from "./zoned-time";
 
+// The most a room may hold (requirement 8); a room's own capacity is set between 2 and this.
 export const FIXED_ROOM_CAPACITY = 10;
+export const ROOM_CAPACITY_MIN = 2;
 export const WAITING_MAX = 20;
 export const REQUEST_TTL_MS = 30 * 60_000;
-export const LESSON_LENGTH_MS = 3 * 60 * 60_000;
+// The user, 2026-11-24 (tentative): a lesson lasts at most 120 minutes unless the owner extends it, 30
+// minutes at a time, to at most 180 in all. A room's own length may be set between 30 and 180; it
+// applies from the room's next lesson. At its end the server ends the lesson (endLessonsPastTime).
+export const LESSON_MINUTES = 120;
+export const LESSON_MINUTES_MIN = 30;
+export const LESSON_MAX_MINUTES = 180;
+export const EXTEND_MINUTES = 30;
+// One-to-one or a group (the user, 2026-11-24: both, a setting per room); each starts with its own
+// capacity, which the owner may change.
+export const ROOM_FORMS = ["one_to_one", "group"] as const;
+export type RoomForm = (typeof ROOM_FORMS)[number];
+const FORM_CAPACITY: Record<RoomForm, number> = { one_to_one: 2, group: FIXED_ROOM_CAPACITY };
+type RoomSettings = { form: RoomForm; capacity: number; minutes: number };
+const DEFAULT_SETTINGS: RoomSettings = { form: "group", capacity: FIXED_ROOM_CAPACITY, minutes: LESSON_MINUTES };
 export const ROOM_ID = /^FR-[0-9a-f]{32}$/;
 const REGISTRY = "FR-REGISTRY";
 // A room's name goes into its recordings' file names: letters and digits first, then letters,
@@ -81,12 +96,13 @@ type DecisionKind = "admitted" | "declined" | "removed";
 type Decision = { kind: DecisionKind; at: number; actor: string; classLessonId: string | null; code: string | null; personCode: string | null; boundBy: string | null };
 // personCode/passHash: a request made with a student's own pass (Gate B); null for the room's link.
 type RoomRequest = { id: string; name: string; shown: string; ticketHash: string; at: number; generation: number; decisions: Decision[]; personCode: string | null; passHash: string | null };
-type RoomLesson = { classLessonId: string; n: number; endsAt: number; ended: boolean };
+// startedAt: when the lesson opened; endsAt: its planned end, moved by each extension (2026-11-24).
+type RoomLesson = { classLessonId: string; n: number; startedAt: number; endsAt: number; ended: boolean };
 // A student on the room's list (Gate B): their code, the first name the list gives, their pass's hash.
 type RoomMember = { code: string; name: string; passHash: string; at: number };
 // rosterSeq: how many changes the room's list has had (each change takes the next number, so of two
 // changes at the same moment one is made and the other is said as such).
-export type FixedRoom = { id: string; label: string; createdAt: number; recording: boolean; disabled: boolean; lastDisabledAt: number | null; links: { generation: number; keyHash: string }[]; lessons: RoomLesson[]; requests: RoomRequest[]; members: RoomMember[]; rosterSeq: number };
+export type FixedRoom = { id: string; label: string; createdAt: number; recording: boolean; disabled: boolean; lastDisabledAt: number | null; links: { generation: number; keyHash: string }[]; lessons: RoomLesson[]; requests: RoomRequest[]; members: RoomMember[]; rosterSeq: number; settingsSeq: number } & RoomSettings;
 // "closed": the person was waiting when the room was taken out of use (2026-11-21, round 7).
 export type RequestState = "waiting" | "admitted" | "declined" | "removed" | "expired" | "replaced" | "ended" | "closed";
 
@@ -112,11 +128,22 @@ function roomFrom(definition: ClassroomEvent, events: readonly ClassroomEvent[])
     ...serverFacts(own, "server.room_enabled").map((event) => ({ inUse: true, at: event.occurredAt })),
     ...serverFacts(own, "server.room_disabled").map((event) => ({ inUse: false, at: event.occurredAt })),
   ].sort((a, b) => a.at - b.at || Number(b.inUse) - Number(a.inUse));
+  // Extensions (2026-11-24): the latest planned end written for each lesson.
+  const extended = new Map<string, number>();
+  for (const event of serverFacts(own, "server.room_lesson_extended")) {
+    const id = String(event.classLessonId), endsAt = Number(event.endsAt);
+    if (Number.isFinite(endsAt)) extended.set(id, Math.max(extended.get(id) ?? 0, endsAt));
+  }
   return {
     id, label: String(definition.label), createdAt: definition.occurredAt, recording: roomRecordingOn(own), disabled: uses.length > 0 && !uses.at(-1)!.inUse,
     lastDisabledAt: uses.filter((use) => !use.inUse).at(-1)?.at ?? null,
     links: serverFacts(own, "server.room_link").map((event) => ({ generation: Number(event.generation), keyHash: String(event.keyHash) })).sort((a, b) => a.generation - b.generation),
-    lessons: serverFacts(own, "server.room_lesson").map((event) => ({ classLessonId: String(event.classLessonId), n: Number(event.n), endsAt: Number(event.endsAt), ended: ended.has(String(event.classLessonId)) })).sort((a, b) => a.n - b.n),
+    lessons: serverFacts(own, "server.room_lesson").map((event) => ({
+      classLessonId: String(event.classLessonId), n: Number(event.n), startedAt: event.occurredAt,
+      endsAt: Math.max(Number(event.endsAt), extended.get(String(event.classLessonId)) ?? 0), ended: ended.has(String(event.classLessonId)),
+    })).sort((a, b) => a.n - b.n),
+    ...settingsOf(own),
+    settingsSeq: serverFacts(own, "server.room_settings").reduce((most, event) => Math.max(most, Number(event.seq) || 0), 0),
     requests: serverFacts(own, "server.room_request").map((event) => ({
       id: String(event.requestId), name: String(event.name), shown: String(event.shown), ticketHash: String(event.ticketHash),
       at: event.occurredAt, generation: Number(event.generation), decisions: decisions.get(String(event.requestId)) ?? [],
@@ -124,6 +151,21 @@ function roomFrom(definition: ClassroomEvent, events: readonly ClassroomEvent[])
     })).sort((a, b) => a.at - b.at),
     members: membersOf(own),
     rosterSeq: rosterFacts(own).reduce((most, event) => Math.max(most, Number(event.seq) || 0), 0),
+  };
+}
+
+// A room's settings (2026-11-24): the latest the owner set, each value checked again as it is read;
+// none set (or a value out of range): the defaults (a group of up to 10, 120 minutes).
+function settingsOf(own: readonly ClassroomEvent[]): RoomSettings {
+  // The latest by its number: each change takes the next one, so of two at the same moment one is made.
+  const last = serverFacts(own, "server.room_settings").sort((a, b) => (Number(a.seq) || 0) - (Number(b.seq) || 0) || a.occurredAt - b.occurredAt).at(-1);
+  if (!last) return { ...DEFAULT_SETTINGS };
+  const form = ROOM_FORMS.includes(last.form as RoomForm) ? (last.form as RoomForm) : DEFAULT_SETTINGS.form;
+  const capacity = Number(last.capacity), minutes = Number(last.minutes);
+  return {
+    form,
+    capacity: Number.isInteger(capacity) && capacity >= ROOM_CAPACITY_MIN && capacity <= FIXED_ROOM_CAPACITY ? capacity : FORM_CAPACITY[form],
+    minutes: Number.isInteger(minutes) && minutes >= LESSON_MINUTES_MIN && minutes <= LESSON_MAX_MINUTES ? minutes : LESSON_MINUTES,
   };
 }
 
@@ -198,7 +240,7 @@ export async function requestEntry({ store, roomId, key, name, pass, now }: { st
   const clean = entryNameOf(name);
   if (!clean) return refused(400, "INVALID_NAME", "Enter your first name in English letters");
   const present = inRoom(room, now), queued = waiting(room, now);
-  if (present.length >= FIXED_ROOM_CAPACITY) return refused(409, "ROOM_FULL", "The classroom is full now; please ask your teacher");
+  if (present.length >= room.capacity) return refused(409, "ROOM_FULL", "The classroom is full now; please ask your teacher");
   if (queued.length >= WAITING_MAX) return refused(409, "TOO_MANY_WAITING", "Many people are waiting; please try again in a moment");
   const shown = distinctName(clean, [...present, ...queued].map((request) => request.shown));
   if (!shown) return refused(409, "NAME_TAKEN", "Too many people with this name; add an initial");
@@ -224,7 +266,7 @@ async function requestWithPass({ store, roomId, pass, now }: { store: ClassroomS
   if (!room || !member) return refused(404, "NOT_FOUND", "Not found");
   if (room.disabled) return refused(409, "ROOM_DISABLED", "This classroom is not in use now; please check with your teacher");
   const present = inRoom(room, now), queued = waiting(room, now);
-  if (present.length >= FIXED_ROOM_CAPACITY) return refused(409, "ROOM_FULL", "The classroom is full now; please ask your teacher");
+  if (present.length >= room.capacity) return refused(409, "ROOM_FULL", "The classroom is full now; please ask your teacher");
   if (queued.length >= WAITING_MAX) return refused(409, "TOO_MANY_WAITING", "Many people are waiting; please try again in a moment");
   const shown = distinctName(member.name, [...present, ...queued].map((request) => request.shown));
   if (!shown) return refused(409, "NAME_TAKEN", "Too many people with this name; please ask your teacher");
@@ -280,7 +322,7 @@ async function lessonToFill({ store, room, actor, now }: { store: ClassroomStore
   if (current) return current.classLessonId;
   const n = (room.lessons.at(-1)?.n ?? 0) + 1;
   const classLessonId = shortId("L");
-  const endsAt = now + LESSON_LENGTH_MS;
+  const endsAt = now + room.minutes * 60_000;
   const claimed = await remember(store, [{ source: "server", type: "server.room_lesson", lessonId: room.id, roomId: room.id, classLessonId, n, endsAt, actor, occurredAt: now, receivedAt: now, key: `server.room_lesson:${room.id}:${n}` }]);
   if (!claimed) return (await readRoom(store, room.id))?.lessons.find((entry) => entry.n === n)?.classLessonId ?? null;
   const slug = room.label.replace(/[^A-Za-z0-9]/g, "").slice(0, 12) || "Room";
@@ -291,7 +333,7 @@ async function lessonToFill({ store, room, actor, now }: { store: ClassroomStore
   const local = wallIn(now, HOUSE_TIME_ZONE);
   await store.createLesson(lesson, [{
     source: "server", type: "server.lesson_scheduled", key: `server.lesson_scheduled:${classLessonId}`, lessonId: classLessonId, occurredAt: now, receivedAt: now,
-    timeZone: HOUSE_TIME_ZONE, localDate: local.date, localTime: local.time, zoneGiven: false, minutes: LESSON_LENGTH_MS / 60_000, fixedRoomId: room.id,
+    timeZone: HOUSE_TIME_ZONE, localDate: local.date, localTime: local.time, zoneGiven: false, minutes: room.minutes, fixedRoomId: room.id,
   }, { source: "server", type: "server.room_recording", lessonId: classLessonId, roomId: room.id, on: room.recording, copied: true, actor, occurredAt: now, receivedAt: now, key: `server.room_recording:${classLessonId}:opened` }]);
   return classLessonId;
 }
@@ -306,7 +348,7 @@ async function admit({ store, roomId, requestId, bindTo, actor, now }: { store: 
     if (room.disabled) return refused(409, "ROOM_DISABLED", "This room is not in use: nobody is let in");
     const state = requestState(room, request, now);
     if (state !== "waiting") return refused(409, "NOT_WAITING", `This person is not waiting (${state})`);
-    if (inRoom(room, now).length >= FIXED_ROOM_CAPACITY) return refused(409, "ROOM_FULL", `The room is full (${FIXED_ROOM_CAPACITY})`);
+    if (inRoom(room, now).length >= room.capacity) return refused(409, "ROOM_FULL", `The room is full (${room.capacity})`);
     // Gate B (round 10): who this person is. A request made with a student's own pass is that student
     // (option A); an owner may say which student on the room's list a request made with the room's
     // link is (option B: bindTo). Bound, their code in the lesson is the student's code, which their
@@ -335,7 +377,7 @@ async function admit({ store, roomId, requestId, bindTo, actor, now }: { store: 
     const alias = member ? `R${room.id.slice(3, 11)}-${randomBytes(3).toString("hex")}` : null;
     // The person's row and the decision in one step: never let in without the record of who did it.
     const result = await store.addLessonParticipant({
-      lessonId: classLessonId, participant, max: FIXED_ROOM_CAPACITY + removed,
+      lessonId: classLessonId, participant, max: room.capacity + removed,
       events: [{
         source: "server", type: "server.room_decision", lessonId: room.id, roomId: room.id, requestId, decision: "admitted", classLessonId, code, actor,
         ...(member ? { personCode: member.code, boundName: member.name, boundBy: request.personCode ? "pass" : "owner" } : {}),
@@ -358,7 +400,7 @@ async function admit({ store, roomId, requestId, bindTo, actor, now }: { store: 
       }
       return { status: 200, body: { ok: true, admitted: requestId, code, ...(member ? { student: member.code } : {}) } };
     }
-    if (result.reason === "ROOM_FULL") return refused(409, "ROOM_FULL", `The room is full (${FIXED_ROOM_CAPACITY})`);
+    if (result.reason === "ROOM_FULL") return refused(409, "ROOM_FULL", `The room is full (${room.capacity})`);
     // A student's own code taken: let in just now by another press (the next look says so), or they
     // already have a place in this lesson (also when taken out earlier: the next lesson can let them in).
     if (member && result.reason === "CODE_TAKEN") {
@@ -475,16 +517,70 @@ async function setRecording({ store, room, on, actor, now }: { store: ClassroomS
   return { status: 200, body: { ok: true, recording: on } };
 }
 
-async function endLesson({ store, provider, drive, room, actor, now }: { store: ClassroomStore; provider: ClassroomProvider; drive: ClassroomDrive; room: FixedRoom; actor: string; now: number }) {
+// timeUp (2026-11-24): the server ends the lesson because its time is over. It says so on the lesson
+// first, so each person's page tells them the time is up, not that the lesson was cancelled.
+async function endLesson({ store, provider, drive, room, actor, now, timeUp = false }: { store: ClassroomStore; provider: ClassroomProvider; drive: ClassroomDrive; room: FixedRoom; actor: string; now: number; timeUp?: boolean }) {
   const last = room.lessons.at(-1);
   if (!last || last.ended) return refused(409, "NO_LESSON", "No lesson is open in this room");
   const lesson = await store.lesson(last.classLessonId);
   if (lesson && !lesson.cancelled) {
+    if (timeUp) await remember(store, [{ source: "server", type: LESSON_TIME_UP, lessonId: lesson.id, roomId: room.id, endsAt: last.endsAt, occurredAt: now, receivedAt: now, key: `${LESSON_TIME_UP}:${lesson.id}` }]);
     await changeLessonAccess({ store, lessonId: lesson.id, action: "cancel", now });
     await stopRecordingForCancelledLesson({ store, provider, drive, lessonId: lesson.id, now });
   }
-  await remember(store, [{ source: "server", type: "server.room_lesson_ended", lessonId: room.id, roomId: room.id, classLessonId: last.classLessonId, actor, occurredAt: now, receivedAt: now, key: `server.room_lesson_ended:${room.id}:${last.classLessonId}` }]);
-  return { status: 200, body: { ok: true, ended: last.classLessonId } };
+  await remember(store, [{ source: "server", type: "server.room_lesson_ended", lessonId: room.id, roomId: room.id, classLessonId: last.classLessonId, actor, ...(timeUp ? { reason: "time_up" } : {}), occurredAt: now, receivedAt: now, key: `server.room_lesson_ended:${room.id}:${last.classLessonId}` }]);
+  return { status: 200, body: { ok: true, ended: last.classLessonId, ...(timeUp ? { reason: "time_up" } : {}) } };
+}
+
+// The lessons whose time is over (the user, 2026-11-24): the server ends each one as the owner's "end
+// this lesson" does (everyone leaves, a recording stops, the Zoom session ends), and says why. Run by
+// the classroom's regular tick; nothing while the fixed rooms are off.
+export async function endLessonsPastTime({ store, provider, drive, now }: { store: ClassroomStore; provider: ClassroomProvider; drive: ClassroomDrive; now: number }) {
+  if (!fixedRoomsEnabled()) return { ended: [] as string[] };
+  const ended: string[] = [];
+  for (const room of await allRooms(store)) {
+    const last = room.lessons.at(-1);
+    if (!last || last.ended || now < last.endsAt) continue;
+    const answer = await endLesson({ store, provider, drive, room, actor: "server:time-limit", now, timeUp: true });
+    if (answer.status === 200) ended.push(last.classLessonId);
+  }
+  return { ended };
+}
+
+// The lesson now, longer (the user, 2026-11-24): 30 more minutes each time, to at most 180 minutes from
+// its start, only while it runs. The lesson's own record moves too, so the join window and every rule
+// that reads the lesson's end see the new one. Two presses at the same moment extend once.
+async function extendLesson({ store, room, actor, now }: { store: ClassroomStore; room: FixedRoom; actor: string; now: number }) {
+  const lesson = currentLesson(room, now);
+  if (!lesson) return refused(409, "NO_LESSON", "No lesson is open in this room");
+  const endsAt = lesson.endsAt + EXTEND_MINUTES * 60_000;
+  if (endsAt > lesson.startedAt + LESSON_MAX_MINUTES * 60_000) return refused(409, "EXTEND_LIMIT", `A lesson lasts at most ${LESSON_MAX_MINUTES} minutes`);
+  const made = await remember(store, [{ source: "server", type: "server.room_lesson_extended", lessonId: room.id, roomId: room.id, classLessonId: lesson.classLessonId, endsAt, actor, occurredAt: now, receivedAt: now, key: `server.room_lesson_extended:${room.id}:${lesson.classLessonId}:${endsAt}` }]);
+  if (!made) return refused(409, "CHANGED_CONCURRENTLY", "This lesson was just extended; look again");
+  await store.setLessonEndsAt(lesson.classLessonId, iso(endsAt));
+  return { status: 200, body: { ok: true, lessonId: lesson.classLessonId, endsAt: iso(endsAt) } };
+}
+
+// A room's settings (the user, 2026-11-24): its form (one-to-one or a group), how many it holds (2 to
+// 10) and how long its lessons last (30 to 180 minutes). Each value left out stays as it is; a form
+// changed without a capacity takes that form's own (one-to-one 2, a group 10). The capacity counts for
+// the next person let in (people already in stay); the length, from the room's next lesson.
+async function setSettings({ store, room, input, actor, now }: { store: ClassroomStore; room: FixedRoom; input: Record<string, unknown>; actor: string; now: number }) {
+  const form = input.form === undefined ? room.form : input.form;
+  if (!ROOM_FORMS.includes(form as RoomForm)) return refused(400, "INVALID_FORM", `Use one of: ${ROOM_FORMS.join(", ")}`);
+  const capacity = input.capacity !== undefined ? input.capacity : form !== room.form ? FORM_CAPACITY[form as RoomForm] : room.capacity;
+  if (!Number.isInteger(capacity) || (capacity as number) < ROOM_CAPACITY_MIN || (capacity as number) > FIXED_ROOM_CAPACITY) {
+    return refused(400, "INVALID_CAPACITY", `A room holds ${ROOM_CAPACITY_MIN} to ${FIXED_ROOM_CAPACITY} people`);
+  }
+  const minutes = input.minutes === undefined ? room.minutes : input.minutes;
+  if (!Number.isInteger(minutes) || (minutes as number) < LESSON_MINUTES_MIN || (minutes as number) > LESSON_MAX_MINUTES) {
+    return refused(400, "INVALID_MINUTES", `A lesson lasts ${LESSON_MINUTES_MIN} to ${LESSON_MAX_MINUTES} minutes`);
+  }
+  const settings: RoomSettings = { form: form as RoomForm, capacity: capacity as number, minutes: minutes as number };
+  const seq = room.settingsSeq + 1;
+  const made = await remember(store, [{ source: "server", type: "server.room_settings", lessonId: room.id, roomId: room.id, ...settings, seq, actor, occurredAt: now, receivedAt: now, key: `server.room_settings:${room.id}:${seq}` }]);
+  if (!made) return refused(409, "CHANGED_CONCURRENTLY", "The room's settings were just changed by someone else; look again");
+  return { status: 200, body: { ok: true, settings, inRoom: inRoom(room, now).length } };
 }
 
 // A room taken out of use, or back into use (round 7, 2026-11-21). Out of use: its link stays the
@@ -564,7 +660,7 @@ async function removeMember({ store, room, code, actor, now }: { store: Classroo
   return { status: 200, body: { ok: true, removedMember: member.code } };
 }
 
-export const FIXED_ROOM_ACTIONS = ["create", "replace_link", "admit", "decline", "remove", "end_lesson", "set_recording", "disable", "enable", "add_member", "reissue_pass", "remove_member"] as const;
+export const FIXED_ROOM_ACTIONS = ["create", "replace_link", "admit", "decline", "remove", "end_lesson", "extend_lesson", "set_settings", "set_recording", "disable", "enable", "add_member", "reissue_pass", "remove_member"] as const;
 export type FixedRoomAction = (typeof FIXED_ROOM_ACTIONS)[number];
 // The list's actions exist only while the site may record fixed rooms; otherwise they are unknown, as
 // before Gate B (round 10 review).
@@ -586,6 +682,8 @@ export async function manageFixedRoom({ store, provider, drive, principal, actio
   if (!room) return refused(404, "NO_SUCH_ROOM", "No such room");
   if (action === "replace_link") return replaceLink({ store, room, actor, now });
   if (action === "end_lesson") return endLesson({ store, provider, drive, room, actor, now });
+  if (action === "extend_lesson") return extendLesson({ store, room, actor, now });
+  if (action === "set_settings") return setSettings({ store, room, input, actor, now });
   if (action === "set_recording") return setRecording({ store, room, on: input.on, actor, now });
   if (action === "disable" || action === "enable") return setInUse({ store, room, inUse: action === "enable", actor, now });
   if (action === "add_member") return addMember({ store, room, code: input.code, name: input.name, actor, now });
@@ -636,7 +734,7 @@ export async function fixedRoomsView({ store, now }: { store: ClassroomStore; no
     const presentCodes = new Set(inRoom(room, now).map((request) => latestDecision(request)!.code));
     const lacking = available ? [...new Set(studentRows(row).map((entry) => entry.code))].filter((code) => consentOf(code) !== "CONSENTED") : [];
     return {
-      id: room.id, label: room.label, createdAt: iso(room.createdAt), linkGeneration: room.links.at(-1)?.generation ?? 0, capacity: FIXED_ROOM_CAPACITY,
+      id: room.id, label: room.label, createdAt: iso(room.createdAt), linkGeneration: room.links.at(-1)?.generation ?? 0, capacity: room.capacity, form: room.form, minutes: room.minutes,
       recording: {
         on: room.recording, available,
         ...(state ? {
@@ -647,7 +745,11 @@ export async function fixedRoomsView({ store, now }: { store: ClassroomStore; no
         } : {}),
       },
       disabled: room.disabled,
-      lesson: lesson ? { lessonId: lesson.classLessonId, endsAt: iso(lesson.endsAt) } : null,
+      // The lesson now, its start and planned end, and whether 30 more minutes still fit (2026-11-24).
+      lesson: lesson ? {
+        lessonId: lesson.classLessonId, startedAt: iso(lesson.startedAt), endsAt: iso(lesson.endsAt),
+        extendable: lesson.endsAt + EXTEND_MINUTES * 60_000 <= lesson.startedAt + LESSON_MAX_MINUTES * 60_000,
+      } : null,
       waiting: waiting(room, now).map((request) => ({ request: request.id, name: request.shown, at: iso(request.at), ...(available ? { student: request.personCode } : {}) })),
       inRoom: inRoom(room, now).map((request) => {
         const decision = latestDecision(request)!;

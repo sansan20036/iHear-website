@@ -219,6 +219,9 @@ export type ClassroomStore = {
   listLessonsForStaff(email: string, window: { from: number; to: number }): Promise<ClassroomLesson[]>;
   // Owners' changes to who can enter: false when there is no such lesson (or student row).
   setLessonCancelled(id: string): Promise<boolean>;
+  // A fixed room's lesson extended by its owner (the user, 2026-11-24): the lesson's end moves; only a
+  // lesson that is not cancelled, and only to a later time. false: no such lesson, or nothing moved.
+  setLessonEndsAt(id: string, endsAt: string): Promise<boolean>;
   // Classroom 3.0 round 3 (2026-11-21), fixed rooms: one more student let into a lesson that is
   // not a block's (a fixed room's lesson), under the lesson's lock: refused whole when the lesson
   // is gone or cancelled, already holds `max` active students, or the id, code or key is taken.
@@ -652,6 +655,12 @@ export function createFileClassroomStore(filePath: string): ClassroomStore {
       const lesson = state.lessons.find((item) => item.id === id);
       if (!lesson) return false;
       lesson.cancelled = true;
+      return true;
+    }),
+    setLessonEndsAt: (id, endsAt) => run((state) => {
+      const lesson = state.lessons.find((item) => item.id === id);
+      if (!lesson || lesson.cancelled || !(Date.parse(endsAt) > Date.parse(lesson.endsAt))) return false;
+      lesson.endsAt = new Date(endsAt).toISOString();
       return true;
     }),
     replaceStudentKeyHash: (lessonId, participantId, keyHash) => run((state) => {
@@ -1359,6 +1368,14 @@ export function createPostgresClassroomStore(sql: postgres.Sql): ClassroomStore 
     },
     async setLessonCancelled(id) {
       const rows = await sql`UPDATE public.classroom_lessons SET cancelled = TRUE, updated_at = NOW() WHERE id = ${id} RETURNING id`;
+      return rows.length > 0;
+    },
+    async setLessonEndsAt(id, endsAt) {
+      const rows = await sql`
+        UPDATE public.classroom_lessons SET ends_at = ${new Date(endsAt)}, updated_at = NOW()
+        WHERE id = ${id} AND cancelled = FALSE AND ends_at < ${new Date(endsAt)}
+        RETURNING id
+      `;
       return rows.length > 0;
     },
     async replaceStudentKeyHash(lessonId, participantId, keyHash) {
