@@ -1132,7 +1132,8 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
 
   // D-14 (2026-11-21), fixed rooms only: everyone there is an ordinary participant (nobody is the
   // host or a manager, so nobody can take anyone out or end the session), and the page offers each
-  // person the teaching tools Zoom itself allows them. Sharing follows Zoom's share privilege; the
+  // person the teaching tools Zoom itself allows them. Sharing: one at a time (see shareAllowed), never
+  // where Zoom says host only; the
   // whiteboard follows Zoom's canStartWhiteboard(), which also says no while a screen is shared or a
   // whiteboard is open, so it is asked only while nothing is on the stage and its last such answer
   // stands meanwhile. While reconnecting, the last answer stands (the buttons are disabled anyway).
@@ -1158,12 +1159,15 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     this.emit({ type: "tools", share, whiteboard, at: this.now() });
   }
 
-  // Whether Zoom lets this ordinary participant share now, by its share privilege; null: no answer.
+  // Whether this ordinary participant may share now; null: Zoom gave no answer. Host only (1) is no.
+  // One share at a time otherwise, also where Zoom lets several share at once (3): W1 on real Zoom
+  // (2026-11-23) read 3 in a fixed room and saw two share together, and the user kept the rule of
+  // one at a time (20:20). This holds for this page only: Zoom itself would still let a changed
+  // client share alongside (whether Zoom can be made to refuse it is a separate analysis).
   private shareAllowed(stream: ZoomStream): boolean | null {
     const privilege = stream.getSharePrivilege?.();
     return privilege === ZOOM_SHARE_HOST_ONLY ? false
-      : privilege === ZOOM_SHARE_SEVERAL ? true
-        : privilege === ZOOM_SHARE_ONE_AT_A_TIME ? this.sharing !== "receiving" : null;
+      : privilege === ZOOM_SHARE_SEVERAL || privilege === ZOOM_SHARE_ONE_AT_A_TIME ? this.sharing !== "receiving" : null;
   }
 
   // A press of the camera or microphone, always from the person's own click, as browsers require.

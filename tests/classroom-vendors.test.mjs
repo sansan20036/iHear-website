@@ -1510,15 +1510,24 @@ describe("browser adapters", () => {
     // Closed: Zoom is asked again (now no).
     expect(await adapter.setWhiteboard(false)).toBe(false);
     expect(tools().at(-1)).toEqual({ share: true, whiteboard: false });
-    // Zoom's share privilege: host only (1) is no; several at once (3) is yes even during another's
-    // share; no answer from Zoom is "not known".
+    // Zoom's share privilege: host only (1) is no; no answer from Zoom is "not known". Several at once
+    // (3), which real Zoom gave a fixed room (W1, 2026-11-23): still one at a time in the room, as the
+    // user decided (20:20): no share while someone else shares, yes again once it ends.
     zoom.setSharePrivilege(1);
     zoom.handlers.get("share-privilege-change")({ privilege: 1 });
     expect(tools().at(-1)).toEqual({ share: false, whiteboard: false });
     zoom.setSharePrivilege(3);
+    zoom.handlers.get("share-privilege-change")({ privilege: 3 });
+    expect(tools().at(-1)).toEqual({ share: true, whiteboard: false });
     zoom.setSharer(2);
     zoom.handlers.get("active-share-change")({ state: "Active", userId: 2 }); await settle();
+    expect(tools().at(-1)).toEqual({ share: false, whiteboard: false });
+    expect(await adapter.setScreenShare(true)).toBe(false);
+    zoom.setSharer(0);
+    zoom.handlers.get("active-share-change")({ state: "Inactive", userId: 2 }); await settle();
     expect(tools().at(-1)).toEqual({ share: true, whiteboard: false });
+    zoom.setSharer(2);
+    zoom.handlers.get("active-share-change")({ state: "Active", userId: 2 }); await settle();
     zoom.setSharePrivilege(undefined);
     zoom.handlers.get("share-privilege-change")({});
     expect(tools().at(-1)).toEqual({ share: null, whiteboard: false });
