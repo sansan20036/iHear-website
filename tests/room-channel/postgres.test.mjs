@@ -8,9 +8,10 @@
 //   ROOM_CHANNEL_PG=1 node --test "tests/room-channel/postgres.test.mjs"
 // Without that, the file says so and does nothing.
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { readdirSync, readFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import test, { after, before } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -34,14 +35,15 @@ if (!asked) {
   const TABLES = ['classroom_room_channel', 'classroom_room_board_lines', 'classroom_room_board_parts', 'classroom_room_board_ops'];
   const up = readFileSync(path.join(ROOT, 'db', 'room-channel', '031_classroom_room_channel.sql'), 'utf8');
   const down = readFileSync(path.join(ROOT, 'db', 'room-channel', '031_classroom_room_channel.down.sql'), 'utf8');
-  let sql = null, second = null, started = false;
+  let sql = null, second = null, started = false, port = null;
+  const workspaces = [];
   const connect = port => postgres(`postgres://postgres:${password}@127.0.0.1:${port}/postgres`, { ssl: false, max: 6, prepare: false, connect_timeout: 3, onnotice: () => {} });
   const tablesNow = async () => (await sql`SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name LIKE 'classroom_room_%' ORDER BY 1`).map(row => row.table_name);
 
   before(async () => {
     docker(['run', '--detach', '--pull=never', '--name', container, '--label', 'ihear-test=room-channel', '-p', '127.0.0.1::5432', '-e', `POSTGRES_PASSWORD=${password}`, 'postgres:17-alpine']);
     started = true;
-    const port = docker(['port', container, '5432/tcp']).match(/^127\.0\.0\.1:(\d+)$/m)?.[1];
+    port = docker(['port', container, '5432/tcp']).match(/^127\.0\.0\.1:(\d+)$/m)?.[1];
     if (!port) throw new Error('Expected a localhost-only PostgreSQL port');
     sql = connect(port);
     second = connect(port);
@@ -64,6 +66,7 @@ if (!asked) {
     await sql?.end({ timeout: 5 }).catch(() => undefined);
     await second?.end({ timeout: 5 }).catch(() => undefined);
     if (started) { try { docker(['rm', '--force', '--volumes', container]); } catch { /* reported by the next run's docker ps */ } }
+    for (const workspace of workspaces) rmSync(workspace, { recursive: true, force: true });
   });
 
   const empty = async () => { await sql`TRUNCATE public.classroom_room_channel, public.classroom_room_board_lines, public.classroom_room_board_parts, public.classroom_room_board_ops`; };
@@ -138,5 +141,113 @@ if (!asked) {
     const row = await store.withPart('L-1', 'board', tx => tx.read());
     assert.deepEqual([row.state.seq, row.state.shown], [120, { lines: 120, points: 120 }]);
     assert.equal((await store.stats(T0)).lines, 120);
+  });
+
+  // The project's own runner (scripts/migrate-database.mjs) on a temporary copy of db/migrations,
+  // against a database of its own in the same disposable PostgreSQL.
+  const runner = (workspace, database) => {
+    const run = spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'migrate-database.mjs')], {
+      cwd: workspace, encoding: 'utf8', windowsHide: true, timeout: 120_000,
+      env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, TEMP: os.tmpdir(), TMP: os.tmpdir(), POSTGRES_URL: `postgres://postgres:${password}@127.0.0.1:${port}/${database}`, DATABASE_URL: '', POSTGRES_SSL: 'disable' },
+    });
+    const line = String(run.status === 0 ? run.stdout : run.stderr).trim().split('\n').pop() || '{}';
+    let report = {};
+    try { report = JSON.parse(line); } catch { report = { raw: line.slice(0, 300) }; }
+    return { status: run.status, report, stderr: String(run.stderr).slice(-400) };
+  };
+  // The structure as pg_dump writes it, without comments, settings or the per-run keys.
+  const schemaOf = database => docker(['exec', container, 'pg_dump', '-U', 'postgres', '-d', database, '--schema-only', '--no-owner', '--no-privileges'])
+    .split('\n').filter(line => line.trim() && !line.startsWith('--') && !/^(SET |SELECT pg_catalog\.set_config|\\(un)?restrict)/.test(line)).join('\n');
+
+  test('PG-5: through the project\'s own runner: 031 is added to a database at 030 with data, nothing else changes; going back and forward again', async () => {
+    await sql.unsafe('CREATE DATABASE mig_room');
+    const db = postgres(`postgres://postgres:${password}@127.0.0.1:${port}/mig_room`, { ssl: false, max: 3, prepare: false, onnotice: () => {} });
+    try {
+      const workspace = mkdtempSync(path.join(os.tmpdir(), 'ihear-room-channel-mig-'));
+      workspaces.push(workspace);
+      mkdirSync(path.join(workspace, 'db', 'migrations'), { recursive: true });
+      const upTo030 = readdirSync(path.join(ROOT, 'db', 'migrations')).filter(name => /^\d+_[a-z0-9_]+\.sql$/i.test(name) && name.split('_', 1)[0] <= '030');
+      for (const name of upTo030) copyFileSync(path.join(ROOT, 'db', 'migrations', name), path.join(workspace, 'db', 'migrations', name));
+      // Today's production structure, with something in it.
+      const first = runner(workspace, 'mig_room');
+      assert.equal(first.status, 0, first.stderr);
+      await db`INSERT INTO public.classroom_lessons (id, code, lesson_date, starts_at, ends_at, created_by) VALUES ('L-kept', 'TEST-KEPT', '2027-01-15', '2027-01-15T08:00:00Z', '2027-01-15T11:00:00Z', 'room-channel-test')`;
+      await db`INSERT INTO public.classroom_events (key, lesson_id, type, source, occurred_at, received_at, data) VALUES ('kept:1', 'L-kept', 'server.lesson_scheduled', 'server', NOW(), NOW(), '{"type":"server.lesson_scheduled"}'::jsonb)`;
+      const before = schemaOf('mig_room');
+      const counts = async () => Object.fromEntries(await Promise.all(['classroom_lessons', 'classroom_events', 'classroom_participants', 'schema_migrations'].map(async name => [name, (await db.unsafe(`SELECT count(*)::int AS n FROM public.${name}`))[0].n])));
+      const countsBefore = await counts();
+      const recorded = async () => (await db`SELECT version FROM public.schema_migrations ORDER BY version`).map(row => row.version);
+      assert.equal((await recorded()).at(-1), '030');
+
+      // The draft becomes migration 031 in this copy only, and the runner applies it.
+      writeFileSync(path.join(workspace, 'db', 'migrations', '031_classroom_room_channel.sql'), up);
+      const applied = runner(workspace, 'mig_room');
+      assert.equal(applied.status, 0, applied.stderr);
+      assert.deepEqual(applied.report.applied, ['031_classroom_room_channel.sql']);
+      assert.equal((await recorded()).at(-1), '031');
+      const countsAfter = await counts();
+      assert.deepEqual({ ...countsAfter, schema_migrations: countsAfter.schema_migrations - 1 }, countsBefore, 'the rows that were there are all there, and no others');
+      // Run again: nothing is applied a second time.
+      const again = runner(workspace, 'mig_room');
+      assert.deepEqual([again.status, again.report.applied], [0, []]);
+
+      // Something is kept in the new tables, then the way back: the down file, and the runner's own record of 031 removed.
+      const channel = createRoomChannel(createPostgresStore(db));
+      const lesson = { id: 'L-kept', roomId: 'FR-1', scheduledEnd: T0 + 3 * 3_600_000, endedAt: null, people: ['P-1'] };
+      const kept = await channel.exchange({ lesson, who: { id: 'P-1', name: 'P-1', member: true }, on: { board: true, chat: true, turn: true }, now: T0, send: [
+        { part: 'board', input: { kind: 'stroke', op: 'a-0', line: 'a', part: 0, points: [[1, 1]], color: 1, width: 2, done: true } }, { part: 'chat', input: { op: 'm1', text: 'hi' } }] });
+      assert.deepEqual(kept.sent.map(item => item.ok), [true, true]);
+      await db.begin(async tx => { await tx.unsafe(down); await tx`DELETE FROM public.schema_migrations WHERE version = '031'`; });
+      assert.equal(schemaOf('mig_room'), before, 'after going back the structure is exactly what it was at 030');
+      assert.deepEqual(await counts(), countsBefore);
+      // With the tables gone, the sweep says so (the route answers 503); it does not pretend to have run.
+      await assert.rejects(channel.sweep({ now: T0 }), /classroom_room_channel|does not exist/i);
+      // Forward again from the same file: applied anew, and empty.
+      const forward = runner(workspace, 'mig_room');
+      assert.deepEqual([forward.status, forward.report.applied], [0, ['031_classroom_room_channel.sql']]);
+      assert.deepEqual((await createPostgresStore(db).stats(T0)).parts, { board: 0, chat: 0, turn: 0 });
+      // Once applied, the file must not be edited: the runner refuses a file that differs from its record.
+      writeFileSync(path.join(workspace, 'db', 'migrations', '031_classroom_room_channel.sql'), `${up}\n-- edited after it was applied\n`);
+      const edited = runner(workspace, 'mig_room');
+      assert.notEqual(edited.status, 0);
+      assert.match(JSON.stringify(edited.report) + edited.stderr, /differs from the recorded file/);
+    } finally {
+      await db.end({ timeout: 5 }).catch(() => undefined);
+    }
+  });
+
+  test('PG-6: the sweep when things go wrong: more due than one run takes, two runs at once, a run that fails half-way', async () => {
+    await empty();
+    // 150 lessons whose chat, turn and board are all past their time.
+    await sql`INSERT INTO public.classroom_lessons (id, code, lesson_date, starts_at, ends_at, created_by)
+      SELECT 'L-due-' || n, 'TEST-DUE-' || n, '2027-01-15', '2027-01-15T08:00:00Z', '2027-01-15T11:00:00Z', 'room-channel-sweep' FROM generate_series(1, 150) AS n`;
+    const fill = () => sql`INSERT INTO public.classroom_room_channel (lesson_id, part, seq, state, ended_at, last_at, delete_after)
+      SELECT 'L-due-' || n, part, 0, jsonb_build_object('seq', 0, 'base', 0, 'endedAt', 1, 'lastAt', 1, 'changes', 0, 'messages', '[]'::jsonb), to_timestamp(1), to_timestamp(1), to_timestamp(${T0 / 1000 - 10})
+      FROM generate_series(1, 150) AS n, unnest(ARRAY['board', 'chat', 'turn']) AS part`;
+    try {
+      await fill();
+      const store = createPostgresStore(sql), channel = createRoomChannel(store);
+      // One run takes at most its limit; the next ones finish the work; nothing is overdue at the end.
+      const runs = [];
+      for (let run = 0; run < 5; run += 1) { const done = await channel.sweep({ now: T0, limit: 200 }); runs.push(done.deleted); if (done.held.overdue === 0) break; }
+      assert.deepEqual(runs, [200, 200, 50]);
+      assert.equal((await store.stats(T0)).overdue, 0);
+      // Two runs at the same moment (two servers): every part is deleted once, neither run fails.
+      await fill();
+      const pair = await Promise.all([channel.sweep({ now: T0, limit: 500 }), createRoomChannel(createPostgresStore(second)).sweep({ now: T0, limit: 500 })]);
+      assert.equal(pair[0].deleted + pair[1].deleted, 450);
+      assert.equal((await store.stats(T0)).overdue, 0);
+      // A run that fails half-way (the connection drops at its 40th part): what it had deleted stays deleted,
+      // the rest stays as it was, and the next run finishes.
+      await fill();
+      let asked = 0;
+      const flaky = { ...store, withPart: (lessonId, part, work) => { asked += 1; if (asked === 40) return Promise.reject(new Error('the connection dropped')); return store.withPart(lessonId, part, work); } };
+      await assert.rejects(createRoomChannel(flaky).sweep({ now: T0, limit: 500 }), /dropped/);
+      assert.equal((await store.stats(T0)).overdue, 450 - 39);
+      const finish = await channel.sweep({ now: T0, limit: 500 });
+      assert.deepEqual([finish.deleted, finish.held.overdue], [450 - 39, 0]);
+    } finally {
+      await sql`DELETE FROM public.classroom_lessons WHERE created_by = 'room-channel-sweep'`;
+    }
   });
 }
