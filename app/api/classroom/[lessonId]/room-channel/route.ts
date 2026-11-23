@@ -59,8 +59,9 @@ export async function POST(request: Request, context: Context) {
     const caller = await roomChannelCaller({ store: classroomStore(), lessonId, key, now });
     if (!caller.ok) return respond({ error: caller.status === 404 ? "Not found" : "You are not in this classroom", code: caller.code }, caller.status);
     const result = await roomChannel().exchange({ lesson: caller.lesson, who: caller.who, on, cursors: plain(body.cursors), send: Array.isArray(body.send) ? body.send : [], now });
-    // you: the name the room has for the person asking, so a page knows its own lines and its own turn.
-    return respond({ ...result, you: caller.who.id }, result.ok === true ? 200 : 400);
+    // you: the person asking, as the room knows them (their place on the lesson's list), so a page
+    // knows its own lines and its own turn. on: which parts this classroom offers now.
+    return respond({ ...result, you: caller.who.id, on }, result.ok === true ? 200 : 400);
   } catch {
     return respond({ error: "The classroom is temporarily unavailable" }, 503);
   }

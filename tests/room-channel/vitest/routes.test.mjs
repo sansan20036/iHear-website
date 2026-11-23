@@ -104,6 +104,8 @@ describe("the room channel's routes", () => {
     expect(only.status).toBe(200);
     expect(only.body.sent.map(answer => answer.ok ? "ok" : answer.error)).toEqual(["ok", "NOT_OFFERED", "NOT_OFFERED"]);
     expect([only.body.board.entries.length, only.body.chat, only.body.turn]).toEqual([1, undefined, undefined]);
+    // Every answer says which parts this classroom offers, so the page shows only those.
+    expect(only.body.on).toEqual({ board: true, chat: false, turn: false });
   });
 
   test("RR-2: a person is who their ticket says; nothing in the body can say otherwise, and a message has no receiver", async () => {
