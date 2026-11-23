@@ -249,6 +249,9 @@ try {
 
   await check('the tutor\'s page says this lesson is not recorded', async () => {
     await expect(tutor.page.locator('.classroom-room-recording')).toContainText('不錄影', { timeout: 45_000 });
+    // Since Classroom 2.0 (11/13) the recording card sits in the room's 資訊 tab, hidden until that tab
+    // is chosen (found by the round-14 regression, 2026-11-23: this check had not been run since).
+    await tutor.page.locator('#classroom-tab-info').click();
     await expect(tutor.page.getByText('這堂課不錄影。')).toBeVisible();
   }, { fatal: false });
   await check('no secret in either page, its storage or its cookies', async () => {
