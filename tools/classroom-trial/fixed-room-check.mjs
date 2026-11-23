@@ -33,6 +33,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { chromium, devices, expect } from '@playwright/test';
 import { readVendorEnv, SECRET_KEYS } from './env-file.mjs';
+import { makeRedactor, TOKEN } from './redact.mjs';
 /* global document -- read inside the pages, through page.evaluate */
 
 const args = Object.fromEntries(process.argv.slice(2).reduce((pairs, value, index, all) => (value.startsWith('--') ? [...pairs, [value.slice(2), all[index + 1]?.startsWith('--') ? 'true' : all[index + 1] ?? 'true']] : pairs), []));
@@ -69,18 +70,13 @@ const settings = readVendorEnv(envFile, root);
 if (settings.CLASSROOM_PROVIDER !== 'zoom-video-sdk') throw new Error('This check is for CLASSROOM_PROVIDER=zoom-video-sdk');
 
 // What must not leak (as local-join-check.mjs): the secrets, the SDK key, the room's key and access
-// token, each person's ticket.
+// token, each person's ticket. One rule for both tools since the W1 review (2026-11-23): see
+// redact.mjs (a socket address in a browser error no longer keeps its query, and the report itself
+// is checked before it is written).
 const secrets = SECRET_KEYS.map(name => settings[name]).filter(Boolean);
 const sdkKey = settings.ZOOM_VIDEO_SDK_KEY;
 const hidden = new Set([...secrets, sdkKey]);
-const TOKEN = /[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g;
-const holds = text => secrets.some(value => text.includes(value));
-const leaks = text => holds(text) || [...text.matchAll(TOKEN)].some(([token]) => token.split('.').slice(0, 2).some(part => holds(Buffer.from(part, 'base64url').toString('latin1'))));
-const redact = text => {
-  let out = String(text);
-  for (const value of hidden) out = out.split(value).join('[hidden]');
-  return out.replace(TOKEN, '[token]').replace(/([#?&](k|a)=)[A-Za-z0-9_-]{8,}/g, '$1[hidden]').replace(/(https?:\/\/[^\s"'<>?#]+)[?#][^\s"'<>]*/g, '$1?[hidden]');
-};
+const { holds, leaks, redact, residue } = makeRedactor({ secrets, hidden });
 
 const report = {
   mode: rehearsal ? 'rehearsal: stand-in keys, no route to Zoom session servers' : 'real: the Zoom Video SDK account', startedAt: new Date(startedAt).toISOString(),
@@ -89,7 +85,7 @@ const report = {
   checks: [], findings: {}, participantMinutes: 0, consoleProblems: [], alerts: [], status: 'running',
 };
 const pages = [];
-const found = { browserResponses: 0, requestsToOutside: 0, pageAndStorage: 0, joinAnswersStopped: 0, serverOutput: 0, runFiles: 0, filesWrittenDuringRun: 0, filesGitCouldCommit: 0 };
+const found = { browserResponses: 0, requestsToOutside: 0, pageAndStorage: 0, joinAnswersStopped: 0, serverOutput: 0, runFiles: 0, filesWrittenDuringRun: 0, filesGitCouldCommit: 0, reportFile: 0 };
 let failure;
 // Set by the watchdog when a limit is reached (the promise of its lesson end and browser closes).
 let hardStop = null;
@@ -249,6 +245,10 @@ try {
       await page.getByRole('button', { name: '進入教室' }).click();
       await expect(page.locator('[data-room-waiting]')).toBeVisible();
       await card().locator(`[data-waiting-person="${who}"]`).getByRole('button', { name: '讓他進入', exact: true }).click();
+      // W1 review (2026-11-23): on real Zoom a person's minutes count from the moment they are let in,
+      // a little before the page reads 已連線, so the limits never run behind Zoom's own count. (The
+      // rehearsal joins nothing, so it keeps counting from "connected", as its hard-stop step needs.)
+      if (!rehearsal) markConnected(who);
       await expect(page).toHaveURL(new RegExp(`^${origin}/classroom/L-[0-9a-f]{32}$`));
       await page.getByRole('button', { name: '進入教室' }).click();
       await expect(page.locator('.classroom-vendor-stage.zoom-video-sdk')).toBeAttached();
@@ -277,7 +277,8 @@ try {
   } else {
     await check('the three connect to the real Zoom session', async () => {
       for (const who of ['TestA', 'TestB', 'TestC']) {
-        await expect(connection(who)).toHaveText('已連線', { timeout: 90_000 }).then(() => markConnected(who), error => { report.findings[`${who}Connect`] = 'did not connect'; if (who !== 'TestC') throw error; });
+        // Someone who never connects stops counting here (they were counted from being let in).
+        await expect(connection(who)).toHaveText('已連線', { timeout: 90_000 }).then(() => markConnected(who), error => { markGone(who); report.findings[`${who}Connect`] = 'did not connect'; if (who !== 'TestC') throw error; });
       }
     });
     await check('Zoom\'s version in the page', async () => {
@@ -378,7 +379,10 @@ try {
   }
   if (!rehearsal) report.leftoverCheck = 'run: node tools/classroom-preflight/emergency-stop-live.mjs --env <zoom.env> (lists live sessions; sends nothing)';
   if (leaks(serverOutput)) found.serverOutput += 1;
-  writeFileSync(path.join(runDir, 'server-output.log'), redact(serverOutput));
+  const serverLog = redact(serverOutput);
+  // W1 review (2026-11-23): what is written is checked too, after redaction.
+  if (residue(serverLog)) found.serverOutput += 1;
+  writeFileSync(path.join(runDir, 'server-output.log'), serverLog);
   const walk = (dir, skip) => readdirSync(dir, { withFileTypes: true }).flatMap(entry => {
     const full = path.join(dir, entry.name);
     if (skip(full)) return [];
@@ -392,9 +396,12 @@ try {
   report.hosts = [...hosts].sort();
   report.secretsFound = found;
   report.finishedAt = new Date().toISOString();
+  if (failure) report.error = redact(failure.message);
+  // W1 review (2026-11-23): the report itself, as it is about to be written (browser errors, alerts,
+  // findings, the error): anything still shaped like a credential after redaction counts as found.
+  if (residue(JSON.stringify(report))) found.reportFile += 1;
   const clean = Object.values(found).every(value => value === 0) && report.gitStatusUnchanged;
   report.status = failure || !clean ? 'failed' : 'passed';
-  if (failure) report.error = redact(failure.message);
   writeFileSync(path.join(runDir, 'report.json'), `${JSON.stringify(report, null, 2)}\n`);
   console.log(`\nFixed-room check (${report.mode}): ${report.status.toUpperCase()}`);
   for (const [name, value] of Object.entries(report.findings)) console.log(`  ${name}: ${typeof value === 'string' ? value : JSON.stringify(value)}`);

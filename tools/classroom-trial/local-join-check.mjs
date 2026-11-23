@@ -24,6 +24,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { chromium, expect } from '@playwright/test';
 import { readVendorEnv, SECRET_KEYS } from './env-file.mjs';
+import { makeRedactor, TOKEN } from './redact.mjs';
 /* global document -- read inside the two pages, through page.evaluate */
 
 const args = Object.fromEntries(process.argv.slice(2).reduce((pairs, value, index, all) => (value.startsWith('--') ? [...pairs, [value.slice(2), all[index + 1]?.startsWith('--') ? 'true' : all[index + 1] ?? 'true']] : pairs), []));
@@ -48,21 +49,15 @@ if (settings.CLASSROOM_PROVIDER !== 'zoom-video-sdk') throw new Error('This chec
 const secrets = SECRET_KEYS.map(name => settings[name]).filter(Boolean);
 const sdkKey = settings.ZOOM_VIDEO_SDK_KEY;
 const hidden = new Set([...secrets, sdkKey]);
-const TOKEN = /[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g;
-const holds = text => secrets.some(value => text.includes(value));
-// A secret inside a token counts too: a token's header and claims are base64url.
-const leaks = text => holds(text) || [...text.matchAll(TOKEN)].some(([token]) => token.split('.').slice(0, 2).some(part => holds(Buffer.from(part, 'base64url').toString('latin1'))));
-// Everything this script prints or writes passes through here.
-const redact = text => {
-  let out = String(text);
-  for (const value of hidden) out = out.split(value).join('[hidden]');
-  return out.replace(TOKEN, '[token]').replace(/(https?:\/\/[^\s"'<>?]+)\?[^\s"'<>]*/g, '$1?[hidden]');
-};
+// A secret inside a token counts too (a token's header and claims are base64url); everything this
+// script prints or writes passes through redact(). One rule for both trial tools since the W1 review
+// (2026-11-23): see redact.mjs.
+const { holds, leaks, redact, residue } = makeRedactor({ secrets, hidden });
 
 const report = { mode: rehearsal ? 'rehearsal: stand-in keys, no route to Zoom session servers' : 'real: the Zoom Video SDK trial keys', startedAt: new Date(startedAt).toISOString(), checks: [], findings: {}, cspProblems: [], consoleProblems: [], alerts: [], status: 'running' };
 // The two pages, for screenshots and the room's own alerts when a check fails.
 const pages = [];
-const found = { browserResponses: 0, requestsToOutside: 0, pageAndStorage: 0, joinAnswersStopped: 0, serverOutput: 0, runFiles: 0, filesWrittenDuringRun: 0, filesGitCouldCommit: 0 };
+const found = { browserResponses: 0, requestsToOutside: 0, pageAndStorage: 0, joinAnswersStopped: 0, serverOutput: 0, runFiles: 0, filesWrittenDuringRun: 0, filesGitCouldCommit: 0, reportFile: 0 };
 const key = { tokensChecked: 0, tokensNamingTheKey: 0, plainInResponses: 0, plainInServerOutput: 0 };
 let failure;
 // A check that fails stops the run unless it is marked { fatal: false }; the leak scans always run.
@@ -294,7 +289,10 @@ try {
   // The server's own output, every file of this run, and the checkout.
   if (leaks(serverOutput)) found.serverOutput += 1;
   if (serverOutput.includes(sdkKey)) key.plainInServerOutput += 1;
-  writeFileSync(path.join(runDir, 'server-output.log'), redact(serverOutput));
+  const serverLog = redact(serverOutput);
+  // W1 review (2026-11-23): what is written is checked too, after redaction.
+  if (residue(serverLog)) found.serverOutput += 1;
+  writeFileSync(path.join(runDir, 'server-output.log'), serverLog);
   const walk = (dir, skip) => readdirSync(dir, { withFileTypes: true }).flatMap(entry => {
     const full = path.join(dir, entry.name);
     if (skip(full)) return [];
@@ -312,9 +310,12 @@ try {
   report.secretsFound = found;
   report.sdkKey = key;
   report.finishedAt = new Date().toISOString();
+  if (failure) report.error = redact(failure.message);
+  // W1 review (2026-11-23): the report itself, as it is about to be written: anything still shaped
+  // like a credential after redaction counts as found.
+  if (residue(JSON.stringify(report))) found.reportFile += 1;
   const clean = Object.values(found).every(value => value === 0) && report.gitStatusUnchanged;
   report.status = failure || !clean ? 'failed' : 'passed';
-  if (failure) report.error = redact(failure.message);
   writeFileSync(path.join(runDir, 'report.json'), `${JSON.stringify(report, null, 2)}\n`);
   console.log(`\nLocal join check (${report.mode}): ${report.status.toUpperCase()}`);
   for (const [name, value] of Object.entries(report.findings)) console.log(`  ${name}: ${value}`);
