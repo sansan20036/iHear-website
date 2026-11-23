@@ -337,7 +337,8 @@ try {
     await check('TestC is taken out: their page leaves; the others move to a new session and come back', async () => {
       const from = Date.now();
       await card().locator('[data-in-room-person="TestC"]').getByRole('button', { name: '請出教室' }).click();
-      await expect(people.TestC.page.getByText('這個個人連結已失效（已撤銷或已更換），所以已離開教室。請向 iHear 索取新的連結。')).toBeVisible({ timeout: 60_000 });
+      // P2 (2026-11-23): the fixed room's own words (the page before this said the one-to-one lesson's).
+      await expect(people.TestC.page.getByText('老師已請你離開這間教室。如有問題，請聯絡老師。')).toBeVisible({ timeout: 60_000 });
       markGone('TestC');
       for (const who of ['TestA', 'TestB']) await expect(connection(who)).toHaveText('已連線', { timeout: 90_000 });
       report.findings.removalSeconds = Math.round((Date.now() - from) / 1000);

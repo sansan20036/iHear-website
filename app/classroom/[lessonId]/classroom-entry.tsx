@@ -10,7 +10,7 @@ import {
   type ClassroomMediaAdapter, type ConnectionState, type DeviceKind, type DeviceProblem, type DeviceState, type MediaEvent, type MediaSystemCheck, type RoomPerson, type SoundProblem, type SoundState, type SyntheticScenario,
 } from "../../../lib/classroom-media";
 import { classroomDeviceOf, deviceLimits, type CapabilityName, type ClassroomDevice } from "../../../lib/classroom-capabilities";
-import { entryEndedBy, rejoinRoom, requestJoin, type JoinedSession } from "../../../lib/classroom-join-client";
+import { entryEndedBy, reasonShown, rejoinRoom, requestJoin, type JoinedSession } from "../../../lib/classroom-join-client";
 import { browserClassroomLocale, CLASSROOM_LOCALES, htmlLangOf, intlLocaleOf, LOCALE_NAMES, type ClassroomLocale } from "../../../lib/classroom-locale";
 import { connectionStep, devicesToOffer, soundOffered, HAND_NOTICE_MS, initialsOf, newHands, orderPeople, personLabel, spotlightOf, stageModeOf } from "../../../lib/classroom-room";
 import { claimLessonTab, lessonTabName, type TabClaim } from "../../../lib/classroom-tab";
@@ -926,6 +926,10 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   }).format(new Date(iso));
   const until = (iso: string) => new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Taipei", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(iso));
   const showSignIn = phase === "blocked" && !joinKey && ["NOT_ON_ROSTER", "IDENTITY_UNVERIFIED"].includes(reason);
+  // P2 (2026-11-23): a fixed room says being taken out and the lesson's end in its own words; the
+  // decisions above and below keep the server's code.
+  const fixedRoom = joined?.fixedRoom === true;
+  const shownReason = reasonShown(reason, fixedRoom);
   const badge = statusProblem && isStudent ? "unknown" : badgeOf(recording);
   // "Simulated" only in the synthetic stand-in; a vendor adapter carries real video.
   const cameraOn = simulator ? text.cameraOnSimulated : text.cameraOn;
@@ -951,7 +955,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   if ((phase !== "joined" || !joined) && !blockMode) {
     return (
       <ClassroomPrejoin
-        locale={locale} onLocale={setLocale} phase={phase === "joined" ? "joining" : phase} reason={reason} synthetic={synthetic}
+        locale={locale} onLocale={setLocale} phase={phase === "joined" ? "joining" : phase} reason={shownReason} synthetic={synthetic}
         preview={preview} onRecheck={recheckPreview} onEnter={() => void enter(phase === "blocked" && (reason === "OTHER_TAB" || reason === "TAKEN_OVER"))} showSignIn={showSignIn} signInUrl={signInUrl}
         enterLabel={phase === "blocked" && (reason === "OTHER_TAB" || reason === "TAKEN_OVER") ? text.continueHere : undefined}
       />
@@ -968,7 +972,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
         {synthetic && <p className="classroom-room-note" role="note">{text.synthetic}</p>}
         <section className="classroom-room-card" aria-live="polite">
           {phase === "left" && <p>{text.left}</p>}
-          {phase === "blocked" && <p className="classroom-room-problem" role="alert">{text.reasons[reason] ?? text.reasons.UNAVAILABLE}</p>}
+          {phase === "blocked" && <p className="classroom-room-problem" role="alert">{text.reasons[shownReason] ?? text.reasons.UNAVAILABLE}</p>}
           <div className="classroom-room-actions">
             <button type="button" className="classroom-room-primary" disabled={phase === "joining"} onClick={() => void enter()}>
               {phase === "joining" ? text.entering : phase === "blocked" ? text.retry : phase === "left" ? text.rejoin : text.enter}
@@ -1135,7 +1139,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
           {media.available && media.connection === "reconnecting" && <p className="classroom-room-problem" role="status">{text.reconnecting}</p>}
           {media.available && media.connection === "failed" && (
             <div className="classroom-room-problem classroom-room-problem-row" role="alert">
-              <span>{text.failed}{rejoinProblem && ` ${text.reasons[rejoinProblem] ?? text.reasons.UNAVAILABLE}`}</span>
+              <span>{text.failed}{rejoinProblem && ` ${text.reasons[reasonShown(rejoinProblem, fixedRoom)] ?? text.reasons.UNAVAILABLE}`}</span>
               {joined.role === "tutor" && ["NOT_ON_ROSTER", "IDENTITY_UNVERIFIED"].includes(rejoinProblem) && <a className="classroom-room-secondary" href={signInUrl}>{text.signIn}</a>}
               <button type="button" className="classroom-room-secondary" disabled={rejoining} onClick={reconnect}>{text.reconnect}</button>
             </div>

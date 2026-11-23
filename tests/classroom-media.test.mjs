@@ -1,9 +1,11 @@
+import { readFile } from "node:fs/promises";
 import { describe, expect, test, vi } from "vitest";
 
 import {
   createMediaAdapter, FIXED_ROOM_SCENARIOS, hostReportFor, MEDIA_PROVIDERS, MediaAdapterUnavailableError, SYNTHETIC_SCENARIOS, SyntheticMediaAdapter,
 } from "../lib/classroom-media";
-import { entryEndedBy, rejoinRoom, requestJoin } from "../lib/classroom-join-client";
+import { entryEndedBy, reasonShown, rejoinRoom, requestJoin } from "../lib/classroom-join-client";
+import { roomCopy as copy } from "../app/classroom/[lessonId]/classroom-copy";
 
 // The browser side of the classroom's video provider, with the synthetic stand-in only. Passing
 // shows the page gets the states a video SDK reports, and the tutor's reports follow from them.
@@ -518,5 +520,39 @@ describe("leaving the room when the entry has ended", () => {
       { status: 403, code: undefined }, { status: 403, code: { toString: () => "LESSON_CANCELLED" } },
     ];
     for (const answer of passing) for (const person of [student, tutor]) expect(entryEndedBy(answer, person), JSON.stringify(answer)).toBeNull();
+  });
+});
+
+// P2 (2026-11-23): a fixed room says being taken out and the lesson's end in its own words; a
+// one-to-one lesson keeps its wording, and every other reason is the same in both.
+describe("the words a fixed room shows when the entry has ended", () => {
+  test("FX-1: in a fixed room, being taken out and the lesson's end have their own message keys", () => {
+    for (const code of ["LINK_REVOKED", "NOT_ON_ROSTER_LINK", "NOT_ON_ROSTER"]) expect(reasonShown(code, true), code).toBe("FIXED_ROOM_TAKEN_OUT");
+    expect(reasonShown("LESSON_CANCELLED", true)).toBe("FIXED_ROOM_ENDED");
+  });
+
+  test("FX-2: a one-to-one lesson keeps the server's code; other reasons are unchanged in a fixed room", () => {
+    for (const code of ["LINK_REVOKED", "NOT_ON_ROSTER_LINK", "NOT_ON_ROSTER", "LESSON_CANCELLED", "OTHER_TAB"]) expect(reasonShown(code, false), code).toBe(code);
+    for (const code of ["OTHER_TAB", "TAKEN_OVER", "UNAVAILABLE", "RATE_LIMITED", "LESSON_NOT_FOUND", ""]) expect(reasonShown(code, true), code).toBe(code);
+  });
+
+  test("FX-3: both messages exist in the three languages, and none of them sends the person to iHear for a new link", () => {
+    for (const locale of ["en", "zhHant", "zhHans"]) {
+      const reasons = copy[locale].reasons;
+      for (const key of ["FIXED_ROOM_TAKEN_OUT", "FIXED_ROOM_ENDED"]) {
+        expect(typeof reasons[key], `${locale} ${key}`).toBe("string");
+        expect(reasons[key].length, `${locale} ${key}`).toBeGreaterThan(10);
+        expect(reasons[key], `${locale} ${key}`).not.toMatch(/iHear|personal link|個人連結|个人链接/);
+      }
+    }
+  });
+
+  test("FX-4: the classroom page shows the fixed room's words wherever it says why the entry ended", async () => {
+    const source = await readFile("app/classroom/[lessonId]/classroom-entry.tsx", "utf8");
+    expect(source).toContain("const shownReason = reasonShown(reason, fixedRoom);");
+    expect(source).toMatch(/<ClassroomPrejoin[\s\S]{0,200}reason=\{shownReason\}/);
+    expect(source).toContain("text.reasons[shownReason] ?? text.reasons.UNAVAILABLE");
+    expect(source).toContain("text.reasons[reasonShown(rejoinProblem, fixedRoom)]");
+    expect(source).not.toMatch(/text\.reasons\[reason\]/);
   });
 });

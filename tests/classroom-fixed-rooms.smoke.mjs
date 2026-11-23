@@ -43,7 +43,7 @@ try {
   browser = await chromium.launch({ headless: process.env.IHEAR_HEADED !== '1' });
   const admin = watch(await (await context({ email: owner })).newPage(), 'owner');
   const roomCard = () => admin.locator('[data-room="Room 1"]');
-  let link, oldLink;
+  let link, oldLink, ann;
 
   await check('R1', '老師在後台建立固定教室：連結只顯示這一次', async () => {
     await admin.goto(`${origin}/admin/classrooms/rooms`);
@@ -186,27 +186,48 @@ try {
     await late.getByRole('button', { name: '進入教室' }).click();
     await expect(late.locator('[data-room-final]')).toHaveText('這個教室連結已經更換。請向老師要新的連結。');
     await expect(kyle.locator('.room2-top .classroom-room-connection')).toHaveText('已連線');
-    const fresh = watch(await (await context({})).newPage(), 'student-new-link');
-    await fresh.goto(link);
-    await fresh.getByLabel(/Please enter your first name/).fill('Ann');
-    await fresh.getByRole('button', { name: '進入教室' }).click();
-    await expect(fresh.locator('[data-room-waiting]')).toBeVisible();
+    ann = watch(await (await context({})).newPage(), 'student-new-link');
+    await ann.goto(link);
+    await ann.getByLabel(/Please enter your first name/).fill('Ann');
+    await ann.getByRole('button', { name: '進入教室' }).click();
+    await expect(ann.locator('[data-room-waiting]')).toBeVisible();
   });
 
-  await check('R6', '請出教室：老師按請出，學生的頁面離開教室並說明；他的連結進不來', async () => {
+  // P2 (2026-11-23): the fixed room's own words, not the one-to-one lesson's ("this personal link no
+  // longer works, ask iHear for a new one"): the room's shared link keeps working.
+  await check('R6', '請出教室：老師按請出，學生的頁面離開教室，說「老師已請你離開這間教室」（不是一對一的「個人連結已失效」）；他的入場憑證進不來', async () => {
     await roomCard().locator('[data-in-room-person="Kyle"]').getByRole('button', { name: '請出教室' }).click();
     await expect(roomCard().locator('[data-in-room-person="Kyle"]')).toHaveCount(0);
-    await expect(kyle.getByText('這個個人連結已失效（已撤銷或已更換），所以已離開教室。請向 iHear 索取新的連結。')).toBeVisible({ timeout: 45_000 });
+    await expect(kyle.getByText('老師已請你離開這間教室。如有問題，請聯絡老師。')).toBeVisible({ timeout: 45_000 });
+    await expect(kyle.getByText(/個人連結已失效|索取新的連結/)).toHaveCount(0);
     await shot(kyle, 'r6-taken-out');
   });
 
+  await check('R6a', '老師讓 Ann 進入：她進到同一次上課（請出別人之後，教室換到新的 Zoom Session）；另一位 Cy 用連結申請、在等待', async () => {
+    await roomCard().locator('[data-waiting-person="Ann"]').getByRole('button', { name: '讓他進入', exact: true }).click();
+    await expect(roomCard().locator('[data-in-room-person="Ann"]')).toBeVisible();
+    await expect(ann).toHaveURL(new RegExp(`${origin}/classroom/L-[0-9a-f]{32}$`));
+    await ann.getByRole('button', { name: '進入教室' }).click();
+    await expect(ann.locator('.room2-top .classroom-room-connection')).toHaveText('已連線');
+    const cy = watch(await (await context({})).newPage(), 'student-cy');
+    await cy.goto(link);
+    await cy.getByLabel(/Please enter your first name/).fill('Cy');
+    await cy.getByRole('button', { name: '進入教室' }).click();
+    await expect(cy.locator('[data-room-waiting]')).toBeVisible();
+    await expect(roomCard().locator('[data-waiting-person="Cy"]')).toBeVisible();
+  });
+
   // Round 7 (2026-11-21): a room taken out of use and back (lib/classroom-fixed-rooms.ts setInUse).
-  await check('R6b', '停用與重新啟用：上課中不能停用（先結束這次上課）；停用後拿連結的人看到「這間教室目前停用」，等待中的申請結束；重新啟用後同一個連結可以申請，舊的申請不會回來', async () => {
+  await check('R6b', '停用與重新啟用：上課中不能停用（先結束這次上課）；結束時教室裡的 Ann 看到「老師已結束這次上課」（不是「這堂課已經取消」）；停用後拿連結的人看到「這間教室目前停用」，等待中的申請結束；重新啟用後同一個連結可以申請，舊的申請不會回來', async () => {
     await roomCard().getByRole('button', { name: '停用這間教室' }).click();
     await expect(admin.getByText('這間教室正在上課：請先結束這次上課，再停用。')).toBeVisible();
     await expect(roomCard()).toHaveAttribute('data-room-in-use', 'yes');
     await roomCard().getByRole('button', { name: '結束這次上課' }).click();
     await expect(roomCard().getByRole('button', { name: '結束這次上課' })).toHaveCount(0);
+    // P2 (2026-11-23): the lesson's end in the fixed room's own words.
+    await expect(ann.getByText('老師已結束這次上課。下次上課時，請再打開同一個教室連結。')).toBeVisible({ timeout: 45_000 });
+    await expect(ann.getByText('這堂課已經取消。')).toHaveCount(0);
+    await shot(ann, 'r6b-lesson-ended');
     await roomCard().getByRole('button', { name: '停用這間教室' }).click();
     await expect(roomCard()).toHaveAttribute('data-room-in-use', 'no');
     await expect(roomCard().locator('[data-room-disabled]')).toBeVisible();
@@ -221,7 +242,8 @@ try {
     await expect(roomCard()).toHaveAttribute('data-room-in-use', 'yes');
     await bea.getByRole('button', { name: '進入教室' }).click();
     await expect(bea.locator('[data-room-waiting]')).toBeVisible();
-    // Only the new request waits: Ann's, closed by the disabling, does not come back.
+    // Only the new request waits: Cy's, closed by the disabling, does not come back (Ann was let in,
+    // and her lesson ended).
     await expect(roomCard().locator('[data-waiting-person]')).toHaveCount(1);
     await expect(roomCard().locator('[data-waiting-person="Bea"]')).toBeVisible();
   });

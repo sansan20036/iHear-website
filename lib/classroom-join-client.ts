@@ -60,6 +60,18 @@ export function entryEndedBy(answer: { status: number; code?: unknown }, person:
   return code === "NOT_ON_ROSTER" && person.hasKey ? "LINK_REVOKED" : code;
 }
 
+// A fixed room's lesson (2026-11-23, P2): being taken out and the lesson's end are said in the room's
+// own words. The one-to-one wording ("this personal link no longer works, ask iHear for a new one";
+// "this lesson has been cancelled") does not fit a room whose shared link keeps working. Only the
+// message changes: every decision (leaving the room, which buttons show) still uses the server's code.
+const FIXED_ROOM_TAKEN_OUT_CODES = new Set(["LINK_REVOKED", "NOT_ON_ROSTER_LINK", "NOT_ON_ROSTER"]);
+export function reasonShown(reason: string, fixedRoom: boolean): string {
+  if (!fixedRoom) return reason;
+  if (FIXED_ROOM_TAKEN_OUT_CODES.has(reason)) return "FIXED_ROOM_TAKEN_OUT";
+  if (reason === "LESSON_CANCELLED") return "FIXED_ROOM_ENDED";
+  return reason;
+}
+
 // One reconnect per room at a time: a second press while one is running gets the same result.
 const rejoining = new WeakMap<ClassroomMediaAdapter, Promise<RejoinResult>>();
 
