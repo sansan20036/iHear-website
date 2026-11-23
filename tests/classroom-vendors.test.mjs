@@ -163,15 +163,40 @@ describe("Zoom Video SDK, server side", () => {
     const led = provider(() => ({ status: 404, body: "" }), lead);
     await led.provider.endSession(lesson);
     expect(led.requests.map(request => request.url)).toEqual([`${base}/${encodeURIComponent(encodeURIComponent(lead))}/status`, `${base}/${encodeURIComponent(lead)}/status`]);
-    // No "/" in the id, or any answer but 404: one request only.
-    const plain = provider(() => ({ status: 404, body: "" }), "abc+DEF123==");
+    // A plain id (no character encodeURIComponent escapes): both encodings are the same request, so one only.
+    const plain = provider(() => ({ status: 404, body: "" }), "abcDEF123xyz");
     expect(await plain.provider.endSession(lesson)).toEqual({ ok: false, httpStatus: 404 });
     expect(plain.requests.length).toBe(1);
+    // Any answer but 404: one request only.
     for (const status of [200, 202, 204, 400, 409, 429, 500]) {
       const other = provider(() => ({ status, body: "" }), sample);
       await other.provider.endSession(lesson);
       expect(other.requests.length, String(status)).toBe(1);
     }
+  });
+
+  // W1 re-test on real Zoom (2026-11-24, ended from the server, PUT .../status): M1 an id with one
+  // "/" in the middle and M2 an id with a "+" and no "/" were answered 404 encoded once and 204
+  // encoded twice; M3 a plain id 204 encoded once. The ids below are made up in the same shapes.
+  test("P-4c: the second encoding is tried for an id with \"+\" and no \"/\" (M2) as for one with \"/\" (M1), and for any other escaped character; a plain id (M3) is ended with one request", async () => {
+    const base = "https://api.zoom.us/v2/videosdk/sessions";
+    const takesTwice = id => provider(request => ({ status: request.url === `${base}/${encodeURIComponent(encodeURIComponent(id))}/status` ? 204 : 404, body: "" }), id);
+    const takesOnce = id => provider(request => ({ status: request.url === `${base}/${encodeURIComponent(id)}/status` ? 204 : 404, body: "" }), id);
+    for (const [shape, id] of [["M1 one \"/\"", "Xk3mPq9/Tz7Lw2Rb5Nc8Hg=="], ["M2 \"+\" and no \"/\"", "Xk3mPq9+Tz7Lw2Rb5Nc8Hg=="], ["\"+\" only, no padding", "Xk3mPq9+Tz7Lw2Rb5Nc8Hg"], ["\"=\" only", "Xk3mPq9aTz7Lw2Rb5Nc8Hg=="]]) {
+      const zoom = takesTwice(id);
+      expect(await zoom.provider.endSession(lesson), shape).toEqual({ ok: true, httpStatus: 204 });
+      expect(zoom.requests.map(request => request.url), shape).toEqual([`${base}/${encodeURIComponent(id)}/status`, `${base}/${encodeURIComponent(encodeURIComponent(id))}/status`]);
+    }
+    // M3: a plain id is answered at once; one request.
+    const m3 = takesOnce("Xk3mPq9aTz7Lw2Rb5Nc8Hg");
+    expect(await m3.provider.endSession(lesson)).toEqual({ ok: true, httpStatus: 204 });
+    expect(m3.requests).toHaveLength(1);
+    // M2's shape when Zoom takes it encoded once after all: one request, no second try.
+    const m2once = takesOnce("Xk3mPq9+Tz7Lw2Rb5Nc8Hg==");
+    expect(await m2once.provider.endSession(lesson)).toEqual({ ok: true, httpStatus: 204 });
+    expect(m2once.requests).toHaveLength(1);
+    // The second try never names text a Zoom session id could be: it decodes to text holding "%".
+    for (const id of ["Xk3mPq9+Tz7Lw2Rb5Nc8Hg==", "Xk3mPq9/Tz7Lw2Rb5Nc8Hg=="]) expect(decodeURIComponent(encodeURIComponent(encodeURIComponent(id)))).toContain("%");
   });
 
   // --- P-1: a reported session is used only once Zoom confirms it ---------------------------------

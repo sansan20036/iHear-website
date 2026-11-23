@@ -98,12 +98,21 @@ export function zoomVideoSdkProvider(config: ZoomVideoSdkConfig, options: Option
   // control call (ending a session, starting or stopping its recording) for an id holding "/" is
   // tried once more under the other encoding when the first answer is 404. For a session that is
   // really gone both answers are 404; a session that answered anything else is never asked twice.
+  //
+  // W1 re-test on real Zoom (2026-11-24, ended from the server): an id with one "/" in the middle
+  // and an id with a "+" and no "/" were both answered 404 encoded once and 204 encoded twice; a
+  // plain id was answered 204 encoded once. So it is the id's characters (not the host having left),
+  // and not only "/": the second try is made whenever the two encodings differ (any character
+  // encodeURIComponent escapes: "/", "+", "=", ...). For a plain id they are the same request, so it
+  // is never sent twice. A doubly encoded id decodes to text holding "%", which no Zoom session id
+  // (base64) holds, so the second try can never name another session.
   const control = async (lesson: ClassroomLesson, method: "PATCH" | "PUT", suffix: string, body: unknown, sessionId?: string): Promise<ProviderCall> => {
     const id = sessionId ?? (await options.sessionsOf(lesson)).at(-1)?.id;
     // No confirmed session yet (nobody joined, or the id is still being checked): nothing to control.
     if (!id) return { ok: false, httpStatus: 409 };
-    let response = await request(method, sessionPath(id, suffix), body);
-    if (response.status === 404 && id.includes("/")) response = await request(method, sessionPath(id, suffix, true), body);
+    const first = sessionPath(id, suffix), other = sessionPath(id, suffix, true);
+    let response = await request(method, first, body);
+    if (response.status === 404 && other !== first) response = await request(method, other, body);
     return { ok: response.status >= 200 && response.status < 300, httpStatus: response.status };
   };
   // A session's details. Zoom describes a session only under its own type (live by default), so
