@@ -82,7 +82,7 @@ test('RB-4: the server\'s order is the order; a page that follows it shows what 
   const entries = since(state, { by: 'P-3', member: true, cursor: 0, now: T0 + 9000 }).entries;
   for (const entry of entries) moveOn(page, entry);
   for (const entry of entries) moveOn(page, entry);          // handed the same entries again: nothing is drawn twice
-  assert.deepEqual(shown(page), snapshot(state, T0 + 9000).lines.map(({ parts, ...line }) => line));
+  assert.deepEqual(shown(page), snapshot(state, T0 + 9000).lines.map(({ parts: _parts, ...line }) => line));
   assert.deepEqual(shown(page), [{ line: 'P-1:a', by: 'P-1', color: 0, width: 2, points: [[1, 1], [2, 2], [3, 3]], done: true }]);
   assert.deepEqual(state.recent.map(entry => entry.seq), [1, 2, 3, 4]);
 });
@@ -295,7 +295,7 @@ test('RB-13: six pages, random drawing, erasing, clearing and undoing, lost answ
       for (const other of people) if (pages.get(other).online && random() < 0.5) catchUp(other);
     }
     for (const by of people) { pages.get(by).online = true; catchUp(by); }
-    const held = snapshot(state, now).lines.map(({ parts, ...line }) => line);
+    const held = snapshot(state, now).lines.map(({ parts: _parts, ...line }) => line);
     for (const by of people) assert.deepEqual(shown(pages.get(by).picture), held, `seed ${seed}: ${by} does not show the server's picture`);
     assert.equal(Object.values(state.lines).reduce((sum, line) => sum + line.points.length, 0), state.points, `seed ${seed}: the count of points drifted`);
   }
