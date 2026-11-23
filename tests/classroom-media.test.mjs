@@ -586,6 +586,14 @@ describe("the words a fixed room shows when the entry has ended", () => {
     }
   });
 
+  test("FX-8: the page keeps a fixed room's recorded name from the join answer only, and hands it to the media adapter on entering and on every reconnect", async () => {
+    const source = await readFile("app/classroom/[lessonId]/classroom-entry.tsx", "utf8");
+    expect(source).toContain("displayName: answer.fixedRoom === true && answer.displayName ? answer.displayName : null });");
+    expect(source.split("equalTools: joined.fixedRoom, ...(joined.displayName ? { displayName: joined.displayName } : {}),").length - 1).toBe(2);
+    const client = await readFile("lib/classroom-join-client.ts", "utf8");
+    expect(client).toContain('...(data.fixedRoom === true && typeof data.displayName === "string" && data.displayName ? { displayName: data.displayName } : {}),');
+  });
+
   test("FX-5: the page counts its moves to another session of the lesson (only a new session name counts) and shows the count on its connection state", async () => {
     const source = await readFile("app/classroom/[lessonId]/classroom-entry.tsx", "utf8");
     expect(source).toContain("if (result.session.sessionName && result.session.sessionName !== session.current?.sessionName) setRoomMoves((moves) => moves + 1);");
