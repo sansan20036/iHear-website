@@ -7,6 +7,7 @@ import test from 'node:test';
 import { BOARD_LIMITS, snapshot } from '../../lib/room-channel/board.mjs';
 import { createRoomClient, ROOM_CLIENT, toBoard } from '../../lib/room-channel/client.mjs';
 import { createRoomChannel } from '../../lib/room-channel/service.mjs';
+import { createShareControl } from '../../lib/room-channel/share-control.mjs';
 import { TURN_LIMITS } from '../../lib/room-channel/share-turn.mjs';
 import { createMemoryStore } from '../../lib/room-channel/store-memory.mjs';
 
@@ -27,9 +28,9 @@ function world(people = ['P-1', 'P-2', 'P-3']) {
   const net = new Map(), requests = new Map();
   const settle = async () => { for (let turn = 0; turn < 8; turn += 1) await new Promise(resolve => { setImmediate(resolve); }); };
   const page = (id, options = {}) => {
-    const told = [];
+    const told = [], hooks = {};
     const client = createRoomClient({
-      key: `ticket-${id}`, now: () => clock.now, timer, changed: what => told.push(what), ...options,
+      key: `ticket-${id}`, now: () => clock.now, timer, changed: what => { told.push(what); hooks.changed?.(what); }, ...options,
       post: async body => {
         const list = requests.get(id) ?? [];
         list.push({ at: clock.now, sent: body.send.length });
@@ -45,13 +46,15 @@ function world(people = ['P-1', 'P-2', 'P-3']) {
         return { status: result.ok ? 200 : 400, body: { ...result, you: id } };
       },
     });
-    return { client, told, id };
+    return { client, told, id, hooks };
   };
   async function advance(ms, step = 50) {
     const end = clock.now + ms;
     while (clock.now < end) {
       clock.now = Math.min(end, clock.now + step);
-      for (;;) {
+      // A page that asks again and again without letting time pass would never let this end: it is said instead.
+      for (let asked = 0; ; asked += 1) {
+        if (asked > 2000) throw new Error('a page keeps asking without a pause');
         const due = timers.filter(entry => entry.at <= clock.now).sort((a, b) => a.at - b.at)[0];
         if (!due) break;
         timers.splice(timers.indexOf(due), 1);
@@ -62,7 +65,7 @@ function world(people = ['P-1', 'P-2', 'P-3']) {
   }
   const server = async () => { const whole = await store.picture('L-1'); return whole ? snapshot({ ...whole.state, lines: whole.lines }, clock.now).lines.map(({ parts: _parts, ...line }) => line) : []; };
   const boardOf = entry => entry.client.view().board.lines.map(({ unconfirmed: _unconfirmed, ...line }) => line);
-  return { store, channel, clock, lesson, net, requests, page, advance, settle, server, boardOf };
+  return { store, channel, clock, lesson, net, requests, page, advance, settle, server, boardOf, timer };
 }
 const draw = (client, points, more = {}) => { const line = client.beginLine({ color: 2, width: 4, ...more }); client.addPoints(line, points); client.endLine(line); return line; };
 
@@ -301,4 +304,130 @@ test('CL-9: a long line goes in parts the server takes; a place on the page beco
   await w.advance(1500);
   assert.equal((await w.server()).length, 1);
   assert.deepEqual([toBoard(0, 0, 800, 600), toBoard(800, 600, 800, 600), toBoard(400, 150, 800, 600), toBoard(-5, 9999, 800, 600)], [[0, 0], [10_000, 10_000], [5_000, 2_500], [0, 10_000]]);
+});
+
+// --- The share control: this page never shares without the turn ------------------------------------
+// A stand-in for the page's media adapter: it counts what it is asked, and the test says who Zoom lists as sharing.
+function fakeMedia(starts = true) {
+  const calls = { start: 0, stop: 0, shown: [] };
+  let listed = [];
+  const listeners = new Set();
+  return {
+    calls,
+    zoomLists(ids) { listed = [...ids]; for (const listener of listeners) listener(); },
+    media: {
+      startShare: async () => { calls.start += 1; return typeof starts === 'function' ? starts() : starts; },
+      stopShare: async () => { calls.stop += 1; },
+      sharers: () => [...listed],
+      onSharersChange: listener => { listeners.add(listener); return () => listeners.delete(listener); },
+      showShareOf: id => { calls.shown.push(id); },
+    },
+  };
+}
+function sharer(w, id, starts = true) {
+  const entry = w.page(id);
+  const stand = fakeMedia(starts);
+  const said = [];
+  const control = createShareControl({ client: entry.client, media: stand.media, timer: w.timer, notify: what => said.push(what) });
+  entry.hooks.changed = what => control.changed(what);
+  entry.client.start();
+  return { ...entry, control, stand, said };
+}
+// What a promise came to, after the room has been given time.
+const after = async (w, promise, ms = 1500) => { await w.advance(ms); return promise; };
+
+test('SC-1: a share starts only with the turn; while one person holds it, another page never starts a share at all', async () => {
+  const w = world();
+  const a = sharer(w, 'P-1'), b = sharer(w, 'P-2');
+  await w.advance(200);
+  assert.equal(await after(w, a.control.start()), true);
+  assert.deepEqual([a.stand.calls.start, a.control.sharing, a.client.view().turn.mine], [1, true, true]);
+  // Everyone shows the holder's stream and no other.
+  assert.equal(b.stand.calls.shown.at(-1), 'P-1');
+  assert.equal(b.client.showsShareOf('P-1'), true);
+  assert.equal(b.client.showsShareOf('P-3'), false);
+  // The second person presses share: refused by the server, and their page asks the browser for nothing.
+  assert.equal(await after(w, b.control.start()), false);
+  assert.deepEqual([b.stand.calls.start, b.control.sharing], [0, false]);
+  assert.deepEqual(b.told.flatMap(what => what.refused ?? []).map(item => item.error), ['BUSY']);
+  // The holder stops: the share is stopped, the turn is free, nobody's stream is shown.
+  await after(w, a.control.stop());
+  assert.deepEqual([a.stand.calls.stop, a.control.sharing], [1, false]);
+  assert.equal(b.client.view().turn.holder, null);
+  assert.equal(b.stand.calls.shown.at(-1), null);
+  // Now the second person can.
+  assert.equal(await after(w, b.control.start()), true);
+  assert.equal(a.client.view().turn.holder, 'P-2');
+});
+
+test('SC-2: the share itself does not start (the person closed the browser\'s window): the turn goes back at once', async () => {
+  const w = world();
+  const a = sharer(w, 'P-1', false), b = sharer(w, 'P-2');
+  await w.advance(200);
+  assert.equal(await after(w, a.control.start()), false);
+  assert.deepEqual([a.stand.calls.start, a.control.sharing], [1, false]);
+  assert.ok(a.said.some(what => what.notice === 'NOT_STARTED'));
+  await w.advance(1500);
+  assert.equal(b.client.view().turn.holder, null);
+  assert.equal(await after(w, b.control.start()), true);
+});
+
+test('SC-3: the turn is lost while the connection is away: the page stops its share when it hears, and says why', async () => {
+  const w = world();
+  const a = sharer(w, 'P-1'), b = sharer(w, 'P-2');
+  await w.advance(200);
+  assert.equal(await after(w, a.control.start()), true);
+  w.net.set('P-1', () => 'lose-request');
+  await w.advance(TURN_LIMITS.leaseMs + 3000, 250);
+  assert.equal(b.client.view().turn.holder, null, 'the others see the turn free once the lease has run out');
+  assert.equal(await after(w, b.control.start()), true);
+  w.net.delete('P-1');
+  await w.advance(12_000, 250);
+  assert.deepEqual([a.control.sharing, a.stand.calls.stop >= 1], [false, true]);
+  assert.ok(a.said.some(what => what.notice === 'LOST'));
+  assert.equal(a.stand.calls.shown.at(-1), 'P-2');
+});
+
+test('SC-4: stopped with the browser\'s own button: Zoom no longer lists the person, and the turn goes back', async () => {
+  const w = world();
+  const a = sharer(w, 'P-1'), b = sharer(w, 'P-2');
+  await w.advance(200);
+  assert.equal(await after(w, a.control.start()), true);
+  a.stand.zoomLists(['P-1']);                      // Zoom lists the holder: nothing changes
+  await w.advance(1500);
+  assert.equal(b.client.view().turn.holder, 'P-1');
+  a.stand.zoomLists([]);                           // the person pressed the browser's "stop sharing"
+  await w.advance(1500);
+  assert.deepEqual([a.control.sharing, b.client.view().turn.holder], [false, null]);
+});
+
+test('SC-5: no answer in time: the share is not started, and a turn that arrives late is given back', async () => {
+  const w = world();
+  const a = sharer(w, 'P-1'), b = sharer(w, 'P-2');
+  await w.advance(200);
+  w.net.set('P-1', () => 'lose-request');
+  assert.equal(await after(w, a.control.start(), 7000), false);
+  assert.equal(a.stand.calls.start, 0);
+  w.net.delete('P-1');
+  await w.advance(12_000, 250);
+  assert.deepEqual([a.client.view().turn.mine, b.client.view().turn.holder, a.control.sharing], [false, null, false]);
+});
+
+test('SC-6: taken out of the room while sharing: the share stops; leaving the room gives the turn back', async () => {
+  const w = world();
+  const a = sharer(w, 'P-1'), b = sharer(w, 'P-2'), c = sharer(w, 'P-3');
+  await w.advance(200);
+  assert.equal(await after(w, a.control.start()), true);
+  w.lesson.people = ['P-2', 'P-3'];                // P-1 is taken out
+  await w.advance(2000);
+  assert.deepEqual([a.client.view().stopped, a.control.sharing, a.stand.calls.stop], ['NOT_IN_ROOM', false, 1]);
+  assert.equal(a.stand.calls.shown.at(-1), null);
+  assert.equal(b.client.view().turn.holder, null);
+  // Another person shares and then leaves the room page: the turn is given back, and nothing is done after that.
+  assert.equal(await after(w, b.control.start()), true);
+  b.control.close();
+  await w.advance(1500);
+  assert.equal(c.client.view().turn.holder, null);
+  assert.equal(await b.control.start(), false);
+  assert.equal(b.stand.calls.start, 1);
 });

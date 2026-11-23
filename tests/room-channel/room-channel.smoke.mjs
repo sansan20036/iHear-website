@@ -122,25 +122,25 @@ try {
   });
 
   await check('C3', '白板：兩個人同時畫，四個人都看到兩條新的線；換顏色和粗細', async () => {
-    await Ann.page.getByRole('button', { name: '紅色' }).click();
-    await Ann.page.getByRole('button', { name: '很粗' }).click();
+    await Ann.page.getByRole('button', { name: '紅色', exact: true }).click();
+    await Ann.page.getByRole('button', { name: '很粗', exact: true }).click();
     await Promise.all([draw(Ann.page, [0.1, 0.8], [0.5, 0.7]), draw(Bo.page, [0.7, 0.2], [0.9, 0.6])]);
     for (const person of [Kyle, Ann, Bo, Dee]) await lines(person.page, 3);
   });
 
   await check('C4', '白板：用橡皮擦點一條線，所有人的那條線都不見', async () => {
-    await Bo.page.getByRole('button', { name: '橡皮擦' }).click();
+    await Bo.page.getByRole('button', { name: '橡皮擦', exact: true }).click();
     await canvas(Bo.page).scrollIntoViewIfNeeded();
     const box = await canvas(Bo.page).boundingBox();
     await Bo.page.mouse.click(box.x + box.width * 0.4, box.y + box.height * 0.35);     // on Kyle's first line
     for (const person of [Kyle, Ann, Bo, Dee]) await lines(person.page, 2);
-    await Bo.page.getByRole('button', { name: '畫筆' }).click();
+    await Bo.page.getByRole('button', { name: '畫筆', exact: true }).click();
   });
 
   await check('C5', '白板：全部清除要先確認；清除後所有人都空了；另一個人按復原，線都回來', async () => {
     await Kyle.page.locator('[data-board-clear]').click();
     await expect(Kyle.page.getByText('要清除整塊白板嗎？所有人的白板都會被清除。')).toBeVisible();
-    await Kyle.page.getByRole('button', { name: '保留' }).click();
+    await Kyle.page.getByRole('button', { name: '保留', exact: true }).click();
     await lines(Kyle.page, 2);
     await Kyle.page.locator('[data-board-clear]').click();
     await Kyle.page.locator('[data-board-clear-yes]').click();

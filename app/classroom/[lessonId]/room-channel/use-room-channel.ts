@@ -4,6 +4,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 // @ts-ignore - the room channel's own code, plain JavaScript tested with node --test.
 import { createRoomClient, toBoard } from "../../../../lib/room-channel/client.mjs";
+// @ts-ignore - as above.
+import { createShareControl } from "../../../../lib/room-channel/share-control.mjs";
 
 // The room's own whiteboard, public chat and share turn, as a page holds them (local integration
 // only, 2026-11-24). One hook owns the connection to the room channel's route; the pieces that
@@ -14,6 +16,10 @@ import { createRoomClient, toBoard } from "../../../../lib/room-channel/client.m
 // media adapter that this hook calls and never implements. Who the person is comes back from the
 // server with the first answer ("you": their place on the lesson's list, which is also the
 // userKey Zoom carries for them).
+//
+// The rules themselves are not here: what is sent and when, and what a lost connection does, are
+// lib/room-channel/client.mjs; "never share without the turn" is lib/room-channel/share-control.mjs.
+// Both run under node --test.
 
 export type RoomChannelMedia = {
   startShare(): Promise<boolean>;
@@ -34,20 +40,24 @@ type View = {
   chat: { messages: ChatMessage[]; ended: boolean };
   turn: { holder: string | null; offeredTo: string | null; mine: boolean; offeredToMe: boolean };
 };
+type Changed = { board?: boolean; chat?: boolean; turn?: boolean | "lost"; refused?: { part: string; error: string; line?: string }[]; stopped?: string };
 type Client = {
   start(): void; stop(): void; setIdle(value: boolean): void; view(): View;
   beginLine(options: { color: number; width: number }): string; addPoints(line: string, points: [number, number][]): boolean; endLine(line: string): void;
   erase(line: string): void; clear(): void; undoClear(): void; say(text: string): void;
   claimTurn(): void; releaseTurn(): void; handOver(to: string): void; showsShareOf(person: string): boolean;
 };
-type Changed = { board?: boolean; chat?: boolean; turn?: boolean | "lost"; refused?: { part: string; error: string; line?: string }[]; stopped?: string };
+type ShareControl = { sharing: boolean; changed(what: Changed): void; start(): Promise<boolean>; stop(): Promise<void>; handOver(to: string): Promise<void>; close(): void };
 
-// The plain-JavaScript client, with the shapes this hook uses of it.
+// The plain-JavaScript pieces, with the shapes this hook uses of them.
 const makeClient = createRoomClient as unknown as (options: { post: (body: unknown) => Promise<{ status: number; body: unknown }>; key: string; changed: (what: Changed) => void }) => Client;
+const makeShare = createShareControl as unknown as (options: { client: Client; media: RoomChannelMedia; notify: (what: { sharing: boolean; notice?: string }) => void }) => ShareControl;
+const boardPoint = toBoard as unknown as (x: number, y: number, width: number, height: number) => [number, number];
 
 const EMPTY: View = { you: null, stopped: null, waiting: 0, board: { seq: 0, ended: false, lines: [], undo: null }, chat: { messages: [], ended: false }, turn: { holder: null, offeredTo: null, mine: false, offeredToMe: false } };
 const REQUEST_MS = 10_000;
-const CLAIM_MS = 6_000;
+// A media adapter that does nothing, for a page that mounts the board and the chat without the turn.
+const NO_MEDIA: RoomChannelMedia = { startShare: async () => false, stopShare: async () => undefined, sharers: () => [], onSharersChange: () => () => undefined, showShareOf: () => undefined };
 
 export type RoomChannel = ReturnType<typeof useRoomChannel>;
 
@@ -59,10 +69,10 @@ export function useRoomChannel({ lessonId, ticket, media = null, enabled = true 
   const [online, setOnline] = useState(true);
   const [sharing, setSharing] = useState(false);
   const client = useRef<Client | null>(null);
-  const mediaNow = useRef(media);
-  mediaNow.current = media;
-  const claim = useRef<{ settle: (got: boolean) => void } | null>(null);
-  const sharingNow = useRef(false);
+  const share = useRef<ShareControl | null>(null);
+  // The adapter may be made after the room is entered: the latest one given is the one used.
+  const mediaNow = useRef<RoomChannelMedia>(media ?? NO_MEDIA);
+  mediaNow.current = media ?? NO_MEDIA;
 
   useEffect(() => {
     if (!enabled || !ticket) return undefined;
@@ -78,7 +88,7 @@ export function useRoomChannel({ lessonId, ticket, media = null, enabled = true 
           const offered = answer?.on;
           if (offered && typeof offered === "object") setParts((before) => (before && before.board === offered.board && before.chat === offered.chat && before.turn === offered.turn ? before : { board: offered.board === true, chat: offered.chat === true, turn: offered.turn === true }));
         }
-        return { status: response.status, body: answer };
+        return { status: response.status, body: answer as unknown };
       } catch (error) {
         if (alive) setOnline(false);
         throw error;
@@ -86,46 +96,41 @@ export function useRoomChannel({ lessonId, ticket, media = null, enabled = true 
         window.clearTimeout(timer);
       }
     };
-    const stopOwnShare = () => {
-      if (!sharingNow.current) return;
-      sharingNow.current = false;
-      setSharing(false);
-      void mediaNow.current?.stopShare().catch(() => undefined);
+    // The adapter's five things, always the latest given.
+    const adapter: RoomChannelMedia = {
+      startShare: () => mediaNow.current.startShare(), stopShare: () => mediaNow.current.stopShare(), sharers: () => mediaNow.current.sharers(),
+      onSharersChange: (listener) => {
+        let given = mediaNow.current;
+        let off = given.onSharersChange(listener);
+        const again = window.setInterval(() => { if (mediaNow.current !== given) { off(); given = mediaNow.current; off = given.onSharersChange(listener); } }, 2000);
+        return () => { window.clearInterval(again); off(); };
+      },
+      showShareOf: (userKey) => mediaNow.current.showShareOf(userKey),
     };
-    const made: Client = makeClient({
+    const control: { current: ShareControl | null } = { current: null };
+    const made = makeClient({
       post, key: ticket,
-      changed: (what: Changed) => {
+      changed: (what) => {
         if (!alive) return;
-        const next = made.view();
-        setView(next);
+        setView(made.view());
         const refused = what.refused?.at(-1);
         if (refused) setNotice({ part: refused.part, code: refused.error, at: Date.now() });
-        // The turn: a claim in waiting learns its answer; a turn lost (the connection was away longer
-        // than the lease) stops this page's own share at once; everyone shows only the holder's stream.
-        if (claim.current && (next.turn.mine || what.refused?.some((item) => item.part === "turn"))) { claim.current.settle(next.turn.mine); claim.current = null; }
-        if (what.turn === "lost") { stopOwnShare(); setNotice({ part: "turn", code: "LOST", at: Date.now() }); }
-        if (what.turn) mediaNow.current?.showShareOf(next.turn.holder);
-        if (what.stopped) { stopOwnShare(); mediaNow.current?.showShareOf(null); }
+        control.current?.changed(what);
       },
     });
+    control.current = makeShare({ client: made, media: adapter, notify: (what) => { if (!alive) return; setSharing(what.sharing); if (what.notice) setNotice({ part: "turn", code: what.notice, at: Date.now() }); } });
     client.current = made;
+    share.current = control.current;
     made.start();
     const seen = () => made.setIdle(document.hidden);
     document.addEventListener("visibilitychange", seen);
-    // The person stopped the share with the browser's own button: the turn goes back at once.
-    const unlisten = mediaNow.current?.onSharersChange(() => {
-      const now = made.view();
-      if (sharingNow.current && now.you && !mediaNow.current?.sharers().includes(now.you)) { sharingNow.current = false; setSharing(false); made.releaseTurn(); }
-    });
     return () => {
       alive = false;
       document.removeEventListener("visibilitychange", seen);
-      unlisten?.();
-      claim.current?.settle(false);
-      claim.current = null;
-      if (sharingNow.current) { sharingNow.current = false; made.releaseTurn(); }
+      control.current?.close();
       made.stop();
       client.current = null;
+      share.current = null;
     };
   }, [enabled, lessonId, ticket]);
 
@@ -142,7 +147,7 @@ export function useRoomChannel({ lessonId, ticket, media = null, enabled = true 
         // What this page has drawn and not yet heard back about is shown from the page's own copy: look at it again now.
         refresh: () => { if (client.current) setView(client.current.view()); },
         // A place in a box of the page (in pixels) as a point of the board.
-        point: (x: number, y: number, width: number, height: number) => toBoard(x, y, width, height) as [number, number],
+        point: (x: number, y: number, width: number, height: number) => boardPoint(x, y, width, height),
         begin: (color: number, width: number) => act((made) => made.beginLine({ color, width }), null as string | null),
         add: (line: string, points: [number, number][]) => act((made) => made.addPoints(line, points), false),
         end: (line: string) => act((made) => made.endLine(line), undefined),
@@ -156,35 +161,10 @@ export function useRoomChannel({ lessonId, ticket, media = null, enabled = true 
         // Whether someone else holds the turn (the page's share button says so instead of starting).
         busy: view.turn.holder !== null && !view.turn.mine,
         // Ask the server for the turn first; only with it start the share. False: not started (the notice says why).
-        start: async (): Promise<boolean> => {
-          const made = client.current, adapter = mediaNow.current;
-          if (!made || !adapter || sharingNow.current) return false;
-          const got = made.view().turn.mine || await new Promise<boolean>((resolve) => {
-            const timer = window.setTimeout(() => { if (claim.current) { claim.current = null; resolve(false); } }, CLAIM_MS);
-            claim.current = { settle: (value) => { window.clearTimeout(timer); resolve(value); } };
-            made.claimTurn();
-          });
-          if (!got) return false;
-          const started = await adapter.startShare().catch(() => false);
-          if (!started) { made.releaseTurn(); setNotice({ part: "turn", code: "NOT_STARTED", at: Date.now() }); return false; }
-          sharingNow.current = true;
-          setSharing(true);
-          return true;
-        },
-        stop: async (): Promise<void> => {
-          const made = client.current, adapter = mediaNow.current;
-          sharingNow.current = false;
-          setSharing(false);
-          await adapter?.stopShare().catch(() => undefined);
-          made?.releaseTurn();
-        },
+        start: (): Promise<boolean> => share.current?.start() ?? Promise.resolve(false),
+        stop: (): Promise<void> => share.current?.stop() ?? Promise.resolve(),
         // Give the turn to one named person; this page's own share stops first.
-        handOver: async (to: string): Promise<void> => {
-          const made = client.current, adapter = mediaNow.current;
-          if (!made) return;
-          if (sharingNow.current) { sharingNow.current = false; setSharing(false); await adapter?.stopShare().catch(() => undefined); }
-          made.handOver(to);
-        },
+        handOver: (to: string): Promise<void> => share.current?.handOver(to) ?? Promise.resolve(),
       },
     };
   }, [view, parts, notice, online, sharing]);

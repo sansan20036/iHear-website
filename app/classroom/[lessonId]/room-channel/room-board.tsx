@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 
 import type { ClassroomLocale } from "../../../../lib/classroom-locale";
+// @ts-ignore - the room channel's own code, plain JavaScript tested with node --test.
+import { BOARD_SPACE, farEnough, fitBoard, lineUnder } from "../../../../lib/room-channel/board-geometry.mjs";
 import { roomChannelCopy } from "./room-channel-copy";
 import type { BoardLine, RoomChannel } from "./use-room-channel";
 import "./room-channel.css";
@@ -17,24 +19,13 @@ import "./room-channel.css";
 
 export const BOARD_COLOURS = ["#111827", "#dc2626", "#ea580c", "#16a34a", "#2563eb", "#7c3aed", "#db2777", "#6b7280"];
 export const BOARD_WIDTHS = [1, 2, 4, 8];
-const SPACE = 10_000;          // the board's own space on both axes (lib/room-channel/board.mjs)
-const STEP = 18;               // a new point only this far (in the board's space) from the last one
-const NEAR = 140;              // how near a tap must be to a line to erase it
+const SPACE: number = BOARD_SPACE;
+// The plain-JavaScript geometry, with the shapes this piece uses of it.
+const boardFit = fitBoard as unknown as (width: number, height: number) => { width: number; height: number };
+const lineAt = lineUnder as unknown as (lines: BoardLine[], x: number, y: number, options?: { near?: number; skip?: Set<string> | null }) => string | null;
+const movedEnough = farEnough as unknown as (last: [number, number], x: number, y: number) => boolean;
 
 type Stroke = { id: string; colour: number; width: number; points: [number, number][] };
-
-// How far a place is from a line (in the board's space; a line of one point is a dot).
-function distanceTo(line: BoardLine, x: number, y: number) {
-  let best = Infinity;
-  const points = line.points;
-  for (let index = 0; index < points.length; index += 1) {
-    const [ax, ay] = points[index], [bx, by] = points[Math.min(index + 1, points.length - 1)];
-    const dx = bx - ax, dy = by - ay;
-    const along = dx === 0 && dy === 0 ? 0 : Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy)));
-    best = Math.min(best, Math.hypot(x - (ax + along * dx), y - (ay + along * dy)));
-  }
-  return best;
-}
 
 export default function RoomBoard({ channel, locale }: { channel: RoomChannel; locale: ClassroomLocale }) {
   const text = roomChannelCopy[locale];
@@ -60,8 +51,8 @@ export default function RoomBoard({ channel, locale }: { channel: RoomChannel; l
     if (!box) return undefined;
     const fit = () => {
       const available = box.getBoundingClientRect();
-      const boardWidth = Math.max(0, Math.floor(Math.min(available.width, (available.height * 4) / 3)));
-      setSize((before) => (before.width === boardWidth ? before : { width: boardWidth, height: Math.floor((boardWidth * 3) / 4) }));
+      const fitted = boardFit(available.width, available.height);
+      setSize((before) => (before.width === fitted.width && before.height === fitted.height ? before : fitted));
     };
     fit();
     const watch = new ResizeObserver(fit);
@@ -119,11 +110,8 @@ export default function RoomBoard({ channel, locale }: { channel: RoomChannel; l
   };
   const eraseAt = (x: number, y: number) => {
     // The line drawn last lies on top: it is the one a tap means.
-    for (let index = linesNow.current.length - 1; index >= 0; index -= 1) {
-      const line = linesNow.current[index];
-      if (line.unconfirmed || erasing.current.has(line.line)) continue;
-      if (distanceTo(line, x, y) <= NEAR + line.width * 10) { erasing.current.add(line.line); channel.board.erase(line.line); return; }
-    }
+    const found = lineAt(linesNow.current, x, y, { skip: erasing.current });
+    if (found) { erasing.current.add(found); channel.board.erase(found); }
   };
   const down = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     if (readOnly || (event.pointerType === "mouse" && event.button !== 0)) return;
@@ -144,7 +132,7 @@ export default function RoomBoard({ channel, locale }: { channel: RoomChannel; l
     if (!own) return;
     const [x, y] = placeOf(event);
     const last = own.points[own.points.length - 1];
-    if (Math.hypot(x - last[0], y - last[1]) < STEP) return;
+    if (!movedEnough(last, x, y)) return;
     own.points.push([x, y]);
     if (!channel.board.add(own.id, [[x, y]])) { stroke.current = null; redraw(); return; }
     // Only the new piece is drawn: the picture is not painted again for every move of the pen.
