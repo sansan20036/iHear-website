@@ -359,4 +359,23 @@ test('SV-11: a change that fails half-way leaves nothing behind', async () => {
   // And the store goes on taking requests for that lesson after the failure.
   assert.equal((await channel.exchange({ lesson, who: who('P-1'), on: ON, now: T0 + 500, send: [{ part: 'board', input: stroke('a', 1, [[2, 2]]) }] })).sent[0].seq, 2);
 });
+
+test('SV-12: a little behind: what was missed; far behind: the picture, never a long list', async () => {
+  const { channel } = await setup();
+  const lesson = lessonOf();
+  const total = BOARD_LIMITS.catchUpEntries + 20;
+  let now = T0;
+  for (let n = 0; n < total; n += 8) {
+    now += 2000;
+    const send = Array.from({ length: Math.min(8, total - n) }, (_unused, index) => ({ part: 'board', input: stroke(`far${n + index}`, 0, [[n + index, 1]], { done: true }) }));
+    const answer = await channel.exchange({ lesson, who: who(PEOPLE[(n / 8) % 6]), on: ON, now, send });
+    assert.ok(answer.sent.every(item => item.ok), JSON.stringify(answer.sent.find(item => !item.ok)));
+  }
+  const near = (await channel.exchange({ lesson, who: who('P-1'), on: ON, now, cursors: { board: total - BOARD_LIMITS.catchUpEntries } })).board;
+  assert.deepEqual([near.fresh, near.entries.length, near.entries[0].seq, near.seq], [false, BOARD_LIMITS.catchUpEntries, total - BOARD_LIMITS.catchUpEntries + 1, total]);
+  const far = (await channel.exchange({ lesson, who: who('P-1'), on: ON, now, cursors: { board: total - BOARD_LIMITS.catchUpEntries - 1 } })).board;
+  assert.deepEqual([far.fresh, far.picture.seq, far.picture.lines.length], [true, total, total]);
+  const first = (await channel.exchange({ lesson, who: who('P-2'), on: ON, now, cursors: { board: 0 } })).board;
+  assert.deepEqual([first.fresh, first.picture.lines.length], [true, total]);
+});
 }

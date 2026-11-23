@@ -207,6 +207,8 @@ const PLANS = {
   // rooms, people in each, drawers in each, poll interval
   standard: [[1, 10, 1, 500], [1, 10, 3, 500], [1, 10, 10, 500], [5, 10, 2, 500], [10, 10, 1, 500], [10, 10, 3, 500], [10, 10, 3, 250], [10, 10, 3, 1000], [10, 10, 10, 500]],
   quick: [[1, 10, 2, 500], [10, 10, 3, 500]],
+  // The runs where the number of database connections decides.
+  busy: [[1, 10, 10, 500], [10, 10, 1, 500], [10, 10, 3, 500], [10, 10, 10, 500]],
 };
 const longAway = Number(args['long-away'] ?? 0);
 

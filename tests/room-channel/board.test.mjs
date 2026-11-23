@@ -300,3 +300,20 @@ test('RB-13: six pages, random drawing, erasing, clearing and undoing, lost answ
     assert.equal(Object.values(state.lines).reduce((sum, line) => sum + line.points.length, 0), state.points, `seed ${seed}: the count of points drifted`);
   }
 });
+
+test('RB-14: someone a little behind is handed what they missed; someone far behind is handed the picture, never a long list', () => {
+  let state = newBoard({ roomId: 'R-1', lessonId: 'L-1', now: T0 });
+  const total = BOARD_LIMITS.catchUpEntries + 120;
+  for (let n = 0; n < total; n += 1) {
+    const out = apply(state, { by: `P-${1 + (n % 6)}`, member: true, input: stroke(`far${n}`, 0, [[n, n]], { done: true }), now: T0 + n * 400 });
+    assert.equal(out.answer.ok, true);
+    state = out.state;
+  }
+  const now = T0 + total * 400;
+  const near = since(state, { by: 'P-1', member: true, cursor: total - BOARD_LIMITS.catchUpEntries, now });
+  assert.deepEqual([near.fresh, near.entries.length, near.entries[0].seq], [false, BOARD_LIMITS.catchUpEntries, total - BOARD_LIMITS.catchUpEntries + 1]);
+  const far = since(state, { by: 'P-1', member: true, cursor: total - BOARD_LIMITS.catchUpEntries - 1, now });
+  assert.deepEqual([far.fresh, far.picture.seq, far.picture.lines.length, far.entries], [true, total, total, undefined]);
+  // From the beginning of a long lesson: the picture, whatever the number of operations kept.
+  assert.equal(since(state, { by: 'P-1', member: true, cursor: 0, now }).fresh, true);
+});
