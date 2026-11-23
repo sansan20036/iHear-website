@@ -122,7 +122,11 @@ describe("the room channel's routes", () => {
     const other = await exchange(lessonId, ann.ticket, { cursors: { board: 0, chat: 0, turn: 0 } });
     expect(other.body.you).not.toBe(you);
     expect(other.body.board.entries.map(entry => [entry.by, entry.line])).toEqual([[you, `${you}:a`]]);
-    expect(other.body.chat.messages.map(message => [message.by, message.name, message.text])).toEqual([[you, you, "hello all"]]);
+    expect(other.body.chat.messages.map(message => [message.by, message.text])).toEqual([[you, "hello all"]]);
+    // A person is known by their place on the lesson's list, which is what Zoom carries for them too.
+    const lesson = await store.lesson(lessonId);
+    expect(lesson.participants.map(entry => entry.id)).toContain(you);
+    expect(other.body.chat.messages[0].name).toBe(lesson.participants.find(entry => entry.id === you).code);
     expect(other.body.turn.holder).toBe(you);
     // Nothing a person typed at the door is in what the room hands out: people show by code only.
     expect(JSON.stringify(other.body)).not.toMatch(/Kyle|Ann/);

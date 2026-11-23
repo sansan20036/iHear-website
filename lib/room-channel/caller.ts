@@ -54,7 +54,10 @@ export async function roomChannelLesson(store: ClassroomStore, lessonId: string,
   if (!roomId) return null;
   const scheduledEnd = Date.parse(lesson.endsAt);
   const gone = leftBehind(events);
-  const people = lesson.participants.filter((entry) => entry.role === "student" && entry.active !== false && !gone.has(entry.id)).map((entry) => shownCodeOf(events, entry.code));
+  // People are known to the channel by their place on the lesson's list (the participant id): it
+  // is what Zoom carries for them too (the session token's user_key), so a page can tell whose
+  // share stream belongs to the holder of the turn whatever name Zoom shows for them.
+  const people = lesson.participants.filter((entry) => entry.role === "student" && entry.active !== false && !gone.has(entry.id)).map((entry) => entry.id);
   const endedAt = lessonEnd({ recordedEnd: await recordedEnd(store, lesson, roomId, now), scheduledEnd, now }) as number | null;
   return { lesson, events, facts: { id: lesson.id, roomId, scheduledEnd, endedAt, people } };
 }
@@ -71,9 +74,8 @@ export async function roomChannelCaller({ store, lessonId, key, now }: { store: 
     const decision = getJoinEligibility({ lesson: forRules(lesson, events), participantId: participant.id, identity: { verified: true, participantId: participant.id, method: "join_link" }, now });
     if (!decision.allowed) return refuse(403, String(decision.reason));
   }
-  // The name the room shows for this person (as in Zoom); if two people on the list ever showed
-  // the same one, the person's own place on the list is used instead, so nobody speaks as another.
-  const shown = shownCodeOf(events, participant.code);
-  const id = facts.people.filter((code) => code === shown).length === 1 ? shown : participant.id;
-  return { ok: true, who: { id, name: shown, member: true }, lesson: facts };
+  // name: what the room shows beside this person's messages. Today that is the code the room
+  // shows for them; when the fixed rooms show the first name a person typed at the door (the user's
+  // decision of 2026-11-24, on the integrator's branch), it is to be that same checked name.
+  return { ok: true, who: { id: participant.id, name: shownCodeOf(events, participant.code), member: true }, lesson: facts };
 }
