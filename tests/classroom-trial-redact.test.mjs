@@ -110,21 +110,33 @@ describe("both trial tools use this one rule", () => {
   // W1 re-test (2026-11-23): the limits may be lowered for a shorter run, never raised, and a bad value
   // stops the tool before anything starts (no folder, no server, no browser).
   // Every run here has --check-args: even if a limit check were broken, nothing would start.
+  // Round 15 (2026-11-24): the test runs the tool 7 times (each loads Playwright first), which took
+  // 7.5 s under a full regression's load and passed vitest's 5 s default. So the test as a whole may
+  // take 2 minutes, while each run is still held to its own 30 s and must END BY ITSELF with exactly
+  // the expected exit code: a run that hangs (killed by the timeout: error and signal set), crashes,
+  // or exits otherwise fails here. A longer wait therefore hides nothing.
   test("RD-11: --limit-minutes and --limit-participant-minutes take only a value above 0 and at most 18 and 55; anything else stops the tool before it starts; --check-args says the limits and starts nothing", () => {
-    const run = (...words) => spawnSync(process.execPath, ["tools/classroom-trial/fixed-room-check.mjs", "--rehearsal", "--check-args", ...words], { encoding: "utf8", timeout: 60_000 });
+    const run = (...words) => spawnSync(process.execPath, ["tools/classroom-trial/fixed-room-check.mjs", "--rehearsal", "--check-args", ...words], { encoding: "utf8", timeout: 30_000 });
+    const endedByItself = (answer, label) => {
+      expect(answer.error, label).toBeUndefined();
+      expect(answer.signal, label).toBeNull();
+    };
     for (const [name, value, most] of [["limit-minutes", "19", 18], ["limit-minutes", "0", 18], ["limit-minutes", "abc", 18], ["limit-participant-minutes", "56", 55], ["limit-participant-minutes", "-1", 55]]) {
       const answer = run(`--${name}`, value);
-      expect(answer.status, `${name} ${value}`).not.toBe(0);
+      endedByItself(answer, `${name} ${value}`);
+      expect(answer.status, `${name} ${value}`).toBe(1);
       expect(`${answer.stdout}${answer.stderr}`, `${name} ${value}`).toContain(`--${name} takes more than 0 and at most ${most}`);
       expect(`${answer.stdout}${answer.stderr}`, `${name} ${value}`).not.toContain("arguments OK");
     }
     const lowered = run("--limit-minutes", "6", "--limit-participant-minutes", "18", "--removal-only");
+    endedByItself(lowered, "lowered");
     expect(lowered.status).toBe(0);
     expect(lowered.stdout).toContain("arguments OK: rehearsal; limits 6 minutes, 18 participant-minutes; steps removal only. Nothing was started.");
     const defaults = run();
+    endedByItself(defaults, "defaults");
     expect(defaults.status).toBe(0);
     expect(defaults.stdout).toContain("limits 18 minutes, 55 participant-minutes; steps all.");
-  });
+  }, 120_000);
 
   test("RD-12: the limits are read before the run's folder is made; --removal-only skips exactly the five optional real steps and keeps the door, connecting, the removal and the end", async () => {
     const source = await readFile("tools/classroom-trial/fixed-room-check.mjs", "utf8");
