@@ -23,6 +23,9 @@
 //     after the first person connects or at 55 participant-minutes, and always ends the lesson.
 //     The limits are checked every second, also in the middle of a step (round 13): at a limit the
 //     owner ends the lesson and the test people's browsers close, whatever step is running.
+//     Lower limits for a shorter run: --limit-minutes <n ≤ 18> --limit-participant-minutes <n ≤ 55>;
+//     --removal-only skips every real step but the door, connecting, a removal and the end.
+//     --check-args: say what the run would use (after the interlocks) and stop; nothing starts.
 //   node tools/classroom-trial/fixed-room-check.mjs --rehearsal --hard-stop-after <seconds>
 //     (rehearsal only: TestA counts as connected once the joins have failed, the time limit is those
 //      seconds, and a step that would wait 120 s must be cut short by that stop; the run then fails)
@@ -48,9 +51,21 @@ const runDir = path.join(process.env.LOCALAPPDATA ?? tmpdir(), 'iHear-classroom-
 // Rehearsal only: --hard-stop-after <seconds> rehearses the watchdog's stop (see the usage above).
 const hardStopAfter = rehearsal && args['hard-stop-after'] !== undefined ? Number(args['hard-stop-after']) : null;
 if (hardStopAfter !== null && !(hardStopAfter > 0 && hardStopAfter <= 60)) throw new Error('--hard-stop-after takes 1 to 60 seconds');
-const LIMIT_MS = hardStopAfter ? hardStopAfter * 1000 : 18 * 60_000;
+// W1 re-test (2026-11-23): a caller may LOWER the limits, never raise them, real runs included:
+// --limit-minutes (more than 0, at most 18) and --limit-participant-minutes (more than 0, at most
+// 55). Checked before anything starts; the per-second watchdog is the same.
+const lowered = (name, most) => {
+  if (args[name] === undefined) return most;
+  const value = Number(args[name]);
+  if (!(Number.isFinite(value) && value > 0 && value <= most)) throw new Error(`--${name} takes more than 0 and at most ${most}`);
+  return value;
+};
+const LIMIT_MS = hardStopAfter ? hardStopAfter * 1000 : lowered('limit-minutes', 18) * 60_000;
 const LIMIT_TEXT = LIMIT_MS % 60_000 === 0 ? `${LIMIT_MS / 60_000} minutes` : `${LIMIT_MS / 1000} seconds`;
-const LIMIT_PARTICIPANT_MINUTES = 55;
+const LIMIT_PARTICIPANT_MINUTES = lowered('limit-participant-minutes', 55);
+// W1 re-test (2026-11-23): --removal-only runs only the door, connecting, a removal (with the wait
+// for the move to the new session) and the end; the other real steps are listed as not run.
+const removalOnly = args['removal-only'] === 'true';
 const ROOM_LABEL = 'Trial W1 Room';
 
 // The real run's interlocks: the W0 review and the user's own order, both required, both recorded.
@@ -60,6 +75,12 @@ if (!rehearsal) {
   if (!args.env || args.env === 'true') refuse('give --env <zoom.env outside the repository>, or --rehearsal');
   if (!args.w0 || !existsSync(args.w0) || !/W0: PASS/.test(readFileSync(args.w0, 'utf8'))) refuse('the W0 review file (--w0) must exist and say "W0: PASS" (the account holder\'s portal check: automatic recording and participants\' recording OFF)');
   if (!args.go || !String(args.go).includes('開始 W1 真實測試')) refuse('the user\'s order (--go) must contain 「開始 W1 真實測試」');
+}
+// W1 re-test (2026-11-23): --check-args says what this run would use, after the interlocks above, and
+// stops: no folder, no server, no browser, nothing sent to Zoom.
+if (args['check-args'] === 'true') {
+  console.log(`fixed-room-check: arguments OK: ${rehearsal ? 'rehearsal' : 'real'}; limits ${LIMIT_TEXT}, ${LIMIT_PARTICIPANT_MINUTES} participant-minutes; steps ${removalOnly ? 'removal only' : 'all'}. Nothing was started.`);
+  process.exit(0);
 }
 mkdirSync(runDir, { recursive: true });
 
@@ -82,6 +103,7 @@ const report = {
   mode: rehearsal ? 'rehearsal: stand-in keys, no route to Zoom session servers' : 'real: the Zoom Video SDK account', startedAt: new Date(startedAt).toISOString(),
   authorization: rehearsal ? null : { w0: path.basename(String(args.w0)), go: redact(String(args.go)).slice(0, 200) },
   limits: { minutes: LIMIT_MS / 60_000, participantMinutes: LIMIT_PARTICIPANT_MINUTES, checked: 'every second, also in the middle of a step' },
+  steps: removalOnly ? 'removal only: the door, connecting, a removal, the end' : 'all',
   checks: [], findings: {}, participantMinutes: 0, consoleProblems: [], alerts: [], status: 'running',
 };
 const pages = [];
@@ -117,6 +139,13 @@ async function check(name, action, { fatal = true } = {}) {
     if (fatal || hardStop || /limit:/.test(error.message)) throw error;
     failure ??= error;
   }
+}
+// A real step the re-test does not need: with --removal-only it is listed as not run, and nothing of
+// it happens (W1 re-test, 2026-11-23).
+async function optional(name, action, options) {
+  if (!removalOnly) return check(name, action, options);
+  report.checks.push({ name, status: 'not run (--removal-only)' });
+  console.log(`[${elapsed()}] NOT RUN ${name} (--removal-only)`);
 }
 const pause = ms => new Promise(resolve => { setTimeout(resolve, ms); });
 const within = (promise, ms) => Promise.race([promise, pause(ms)]);
@@ -281,11 +310,11 @@ try {
         await expect(connection(who)).toHaveText('已連線', { timeout: 90_000 }).then(() => markConnected(who), error => { markGone(who); report.findings[`${who}Connect`] = 'did not connect'; if (who !== 'TestC') throw error; });
       }
     });
-    await check('Zoom\'s version in the page', async () => {
+    await optional('Zoom\'s version in the page', async () => {
       report.findings.sdkVersion = await people.TestA.page.locator('[data-sdk-version]').first().getAttribute('data-sdk-version').catch(() => 'not shown');
     }, { fatal: false });
     // W1 matrix, whiteboard: the button is Zoom's canStartWhiteboard() for that person.
-    await check('whiteboard: who has the button, and whether it opens for the others', async () => {
+    await optional('whiteboard: who has the button, and whether it opens for the others', async () => {
       const shows = {};
       for (const who of ['TestA', 'TestB', 'TestC']) shows[who] = await people[who].page.locator('[data-tool="whiteboard"]').count() > 0;
       report.findings.whiteboardButton = shows;
@@ -307,7 +336,7 @@ try {
       await expect(board).toHaveAttribute('aria-pressed', 'false', { timeout: 30_000 });
     }, { fatal: false });
     // Sharing, one at a time: in automated Chromium the picker is chosen by the browser itself.
-    await check('sharing: TestA shares, TestB\'s share waits, TestA stops', async () => {
+    await optional('sharing: TestA shares, TestB\'s share waits, TestA stops', async () => {
       const share = people.TestA.page.locator('[data-tool="share"]');
       if (!(await share.count())) { report.findings.share = 'no share button for TestA'; return; }
       await share.click();
@@ -319,7 +348,7 @@ try {
       await share.click();
       await expect(share).toHaveAttribute('aria-pressed', 'false', { timeout: 30_000 });
     }, { fatal: false });
-    await check('a dropped connection comes back (TestA offline 10 seconds)', async () => {
+    await optional('a dropped connection comes back (TestA offline 10 seconds)', async () => {
       const from = Date.now();
       await people.TestA.context.setOffline(true);
       await pause(10_000);
@@ -327,7 +356,7 @@ try {
       await expect(connection('TestA')).toHaveText('已連線', { timeout: 90_000 });
       report.findings.reconnectSeconds = Math.round((Date.now() - from) / 1000);
     }, { fatal: false });
-    await check('TestB leaves and enters again without being let in again', async () => {
+    await optional('TestB leaves and enters again without being let in again', async () => {
       await people.TestB.page.locator('[data-control="leave"]').click();
       markGone('TestB');
       await people.TestB.page.getByRole('button', { name: '重新進入', exact: true }).click();

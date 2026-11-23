@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { describe, expect, test } from "vitest";
 
@@ -104,5 +105,39 @@ describe("both trial tools use this one rule", () => {
     const end = source.slice(source.indexOf("the owner ends the lesson: everyone leaves"));
     expect(end.indexOf("if (!rehearsal) await pause(5_000);")).toBeGreaterThan(0);
     expect(end.indexOf("if (!rehearsal) await pause(5_000);")).toBeLessThan(end.indexOf("'結束這次上課' }).click()"));
+  });
+
+  // W1 re-test (2026-11-23): the limits may be lowered for a shorter run, never raised, and a bad value
+  // stops the tool before anything starts (no folder, no server, no browser).
+  // Every run here has --check-args: even if a limit check were broken, nothing would start.
+  test("RD-11: --limit-minutes and --limit-participant-minutes take only a value above 0 and at most 18 and 55; anything else stops the tool before it starts; --check-args says the limits and starts nothing", () => {
+    const run = (...words) => spawnSync(process.execPath, ["tools/classroom-trial/fixed-room-check.mjs", "--rehearsal", "--check-args", ...words], { encoding: "utf8", timeout: 60_000 });
+    for (const [name, value, most] of [["limit-minutes", "19", 18], ["limit-minutes", "0", 18], ["limit-minutes", "abc", 18], ["limit-participant-minutes", "56", 55], ["limit-participant-minutes", "-1", 55]]) {
+      const answer = run(`--${name}`, value);
+      expect(answer.status, `${name} ${value}`).not.toBe(0);
+      expect(`${answer.stdout}${answer.stderr}`, `${name} ${value}`).toContain(`--${name} takes more than 0 and at most ${most}`);
+      expect(`${answer.stdout}${answer.stderr}`, `${name} ${value}`).not.toContain("arguments OK");
+    }
+    const lowered = run("--limit-minutes", "6", "--limit-participant-minutes", "18", "--removal-only");
+    expect(lowered.status).toBe(0);
+    expect(lowered.stdout).toContain("arguments OK: rehearsal; limits 6 minutes, 18 participant-minutes; steps removal only. Nothing was started.");
+    const defaults = run();
+    expect(defaults.status).toBe(0);
+    expect(defaults.stdout).toContain("limits 18 minutes, 55 participant-minutes; steps all.");
+  });
+
+  test("RD-12: the limits are read before the run's folder is made; --removal-only skips exactly the five optional real steps and keeps the door, connecting, the removal and the end", async () => {
+    const source = await readFile("tools/classroom-trial/fixed-room-check.mjs", "utf8");
+    expect(source).toContain("lowered('limit-minutes', 18) * 60_000");
+    expect(source).toContain("const LIMIT_PARTICIPANT_MINUTES = lowered('limit-participant-minutes', 55);");
+    expect(source.indexOf("lowered('limit-participant-minutes', 55)")).toBeLessThan(source.indexOf("mkdirSync(runDir"));
+    expect(source.split("await optional('").length - 1).toBe(5);
+    for (const name of ["Zoom\\'s version in the page", "whiteboard: who has the button, and whether it opens for the others", "sharing: TestA shares, TestB\\'s share waits, TestA stops", "a dropped connection comes back (TestA offline 10 seconds)", "TestB leaves and enters again without being let in again"]) {
+      expect(source, name).toContain(`await optional('${name}'`);
+    }
+    for (const kept of ["the three ask at the door, wait, are let in by the owner and enter", "the three connect to the real Zoom session", "TestC is taken out: their page leaves; the others move to a new session and come back", "the owner ends the lesson: everyone leaves"]) {
+      expect(source, kept).toContain(`await check('${kept}'`);
+    }
+    expect(source).toContain("if (!removalOnly) return check(name, action, options);");
   });
 });
