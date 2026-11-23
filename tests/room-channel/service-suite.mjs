@@ -7,7 +7,7 @@ import nodeTest from 'node:test';
 import { apply, BOARD_LIMITS, newBoard, since, snapshot } from '../../lib/room-channel/board.mjs';
 import { CHAT_LIMITS } from '../../lib/room-channel/chat.mjs';
 import { deleteAfter, lessonEnd, RETENTION } from '../../lib/room-channel/retention.mjs';
-import { createRoomChannel, SEND_MAX } from '../../lib/room-channel/service.mjs';
+import { askedOf, createRoomChannel, SEND_MAX } from '../../lib/room-channel/service.mjs';
 import { TURN_LIMITS } from '../../lib/room-channel/share-turn.mjs';
 
 const T0 = 1_800_000_000_000;
@@ -381,5 +381,32 @@ test('SV-12: a little behind: what was missed; far behind: the picture, never a 
   assert.deepEqual([far.fresh, far.picture.seq, far.picture.lines.length], [true, total, total]);
   const first = (await channel.exchange({ lesson, who: who('P-2'), on: ON, now, cursors: { board: 0 } })).board;
   assert.deepEqual([first.fresh, first.picture.lines.length], [true, total]);
+});
+
+test('SV-13: news read together with the check of who is asking is used as it is, but never when it could be older than this request', async () => {
+  const { store, channel } = await setup();
+  const lesson = lessonOf();
+  await channel.exchange({ lesson, who: who('P-1'), on: ON, now: T0, send: [{ part: 'board', input: stroke('a', 0, [[1, 1]], { done: true }) }, { part: 'chat', input: { op: 'm1', text: 'first' } }] });
+  const cursors = { board: 0, chat: 0, turn: 0 };
+  const { asked } = askedOf(ON, cursors);
+  // Nothing is sent: the news handed in is the answer, and the store is not asked again.
+  const early = await store.news(lesson.id, asked);
+  const before = store.calls.news;
+  const handed = await channel.exchange({ lesson, who: who('P-2'), on: ON, now: T0 + 100, cursors, seen: early });
+  assert.equal(store.calls.news, before, 'the store was not asked a second time');
+  const plain = await channel.exchange({ lesson, who: who('P-2'), on: ON, now: T0 + 100, cursors });
+  assert.deepEqual(handed, plain);
+  assert.deepEqual([handed.board.entries.length, handed.chat.messages.length], [1, 1]);
+  // Something is sent in the same request: what was read before it is not used, so the answer holds what was just sent.
+  const sending = await channel.exchange({ lesson, who: who('P-2'), on: ON, now: T0 + 200, cursors, seen: early, send: [{ part: 'board', input: stroke('b', 0, [[2, 2]], { done: true }) }] });
+  assert.deepEqual(sending.board.entries.map(entry => entry.line), ['P-1:a', 'P-2:b']);
+  // The lesson is over and this request is the first to say so: what was read before the closing (a chat with a message) is not handed out.
+  const stale = await store.news(lesson.id, asked);
+  assert.equal(stale.chat.messages.length, 1);
+  const over = await channel.exchange({ lesson: lessonOf({ endedAt: T0 + 300 }), who: who('P-2'), on: ON, now: T0 + 400, cursors, seen: stale });
+  assert.deepEqual(over.chat, { ok: true, seq: 0, ended: true, missed: false, messages: [], more: false });
+  assert.equal(over.board.ended, true);
+  // Which parts are asked of, and from where: switched-on parts with whole-number places only.
+  assert.deepEqual(askedOf({ board: true, chat: false, turn: true }, { board: 3, chat: 1, turn: 'x' }), { asked: { board: 3 }, refused: { turn: { ok: false, error: 'CURSOR' } } });
 });
 }
