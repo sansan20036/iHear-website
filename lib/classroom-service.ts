@@ -1023,10 +1023,13 @@ export async function runClassroomTick({ store, provider, drive, now, lessonIds,
   const clock = () => now + (Date.now() - startedAt);
   // Fixed rooms (the user, 2026-11-24): a lesson whose time is over is ended first, so this tick's own
   // work sees it cancelled (its recording stops, its session ends). Only the full tick, not one asked
-  // for given lessons (a webhook's); nothing while the fixed rooms are off. Loaded here rather than at
-  // the top: the fixed rooms import this module. A failure here never stops the rest of the tick.
-  const timeUp = lessonIds ? { ended: [] as string[] }
-    : await (await import("./classroom-fixed-rooms")).endLessonsPastTime({ store, provider, drive, now }).catch(() => ({ ended: [] as string[], failed: true }));
+  // for given lessons (a webhook's). Loaded here rather than at the top: the fixed rooms import this
+  // module. While the fixed rooms are off (as on the site) the module is not even loaded, so the tick
+  // costs what it did before (round 15: loading it on every first tick slowed two tests past their
+  // 5 s). The same switch as fixedRoomsEnabled(). A failure here, loading included, never stops the
+  // rest of the tick.
+  const timeUp = lessonIds || process.env.CLASSROOM_FIXED_ROOMS !== "on" ? { ended: [] as string[] }
+    : await import("./classroom-fixed-rooms").then((fixed) => fixed.endLessonsPastTime({ store, provider, drive, now })).catch(() => ({ ended: [] as string[], failed: true }));
   const lessons = lessonIds
     ? (await Promise.all(lessonIds.map((id) => store.lesson(id)))).filter((lesson): lesson is ClassroomLesson => Boolean(lesson))
     : await lessonsInView(store, now);

@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, test, vi } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -157,5 +157,25 @@ describe("a lesson's time", () => {
     expect(nextId).not.toBe(lessonId);
     await manage("end_lesson", { room: r.id }, { now: START + 130 * MIN });
     expect((await classroomStatus({ store, lessonId: nextId, key: again.asked.body.ticket, now: START + 131 * MIN })).body.code).toBe("LESSON_CANCELLED");
+  });
+
+  // Round 15 (2026-11-24): with the fixed rooms off (as on the site) the tick costs what it did before.
+  test("ST-6: while the fixed rooms are off the tick does not even load their module, by the same switch as fixedRoomsEnabled(); a failure there, loading included, never stops the tick", async () => {
+    const source = await readFile("lib/classroom-service.ts", "utf8");
+    expect(source).toContain('const timeUp = lessonIds || process.env.CLASSROOM_FIXED_ROOMS !== "on" ? { ended: [] as string[] }');
+    expect(source).toContain('await import("./classroom-fixed-rooms").then((fixed) => fixed.endLessonsPastTime({ store, provider, drive, now })).catch(() => ({ ended: [] as string[], failed: true }));');
+    for (const [value, on] of [["on", true], ["", false], ["ON", false], ["1", false]]) expect(rooms.fixedRoomsEnabled({ CLASSROOM_FIXED_ROOMS: value }), value).toBe(on);
+    const r = await room();
+    const ann = await admitOne(r, "Ann");
+    const lessonId = (await status(r, ann.asked)).body.lessonId;
+    vi.stubEnv("CLASSROOM_FIXED_ROOMS", "");
+    const off = await runClassroomTick({ store, provider, drive, now: START + 500 * MIN, workerId: "st-6" });
+    expect(off.fixedRoomLessonsTimeUp).toBeUndefined();
+    expect(off.fixedRoomTimeUpFailed).toBeUndefined();
+    expect((await store.lesson(lessonId)).cancelled).toBe(false);
+    vi.stubEnv("CLASSROOM_FIXED_ROOMS", "on");
+    const on = await runClassroomTick({ store, provider, drive, now: START + 501 * MIN, workerId: "st-6" });
+    expect(on.fixedRoomLessonsTimeUp).toBeGreaterThanOrEqual(1);
+    expect((await store.lesson(lessonId)).cancelled).toBe(true);
   });
 });
