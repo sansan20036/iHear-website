@@ -74,6 +74,8 @@ test('CL-1: what one person draws shows on their page at once, and on everyone e
   const a = w.page('P-1'), b = w.page('P-2');
   a.client.start(); b.client.start();
   await w.advance(100);
+  // The first answer says who the page is, and the page is told at once (nothing else has happened yet).
+  assert.deepEqual([a.client.view().you, a.told[0]], ['P-1', { you: true }]);
   const line = a.client.beginLine({ color: 3, width: 2 });
   a.client.addPoints(line, [[100, 100], [200, 200]]);
   // On the drawer's own page before any answer: there, marked as not confirmed yet.
