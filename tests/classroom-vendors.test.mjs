@@ -3,7 +3,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { CLASSROOM_CAPABILITIES, classroomDeviceOf, deviceLimits } from "../lib/classroom-capabilities";
 import { handCommand } from "../lib/classroom-chat";
-import { hostReportFor, LcicEmbedAdapter, LCIC_FRAME_PERMISSIONS, MediaAdapterUnavailableError, ZoomVideoSdkMediaAdapter } from "../lib/classroom-media";
+import { hostReportFor, LcicEmbedAdapter, LCIC_FRAME_PERMISSIONS, MediaAdapterUnavailableError, ZoomVideoSdkMediaAdapter, zoomDisplayNameOf } from "../lib/classroom-media";
 import { ClassroomProviderUnavailableError, classroomProvider } from "../lib/classroom-provider";
 import { isTestLesson, LcicApiError, lcicStatusOf, memoryRoomRegistry, tc3Sign, tencentLcicConfig, tencentLcicProvider, verifyLcicCallback } from "../lib/classroom-vendors/tencent-lcic";
 import { zoomApiToken, zoomSessionPath, zoomVideoSdkConfig, zoomVideoSdkProvider } from "../lib/classroom-vendors/zoom-video-sdk";
@@ -1542,6 +1542,23 @@ describe("browser adapters", () => {
     other.mount(fakeDom().root);
     await other.join({ ...zoomJoin, role: "student", participantCode: "TEST-S01", equalTools: true });
     expect(otherEvents.filter(event => event.type === "tools").at(-1)).toMatchObject({ share: true, whiteboard: false });
+  });
+
+  // The user's decision (2026-11-24): in a fixed room Zoom shows the person's typed first name.
+  test("NAME-1: in a fixed room the person joins Zoom with the name the server recorded; a one-to-one lesson, a missing name or an unsafe one joins with the code", async () => {
+    const joinedAs = async (input) => {
+      const zoom = fakeZoom(), adapter = new ZoomVideoSdkMediaAdapter(async () => zoom.sdk, () => 1);
+      adapter.mount(fakeDom().root);
+      await adapter.join({ ...zoomJoin, role: "student", participantCode: "R0123abcd-0a1b2c", ...input });
+      return zoom.calls.find(call => call.startsWith("join:"));
+    };
+    expect(await joinedAs({ equalTools: true, displayName: "Kyle B" })).toBe("join:ihear-l-test-v01:synthetic.jwt.token:Kyle B");
+    expect(await joinedAs({ equalTools: false, displayName: "Kyle B" })).toBe("join:ihear-l-test-v01:synthetic.jwt.token:R0123abcd-0a1b2c");
+    expect(await joinedAs({ equalTools: true })).toBe("join:ihear-l-test-v01:synthetic.jwt.token:R0123abcd-0a1b2c");
+    for (const unsafe of ["<img src=x>", "Kyle\u0000", "K".repeat(43), "1Kyle", "Kyle_B", "   "]) {
+      expect(await joinedAs({ equalTools: true, displayName: unsafe }), JSON.stringify(unsafe)).toBe("join:ihear-l-test-v01:synthetic.jwt.token:R0123abcd-0a1b2c");
+    }
+    expect(zoomDisplayNameOf({ participantCode: "X1", displayName: " Ann ", equalTools: true })).toBe("Ann");
   });
 
   test("Zoom whiteboard: a start Zoom refuses keeps only Zoom's code (8000–8006), never Zoom's words, links or tokens", async () => {

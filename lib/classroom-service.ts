@@ -12,7 +12,7 @@ import { buildDashboard, LABELS } from "../tools/recording-pathway/classroom/liv
 // @ts-ignore - shared classroom logic, plain JavaScript.
 import { answerLost, mayHaveReachedZoom, OPERATED } from "../tools/recording-pathway/classroom/operations.mjs";
 import type { ClassroomDrive } from "./classroom-drive";
-import { fixedRoomOf, roomRecordingOn, shownCodeOf } from "./classroom-fixed-room-facts";
+import { displayNameOf, fixedRoomOf, roomRecordingOn, shownCodeOf } from "./classroom-fixed-room-facts";
 import type { ClassroomProvider } from "./classroom-provider";
 import type { ClassroomBlock, ClassroomBlockMember, ClassroomEvent, ClassroomLesson, ClassroomStore, OperationState, RecordingFile } from "./classroom-store";
 import { fixedRoomRecordingEnabled, sessionReportsEnabled, vendorDeletionEnabled } from "./classroom-switches";
@@ -459,6 +459,9 @@ export async function joinClassroom({ store, provider, lessonId, key, sessionEma
       // Gate B round 10: in a fixed room a student let in as themselves shows by a name of this lesson
       // only (their code is their consent's, never shown to the others in Zoom).
       participantCode: fixedRoomOf(events) ? shownCodeOf(events, participant!.code) : participant!.code,
+      // The user, 2026-11-24: in a fixed room Zoom shows the first name recorded when the person was
+      // let in (checked again as it is read); nothing for any other lesson.
+      ...(fixedRoomOf(events) && displayNameOf(events, participant!.code) ? { displayName: displayNameOf(events, participant!.code) } : {}),
       ...(lesson.blockId ? { block: { roomKind: lesson.roomKind, roomLabel: lesson.roomLabel, memberRole: member?.role ?? null } } : {}),
       // The token goes only to the media adapter. LCIC's address carries its own login.
       session: token.kind === "embed"
@@ -467,8 +470,8 @@ export async function joinClassroom({ store, provider, lessonId, key, sessionEma
       // Only the tutor's page reports the vendor's session id, and only where it is confirmed.
       ...(participant!.role === "tutor" && sessionReportsEnabled() ? { sessionReports: true } : {}),
       // Round 3: a fixed room's lesson (the server's own scheduling fact says so). It has no tutor to
-      // host it, so the page offers no chat or raised hands there until real Zoom shows what a session
-      // without a host allows (D-14).
+      // host it: the page offers no Zoom chat there (nobody can make it public-only), but raised hands
+      // (Zoom's command channel works without a host: W1 on real Zoom, 2026-11-23; on since 11/24).
       ...(fixedRoomOf(events) ? { fixedRoom: true } : {}),
     },
   };

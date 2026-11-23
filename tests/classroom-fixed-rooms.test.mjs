@@ -100,7 +100,7 @@ describe("fixed classroom links", () => {
     expect(JSON.stringify(await store.eventsFor([r.id]))).not.toContain(asked.body.ticket);
   });
 
-  test("FR-4: let in by an owner: the room opens a lesson, the person is its student by their ticket, and only then enters; Zoom gets a code, never the name; no host, no chat", async () => {
+  test("FR-4: let in by an owner: the room opens a lesson, the person is its student by their ticket, and only then enters; the token carries a code, never the name (the name Zoom shows comes apart, FR-4n); no host, no chat", async () => {
     const r = await room();
     const kyle = await ask(r, "Kyle");
     expect((await manage("admit", { room: r.id, request: kyle.body.requestId })).status).toBe(200);
@@ -126,6 +126,31 @@ describe("fixed classroom links", () => {
     const normal = await joinClassroom({ store, provider, lessonId: plain.id, key: keyOf(studentLink), now: START });
     expect(normal.status).toBe(200);
     expect(normal.body.fixedRoom).toBeUndefined();
+    expect(normal.body.displayName).toBeUndefined();
+  });
+
+  // The user's decision (2026-11-24): in a fixed room Zoom shows the first name a person typed.
+  test("FR-4n: the name Zoom shows is the one the owner saw when letting the person in (the second Kyle is \"kyle B\"), recorded by the server and checked again when read; a forged or unsafe name gives none, and then the code is shown", async () => {
+    const r = await room();
+    const kyle = await ask(r, "Kyle");
+    await manage("admit", { room: r.id, request: kyle.body.requestId });
+    const lessonId = (await status(r, kyle)).body.lessonId;
+    const twin = await ask(r, "kyle");
+    await manage("admit", { room: r.id, request: twin.body.requestId });
+    const first = await join(lessonId, kyle.body.ticket), second = await join(lessonId, twin.body.ticket);
+    expect(first.body.displayName).toBe("Kyle");
+    expect(second.body.displayName).toBe("kyle B");
+    // The token never carries the name; the code stays the person's identity in the lesson.
+    expect(JSON.stringify(claimsOf(first.body.session.token))).not.toMatch(/kyle/i);
+    expect(first.body.participantCode).toMatch(/^R[0-9a-f]{8}-[0-9a-f]{6}$/);
+    // A name that is not a safe one (another source, markup, too long) is not shown; the code is.
+    const { displayNameOf, PARTICIPANT_DISPLAY_NAME } = await import("../lib/classroom-fixed-room-facts");
+    const code = first.body.participantCode;
+    const fact = (name, extra = {}) => ({ source: "server", type: PARTICIPANT_DISPLAY_NAME, lessonId, participantCode: code, name, occurredAt: START + 1, receivedAt: START + 1, key: `t:${name}`, ...extra });
+    expect(displayNameOf([fact("Kyle")], code)).toBe("Kyle");
+    for (const bad of ["<b>Kyle</b>", "Kyle\u0000", "K".repeat(43), "", "1Kyle", "Kyle_B"]) expect(displayNameOf([fact(bad)], code), JSON.stringify(bad)).toBeNull();
+    expect(displayNameOf([fact("Kyle", { source: "page" })], code)).toBeNull();
+    expect(displayNameOf([fact("Kyle")], "R00000000-000000")).toBeNull();
   });
 
   test("FR-5: rooms are apart, and a typed name takes nobody's place: another room's ticket or key gets nothing; the same name again is a new person waiting (\"Kyle B\" for the teacher, never in the answer)", async () => {

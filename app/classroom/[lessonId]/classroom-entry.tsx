@@ -75,7 +75,8 @@ type Phase = "ready" | "joining" | "joined" | "blocked" | "left";
 // sessionReports: the join answer asked this (tutor's) page to report the vendor's session id.
 // fixedRoom: a fixed room's lesson (round 3): no host. Everyone gets the same teaching tools as far
 // as Zoom allows an ordinary participant (D-14, 2026-11-21); chat and raised hands stay off.
-type Joined = { provider: string; lesson: { code: string; startsAt: string; endsAt: string }; role: "tutor" | "student"; participantCode: string; sessionReports: boolean; fixedRoom: boolean };
+// displayName: a fixed room's recorded first name, which Zoom shows (the user, 2026-11-24); null elsewhere.
+type Joined = { provider: string; lesson: { code: string; startsAt: string; endsAt: string }; role: "tutor" | "student"; participantCode: string; sessionReports: boolean; fixedRoom: boolean; displayName: string | null };
 type Recording = { decided: boolean; allowed: boolean; status: string; basis: string };
 type Media = {
   available: boolean;
@@ -312,7 +313,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
     const answer = await requestJoin(lessonId, joinKey);
     if (answer.ok) {
       session.current = answer.session;
-      setJoined({ provider: answer.provider, lesson: answer.lesson, role: answer.role, participantCode: answer.participantCode, sessionReports: answer.sessionReports === true, fixedRoom: answer.fixedRoom === true });
+      setJoined({ provider: answer.provider, lesson: answer.lesson, role: answer.role, participantCode: answer.participantCode, sessionReports: answer.sessionReports === true, fixedRoom: answer.fixedRoom === true, displayName: answer.fixedRoom === true && answer.displayName ? answer.displayName : null });
       setRecording(null);
       setMedia(initialMedia());
       setPhase("joined");
@@ -376,6 +377,10 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
 
   const isTutor = phase === "joined" && joined?.role === "tutor";
   const isStudent = phase === "joined" && joined?.role === "student";
+  // Raised hands (the user, 2026-11-24: on in fixed rooms too). Who sees the others' hands: the tutor,
+  // and everyone in a fixed room (nobody hosts there). Who may lower someone else's: the tutor only;
+  // in a fixed room each person lowers their own.
+  const seesHands = isTutor || (phase === "joined" && joined?.fixedRoom === true);
 
   // The media adapter for this provider. Its events drive the stage, and on the tutor's page they
   // are reported to iHear the moment they happen.
@@ -395,7 +400,10 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
     setTools(NO_TOOLS);
     // A fixed room has no host to keep chat public: no chat and no raised hands there (D-14 settled
     // the teaching tools only; chat waits for its own decision).
-    setFeatures({ chat: current.capabilities.chat && !joined.fixedRoom, raiseHand: current.capabilities.raiseHand && !joined.fixedRoom, sound: typeof current.joinSound === "function" });
+    // A fixed room: no chat (nobody can make it public-only without a host; the server's own public
+    // chat is a separate piece), but raised hands, on Zoom's command channel, which needs no host
+    // (W1 on real Zoom, 2026-11-23; the user turned them on 2026-11-24).
+    setFeatures({ chat: current.capabilities.chat && !joined.fixedRoom, raiseHand: current.capabilities.raiseHand, sound: typeof current.joinSound === "function" });
     // A new room starts with both devices off and nothing pressed yet.
     wanted.current = { camera: false, microphone: false };
     let lost = false;
@@ -454,7 +462,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
     if (session.current) {
       current.join({
         sessionToken: session.current.token ?? "", sessionName: session.current.sessionName, embedUrl: session.current.embedUrl,
-        lessonCode: joined.lesson.code, participantCode: joined.participantCode, role: joined.role, equalTools: joined.fixedRoom,
+        lessonCode: joined.lesson.code, participantCode: joined.participantCode, role: joined.role, equalTools: joined.fixedRoom, ...(joined.displayName ? { displayName: joined.displayName } : {}),
       }).catch((error: unknown) => {
         // A vendor that cannot load (the Zoom package before the trial) says "not connected".
         if (error instanceof MediaAdapterUnavailableError) setMedia((state) => ({ ...state, available: false }));
@@ -531,13 +539,13 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   // A newly raised hand is told on top of the stage for a few seconds (the tutor's page); then the
   // participants button, the top bar and the list keep it until the hand is lowered.
   useEffect(() => {
-    const fresh = isTutor ? newHands(handsBefore.current, hands) : [];
+    const fresh = seesHands ? newHands(handsBefore.current, hands) : [];
     handsBefore.current = hands;
     setHandNotices((current) => {
       const still = current.filter((notice) => hands.some((hand) => hand.id === notice.id));
       return fresh.length === 0 && still.length === current.length ? current : [...still, ...fresh];
     });
-  }, [hands, isTutor]);
+  }, [hands, seesHands]);
   useEffect(() => {
     if (handNotices.length === 0) return;
     const timer = setTimeout(() => setHandNotices([]), HAND_NOTICE_MS);
@@ -842,7 +850,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
     setRejoining(true);
     setRejoinProblem("");
     const result = await rejoinRoom(current, () => requestJoin(lessonId, joinKey), {
-      lessonCode: joined.lesson.code, participantCode: joined.participantCode, role: joined.role, equalTools: joined.fixedRoom,
+      lessonCode: joined.lesson.code, participantCode: joined.participantCode, role: joined.role, equalTools: joined.fixedRoom, ...(joined.displayName ? { displayName: joined.displayName } : {}),
     });
     setRejoining(false);
     // Left (or entered anew) meanwhile: this answer belongs to a room that is gone.
@@ -1099,7 +1107,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
             </span>
             <span className={`classroom-room-badge ${badge}`} role="status" aria-label={`${text.recording}：${text.badge[badge]}`}>{text.badge[badge]}</span>
             {headcount != null && <span className="classroom-room-connection" role="status" data-headcount={headcount}>{locale === "en" ? `${headcount} in the room` : `教室人數：${headcount}`}</span>}
-            {isTutor && othersHands.length > 0 && (
+            {seesHands && othersHands.length > 0 && (
               <button type="button" className="room2-chip room2-hands-chip" data-hands-chip={othersHands.length}
                 onClick={(event) => togglePanel("people", event.currentTarget)}>
                 <RoomIcon name="hand" />{text.handsWaiting(othersHands.length)}
@@ -1239,7 +1247,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
                 <div key={hand.id} className="room2-notice" data-hand-notice={hand.id}>
                   <RoomIcon name="hand" />
                   <span>{text.handNotice(label)}</span>
-                  <button type="button" className="classroom-room-secondary" onClick={() => void lowerHand(hand.id)}>{text.handLower(hand.name)}</button>
+                  {isTutor && <button type="button" className="classroom-room-secondary" onClick={() => void lowerHand(hand.id)}>{text.handLower(hand.name)}</button>}
                   <button type="button" className="classroom-room-secondary" onClick={() => setHandNotices([])}>{text.handNoticeDismiss}</button>
                 </div>
               );
@@ -1250,7 +1258,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
             <div className="room2-panel-head">
               <div className="room2-tabs" role="tablist">
                 {features.chat && <button type="button" role="tab" id="classroom-tab-chat" aria-selected={panel === "chat"} aria-controls="classroom-chat" onClick={() => setPanel("chat")}>{text.chat}{unread > 0 && <span className="room2-tab-count">{unread}</span>}</button>}
-                {!lcic && <button type="button" role="tab" id="classroom-tab-people" aria-selected={panel === "people"} aria-controls="classroom-people" onClick={() => setPanel("people")}>{text.people}{isTutor && othersHands.length > 0 && <span className="room2-tab-count">{othersHands.length}</span>}</button>}
+                {!lcic && <button type="button" role="tab" id="classroom-tab-people" aria-selected={panel === "people"} aria-controls="classroom-people" onClick={() => setPanel("people")}>{text.people}{seesHands && othersHands.length > 0 && <span className="room2-tab-count">{othersHands.length}</span>}</button>}
                 <button type="button" role="tab" id="classroom-tab-info" aria-selected={panel === "info"} aria-controls="classroom-info" onClick={() => setPanel("info")}>{text.info}</button>
               </div>
               <button type="button" className="room2-panel-close" aria-label={panel === "chat" ? text.chatClose : panel === "people" ? text.peopleClose : text.infoClose} onClick={closePanel}>
@@ -1285,12 +1293,13 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
             {!lcic && (
               <section id="classroom-people" role="tabpanel" aria-labelledby="classroom-tab-people" className="room2-tabpanel" hidden={panel !== "people"}>
                 <h2 className="sr-only">{text.people}</h2>
-                {/* The tutor sees who raised a hand, plainly, and can lower it. */}
-                {isTutor && othersHands.length > 0 && (
+                {/* The tutor sees who raised a hand, plainly, and can lower it; in a fixed room everyone
+                    sees it, and each person lowers their own. */}
+                {seesHands && othersHands.length > 0 && (
                   <div className="classroom-room-hands" role="status" data-hands={othersHands.length}>
                     <RoomIcon name="hand" />
                     <span>{text.handsRaised}{othersHands.map((hand) => hand.name || text.student).join(text.nameSeparator)}</span>
-                    {othersHands.map((hand) => (
+                    {isTutor && othersHands.map((hand) => (
                       <button key={hand.id} type="button" className="classroom-room-secondary" onClick={() => void lowerHand(hand.id)}>{text.handLower(hand.name)}</button>
                     ))}
                   </div>
@@ -1405,9 +1414,9 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
                 </button>
               )}
               {!lcic && toolButton({
-                control: "people", icon: "people", label: text.people, name: text.peopleButton(people.length, isTutor ? othersHands.length : 0), tip: text.people,
+                control: "people", icon: "people", label: text.people, name: text.peopleButton(people.length, seesHands ? othersHands.length : 0), tip: text.people,
                 expanded: panel === "people", controls: "classroom-people", onClick: (event) => togglePanel("people", event.currentTarget),
-                badge: isTutor && othersHands.length > 0 ? <span className="classroom-room-unread room2-hands-badge" aria-hidden="true">{othersHands.length}</span> : null,
+                badge: seesHands && othersHands.length > 0 ? <span className="classroom-room-unread room2-hands-badge" aria-hidden="true">{othersHands.length}</span> : null,
               })}
             </div>
           )}

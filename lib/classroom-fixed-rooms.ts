@@ -29,7 +29,7 @@ import { hashKey } from "./classroom-block-rules";
 import type { ClassroomDrive } from "./classroom-drive";
 import { distinctName, entryNameOf } from "./classroom-names";
 import type { ClassroomProvider } from "./classroom-provider";
-import { PARTICIPANT_ALIAS, roomRecordingOn } from "./classroom-fixed-room-facts";
+import { PARTICIPANT_ALIAS, PARTICIPANT_DISPLAY_NAME, roomRecordingOn } from "./classroom-fixed-room-facts";
 import { changeLessonAccess, consentPolicy, forRules, PERSON_CODE, roomMayRecordNow, stopRecordingForCancelledLesson } from "./classroom-service";
 // @ts-ignore - shared classroom logic, plain JavaScript tested with node --test.
 import { personConsentProblem } from "../tools/recording-pathway/classroom/eligibility.mjs";
@@ -343,7 +343,13 @@ async function admit({ store, roomId, requestId, bindTo, actor, now }: { store: 
       }, ...(member && alias ? [{
         source: "server", type: PARTICIPANT_ALIAS, lessonId: classLessonId, participantCode: member.code, alias,
         occurredAt: now, receivedAt: now, key: `${PARTICIPANT_ALIAS}:${classLessonId}:${member.code}:${requestId}`,
-      }] : [])],
+      }] : []), {
+        // The name Zoom shows for this person (the user, 2026-11-24): the one the iHear teacher saw
+        // when letting them in (their typed first name, or the list's for a student let in as
+        // themselves), already checked and made distinct in this room.
+        source: "server", type: PARTICIPANT_DISPLAY_NAME, lessonId: classLessonId, participantCode: code, name: request.shown,
+        occurredAt: now, receivedAt: now, key: `${PARTICIPANT_DISPLAY_NAME}:${classLessonId}:${code}:${requestId}`,
+      }],
     });
     if (result.ok) {
       if (member) {

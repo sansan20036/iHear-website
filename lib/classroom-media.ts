@@ -91,6 +91,16 @@ export type MediaCapabilities = {
   raiseHand: boolean;
 };
 
+// What Zoom shows for this person (the user, 2026-11-24): in a fixed room the first name the server
+// recorded when they were let in, if it is a safe one (English letters first, then letters, spaces,
+// . and ', at most 42: a typed name of up to 40 plus " B"); otherwise, and in every other lesson, the
+// participant code. The server checks the name first; this is the page's second check.
+const SHOWN_NAME = /^[A-Za-z][A-Za-z .']{0,41}$/;
+export function zoomDisplayNameOf(input: Pick<MediaJoin, "participantCode" | "displayName" | "equalTools">): string {
+  const name = typeof input.displayName === "string" ? input.displayName.trim() : "";
+  return input.equalTools === true && SHOWN_NAME.test(name) ? name : input.participantCode;
+}
+
 export type MediaJoin = {
   sessionToken: string; lessonCode: string; participantCode: string; role: MediaRole;
   // Zoom: the topic the join token names. LCIC: Tencent's classroom address with its login.
@@ -99,6 +109,10 @@ export type MediaJoin = {
   // tools as far as the vendor allows an ordinary participant; the adapter then tells the page what
   // that is (the "tools" event). Management stays off the page: everyone joins as a participant.
   equalTools?: boolean;
+  // A fixed room (the user, 2026-11-24): the first name the person typed, as the server checked and
+  // recorded it when they were let in (e.g. "Kyle B"), shown in Zoom in place of the code. Only the
+  // server's answer sets it; a one-to-one lesson or a block has none, and shows the code as before.
+  displayName?: string;
 };
 
 export interface ClassroomMediaAdapter {
@@ -1025,8 +1039,10 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
         const { name, state } = (payload ?? {}) as { name?: string; state?: string };
         if ((name === "camera" || name === "microphone") && state === "denied") this.fromZoom(name, { state: "denied" });
       });
-      // The display name is the participant code: no student name reaches Zoom.
-      await zoom.join(input.sessionName, input.sessionToken, input.participantCode);
+      // The display name is the participant code (no student name reaches Zoom), except in a fixed
+      // room, where it is the first name the server recorded when the person was let in (the user,
+      // 2026-11-24). Identity never rests on it: Zoom ties a person to us by the token's user key.
+      await zoom.join(input.sessionName, input.sessionToken, zoomDisplayNameOf(input));
       if (await overtaken()) return;
       this.stream = zoom.getMediaStream();
       for (const ready of [...this.streamWaiters]) ready();

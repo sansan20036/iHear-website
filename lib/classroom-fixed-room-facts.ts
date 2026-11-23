@@ -19,6 +19,19 @@ export function shownCodeOf(events: readonly ClassroomEvent[], code: string): st
   return given ? String(given.alias) : code;
 }
 
+// The user's decision (2026-11-24): in a fixed room Zoom shows the first name a person typed, as the
+// server checked and shows it to the iHear teacher (a second "Kyle" as "Kyle B"), recorded when they
+// are let in. Read back only when it is still a safe name (English letters first, then letters,
+// spaces, . and ', at most 42); otherwise none, and the page shows the code as before.
+export const PARTICIPANT_DISPLAY_NAME = "server.participant_display_name";
+const SHOWN_NAME = /^[A-Za-z][A-Za-z .']{0,41}$/;
+export function displayNameOf(events: readonly ClassroomEvent[], code: string): string | null {
+  const given = events.filter((event) => event.source === "server" && event.type === PARTICIPANT_DISPLAY_NAME && event.participantCode === code && typeof event.name === "string")
+    .sort((a, b) => a.occurredAt - b.occurredAt || String(a.key).localeCompare(String(b.key))).at(-1);
+  const name = given ? String(given.name).trim() : "";
+  return SHOWN_NAME.test(name) ? name : null;
+}
+
 // The room's own recording switch as the lesson knows it (the iHear teacher's latest choice, written
 // to the room's lesson): off unless turned on. The site's switch is checked apart.
 // The copy a new lesson starts with (copied: true) gives way to the teacher's own choice made at the

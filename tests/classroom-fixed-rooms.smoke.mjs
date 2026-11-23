@@ -106,7 +106,7 @@ try {
     await expect(roomCard().locator('[data-waiting-person]')).toHaveCount(1);
   });
 
-  await check('R3', '老師讓他進入：學生自動到教室頁並進入；按「開啟聲音」聽得到；沒有聊天和舉手（沒有主持人，D-14）', async () => {
+  await check('R3', '老師讓他進入：學生自動到教室頁並進入；按「開啟聲音」聽得到；沒有聊天（沒有主持人，D-14）；可以舉手、自己放下（使用者 11/24 開放）', async () => {
     await roomCard().locator('[data-waiting-person="Kyle"]').getByRole('button', { name: '讓他進入', exact: true }).click();
     await expect(roomCard().locator('[data-in-room-person="Kyle"]')).toBeVisible();
     await expect(kyle).toHaveURL(new RegExp(`${origin}/classroom/L-[0-9a-f]{32}$`));
@@ -117,8 +117,15 @@ try {
     await sound.getByRole('button', { name: '開啟聲音', exact: true }).click();
     await expect(sound).toHaveCount(0);
     await expect(kyle.getByRole('tab', { name: /聊天/ })).toHaveCount(0);
-    await expect(kyle.getByRole('button', { name: /舉手/ })).toHaveCount(0);
+    // The user, 2026-11-24: raised hands are on in a fixed room (Zoom's command channel needs no
+    // host; W1 on real Zoom). The person raises and lowers their own hand.
+    const hand = kyle.locator('[data-control="hand"]');
+    await expect(hand).toHaveAttribute('aria-pressed', 'false');
+    await hand.click();
+    await expect(hand).toHaveAttribute('aria-pressed', 'true');
     await shot(kyle, 'r3-in-room');
+    await hand.click();
+    await expect(hand).toHaveAttribute('aria-pressed', 'false');
   });
 
   // D-14 (2026-11-21): the teacher's rule, "the same teaching tools for everyone, management kept

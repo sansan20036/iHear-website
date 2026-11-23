@@ -556,6 +556,22 @@ describe("the words a fixed room shows when the entry has ended", () => {
     expect(source).not.toMatch(/text\.reasons\[reason\]/);
   });
 
+  test("FX-6: raised hands in a fixed room (the user, 2026-11-24): on; everyone there sees the others' hands; only a tutor is offered to lower someone else's", async () => {
+    const source = await readFile("app/classroom/[lessonId]/classroom-entry.tsx", "utf8");
+    expect(source).toContain("raiseHand: current.capabilities.raiseHand, sound:");
+    expect(source).not.toMatch(/raiseHand: current\.capabilities\.raiseHand && !joined\.fixedRoom/);
+    expect(source).toContain('const seesHands = isTutor || (phase === "joined" && joined?.fixedRoom === true);');
+    expect(source).toContain("const fresh = seesHands ? newHands(handsBefore.current, hands) : [];");
+    for (const shown of ["{seesHands && othersHands.length > 0 && (", "seesHands ? othersHands.length : 0", "badge: seesHands && othersHands.length > 0"]) expect(source, shown).toContain(shown);
+    // Every button that lowers someone else's hand is the tutor's alone.
+    const lowering = [...source.matchAll(/onClick=\{\(\) => void lowerHand\(hand\.id\)\}/g)].map((match) => source.slice(Math.max(0, match.index - 220), match.index));
+    expect(lowering.length).toBe(2);
+    for (const before of lowering) {
+      expect(before.lastIndexOf("isTutor && "), before).toBeGreaterThanOrEqual(0);
+      expect(before.lastIndexOf("isTutor && "), before).toBeGreaterThan(before.lastIndexOf("seesHands && "));
+    }
+  });
+
   test("FX-5: the page counts its moves to another session of the lesson (only a new session name counts) and shows the count on its connection state", async () => {
     const source = await readFile("app/classroom/[lessonId]/classroom-entry.tsx", "utf8");
     expect(source).toContain("if (result.session.sessionName && result.session.sessionName !== session.current?.sessionName) setRoomMoves((moves) => moves + 1);");
