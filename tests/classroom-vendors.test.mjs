@@ -139,6 +139,41 @@ describe("Zoom Video SDK, server side", () => {
     ]);
   });
 
+  // W1 on real Zoom (2026-11-23): ending a live session whose id held one "/" (encoded once) was
+  // answered 404; the cause is not settled. A control call for such an id tries the other encoding
+  // once; nothing else is ever sent twice. (This shows what iHear sends, not what Zoom accepts.)
+  test("P-4b: a control call for an id holding \"/\" answered 404 is tried once more under the other encoding; no other call is sent twice", async () => {
+    const sample = "oiFKKKL/RyGdm9W1r1Ll6w==";
+    const once = "oiFKKKL%2FRyGdm9W1r1Ll6w%3D%3D", twice = "oiFKKKL%252FRyGdm9W1r1Ll6w%253D%253D";
+    const base = "https://api.zoom.us/v2/videosdk/sessions";
+    // Zoom takes only the double encoding: the second try ends the session.
+    const doubleOnly = provider(request => ({ status: request.url.includes(twice) ? 204 : 404, body: "" }), sample);
+    expect(await doubleOnly.provider.endSession(lesson)).toEqual({ ok: true, httpStatus: 204 });
+    expect(doubleOnly.requests.map(request => [request.method, request.url])).toEqual([["PUT", `${base}/${once}/status`], ["PUT", `${base}/${twice}/status`]]);
+    // The same for stopping and starting a recording (PATCH events).
+    const stop = provider(request => ({ status: request.url.includes(twice) ? 202 : 404, body: "" }), sample);
+    expect(await stop.provider.stopRecording(lesson)).toEqual({ ok: true, httpStatus: 202 });
+    expect(stop.requests.map(request => [request.method, request.url, JSON.parse(request.body).method])).toEqual([["PATCH", `${base}/${once}/events`, "recording.stop"], ["PATCH", `${base}/${twice}/events`, "recording.stop"]]);
+    // A session that is really gone: 404 both times, reported as 404, never as done.
+    const gone = provider(() => ({ status: 404, body: "" }), sample);
+    expect(await gone.provider.endSession(lesson)).toEqual({ ok: false, httpStatus: 404 });
+    expect(gone.requests.length).toBe(2);
+    // An id beginning with "/" is encoded twice first; the second try is encoded once.
+    const lead = "/Q4zHkBcRYGrW8q2xZ6wgQ==";
+    const led = provider(() => ({ status: 404, body: "" }), lead);
+    await led.provider.endSession(lesson);
+    expect(led.requests.map(request => request.url)).toEqual([`${base}/${encodeURIComponent(encodeURIComponent(lead))}/status`, `${base}/${encodeURIComponent(lead)}/status`]);
+    // No "/" in the id, or any answer but 404: one request only.
+    const plain = provider(() => ({ status: 404, body: "" }), "abc+DEF123==");
+    expect(await plain.provider.endSession(lesson)).toEqual({ ok: false, httpStatus: 404 });
+    expect(plain.requests.length).toBe(1);
+    for (const status of [200, 202, 204, 400, 409, 429, 500]) {
+      const other = provider(() => ({ status, body: "" }), sample);
+      await other.provider.endSession(lesson);
+      expect(other.requests.length, String(status)).toBe(1);
+    }
+  });
+
   // --- P-1: a reported session is used only once Zoom confirms it ---------------------------------
 
   test("a session id the tutor's page reported is confirmed only when Zoom says the session is this lesson's", async () => {

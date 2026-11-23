@@ -193,28 +193,35 @@ try {
     await expect(ann.locator('[data-room-waiting]')).toBeVisible();
   });
 
-  // P2 (2026-11-23): the fixed room's own words, not the one-to-one lesson's ("this personal link no
-  // longer works, ask iHear for a new one"): the room's shared link keeps working.
-  await check('R6', '請出教室：老師按請出，學生的頁面離開教室，說「老師已請你離開這間教室」（不是一對一的「個人連結已失效」）；他的入場憑證進不來', async () => {
-    await roomCard().locator('[data-in-room-person="Kyle"]').getByRole('button', { name: '請出教室' }).click();
-    await expect(roomCard().locator('[data-in-room-person="Kyle"]')).toHaveCount(0);
-    await expect(kyle.getByText('老師已請你離開這間教室。如有問題，請聯絡老師。')).toBeVisible({ timeout: 45_000 });
-    await expect(kyle.getByText(/個人連結已失效|索取新的連結/)).toHaveCount(0);
-    await shot(kyle, 'r6-taken-out');
-  });
-
-  await check('R6a', '老師讓 Ann 進入：她進到同一次上課（請出別人之後，教室換到新的 Zoom Session）；另一位 Cy 用連結申請、在等待', async () => {
+  await check('R5b', '老師讓 Ann 進入：她和 Kyle 在同一次上課；另一位 Cy 用連結申請、在等待', async () => {
     await roomCard().locator('[data-waiting-person="Ann"]').getByRole('button', { name: '讓他進入', exact: true }).click();
     await expect(roomCard().locator('[data-in-room-person="Ann"]')).toBeVisible();
     await expect(ann).toHaveURL(new RegExp(`${origin}/classroom/L-[0-9a-f]{32}$`));
     await ann.getByRole('button', { name: '進入教室' }).click();
     await expect(ann.locator('.room2-top .classroom-room-connection')).toHaveText('已連線');
+    await expect(ann.locator('.room2-top .classroom-room-connection')).toHaveAttribute('data-room-moves', '0');
     const cy = watch(await (await context({})).newPage(), 'student-cy');
     await cy.goto(link);
     await cy.getByLabel(/Please enter your first name/).fill('Cy');
     await cy.getByRole('button', { name: '進入教室' }).click();
     await expect(cy.locator('[data-room-waiting]')).toBeVisible();
     await expect(roomCard().locator('[data-waiting-person="Cy"]')).toBeVisible();
+  });
+
+  // P2 (2026-11-23): the fixed room's own words, not the one-to-one lesson's ("this personal link no
+  // longer works, ask iHear for a new one"): the room's shared link keeps working. And the one who
+  // stays moves to the room's new session (D-4) and is connected there: data-room-moves says the
+  // page really moved, so 已連線 is the new session's, not the old one's (W1 on real Zoom, 11/23).
+  await check('R6', '請出教室：老師按請出 Kyle，他的頁面離開教室，說「老師已請你離開這間教室」（不是一對一的「個人連結已失效」）；留下的 Ann 換到新的 Session 並重新連上', async () => {
+    await roomCard().locator('[data-in-room-person="Kyle"]').getByRole('button', { name: '請出教室' }).click();
+    await expect(roomCard().locator('[data-in-room-person="Kyle"]')).toHaveCount(0);
+    await expect(kyle.getByText('老師已請你離開這間教室。如有問題，請聯絡老師。')).toBeVisible({ timeout: 45_000 });
+    await expect(kyle.getByText(/個人連結已失效|索取新的連結/)).toHaveCount(0);
+    await shot(kyle, 'r6-taken-out');
+    const annState = ann.locator('.room2-top .classroom-room-connection');
+    await expect(annState).toHaveAttribute('data-room-moves', '1', { timeout: 45_000 });
+    await expect(annState).toHaveText('已連線');
+    await expect(roomCard().locator('[data-in-room-person="Ann"]')).toBeVisible();
   });
 
   // Round 7 (2026-11-21): a room taken out of use and back (lib/classroom-fixed-rooms.ts setInUse).

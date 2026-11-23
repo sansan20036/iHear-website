@@ -94,4 +94,15 @@ describe("both trial tools use this one rule", () => {
     expect(source.slice(letIn, letIn + 600)).toContain("if (!rehearsal) markConnected(who);");
     expect(source).toMatch(/error => \{ markGone\(who\); report\.findings\[`\$\{who\}Connect`\] = 'did not connect';/);
   });
+
+  test("RD-10: after a removal the others must have moved to the room's new session (data-room-moves) before 已連線 counts; a few seconds pass before the owner ends a real lesson", async () => {
+    const source = await readFile("tools/classroom-trial/fixed-room-check.mjs", "utf8");
+    const removal = source.slice(source.indexOf("TestC is taken out"), source.indexOf("the owner ends the lesson: everyone leaves"));
+    expect(removal).toContain("getAttribute('data-room-moves')");
+    expect(removal).toMatch(/expect\.poll\(\(\) => movesOf\(who\), \{ timeout: 90_000 \}\)\.toBeGreaterThan\(before\[who\]\)/);
+    expect(removal).toContain("throw new Error('not everyone left in the room moved to its new session')");
+    const end = source.slice(source.indexOf("the owner ends the lesson: everyone leaves"));
+    expect(end.indexOf("if (!rehearsal) await pause(5_000);")).toBeGreaterThan(0);
+    expect(end.indexOf("if (!rehearsal) await pause(5_000);")).toBeLessThan(end.indexOf("'結束這次上課' }).click()"));
+  });
 });

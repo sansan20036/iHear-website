@@ -249,6 +249,11 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
     const here = session.current?.sessionName;
     if (typeof room === "string" && room && here && room !== here) moveRoom.current();
   }, []);
+  // How many times this page has moved to another session of the lesson (a new room after someone
+  // was taken out, D-4/D-5). Shown as data-room-moves on the connection state, a count only, so a
+  // check can tell "connected again in the new session" from the old session's label (W1 on real
+  // Zoom, 2026-11-23: a check read 已連線 before the old session had ended).
+  const [roomMoves, setRoomMoves] = useState(0);
   // "Connect again" on its way, and why the join check refused it (its code), if it did.
   const [rejoining, setRejoining] = useState(false);
   const [rejoinProblem, setRejoinProblem] = useState("");
@@ -842,8 +847,10 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
     setRejoining(false);
     // Left (or entered anew) meanwhile: this answer belongs to a room that is gone.
     if (adapter.current !== current) return;
-    if (result.ok) session.current = result.session;
-    else if (result.code !== "CONNECT_FAILED") setRejoinProblem(result.code);
+    if (result.ok) {
+      if (result.session.sessionName && result.session.sessionName !== session.current?.sessionName) setRoomMoves((moves) => moves + 1);
+      session.current = result.session;
+    } else if (result.code !== "CONNECT_FAILED") setRejoinProblem(result.code);
   }
   // Moving to the room the server names is this same request (see moveRoom above).
   useEffect(() => {
@@ -1087,7 +1094,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
             {roomLabel && <span className="room2-chip room2-chip-room" data-room-label={roomLabel}>{locale === "en" ? "Room " : "教室 "}{roomName}</span>}
           </div>
           <div className="room2-status classroom-room-statusbar">
-            <span className={`classroom-room-connection ${media.available ? media.connection : "unavailable"}`} role="status">
+            <span className={`classroom-room-connection ${media.available ? media.connection : "unavailable"}`} role="status" data-room-moves={roomMoves}>
               {media.available ? text.connection[media.connection] : text.connection.idle}
             </span>
             <span className={`classroom-room-badge ${badge}`} role="status" aria-label={`${text.recording}：${text.badge[badge]}`}>{text.badge[badge]}</span>

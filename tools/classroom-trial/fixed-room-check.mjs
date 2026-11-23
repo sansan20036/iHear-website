@@ -336,16 +336,30 @@ try {
     }, { fatal: false });
     await check('TestC is taken out: their page leaves; the others move to a new session and come back', async () => {
       const from = Date.now();
+      // W1 review (2026-11-23): 已連線 alone was still the old session's when this check read it. Each
+      // page counts its moves to another session (data-room-moves): the others must have moved, and
+      // be connected after that.
+      const movesOf = async who => Number(await connection(who).getAttribute('data-room-moves')) || 0;
+      const before = { TestA: await movesOf('TestA'), TestB: await movesOf('TestB') };
       await card().locator('[data-in-room-person="TestC"]').getByRole('button', { name: '請出教室' }).click();
       // P2 (2026-11-23): the fixed room's own words (the page before this said the one-to-one lesson's).
       await expect(people.TestC.page.getByText('老師已請你離開這間教室。如有問題，請聯絡老師。')).toBeVisible({ timeout: 60_000 });
       markGone('TestC');
-      for (const who of ['TestA', 'TestB']) await expect(connection(who)).toHaveText('已連線', { timeout: 90_000 });
+      const moved = {};
+      for (const who of ['TestA', 'TestB']) {
+        moved[who] = await expect.poll(() => movesOf(who), { timeout: 90_000 }).toBeGreaterThan(before[who]).then(() => true, () => false);
+        if (moved[who]) await expect(connection(who)).toHaveText('已連線', { timeout: 90_000 });
+      }
+      report.findings.othersMovedToTheNewSession = moved;
       report.findings.removalSeconds = Math.round((Date.now() - from) / 1000);
+      if (!moved.TestA || !moved.TestB) throw new Error('not everyone left in the room moved to its new session');
     }, { fatal: false });
   }
 
   await check('the owner ends the lesson: everyone leaves', async () => {
+    // W1 review (2026-11-23): a few seconds in the room's last session first, so Zoom's own record
+    // has everyone's stay in it before the lesson ends.
+    if (!rehearsal) await pause(5_000);
     await card().getByRole('button', { name: '結束這次上課' }).click();
     lessonEnded = true;
     for (const who of ['TestA', 'TestB']) {

@@ -54,8 +54,9 @@ export function zoomApiToken(config: Pick<ZoomVideoSdkConfig, "apiKey" | "apiSec
  * want it encoded twice when it contains any "/"; the session, users, events and status calls
  * when it begins with "/" or contains "//". Otherwise once.
  */
-export function zoomSessionPath(id: string, rule: "session" | "recordings") {
-  const twice = rule === "recordings" ? id.includes("/") : id.startsWith("/") || id.includes("//");
+export function zoomSessionPath(id: string, rule: "session" | "recordings", alternate = false) {
+  // alternate: the other of the two encodings (W1, 2026-11-23; see control below).
+  const twice = (rule === "recordings" ? id.includes("/") : id.startsWith("/") || id.includes("//")) !== alternate;
   const once = encodeURIComponent(id);
   return twice ? encodeURIComponent(once) : once;
 }
@@ -87,14 +88,22 @@ export function zoomVideoSdkProvider(config: ZoomVideoSdkConfig, options: Option
       return { status: 0, body: "" };
     }
   };
-  const sessionPath = (id: string, suffix = "") => `/videosdk/sessions/${zoomSessionPath(id, suffix === "/recordings" ? "recordings" : "session")}${suffix}`;
+  const sessionPath = (id: string, suffix = "", alternate = false) => `/videosdk/sessions/${zoomSessionPath(id, suffix === "/recordings" ? "recordings" : "session", alternate)}${suffix}`;
   // A request for one session: the one named (G-3: the server names each session it means), or
   // without a name the lesson's latest known session, as before.
+  //
+  // W1 on real Zoom (2026-11-23): ending a live session whose id holds one "/" (not at its start),
+  // encoded once as the reference asks, was answered 404, while the same call for an id without "/"
+  // was answered 204. Why is not settled (the encoding, or that session's host having left). So a
+  // control call (ending a session, starting or stopping its recording) for an id holding "/" is
+  // tried once more under the other encoding when the first answer is 404. For a session that is
+  // really gone both answers are 404; a session that answered anything else is never asked twice.
   const control = async (lesson: ClassroomLesson, method: "PATCH" | "PUT", suffix: string, body: unknown, sessionId?: string): Promise<ProviderCall> => {
     const id = sessionId ?? (await options.sessionsOf(lesson)).at(-1)?.id;
     // No confirmed session yet (nobody joined, or the id is still being checked): nothing to control.
     if (!id) return { ok: false, httpStatus: 409 };
-    const response = await request(method, sessionPath(id, suffix), body);
+    let response = await request(method, sessionPath(id, suffix), body);
+    if (response.status === 404 && id.includes("/")) response = await request(method, sessionPath(id, suffix, true), body);
     return { ok: response.status >= 200 && response.status < 300, httpStatus: response.status };
   };
   // A session's details. Zoom describes a session only under its own type (live by default), so

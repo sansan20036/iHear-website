@@ -555,4 +555,11 @@ describe("the words a fixed room shows when the entry has ended", () => {
     expect(source).toContain("text.reasons[reasonShown(rejoinProblem, fixedRoom)]");
     expect(source).not.toMatch(/text\.reasons\[reason\]/);
   });
+
+  test("FX-5: the page counts its moves to another session of the lesson (only a new session name counts) and shows the count on its connection state", async () => {
+    const source = await readFile("app/classroom/[lessonId]/classroom-entry.tsx", "utf8");
+    expect(source).toContain("if (result.session.sessionName && result.session.sessionName !== session.current?.sessionName) setRoomMoves((moves) => moves + 1);");
+    expect(source.indexOf("setRoomMoves((moves) => moves + 1)")).toBeLessThan(source.indexOf("session.current = result.session;"));
+    expect(source).toMatch(/className=\{`classroom-room-connection [^`]+`\} role="status" data-room-moves=\{roomMoves\}/);
+  });
 });
