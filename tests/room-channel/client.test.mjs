@@ -241,6 +241,15 @@ test('CL-7: the chat: to the whole room, each message once, cut at its length, a
   await w.advance(2000);
   assert.deepEqual([b.client.view().chat.messages.length, b.client.view().chat.ended], [0, true]);
   assert.deepEqual([a.client.view().chat.messages.length, a.client.view().chat.ended], [0, true]);
+  // A room where nobody had written anything: the page still learns that the chat is over.
+  const quiet = world();
+  const c = quiet.page('P-1');
+  c.client.start();
+  await quiet.advance(1000);
+  assert.equal(c.client.view().chat.ended, false);
+  quiet.lesson.endedAt = quiet.clock.now;
+  await quiet.advance(2000);
+  assert.deepEqual([c.client.view().chat.messages.length, c.client.view().chat.ended, c.client.view().board.ended], [0, true, true]);   // and that the board can no longer be drawn on
 });
 
 test('CL-8: the share turn on a page: asked for before sharing, kept by saying "still sharing", lost with the connection, handed over', async () => {
@@ -430,4 +439,28 @@ test('SC-6: taken out of the room while sharing: the share stops; leaving the ro
   assert.equal(c.client.view().turn.holder, null);
   assert.equal(await b.control.start(), false);
   assert.equal(b.stand.calls.start, 1);
+});
+
+test('SC-7: the turn is lost while the browser\'s own window is still open: when the person finally chooses, nothing is shared', async () => {
+  const w = world();
+  // The person leaves the browser's "choose what to share" window open; the test says when they choose.
+  let choose = null;
+  const a = sharer(w, 'P-1', () => new Promise(resolve => { choose = resolve; })), b = sharer(w, 'P-2');
+  await w.advance(200);
+  const starting = a.control.start();
+  await w.advance(1500);
+  assert.deepEqual([a.client.view().turn.mine, a.stand.calls.start, a.control.sharing], [true, 1, false]);
+  // Meanwhile the connection is away for longer than the lease, and someone else takes the turn.
+  w.net.set('P-1', () => 'lose-request');
+  await w.advance(TURN_LIMITS.leaseMs + 3000, 250);
+  assert.equal(await after(w, b.control.start()), true);
+  w.net.delete('P-1');
+  await w.advance(12_000, 250);
+  assert.equal(a.client.view().turn.holder, 'P-2');
+  // Now the person chooses a window: the share that the browser has just started is stopped at once.
+  choose(true);
+  assert.equal(await after(w, starting, 500), false);
+  assert.deepEqual([a.control.sharing, a.stand.calls.stop >= 1], [false, true]);
+  assert.ok(a.said.some(what => what.notice === 'LOST'));
+  assert.equal(b.control.sharing, true);
 });
