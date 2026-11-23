@@ -66,8 +66,11 @@ const PROFILES = {
 // list only by its own approval. Gate B round 10 (2026-11-22): the recordings' retention and
 // deletion mode, and the fixed rooms' file-name rule (iHear's decisions: 保存期限, file names).
 // Round 12: which kinds of recording a period covers, and who may apply it (保存期限, who may delete).
+// Round 15 (2026-11-24): the fixed rooms' own board, public chat and share turn on our server (the
+// user's decisions of 11/23 20:45 and 21:35; developed locally, each off unless set).
 export const FORBIDDEN = [
   'CLASSROOM_FIXED_ROOM_RECORDING', 'CLASSROOM_FIXED_ROOMS', 'CLASSROOM_PERMANENT_ENTRY',
+  'CLASSROOM_ROOM_BOARD', 'CLASSROOM_ROOM_CHAT', 'CLASSROOM_ROOM_SHARE_TURN',
   'CLASSROOM_RECORDING_RETENTION_DAYS', 'CLASSROOM_RECORDING_RETENTION_MODE', 'CLASSROOM_FIXED_ROOM_FILE_NAMES',
   'CLASSROOM_RECORDING_RETENTION_SCOPE', 'CLASSROOM_RECORDING_RETENTION_DELETERS',
   'CLASSROOM_VENDOR_DELETION', 'CLASSROOM_MULTI_RECORDING', 'CLASSROOM_TRIAL_CONSENT',

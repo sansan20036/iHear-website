@@ -61,6 +61,8 @@ describe('env-check', () => {
     expect(codes(checkMetadata([...pilotListing, { key: 'CLASSROOM_MULTI_RECORDING', type: 'sensitive', target: ['production'] }], 'pilot'))).toEqual(['error:CLASSROOM_MULTI_RECORDING:FORBIDDEN_IN_PRODUCTION']);
     // Round 4: what is not approved yet is refused in production too (Gate B; D-16, D-14).
     for (const key of ['CLASSROOM_FIXED_ROOM_RECORDING', 'CLASSROOM_FIXED_ROOMS', 'CLASSROOM_PERMANENT_ENTRY']) expect(codes(checkMetadata([...pilotListing, { key, type: 'sensitive', target: ['production'] }], 'pilot')), key).toEqual([`error:${key}:FORBIDDEN_IN_PRODUCTION`]);
+    // Round 15 (2026-11-24): the fixed rooms' board, public chat and share turn on our server.
+    for (const key of ['CLASSROOM_ROOM_BOARD', 'CLASSROOM_ROOM_CHAT', 'CLASSROOM_ROOM_SHARE_TURN']) expect(codes(checkMetadata([...pilotListing, { key, type: 'sensitive', target: ['production'] }], 'pilot')), key).toEqual([`error:${key}:FORBIDDEN_IN_PRODUCTION`]);
     expect(codes(checkMetadata([...pilotListing, { key: 'CLASSROOM_SOMETHING_NEW', type: 'sensitive', target: ['production'] }], 'pilot'))).toEqual(['error:CLASSROOM_SOMETHING_NEW:UNKNOWN_CLASSROOM_SETTING']);
     expect(codes(checkMetadata(pilotListing.filter(e => e.key !== 'CLASSROOM_SESSION_REPORTS'), 'pilot'))).toEqual(['warn:CLASSROOM_SESSION_REPORTS:RECOMMENDED_MISSING']);
   });
