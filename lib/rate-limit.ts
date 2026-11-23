@@ -254,12 +254,19 @@ export async function enforceRateLimits(request: Request, buckets: RateLimitOpti
     } else {
       const windowSeconds = buckets[0].windowSeconds;
       const keys = [...new Set(keyed.map((entry) => entry.key))].sort();
+      // Round 15 (2026-11-24): the keys go as one string, not as an array parameter. The postgres
+      // package (3.4.9) learns the array types when a connection opens, but builds the connection's
+      // first query before that answer is stored, so an array in it was sent as plain text ("a,b")
+      // and refused (22P02): the first such request of every new server instance was answered 503.
+      // Every key is an HMAC in hex (hashRateLimitIdentifier), so a comma can never split or join
+      // one; anything else is refused here, before the statement.
+      if (keys.some((key) => !/^[0-9a-f]{64}$/.test(key))) throw new Error("Invalid rate-limit bucket key");
       const rows = await sql<(RateLimitRow & { bucket_key: string })[]>`
         INSERT INTO public.api_rate_limits (
           bucket_key, window_started_at, request_count, updated_at
         )
         SELECT input.key, NOW(), 1, NOW()
-        FROM unnest(${sql.array(keys)}::text[]) AS input(key)
+        FROM unnest(string_to_array(${keys.join(",")}, ',')) AS input(key)
         ORDER BY input.key
         ON CONFLICT (bucket_key) DO UPDATE SET
           window_started_at = CASE

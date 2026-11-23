@@ -268,3 +268,130 @@ describe('hotfix on PostgreSQL: a window that starts after the counting statemen
     }
   }, 30_000);
 });
+
+// Round 15 (2026-11-24): the first request of a new server process through the several-allowance
+// limiter was answered 503 once. Cause (postgres 3.4.9, node_modules/postgres/src/connection.js): a
+// new connection first loads the array types, and the query waiting behind that load is built in the
+// same step that answers the load (ReadyForQuery), before the load's result is stored (an await
+// later). So the very first query of a connection does not know text[] yet: an sql.array(...) in it
+// is sent as plain text ("a,b") and "::text[]" refuses it (22P02, malformed array literal). The
+// limiter has its own connection (max: 1), and every test above warmed its connections first
+// (SELECT 1), so none saw it. Here no connection is warmed: each one's first query is the one tested.
+describe('round 15 on PostgreSQL: the very first request on a new connection', () => {
+  const statusOf = decision => (decision.limited ? decision.response.status : 200);
+  const tally = decisions => decisions.reduce((counts, decision) => ({ ...counts, [statusOf(decision)]: (counts[statusOf(decision)] ?? 0) + 1 }), {});
+  const bucket = async key => (await sql`SELECT request_count, updated_at >= window_started_at AS ordered FROM public.api_rate_limits WHERE bucket_key = ${key}`)[0];
+  const keyOf = (policy, identifier) => limiter.hashRateLimitIdentifier(policy.scope, identifier);
+  // A connection made as lib/rate-limit.ts makes its own, and never used before.
+  const fresh = () => postgres(`postgres://postgres:${password}@127.0.0.1:${port}/postgres`, { max: 1, prepare: false, ssl: false, connect_timeout: 10, idle_timeout: 20, onnotice: () => {} });
+  // What the limiter logged when it refused as unavailable: the database's error code, else the message.
+  const logged = async action => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const value = await action();
+      return { value, errors: spy.mock.calls.map(([, error]) => error?.code ?? error?.message ?? String(error)) };
+    } finally {
+      spy.mockRestore();
+    }
+  };
+  // Every call counted through fresh connections, in turn, all at the same moment; ended afterwards.
+  const viaFresh = async (count, calls) => {
+    const own = globalThis.ihearRateLimitSql;
+    const pool = Array.from({ length: count }, fresh);
+    try {
+      return await logged(() => Promise.all(calls.map((call, index) => { globalThis.ihearRateLimitSql = pool[index % count]; return call(); })));
+    } finally {
+      globalThis.ihearRateLimitSql = own;
+      await Promise.all(pool.map(client => client.end({ timeout: 2 })));
+    }
+  };
+  const pair = (policy, person, shared = 'f-address') => limiter.enforceRateLimits(request(), [{ ...policy, identifier: shared }, { ...policy, scope: `${policy.scope}-person`, identifier: person }]);
+
+  test('F-1 (initialization): a new server process: the limiter makes its own connection, and its very first request is a several-allowance one: allowed, each allowance counted once, nothing refused as unavailable', async () => {
+    await globalThis.ihearRateLimitSql?.end({ timeout: 2 });
+    delete globalThis.ihearRateLimitSql;
+    const policy = { scope: 'first-own', limit: 10, windowSeconds: 60 };
+    const { value, errors } = await logged(() => limiter.enforceRateLimits(request(), [{ ...policy, identifier: 'f1-a' }, { ...policy, identifier: 'f1-b' }]));
+    console.log(`F-1: status ${statusOf(value)}; logged: ${JSON.stringify(errors)}`);
+    expect(errors).toEqual([]);
+    expect(statusOf(value)).toBe(200);
+    expect(globalThis.ihearRateLimitSql).toBeDefined();
+    expect(await bucket(keyOf(policy, 'f1-a'))).toEqual({ request_count: 1, ordered: true });
+    expect(await bucket(keyOf(policy, 'f1-b'))).toEqual({ request_count: 1, ordered: true });
+    // And the second request on that connection, as before.
+    expect(statusOf(await limiter.enforceRateLimits(request(), [{ ...policy, identifier: 'f1-a' }, { ...policy, identifier: 'f1-b' }]))).toBe(200);
+    expect(await bucket(keyOf(policy, 'f1-a'))).toEqual({ request_count: 2, ordered: true });
+  }, 30_000);
+
+  test('F-2 (first request): 10 new connections one after another, each one\'s first query a several-allowance request: all 10 allowed and counted', async () => {
+    const policy = { scope: 'first-each', limit: 10, windowSeconds: 60 };
+    const statuses = [], codes = [];
+    for (let n = 0; n < 10; n += 1) {
+      const { value: [decision], errors } = await viaFresh(1, [() => pair(policy, `f2-${n}`, `f2-address-${n}`)]);
+      statuses.push(statusOf(decision));
+      codes.push(...errors);
+    }
+    console.log(`F-2: statuses ${JSON.stringify(statuses)}; logged: ${JSON.stringify(codes)}`);
+    expect(codes).toEqual([]);
+    expect(statuses).toEqual(Array(10).fill(200));
+    for (let n = 0; n < 10; n += 1) expect(await bucket(keyOf(policy, `f2-address-${n}`))).toEqual({ request_count: 1, ordered: true });
+  }, 60_000);
+
+  test('F-3 (concurrent): 8 new server instances at once, each starting with a burst (40 people behind one address, 5 times, new connections each time): every request allowed, exact counts, none 503', async () => {
+    const policy = { scope: 'first-burst', limit: 1000, windowSeconds: 60 };
+    let total = 0, unavailable = 0, wrongCounts = 0;
+    const codes = [];
+    for (let round = 0; round < 5; round += 1) {
+      const shared = `f3-address-${round}`;
+      const { value: decisions, errors } = await viaFresh(8, Array.from({ length: 40 }, (_, index) => () => pair(policy, `f3-${round}-${index}`, shared)));
+      total += decisions.length;
+      unavailable += tally(decisions)[503] ?? 0;
+      codes.push(...errors);
+      const row = await bucket(keyOf(policy, shared));
+      if (row?.request_count !== 40 || !row.ordered) wrongCounts += 1;
+    }
+    console.log(`F-3: ${unavailable} of ${total} requests answered 503; rounds with a wrong count: ${wrongCounts}; logged: ${JSON.stringify([...new Set(codes)])} (${codes.length})`);
+    expect(codes).toEqual([]);
+    expect(unavailable).toBe(0);
+    expect(wrongCounts).toBe(0);
+  }, 120_000);
+
+  test('F-4 (protection kept): over the limit through 8 new connections: exactly the limit allowed, the rest 429, none 503, the counter exact; one more is refused; a person past their own allowance is refused; an unreachable database is still 503', async () => {
+    const policy = { scope: 'first-over', limit: 30, windowSeconds: 60 };
+    const { value: decisions, errors } = await viaFresh(8, Array.from({ length: 120 }, (_, index) => () => pair(policy, `f4-${index}`)));
+    console.log(`F-4: ${JSON.stringify(tally(decisions))}; logged: ${JSON.stringify([...new Set(errors)])} (${errors.length})`);
+    expect(errors).toEqual([]);
+    expect(tally(decisions)).toEqual({ 200: 30, 429: 90 });
+    expect(await bucket(keyOf(policy, 'f-address'))).toEqual({ request_count: 120, ordered: true });
+    const { value: [after] } = await viaFresh(1, [() => pair(policy, 'f4-late')]);
+    expect(statusOf(after)).toBe(429);
+    expect(after.response.headers.get('Retry-After')).toMatch(/^[1-9]\d*$/);
+    // The person's own allowance is still counted apart: a person past it is refused while the address has room.
+    const own = { scope: 'first-person', limit: 1000, windowSeconds: 60 };
+    const person = [{ ...own, identifier: 'f4-room' }, { ...own, scope: 'first-person-own', limit: 2, identifier: 'f4-one' }];
+    const { value: three } = await viaFresh(1, [0, 1, 2].map(() => () => limiter.enforceRateLimits(request(), person)));
+    expect(three.map(statusOf)).toEqual([200, 200, 429]);
+    const unreachable = postgres('postgres://postgres:unused@127.0.0.1:1/postgres', { max: 1, prepare: false, ssl: false, connect_timeout: 2, onnotice: () => {} });
+    const saved = globalThis.ihearRateLimitSql;
+    globalThis.ihearRateLimitSql = unreachable;
+    try {
+      const { value: down } = await logged(() => pair(policy, 'f4-down'));
+      expect(statusOf(down)).toBe(503);
+    } finally {
+      globalThis.ihearRateLimitSql = saved;
+      await unreachable.end({ timeout: 1 });
+    }
+  }, 120_000);
+
+  test('F-5: the counting statement sends no array parameter: the keys go as one checked string (64 hex characters each, so a comma can never split or join a key) and the rows are still taken in key order', async () => {
+    const source = readFileSync('lib/rate-limit.ts', 'utf8');
+    expect(source).not.toContain('sql.array(');
+    const check = source.indexOf('if (keys.some((key) => !/^[0-9a-f]{64}$/.test(key))) throw new Error("Invalid rate-limit bucket key");');
+    const statement = source.indexOf("FROM unnest(string_to_array(${keys.join(\",\")}, ',')) AS input(key)");
+    expect(check).toBeGreaterThan(0);
+    expect(statement).toBeGreaterThan(check);
+    expect(source.slice(statement, statement + 120)).toContain('ORDER BY input.key');
+    // Every key the limiter makes passes the check.
+    for (const identifier of ['', 'x', '203.0.113.9:block-1:p1', 'ÄÖ,;\u0000\n']) expect(limiter.hashRateLimitIdentifier('scope', identifier)).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
