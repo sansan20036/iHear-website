@@ -1584,7 +1584,7 @@ describe("browser adapters", () => {
     // Round 16: Chinese names (both scripts) and the server's "（2）" reach Zoom as they are; one-to-one keeps the code.
     for (const name of ["王小明", "王晓明（2）", "陳 Amy", "約翰·史密斯"]) expect(await joinedAs({ equalTools: true, displayName: name }), name).toBe(`join:ihear-l-test-v01:synthetic.jwt.token:${name}`);
     expect(await joinedAs({ equalTools: false, displayName: "王小明" })).toBe("join:ihear-l-test-v01:synthetic.jwt.token:R0123abcd-0a1b2c");
-    for (const unsafe of ["<img src=x>", "Kyle\u0000", "K".repeat(43), "1Kyle", "Kyle_B", "   ", "王小明（1）", "王​小明", "王小明😀", "小".repeat(21)]) {
+    for (const unsafe of ["<img src=x>", "Kyle\u0000", "K".repeat(43), "1Kyle", "Kyle_B", "   ", "王小明（1）", "王\u200B小明", "王小明😀", "小".repeat(21)]) {
       expect(await joinedAs({ equalTools: true, displayName: unsafe }), JSON.stringify(unsafe)).toBe("join:ihear-l-test-v01:synthetic.jwt.token:R0123abcd-0a1b2c");
     }
     expect(zoomDisplayNameOf({ participantCode: "X1", displayName: " Ann ", equalTools: true })).toBe("Ann");

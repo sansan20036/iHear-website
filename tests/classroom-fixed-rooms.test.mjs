@@ -89,7 +89,7 @@ describe("fixed classroom links", () => {
     expect((await ask(r, "Kyle", { key: "not-the-key" })).body.code).toBe("NOT_FOUND");
     expect((await rooms.requestEntry({ store, roomId: "FR-00000000000000000000000000000000", key: r.key, name: "Kyle", now: START })).body.code).toBe("NOT_FOUND");
     expect((await rooms.requestEntry({ store, roomId: "../etc", key: r.key, name: "Kyle", now: START })).body.code).toBe("NOT_FOUND");
-    for (const bad of ["小明2", "小明（2）", "Kyle😀", "Ky​le", "Кyle", "小".repeat(21)]) expect((await ask(r, bad)).body.code, JSON.stringify(bad)).toBe("INVALID_NAME");
+    for (const bad of ["小明2", "小明（2）", "Kyle😀", "Ky\u200Ble", "Кyle", "小".repeat(21)]) expect((await ask(r, bad)).body.code, JSON.stringify(bad)).toBe("INVALID_NAME");
     expect((await ask(r, "小明")).body).toMatchObject({ ok: true, name: "小明" });
     expect((await ask(r, "　王　晓明 ")).body).toMatchObject({ ok: true, name: "王 晓明" });
     const asked = await ask(r, "  Kyle ");
@@ -159,7 +159,7 @@ describe("fixed classroom links", () => {
     expect(displayNameOf([fact("Kyle")], code)).toBe("Kyle");
     // Round 16: Chinese names and the server's own marks read back too; a mark nobody could get does not.
     for (const good of ["王小明", "王小明（2）", "陳 Amy（26）", "K".repeat(40) + " Z"]) expect(displayNameOf([fact(good)], code), good).toBe(good);
-    for (const bad of ["<b>Kyle</b>", "Kyle\u0000", "K".repeat(43), "", "1Kyle", "Kyle_B", "王小明（1）", "王小明（27）", "Kyle（2）", "王‮小明"]) expect(displayNameOf([fact(bad)], code), JSON.stringify(bad)).toBeNull();
+    for (const bad of ["<b>Kyle</b>", "Kyle\u0000", "K".repeat(43), "", "1Kyle", "Kyle_B", "王小明（1）", "王小明（27）", "Kyle（2）", "王\u202E小明"]) expect(displayNameOf([fact(bad)], code), JSON.stringify(bad)).toBeNull();
     expect(displayNameOf([fact("Kyle", { source: "page" })], code)).toBeNull();
     expect(displayNameOf([fact("Kyle")], "R00000000-000000")).toBeNull();
   });

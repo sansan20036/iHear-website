@@ -25,9 +25,11 @@ describe("display names: Chinese and English (round 16)", () => {
 
   test("DN-3: refused, never quietly changed: control, format, bidi and zero-width characters, lone surrogates, combining marks, other scripts, digits, brackets, emoji, a typed mark, two separators, too long", () => {
     const refused = [
-      "", "   ", "1Kyle", "Kyle2", "Kyle_B", "Mary-Jane", "<img src=x>", "Kyle\u0000", "Kyle\nB", "Kyle\tB", "Ky​le", "‮elyK", "王⁦小明",
-      "é", "Кyle", "Κyle", "やまだ", "김민수", "ㄅㄆ", "Kyle😀", "王小明😀", "王小明（2）", "王小明(2)", "Kyle..", "Kyle .B", "Kyle ' B", "·王",
+      "", "   ", "1Kyle", "Kyle2", "Kyle_B", "Mary-Jane", "<img src=x>", "Kyle\u0000", "Kyle\nB", "Kyle\tB", "Ky\u200Ble", "\u202EelyK", "王\u2066小明",
+      "e\u0301", "\u041Ayle", "\u039Ayle", "やまだ", "김민수", "ㄅㄆ", "Kyle😀", "王小明😀", "王小明（2）", "王小明(2)", "Kyle..", "Kyle .B", "Kyle ' B", "·王",
       "小".repeat(21), "K".repeat(41), "Kyle\uD83D", "\uD83DKyle", "〇", "々木", ".Kyle",
+      // At a name's ends: trim() would quietly drop these; the rule refuses them instead.
+      "Kyle\n", "\tKyle", "\uFEFFKyle", "王小明\r", "\u200EKyle", "Kyle\u2028",
     ];
     for (const name of refused) expect(typedNameOf(name), JSON.stringify(name)).toBeNull();
     for (const notText of [undefined, null, 42, {}, ["Kyle"]]) expect(typedNameOf(notText)).toBeNull();
