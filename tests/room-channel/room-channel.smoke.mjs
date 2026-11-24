@@ -39,6 +39,7 @@ const PAGE = {
   boardToggle: '[data-room-board-toggle]',       // shows or hides the room's board on this page's stage
   boardStage: '[data-room-board-stage]',         // where the board is while shown
   panelControl: name => `[data-control="${name}"]`,   // the toolbar button of a side-panel tab: "chat", "people" (the share turn is there)
+  doorBack: '[data-room-door-back]',             // "back to the classroom": shown when the page does not go back to the room's door by itself
 };
 
 async function check(id, name, action) {
@@ -101,16 +102,26 @@ async function intoRoom(page) {
 }
 // After a reload the page brings a fixed-room person back by itself (the user's decision of
 // 2026-11-24: 「選 B，自動帶回教室」): through the room's door, which remembers this tab, and on to
-// the lesson. Whether the page's own door (「進入教室」) is shown again is the page's choice: pressed
-// when it is there.
+// the lesson, where the page's own door (「進入教室」) is pressed. On the way the page passes through
+// pages whose own buttons are not ready (the lesson page before it knows the person, the room's
+// door): the way in is ready when the button with exactly those words can be pressed. A page that
+// has made its automatic trips for now (the reload fix, round 16: a few within two minutes, so that
+// a real loop stops) shows a "back to the classroom" button to the room's door instead: pressed
+// when it is there. Says which of the two it was.
 async function backByItself(page) {
-  const door = page.getByRole('button', { name: '進入教室' });
+  const door = page.getByRole('button', { name: '進入教室', exact: true });
   const connected = page.locator(PAGE.connected).filter({ hasText: '已連線' });
-  await expect(door.or(connected).first()).toBeVisible({ timeout: 30_000 });
-  await expect(page).toHaveURL(new RegExp(`${origin}/classroom/L-[0-9a-f]{32}$`));
-  if (await door.isVisible().catch(() => false)) await door.click();
+  const back = page.locator(PAGE.doorBack);
+  let how = 'by itself';
+  await expect(async () => {
+    if ((await back.count()) > 0 && await back.first().isVisible()) { how = 'by the button'; await back.first().click({ timeout: 2000 }); }
+    expect(new RegExp(`${origin}/classroom/L-[0-9a-f]{32}$`).test(page.url())).toBe(true);
+    expect((await connected.count()) > 0 || (await door.isEnabled({ timeout: 1000 }))).toBe(true);
+  }).toPass({ timeout: 30_000 });
+  if ((await connected.count()) === 0) await door.click();
   await expect(page.locator(PAGE.connected)).toHaveText('已連線');
   await expect(mount(page)).toHaveAttribute('data-you', /^P-[0-9a-f]{32}$/);
+  return how;
 }
 // Back into the room after leaving it on purpose: by the room link the person was given. The
 // room's door remembers this tab's request and takes the person on to the lesson; then the page's
@@ -430,6 +441,21 @@ try {
       await expect(person.page.locator(PAGE.zoomBoardTool)).toHaveCount(0);
       await expect(person.page.locator('[data-tool="export"]')).toHaveCount(0);
     }
+  });
+
+  await check('D7', '連續重新整理：回到教室後馬上再重新整理，一共四次，每一次都回得到教室（頁面自己帶回，或畫面出現「回到教室」按鈕、按了就回來）；白板和聊天都在，自己還是同一個人', async () => {
+    // Dee has not reloaded before. Found on 2026-11-24 with four browsers: a second reload within
+    // about 15 seconds of the first left the person on a refusal screen for good.
+    const before = await shownOn(Dee.page);
+    report.notes.quickReloads = [];
+    for (let time = 1; time <= 4; time += 1) {
+      const at = Date.now();
+      await Dee.page.reload();
+      const how = await backByItself(Dee.page);
+      report.notes.quickReloads.push({ time, how, ms: Date.now() - at });
+      expect(await shownOn(Dee.page), `after quick reload ${time}`).toEqual(before);
+    }
+    for (const person of [Kyle, Ann]) await expect(person.page.locator(PAGE.connected)).toHaveText('已連線');
   });
 
   await check('C12', '整個過程沒有連到網站以外的地方，頁面沒有非預期的錯誤', async () => {

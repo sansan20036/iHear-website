@@ -41,6 +41,7 @@ const PAGE = {
   connected: '.room2-top .classroom-room-connection',
   boardToggle: '[data-room-board-toggle]',
   panelControl: name => `[data-control="${name}"]`,
+  doorBack: '[data-room-door-back]',
 };
 
 async function check(id, name, action) {
@@ -119,21 +120,27 @@ const painted = page => page.evaluate(() => {
 // What a page shows of the board and the chat, to compare before and after.
 const shownOn = async page => { await showBoard(page); return { lines: await board(page).getAttribute('data-lines'), messages: await chat(page).getAttribute('data-messages'), you: await mount(page).getAttribute('data-you') }; };
 // After a reload the page brings a fixed-room person back by itself (the user's decision of
-// 2026-11-24): through the room's door, which remembers this tab, and on to the lesson; the page's
-// own door (「進入教室」) is pressed when it is shown.
+// 2026-11-24: 「選 B，自動帶回教室」): through the room's door, which remembers this tab, and on to
+// the lesson, where the page's own door (「進入教室」) is pressed. On the way the page passes through
+// pages whose own buttons are not ready (the lesson page before it knows the person, the room's
+// door): the way in is ready when the button with exactly those words can be pressed. A page that
+// has made its automatic trips for now (the reload fix, round 16: a few within two minutes, so that
+// a real loop stops) shows a "back to the classroom" button to the room's door instead: pressed
+// when it is there. Says which of the two it was.
 async function backByItself(page) {
-  // The exact words: while the page is entering, its button says so and is not this one. On the
-  // way back the page passes through pages whose own buttons are not ready (the lesson page before
-  // it knows the person, the room's door); the way in is ready when the button can be pressed.
   const door = page.getByRole('button', { name: '進入教室', exact: true });
   const connected = page.locator(PAGE.connected).filter({ hasText: '已連線' });
+  const back = page.locator(PAGE.doorBack);
+  let how = 'by itself';
   await expect(async () => {
+    if ((await back.count()) > 0 && await back.first().isVisible()) { how = 'by the button'; await back.first().click({ timeout: 2000 }); }
     expect(new RegExp(`${origin}/classroom/L-[0-9a-f]{32}$`).test(page.url())).toBe(true);
     expect((await connected.count()) > 0 || (await door.isEnabled({ timeout: 1000 }))).toBe(true);
   }).toPass({ timeout: 30_000 });
   if ((await connected.count()) === 0) await door.click();
   await expect(page.locator(PAGE.connected)).toHaveText('已連線');
   await expect(mount(page)).toHaveAttribute('data-you', /^P-[0-9a-f]{32}$/);
+  return how;
 }
 async function startShare(person) { await shareButton(person.page).click(); await expect(turn(person.page)).toHaveAttribute('data-sharing', 'true'); }
 async function stopShare(person, everyone) {
