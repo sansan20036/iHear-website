@@ -7,9 +7,9 @@
 // drops off the network, someone leaves and comes back, there is one whiteboard and no other, and
 // with the three switches off the room is as it was before any of this.
 //
-// It needs a build in which the classroom page mounts the pieces. Until the page's owner has
-// written that mount, a private one stands in (output/a0-multiroom/room-channel-private-mount.mjs
-// --apply, then npm run build). Without a mount this file says so and fails at its first check.
+// It needs a build in which the classroom page mounts the pieces (the page's own mount, round 16:
+// the board on the stage, the chat and the share turn in the side panel, the page's share button
+// through the turn). Without a mount this file says so and fails at its first check.
 //   node tests/room-channel/room-channel.smoke.mjs
 // It proves our pages, our route and our checks. It says nothing about Zoom: no real session, no
 // real share, no real recording; and nothing about the production site or its database.
@@ -36,6 +36,9 @@ const PAGE = {
   zoomBoardTool: '[data-tool="whiteboard"]',     // Zoom's own whiteboard tool: not offered while the room's board is on
   leave: '[data-control="leave"]',               // the page's own "leave the room"
   connected: '.room2-top .classroom-room-connection',
+  boardToggle: '[data-room-board-toggle]',       // shows or hides the room's board on this page's stage
+  boardStage: '[data-room-board-stage]',         // where the board is while shown
+  panelControl: name => `[data-control="${name}"]`,   // the toolbar button of a side-panel tab: "chat", "people" (the share turn is there)
 };
 
 async function check(id, name, action) {
@@ -57,9 +60,27 @@ function watch(page, who) {
 const shot = (page, name) => screenshotSafely(page, { path: path.join(directory, `${name}.png`), fullPage: true });
 const board = page => page.locator('[data-room-board]');
 const canvas = page => page.locator('.room-channel-canvas');
-const lines = (page, count) => expect(board(page)).toHaveAttribute('data-lines', String(count));
+// The side panel: a press on a tab's toolbar button opens it, a second press closes it.
+async function openPanel(page, name) {
+  const control = page.locator(PAGE.panelControl(name)).first();
+  if ((await control.getAttribute('aria-expanded')) !== 'true') await control.click();
+}
+async function closePanels(page) {
+  for (const name of ['chat', 'people']) {
+    const control = page.locator(PAGE.panelControl(name)).first();
+    if ((await control.count()) > 0 && (await control.getAttribute('aria-expanded')) === 'true') await control.click();
+  }
+}
+// The room's board on this page's stage. A share that comes in puts the share first (the page's
+// own choice); the board is then one press away, and the checks press it.
+async function showBoard(page) {
+  if ((await page.locator('[data-room-channel]').getAttribute('data-room-board-shown')) === 'false') await page.locator(PAGE.boardToggle).click();
+  await expect(board(page)).toBeVisible();
+}
+const lines = async (page, count) => { await showBoard(page); await expect(board(page)).toHaveAttribute('data-lines', String(count)); };
 // A stroke with the mouse, between two places given as shares of the board's width and height.
 async function draw(page, from, to) {
+  await showBoard(page);
   await canvas(page).scrollIntoViewIfNeeded();
   const box = await canvas(page).boundingBox();
   const at = (share, index) => (index === 0 ? box.x + box.width * share : box.y + box.height * share);
@@ -79,7 +100,7 @@ async function intoRoom(page) {
   await expect(mount(page)).toHaveAttribute('data-you', /^P-[0-9a-f]{32}$/);
 }
 // What a page shows of the board and the chat, to compare before and after.
-const shownOn = async page => ({ lines: await board(page).getAttribute('data-lines'), messages: await chat(page).getAttribute('data-messages'), you: await mount(page).getAttribute('data-you') });
+const shownOn = async page => { await showBoard(page); return { lines: await board(page).getAttribute('data-lines'), messages: await chat(page).getAttribute('data-messages'), you: await mount(page).getAttribute('data-you') }; };
 async function startShare(person) { await shareButton(person.page).click(); await expect(turn(person.page)).toHaveAttribute('data-sharing', 'true'); }
 async function stopShare(person, everyone) {
   await shareButton(person.page).click();
@@ -128,8 +149,12 @@ try {
     for (const { page } of Object.values(people)) {
       await expect(page.locator('[data-room-channel]')).toHaveAttribute('data-you', /^P-[0-9a-f]{32}$/);
       await expect(board(page)).toBeVisible();
+      await expect(page.locator(PAGE.boardStage)).toHaveCount(1);
+      await openPanel(page, 'chat');
       await expect(page.locator('[data-room-chat]')).toBeVisible();
+      await openPanel(page, 'people');
       await expect(page.locator('[data-room-turn]')).toBeVisible();
+      await closePanels(page);
     }
     // Four people, four different ids; nobody's ticket or the room's link key is anywhere in the page.
     const ids = await Promise.all(Object.values(people).map(({ page }) => page.locator('[data-room-channel]').getAttribute('data-you')));
@@ -189,6 +214,7 @@ try {
 
   await check('C7', '公開聊天：訊息傳給所有人；自己的顯示「你」；沒有任何選擇收件人的地方；最多 500 個字', async () => {
     const input = page => page.locator('#room-channel-chat-input');
+    for (const person of [Kyle, Ann, Bo]) await openPanel(person.page, 'chat');
     await input(Ann.page).fill('大家好');
     await Ann.page.locator('[data-room-chat]').getByRole('button', { name: '送出' }).click();
     for (const person of [Kyle, Bo, Dee]) {
@@ -230,6 +256,7 @@ try {
     await expect(button(Kyle.page)).toBeDisabled();
     await button(Ann.page).click();
     await expect(turn(Kyle.page)).toHaveAttribute('data-holder', '');
+    for (const person of [Kyle, Ann, Bo, Dee]) await showBoard(person.page);
   });
 
   await check('C9', '斷線重連：一個人斷線時頁面會說；期間別人畫的線和說的話，他回來後都補上；他斷線時畫的線也會送出', async () => {
@@ -239,6 +266,7 @@ try {
     await expect(Bo.page.locator('[data-room-channel]')).toHaveAttribute('data-online', 'false');
     await expect(board(Bo.page)).toContainText('重新連線中…');
     await draw(Kyle.page, [0.8, 0.8], [0.9, 0.9]);
+    await openPanel(Ann.page, 'chat');
     await Ann.page.locator('#room-channel-chat-input').fill('Bo 還在嗎');
     await Ann.page.locator('#room-channel-chat-input').press('Enter');
     for (const person of [Kyle, Ann, Dee]) await lines(person.page, 4);
@@ -273,6 +301,7 @@ try {
     }, { timeout: 20_000 }).toMatch(/^(NOT_IN_ROOM|left the room)$/);
     await draw(Kyle.page, [0.5, 0.15], [0.6, 0.2]);
     for (const person of [Kyle, Ann, Dee]) await lines(person.page, 7);
+    await openPanel(Kyle.page, 'chat');
     await Kyle.page.locator('#room-channel-chat-input').fill('繼續上課');
     await Kyle.page.locator('#room-channel-chat-input').press('Enter');
     await expect(Ann.page.locator('[data-room-chat]')).toHaveAttribute('data-messages', '4');
@@ -286,6 +315,7 @@ try {
 
   await check('D1', '轉交分享權：持有人把分享權交給指定的人，對方按「開始分享」就接手；這段時間其他人拿不到；沒有人接手的話，10 秒後任何人都可以分享', async () => {
     await startShare(Kyle);
+    await openPanel(Kyle.page, 'people');
     await Kyle.page.locator('[data-room-turn-to]').selectOption(ids.Ann);
     await Kyle.page.locator('[data-room-turn-give]').click();
     await expect(turn(Kyle.page)).toHaveAttribute('data-sharing', 'false');
@@ -297,6 +327,7 @@ try {
     for (const person of here) await expect(turn(person.page)).toHaveAttribute('data-holder', ids.Ann);
     await shot(Kyle.page, 'd1-handed-over');
     // Handed on and not taken: after ten seconds the turn is anyone's again.
+    await openPanel(Ann.page, 'people');
     await Ann.page.locator('[data-room-turn-to]').selectOption(ids.Kyle);
     await Ann.page.locator('[data-room-turn-give]').click();
     await expect(turn(Kyle.page)).toHaveAttribute('data-offered-to-me', 'true');
@@ -363,8 +394,11 @@ try {
 
   await check('D5', '一間教室只有一套白板：頁面上只有教室自己的白板，沒有 Zoom 白板的按鈕', async () => {
     for (const person of here) {
+      await showBoard(person.page);
       await expect(board(person.page)).toHaveCount(1);
+      await expect(person.page.locator(PAGE.boardStage)).toHaveCount(1);
       await expect(person.page.locator(PAGE.zoomBoardTool)).toHaveCount(0);
+      await expect(person.page.locator('[data-tool="export"]')).toHaveCount(0);
     }
   });
 
