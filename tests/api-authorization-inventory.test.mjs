@@ -30,6 +30,11 @@ const OWN_PROTECTION = {
   'classroom/blocks/[blockId]/where/route.ts POST': [/isSameOrigin\(/, 'classroom (closed): participant session'],
   'classroom/lcic/callback/route.ts POST': [/verifyLcicCallback\(/, 'vendor callback: signature'],
   'recordings/zoom/webhook/route.ts POST': [/ingestWebhook\(|answerWhileClosed\(/, 'Zoom webhook: signature and timestamp'],
+  // Round 16 (2026-11-24, reviewed by the integrator): a fixed room's own whiteboard, chat and share
+  // turn (f1's room channel). 404 unless fixed rooms and one of its three switches are on; same origin;
+  // body at most 160 KB; limited per person and per address; who asks is decided from the personal key
+  // alone, with the same check as entering the classroom, on every request.
+  'classroom/[lessonId]/room-channel/route.ts POST': [/isSameOrigin\(/, 'room channel (off by default): same origin, personal key checked as for entering, rate limit'],
 };
 // Reads that anyone may make (published content, health, bootstraps), or that check their own caller.
 const PUBLIC_READS = new Set([
@@ -39,6 +44,9 @@ const PUBLIC_READS = new Set([
   'resource-topics/route.ts GET', 'resources/[id]/route.ts GET', 'resources/route.ts GET', 'site-layout/bootstrap/route.ts GET',
   'site-layout/route.ts GET', 'site-media/[slot]/image/route.ts GET', 'site-media/route.ts GET', 'site-metrics/route.ts GET',
   'site-theme/bootstrap/route.ts GET', 'site-theme/route.ts GET',
+  // Round 16 (reviewed): the room channel's scheduled sweep, like the classroom's own tick: a scheduler's
+  // Bearer CRON_SECRET (at least 32 characters, compared in constant time), else 503 or 401 and nothing done.
+  'classroom/room-channel-purge/route.ts GET',
 ]);
 
 async function routeFiles(directory, prefix = '') {
