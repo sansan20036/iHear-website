@@ -8,7 +8,7 @@ const events = new Map();
 vi.mock("../lib/classroom-store", () => ({
   classroomStore: () => ({
     lesson: async (id) => lessons.get(id) ?? null,
-    eventsOf: async (id) => { if (id === "L-broken") throw new Error("store down"); return events.get(id) ?? []; },
+    eventsFor: async ([id]) => { if (id === "L-broken") throw new Error("store down"); return events.get(id) ?? []; },
   }),
 }));
 const enforceRateLimit = vi.fn(async () => ({ limited: false, kind: "single" }));

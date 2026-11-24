@@ -13,7 +13,7 @@ export async function lessonDoorLimit(request: Request, { scope, lessonId, perso
 }) {
   const store = classroomStore();
   const lesson = await store.lesson(lessonId).catch(() => null);
-  const shared = Boolean(lesson?.blockId) || (lesson ? fixedRoomOf(await store.eventsOf(lessonId).catch(() => [])) !== null : false);
+  const shared = Boolean(lesson?.blockId) || (lesson ? fixedRoomOf(await store.eventsFor([lessonId]).catch(() => [])) !== null : false);
   if (shared) return personAndPlaceLimit(request, { scope, place: lessonId, person, perPerson, perPlace });
   return enforceRateLimit(request, { scope, limit: single, windowSeconds: 60, identifier: `${clientIp(request)}:${lessonId}` });
 }
