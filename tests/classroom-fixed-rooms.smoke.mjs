@@ -122,8 +122,10 @@ try {
     await expect(sound).toHaveAttribute('data-sound', 'off');
     await sound.getByRole('button', { name: '開啟聲音', exact: true }).click();
     await expect(sound).toHaveCount(0);
-    // Zoom's chat stays off in a fixed room; with the room channel's chat on, the room's own chat is the tab.
-    await expect(kyle.getByRole('tab', { name: /聊天/ })).toHaveCount(ROOM_CHAT_ON ? 1 : 0);
+    // Zoom's chat stays off in a fixed room; with the room channel's chat on, the room's own chat is
+    // offered (the toolbar's chat button; the panel's tab is hidden until the panel opens).
+    await expect(kyle.getByRole('tab', { name: /聊天/ })).toHaveCount(0);
+    await expect(kyle.locator('[data-control="chat"]')).toHaveCount(ROOM_CHAT_ON ? 1 : 0);
     // The user, 2026-11-24: raised hands are on in a fixed room (Zoom's command channel needs no
     // host; W1 on real Zoom). The person raises and lowers their own hand.
     const hand = kyle.locator('[data-control="hand"]');
