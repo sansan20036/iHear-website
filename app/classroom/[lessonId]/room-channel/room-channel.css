@@ -1,9 +1,9 @@
 /* The room's own whiteboard and public chat (local integration only, 2026-11-24). The classroom's
    own colours where the page gives them (classroom.css), with fallbacks so the pieces also stand alone. */
-.room-channel-board, .room-channel-chat { --rc-ink: var(--room-ink, #1A2B4C); --rc-muted: var(--room-muted, #5d6877); --rc-line: var(--room-line, #e3e8ef); --rc-accent: var(--room-accent, #263974);
+.room-channel-board, .room-channel-chat, .room-channel-turn { --rc-ink: var(--room-ink, #1A2B4C); --rc-muted: var(--room-muted, #5d6877); --rc-line: var(--room-line, #e3e8ef); --rc-accent: var(--room-accent, #263974);
   --rc-surface: var(--room-surface, #fff); --rc-bad: var(--room-bad, #a3261d); --rc-focus: var(--room-focus, #1264A3);
   box-sizing: border-box; color: var(--rc-ink); font: inherit; min-width: 0; min-height: 0; }
-.room-channel-board *, .room-channel-chat * { box-sizing: border-box; }
+.room-channel-board *, .room-channel-chat *, .room-channel-turn * { box-sizing: border-box; }
 
 /* The whiteboard: its tools, a line of words, and the board itself filling what is left. */
 .room-channel-board { display: grid; grid-template-rows: auto auto minmax(0, 1fr); gap: 8px; width: 100%; height: 100%; background: var(--rc-surface); border-radius: 12px; padding: 8px; }
@@ -20,7 +20,7 @@
 .room-channel-width span { display: block; width: 100%; border-radius: 999px; background: var(--rc-ink); }
 .room-channel-width[aria-pressed="true"] { border-color: var(--rc-accent); box-shadow: 0 0 0 2px var(--rc-accent); }
 .room-channel-width:disabled { opacity: .5; cursor: default; }
-.room-channel-tool:focus-visible, .room-channel-colour:focus-visible, .room-channel-width:focus-visible, .room-channel-send input:focus-visible { outline: 3px solid var(--rc-focus); outline-offset: 2px; }
+.room-channel-tool:focus-visible, .room-channel-colour:focus-visible, .room-channel-width:focus-visible, .room-channel-send input:focus-visible, .room-channel-give select:focus-visible { outline: 3px solid var(--rc-focus); outline-offset: 2px; }
 .room-channel-ask { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; font-weight: 700; }
 .room-channel-hint { margin: 0; color: var(--rc-muted); font-size: 14px; line-height: 1.5; }
 .room-channel-frame { display: grid; place-items: center; min-height: 160px; overflow: hidden; background: #eef1f6; border-radius: 10px; }
@@ -41,9 +41,17 @@
 .room-channel-left { font-size: 13px; color: var(--rc-muted); }
 .room-channel-chat .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
+/* The share turn: who shares now, and handing the share to one person. */
+.room-channel-turn { display: grid; gap: 8px; }
+.room-channel-turn-state { margin: 0; font-weight: 700; color: var(--rc-ink); line-height: 1.5; }
+.room-channel-give { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.room-channel-give label { font-size: 14px; color: var(--rc-muted); }
+.room-channel-give select { flex: 1 1 140px; min-width: 0; min-height: 40px; font: inherit; padding: 6px 10px; border-radius: 10px; border: 1px solid var(--rc-line); background: var(--rc-surface); color: var(--rc-ink); }
+
 @media (max-width: 640px) {
   .room-channel-board { padding: 6px; gap: 6px; }
   .room-channel-tool { min-height: 44px; padding: 6px 12px; }
+  .room-channel-give select { min-height: 44px; }
   .room-channel-colour { width: 36px; height: 36px; min-width: 36px; }
   .room-channel-width { width: 44px; height: 44px; }
 }

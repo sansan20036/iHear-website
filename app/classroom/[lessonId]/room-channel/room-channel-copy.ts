@@ -1,4 +1,5 @@
 import type { ClassroomLocale } from "../../../../lib/classroom-locale";
+import type { RoomChannelNotice } from "./use-room-channel";
 
 // The words of the room's own whiteboard, public chat and share turn (local integration only,
 // 2026-11-24), in the page's three languages. Kept beside the pieces that use them.
@@ -8,6 +9,8 @@ type Copy = {
   chat: string; chatPublic: string; chatDeleted: string; chatEmpty: string; chatLabel: string; chatPlaceholder: string; chatSend: string; chatYou: string; chatEnded: string;
   chatLeft: (count: number) => string;
   shareBusy: string; shareOffered: string; shareLost: string; shareNotStarted: string;
+  turn: string; turnShare: string; turnStop: string; turnNobody: string; turnYou: string; turnSomeone: string; turnHolder: (name: string) => string;
+  turnOfferedYou: string; turnTake: string; turnOfferedTo: (name: string) => string; turnGiveTo: string; turnChoose: string; turnGive: string; turnNoOne: string;
   reconnecting: string; ended: string; stopped: string; notOffered: string;
   refused: Record<string, string>; refusedOther: (code: string) => string;
 };
@@ -23,6 +26,9 @@ export const roomChannelCopy: Record<ClassroomLocale, Copy> = {
     chatLeft: (count) => `${count} left`,
     shareBusy: "Someone else is sharing now. Please wait until they stop.", shareOffered: "The share was handed to someone else. Please wait a moment.",
     shareLost: "Your share was stopped: the connection was lost for too long.", shareNotStarted: "The share did not start.",
+    turn: "Screen sharing", turnShare: "Share my screen", turnStop: "Stop sharing", turnNobody: "Nobody is sharing now.", turnYou: "You are sharing now.", turnSomeone: "Someone",
+    turnHolder: (name) => `${name} is sharing now.`, turnOfferedYou: "The share was handed to you. Start within 10 seconds.", turnTake: "Start sharing",
+    turnOfferedTo: (name) => `The share was handed to ${name}.`, turnGiveTo: "Hand the share to", turnChoose: "Choose a person", turnGive: "Hand over", turnNoOne: "Nobody else is in the classroom.",
     reconnecting: "Reconnecting…", ended: "The lesson has ended. The whiteboard can still be looked at, but not changed.", stopped: "You are no longer in this classroom.", notOffered: "This is not available in this classroom.",
     refused: {
       TOO_FAST: "Too fast. The rest will be sent in a moment.", BOARD_FULL: "The whiteboard is full. Clear it to go on drawing.", CLEAR_TOO_OFTEN: "The whiteboard was cleared a moment ago. Please wait a little.",
@@ -42,6 +48,9 @@ export const roomChannelCopy: Record<ClassroomLocale, Copy> = {
     chatLeft: (count) => `還可以輸入 ${count} 個字`,
     shareBusy: "現在有其他人在分享，請等對方停止後再試。", shareOffered: "分享權已交給另一位，請稍等一下。",
     shareLost: "你的分享已停止：連線中斷太久了。", shareNotStarted: "分享沒有開始。",
+    turn: "畫面分享", turnShare: "分享我的畫面", turnStop: "停止分享", turnNobody: "現在沒有人在分享。", turnYou: "現在是你在分享。", turnSomeone: "有人",
+    turnHolder: (name) => `${name} 正在分享。`, turnOfferedYou: "分享權已交給你，請在 10 秒內開始分享。", turnTake: "開始分享",
+    turnOfferedTo: (name) => `分享權已交給 ${name}。`, turnGiveTo: "把分享權交給", turnChoose: "選一位", turnGive: "轉交", turnNoOne: "教室裡沒有其他人。",
     reconnecting: "重新連線中…", ended: "課程已結束。白板還可以看，但不能再修改。", stopped: "你已經不在這間教室裡。", notOffered: "這間教室沒有提供這個功能。",
     refused: {
       TOO_FAST: "太快了，剩下的稍後會自動送出。", BOARD_FULL: "白板已經滿了，清除後才能繼續畫。", CLEAR_TOO_OFTEN: "白板剛剛才被清除過，請稍等一下。",
@@ -61,6 +70,9 @@ export const roomChannelCopy: Record<ClassroomLocale, Copy> = {
     chatLeft: (count) => `还可以输入 ${count} 个字`,
     shareBusy: "现在有其他人在分享，请等对方停止后再试。", shareOffered: "分享权已交给另一位，请稍等一下。",
     shareLost: "你的分享已停止：连接中断太久了。", shareNotStarted: "分享没有开始。",
+    turn: "屏幕共享", turnShare: "共享我的屏幕", turnStop: "停止共享", turnNobody: "现在没有人在共享。", turnYou: "现在是你在共享。", turnSomeone: "有人",
+    turnHolder: (name) => `${name} 正在共享。`, turnOfferedYou: "共享权已交给你，请在 10 秒内开始共享。", turnTake: "开始共享",
+    turnOfferedTo: (name) => `共享权已交给 ${name}。`, turnGiveTo: "把共享权交给", turnChoose: "选一位", turnGive: "转交", turnNoOne: "教室里没有其他人。",
     reconnecting: "重新连接中…", ended: "课程已结束。白板还可以看，但不能再修改。", stopped: "你已经不在这间教室里。", notOffered: "这间教室没有提供这个功能。",
     refused: {
       TOO_FAST: "太快了，剩下的稍后会自动发出。", BOARD_FULL: "白板已经满了，清除后才能继续画。", CLEAR_TOO_OFTEN: "白板刚刚才被清除过，请稍等一下。",
@@ -71,3 +83,12 @@ export const roomChannelCopy: Record<ClassroomLocale, Copy> = {
     refusedOther: (code) => `没有成功（${code}）。`,
   },
 };
+
+// The words for the latest refusal, for the page's own places (its share button's line of words).
+export function roomChannelNoticeText(locale: ClassroomLocale, notice: RoomChannelNotice | null): string | null {
+  if (!notice) return null;
+  const text = roomChannelCopy[locale];
+  if (notice.code === "LOST") return text.shareLost;
+  if (notice.code === "NOT_STARTED") return text.shareNotStarted;
+  return text.refused[notice.code] ?? text.refusedOther(notice.code);
+}

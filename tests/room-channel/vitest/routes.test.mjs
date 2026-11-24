@@ -269,4 +269,23 @@ describe("the room channel's routes", () => {
     allOn();
     expect((await exchange(lessonId, people[0].ticket, { cursors: { board: 9 } })).body.board.picture.lines).toHaveLength(0);
   });
+
+  test("RR-9: a page's last request as it goes away: the turn it holds is free at once and nothing is read; from someone who holds no turn it takes nothing", async () => {
+    const { people: [ann, bo], lessonId } = await roomWith(["Ann", "Bo"]);
+    const claimed = await exchange(lessonId, ann.ticket, { cursors: { turn: 0 }, send: [{ part: "turn", action: "claim" }] });
+    const annName = claimed.body.you;
+    expect(claimed.body.turn.holder).toBe(annName);
+    const last = { cursors: {}, send: [{ part: "turn", action: "release" }] };   // lib/room-channel/client.mjs: parting()
+    // Bo's page goes away: Bo holds no turn, so nothing changes.
+    const notHolder = await exchange(lessonId, bo.ticket, last);
+    expect([notHolder.status, notHolder.body.sent[0].wasHolder]).toEqual([200, false]);
+    expect((await exchange(lessonId, bo.ticket, { cursors: { turn: 0 } })).body.turn.holder).toBe(annName);
+    // Ann's page goes away: the turn is free on the next look of anyone, well inside the lease.
+    vi.setSystemTime(START + 2000);
+    const gone = await exchange(lessonId, ann.ticket, last);
+    expect([gone.status, gone.body.sent[0].wasHolder]).toEqual([200, true]);
+    expect(Object.keys(gone.body).sort()).toEqual(["ok", "on", "sent", "you"]);
+    expect((await exchange(lessonId, bo.ticket, { cursors: { turn: 0 } })).body.turn.holder).toBe(null);
+    expect((await exchange(lessonId, bo.ticket, { cursors: { turn: 0 }, send: [{ part: "turn", action: "claim" }] })).body.turn.holder).not.toBe(annName);
+  });
 });

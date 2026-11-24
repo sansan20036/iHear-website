@@ -65,7 +65,9 @@ function world(people = ['P-1', 'P-2', 'P-3']) {
   }
   const server = async () => { const whole = await store.picture('L-1'); return whole ? snapshot({ ...whole.state, lines: whole.lines }, clock.now).lines.map(({ parts: _parts, ...line }) => line) : []; };
   const boardOf = entry => entry.client.view().board.lines.map(({ unconfirmed: _unconfirmed, ...line }) => line);
-  return { store, channel, clock, lesson, net, requests, page, advance, settle, server, boardOf, timer };
+  // A request that does not come from a page's own queue: the one a page hands to the browser as it goes away.
+  const send = (id, body) => channel.exchange({ lesson, who: { id, name: id, member: lesson.people.includes(id) }, on: ON, cursors: body.cursors, send: body.send, now: clock.now });
+  return { store, channel, clock, lesson, net, requests, page, advance, settle, server, boardOf, timer, send };
 }
 const draw = (client, points, more = {}) => { const line = client.beginLine({ color: 2, width: 4, ...more }); client.addPoints(line, points); client.endLine(line); return line; };
 
@@ -465,4 +467,59 @@ test('SC-7: the turn is lost while the browser\'s own window is still open: when
   assert.deepEqual([a.control.sharing, a.stand.calls.stop >= 1], [false, true]);
   assert.ok(a.said.some(what => what.notice === 'LOST'));
   assert.equal(b.control.sharing, true);
+});
+
+test('SC-8: the page that shares goes away (closed, reloaded): its turn is free at once, not when the lease runs out; another window of the same person takes nothing with it', async () => {
+  const w = world();
+  const a = sharer(w, 'P-1'), b = sharer(w, 'P-2');
+  const second = sharer(w, 'P-1');                 // the same person has the room open in a second window, which does not share
+  await w.advance(200);
+  assert.deepEqual([a.control.holding, a.client.parting({ turn: a.control.holding })], [false, null], 'a page that does not share has nothing to give back');
+  assert.equal(a.client.parting({ turn: true }), null, 'and nobody\'s turn is given back by a page that holds none');
+  assert.equal(await after(w, a.control.start()), true);
+  assert.deepEqual([a.control.holding, second.control.holding, second.client.view().turn.mine], [true, false, true]);
+
+  // The second window is closed. The turn is this person's, but not this window's: it sends nothing, and the share goes on.
+  assert.equal(second.client.parting({ turn: second.control.holding }), null);
+  second.control.close();
+  second.client.stop();
+  await w.advance(TURN_LIMITS.beatEveryMs * 2 + 500, 250);
+  assert.deepEqual([a.control.sharing, b.client.view().turn.holder], [true, 'P-1']);
+
+  // The sharing window is reloaded. Its last request gives the turn back and asks for nothing.
+  const last = a.client.parting({ turn: a.control.holding });
+  assert.deepEqual(last, { key: 'ticket-P-1', cursors: {}, send: [{ part: 'turn', action: 'release' }] });
+  a.control.close();
+  a.client.stop();
+  const left = w.clock.now;
+  const answer = await w.send('P-1', last);
+  assert.deepEqual([Object.keys(answer).sort(), answer.sent.length, answer.sent[0].wasHolder, answer.sent[0].turn.holder], [['ok', 'sent'], 1, true, null], 'the turn is given back, and nothing is read');
+  await w.advance(1000);
+  assert.equal(b.client.view().turn.holder, null);
+  assert.ok(w.clock.now - left < TURN_LIMITS.leaseMs / 10, 'within a second, where the lease would have taken fifteen');
+
+  // Someone goes away while the browser's own "choose what to share" window is still open: that page holds the turn too.
+  const c = sharer(w, 'P-3', () => new Promise(() => {}));
+  await w.advance(300);
+  void c.control.start();
+  await w.advance(1500);
+  assert.deepEqual([c.client.view().turn.mine, c.control.sharing, c.control.holding], [true, false, true]);
+  const lastOfC = c.client.parting({ turn: c.control.holding });
+  c.control.close();
+  c.client.stop();
+  assert.equal((await w.send('P-3', lastOfC)).sent[0].wasHolder, true);
+  await w.advance(1000);
+  assert.equal(b.client.view().turn.holder, null);
+
+  // The reloaded page comes back as a new page: it holds nothing, and can share again.
+  const again = sharer(w, 'P-1');
+  await w.advance(600);
+  assert.deepEqual([again.client.view().turn.mine, again.control.holding], [false, false]);
+  assert.equal(await after(w, again.control.start()), true);
+  assert.equal(b.client.view().turn.holder, 'P-1');
+
+  // Taken out of the room: the page has nothing more to say as it goes.
+  w.lesson.people = ['P-2', 'P-3'];
+  await w.advance(2000);
+  assert.deepEqual([again.client.view().stopped, again.client.parting({ turn: true })], ['NOT_IN_ROOM', null]);
 });
