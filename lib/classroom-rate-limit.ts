@@ -1,15 +1,20 @@
 import { createHash } from "node:crypto";
 
+import { fixedRoomOf } from "./classroom-fixed-room-facts";
 import { classroomStore } from "./classroom-store";
 import { clientIp, enforceRateLimit, enforceRateLimits } from "./rate-limit";
 
 // The limit for a lesson's door: a one-to-one lesson keeps its own (one allowance per address and
-// lesson, as verified); only a block's Lobby or room, which many people share, counts per person.
+// lesson, as verified); a block's Lobby or room and a fixed room, which many people share, count per
+// person. Round 17 (f1's finding F3, 2026-11-25): a fixed room's lesson carries no blockId (its
+// schedule event names the room), so it counted ten joins a minute per address for the whole room.
 export async function lessonDoorLimit(request: Request, { scope, lessonId, person, single, perPerson, perPlace }: {
   scope: string; lessonId: string; person: string | null; single: number; perPerson: number; perPlace: number;
 }) {
-  const lesson = await classroomStore().lesson(lessonId).catch(() => null);
-  if (lesson?.blockId) return personAndPlaceLimit(request, { scope, place: lessonId, person, perPerson, perPlace });
+  const store = classroomStore();
+  const lesson = await store.lesson(lessonId).catch(() => null);
+  const shared = Boolean(lesson?.blockId) || (lesson ? fixedRoomOf(await store.eventsOf(lessonId).catch(() => [])) !== null : false);
+  if (shared) return personAndPlaceLimit(request, { scope, place: lessonId, person, perPerson, perPlace });
   return enforceRateLimit(request, { scope, limit: single, windowSeconds: 60, identifier: `${clientIp(request)}:${lessonId}` });
 }
 
