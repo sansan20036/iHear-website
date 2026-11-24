@@ -17,7 +17,7 @@ import { claimLessonTab, lessonTabName, type TabClaim } from "../../../lib/class
 import { roomCopy as copy, vendorCopy } from "./classroom-copy";
 import { RoomIcon, type RoomIconName } from "./classroom-icons";
 import ClassroomPrejoin from "./classroom-prejoin";
-import { RoomBoard, RoomChat, roomChannelNoticeText, useRoomChannel, type RoomChannelMedia } from "./room-channel";
+import { RoomBoard, RoomChat, RoomTurn, useRoomChannel, type RoomChannelMedia } from "./room-channel";
 import { useLessonPreview } from "./use-lesson-preview";
 
 // The vendor-specific parts of the room (2026-10-30): Zoom draws its video in our page; LCIC is
@@ -289,20 +289,34 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   }), []);
   const channel = useRoomChannel({ lessonId, ticket: joinKey, media: channelMedia, enabled: phase === "joined" && joined?.fixedRoom === true });
   turnOffered.current = joined?.fixedRoom === true && channel.parts?.turn === true;
-  // The room's board on this page's stage (each page chooses; it starts shown, and someone else's
-  // share coming in puts the share first, the board one press away).
+  // The room's board on this page's stage (each page chooses; it starts shown). Someone else's share
+  // coming in puts the share first; when it ends the board comes back by itself, unless the person
+  // pressed the board button meanwhile (then their choice stays).
   const [roomBoardShown, setRoomBoardShown] = useState(true);
   const shareBefore = useRef(media.share);
+  const boardHiddenByShare = useRef(false);
   useEffect(() => {
-    if (media.share === "receiving" && shareBefore.current !== "receiving") setRoomBoardShown(false);
+    const before = shareBefore.current;
     shareBefore.current = media.share;
+    if (media.share === "receiving" && before !== "receiving") {
+      setRoomBoardShown((shown) => { if (shown) boardHiddenByShare.current = true; return false; });
+    } else if (media.share !== "receiving" && before === "receiving" && boardHiddenByShare.current) {
+      boardHiddenByShare.current = false;
+      setRoomBoardShown(true);
+    }
   }, [media.share]);
+  const pressBoard = () => { boardHiddenByShare.current = false; setRoomBoardShown((shown) => !shown); };
   // The room's chat: messages from others not yet seen while the chat is closed.
   const roomChatSeen = useRef(0);
   const roomChatNewest = channel.chat.messages.at(-1)?.seq ?? 0;
   useEffect(() => {
     if (chatOpen) roomChatSeen.current = roomChatNewest;
   }, [chatOpen, roomChatNewest]);
+  // The share handed to this person (10 s to take it): the people panel, where the turn is, opens.
+  const offeredToMe = channel.share.offeredToMe;
+  useEffect(() => {
+    if (offeredToMe) setPanel("people");
+  }, [offeredToMe]);
   const connection = useRef<ConnectionState>("idle");
   const text = copy[locale];
   const hostUrl = `/api/classroom/${encodeURIComponent(lessonId)}/host-events`;
@@ -1077,12 +1091,12 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   const boardOnStage = roomBoard && roomBoardShown;
   const boardTools = !roomBoard && (isTutor || (equalTools && (tools.whiteboard === true || media.whiteboard === "presenting"))) && !!adapter.current?.setWhiteboard && (zoom || !!simulator);
   // With the turn, someone else holding it is what keeps this page from sharing (the server's word).
-  const shareBusy = roomTurn ? channel.share.busy && !channel.share.sharing : !isTutor && equalTools && tools.share === false && media.share !== "sending";
+  const shareBusy = roomTurn ? !channel.share.sharing && (channel.share.busy || (channel.share.offeredTo !== null && !channel.share.offeredToMe)) : !isTutor && equalTools && tools.share === false && media.share !== "sending";
   const sharingNow = roomTurn ? channel.share.sharing : media.share === "sending";
   const boardBusy = !isTutor && equalTools && media.whiteboard === "viewing";
   const canExport = !roomBoard && media.whiteboard === "presenting" && !!adapter.current?.exportWhiteboard;
-  const turnHolder = roomTurn && channel.share.holder ? people.find((person) => person.key === channel.share.holder) ?? null : null;
-  const turnNote = roomTurn ? roomChannelNoticeText(locale, channel.notice?.part === "turn" ? channel.notice : null) : null;
+  // Who is in the room for the turn (f1's RoomTurn): by participant id, with the name the page shows.
+  const turnPeople = roomTurn ? people.filter((person) => person.key).map((person) => ({ id: person.key as string, name: labelOf(person) })) : [];
   const roomUnread = roomChat && !chatOpen ? channel.chat.messages.filter((message) => message.by !== channel.you && message.seq > roomChatSeen.current).length : 0;
   const chatUnread = roomChat ? roomUnread : unread;
   const stageLabel = boardOnStage ? text.stageLabel.board : mode === "share" ? (media.share === "sending" ? text.stageLabel.ownShare : text.stageLabel.share) : text.stageLabel[mode];
@@ -1381,12 +1395,9 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
                     ))}
                   </div>
                 )}
-                {roomTurn && (
-                  <p className="room2-turn" role="status" data-room-turn data-holder={channel.share.holder ?? ""} data-mine={String(channel.share.mine)} data-sharing={String(channel.share.sharing)}>
-                    {channel.share.mine ? v.turnMine : turnHolder ? v.turnHeld(labelOf(turnHolder)) : channel.share.holder ? v.turnHeldUnknown : v.turnFree}
-                    {turnNote && <span className="room2-turn-note" data-room-turn-note> {turnNote}</span>}
-                  </p>
-                )}
+                {/* The share turn: who shares, handing it over, taking it when handed (f1's RoomTurn; the
+                    toolbar's share button is the page's own, so RoomTurn shows none). */}
+                {roomTurn && <div className="room2-turn"><RoomTurn channel={channel} people={turnPeople} locale={locale} button={false} /></div>}
                 <ul className="room2-people">
                   {ordered.map((person) => (
                     <li key={person.id} data-person-row={person.id} data-host={person.host} data-self={person.self}>
@@ -1478,7 +1489,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
               })}
               {roomBoard && toolButton({
                 tool: "room-board", icon: "whiteboard", label: v.whiteboardShort, name: boardOnStage ? v.roomBoardHide : v.roomBoardShow,
-                pressed: boardOnStage, marks: { "data-room-board-toggle": "" }, onClick: () => setRoomBoardShown((shown) => !shown),
+                pressed: boardOnStage, marks: { "data-room-board-toggle": "" }, onClick: pressBoard,
               })}
               {boardTools && toolButton({
                 tool: "whiteboard", icon: "whiteboard", label: v.whiteboardShort, name: media.whiteboard === "presenting" ? v.whiteboardStop : v.whiteboard,

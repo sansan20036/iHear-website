@@ -33,7 +33,6 @@ export const vendorCopy = {
     shareBusy: "其他人正在分享畫面；等對方停止分享後，才能分享你的畫面。",
     // Round 16: a fixed room's own whiteboard and share turn (lib/room-channel).
     roomBoardShow: "顯示教室白板", roomBoardHide: "收起教室白板（回到畫面）",
-    turnFree: "目前沒有人分享畫面。", turnMine: "你正在分享畫面。", turnHeld: (who: string) => `${who} 正在分享畫面。`, turnHeldUnknown: "有人正在分享畫面。",
     turnBusy: "其他人正在分享畫面；等對方停止或交給你之後，才能分享你的畫面。",
     boardViewFailedAny: "有人開了白板，但這台裝置沒有成功顯示。請告訴開白板的人，改用「分享畫面」展示。",
     zoomCode: (code: number) => `（Zoom 錯誤代碼 ${code}）`,
@@ -66,7 +65,6 @@ export const vendorCopy = {
     shareBusy: "Someone else is sharing. You can share your screen once they stop.",
     // Round 16: a fixed room's own whiteboard and share turn (lib/room-channel).
     roomBoardShow: "Show the room's whiteboard", roomBoardHide: "Hide the room's whiteboard (back to the screen)",
-    turnFree: "Nobody is sharing.", turnMine: "You are sharing.", turnHeld: (who: string) => `${who} is sharing.`, turnHeldUnknown: "Someone is sharing.",
     turnBusy: "Someone else is sharing. You can share once they stop or hand the turn to you.",
     boardViewFailedAny: "Someone opened the whiteboard, but this device could not show it. Tell them, so they can share their screen instead.",
     zoomCode: (code: number) => ` (Zoom error code ${code})`,
@@ -99,7 +97,6 @@ export const vendorCopy = {
     shareBusy: "其他人正在共享屏幕；等对方停止共享后，才能共享你的屏幕。",
     // Round 16: a fixed room's own whiteboard and share turn (lib/room-channel).
     roomBoardShow: "显示教室白板", roomBoardHide: "收起教室白板（回到画面）",
-    turnFree: "目前没有人共享屏幕。", turnMine: "你正在共享屏幕。", turnHeld: (who: string) => `${who} 正在共享屏幕。`, turnHeldUnknown: "有人正在共享屏幕。",
     turnBusy: "其他人正在共享屏幕；等对方停止或交给你之后，才能共享你的屏幕。",
     boardViewFailedAny: "有人打开了白板，但这台设备没有成功显示。请告诉打开白板的人，改用“共享屏幕”展示。",
     zoomCode: (code: number) => `（Zoom 错误代码 ${code}）`,
