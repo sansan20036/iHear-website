@@ -109,7 +109,7 @@ describe("the room channel's routes", () => {
   });
 
   test("RR-2: a person is who their ticket says; nothing in the body can say otherwise, and a message has no receiver", async () => {
-    const { people, lessonId } = await roomWith(["Kyle", "Ann"]);
+    const { room, people, lessonId } = await roomWith(["Kyle", "Ann"]);
     const [kyle, ann] = people;
     const first = await exchange(lessonId, kyle.ticket, { cursors: { board: 0, chat: 0, turn: 0 }, by: "someone-else", who: { id: "x" }, send: [
       { part: "board", input: stroke("a") }, { part: "chat", input: { op: "m1", text: "hello all" } }, { part: "turn", action: "claim" },
@@ -128,10 +128,14 @@ describe("the room channel's routes", () => {
     // A person is known by their place on the lesson's list, which is what Zoom carries for them too.
     const lesson = await store.lesson(lessonId);
     expect(lesson.participants.map(entry => entry.id)).toContain(you);
-    expect(other.body.chat.messages[0].name).toBe(lesson.participants.find(entry => entry.id === you).code);
+    // Beside a message: the name the room shows for its writer, which is the first name recorded when
+    // they were let in (the user's decision of 2026-11-24), as Zoom shows it; never the list's code.
+    expect(other.body.chat.messages[0].name).toBe("Kyle");
+    expect(other.body.chat.messages[0].name).not.toBe(lesson.participants.find(entry => entry.id === you).code);
     expect(other.body.turn.holder).toBe(you);
-    // Nothing a person typed at the door is in what the room hands out: people show by code only.
-    expect(JSON.stringify(other.body)).not.toMatch(/Kyle|Ann/);
+    // What the room hands out about people is their place on the list and that name: never a ticket,
+    // a request's id or the room's own key.
+    for (const secret of [kyle.ticket, ann.ticket, kyle.requestId, ann.requestId, room.key]) expect(JSON.stringify(other.body)).not.toContain(secret);
     // The limit is asked for each request, per person (never the ticket itself) and per address.
     const buckets = enforceRateLimits.mock.calls[0][1];
     expect(buckets.map(bucket => [bucket.scope, bucket.limit])).toEqual([["classroom-room-channel", 9000], ["classroom-room-channel-person", 900]]);
@@ -147,8 +151,12 @@ describe("the room channel's routes", () => {
       ["their own ticket", people[0].ticket], ["another person's ticket", people[1].ticket], ["no ticket", null], ["a ticket that is no one's", "not-a-ticket"],
       ["the ticket of a person in another room", elsewhere.people[0].ticket], ["the room's own link key", room.key], ["a one-to-one lesson's link", keyOf(plain.studentLink)], ["the ticket of a person taken out", people[2].ticket],
     ];
+    // The lesson's own planned end: a fixed room's lesson lasts as long as the room is set to, and an
+    // extension moves it (RR-6). Nothing here assumes a length.
+    const end = Date.parse((await store.lesson(lessonId)).endsAt);
+    expect(end).toBeGreaterThan(START + HOUR);
     // Also a moment before the lesson's door opened (it opened when the first person was let in).
-    for (const now of [START - 20 * MIN, START + 2 * MIN, START + 2 * HOUR, START + 3 * HOUR - 1]) {
+    for (const now of [START - 20 * MIN, START + 2 * MIN, START + HOUR, end - 1]) {
       for (const [label, key] of cases) {
         const mine = await roomChannelCaller({ store, lessonId, key, now });
         const theirs = await classroomStatus({ store, lessonId, key, sessionEmail: null, now });
@@ -158,8 +166,24 @@ describe("the room channel's routes", () => {
     expect((await roomChannelCaller({ store, lessonId, key: people[0].ticket, now: START + 2 * MIN })).ok).toBe(true);
     // A signed-in member of staff is not a person in the room for the channel: only a ticket counts.
     const facts = (await roomChannelCaller({ store, lessonId, key: people[0].ticket, now: START + 2 * MIN })).lesson;
-    expect(facts).toMatchObject({ id: lessonId, roomId: room.id, scheduledEnd: START + 3 * HOUR, endedAt: null });
+    expect(facts).toMatchObject({ id: lessonId, roomId: room.id, scheduledEnd: end, endedAt: null });
     expect(facts.people).toHaveLength(2);
+    // After the planned end the two part ways, on purpose. The classroom lets nobody in once its door
+    // has closed (15 minutes after the end). The channel's lesson ended AT the planned end, not later:
+    // from that moment nothing can be written (RR-6), and a person of that lesson may still read its
+    // whiteboard until it is deleted. Whoever is not a person of the lesson is refused by both.
+    const late = end + 16 * MIN;
+    expect((await classroomStatus({ store, lessonId, key: people[0].ticket, sessionEmail: null, now: late })).status).toBe(403);
+    const reader = await roomChannelCaller({ store, lessonId, key: people[0].ticket, now: late });
+    expect([reader.ok, reader.lesson.endedAt]).toEqual([true, end]);
+    expect((await roomChannelCaller({ store, lessonId, key: people[0].ticket, now: end })).lesson.endedAt).toBe(end);
+    for (const key of [people[2].ticket, null, "not-a-ticket", room.key, elsewhere.people[0].ticket, keyOf(plain.studentLink)]) {
+      expect((await roomChannelCaller({ store, lessonId, key, now: late })).ok).toBe(false);
+    }
+    // And a write after the end is refused through the route, whoever asks.
+    vi.setSystemTime(late);
+    const written = await exchange(lessonId, people[0].ticket, { send: [{ part: "board", input: stroke("late") }, { part: "chat", input: { op: "m9", text: "late" } }] });
+    expect(written.body.sent.map(answer => answer.error)).toEqual(["LESSON_ENDED", "LESSON_ENDED"]);
   });
 
   test("RR-4: taken out of the room: refused on the very next request, their share turn is free, their lines stay for the others", async () => {
@@ -215,8 +239,19 @@ describe("the room channel's routes", () => {
     expect((await exchange(lessonId, ann.ticket, { cursors: { board: 9 } })).body.board.picture.lines).toHaveLength(0);
     // A lesson that simply ran to its planned end: the end is the planned end.
     const second = await roomWith(["Kim"], START);
-    expect((await roomChannelCaller({ store, lessonId: second.lessonId, key: second.people[0].ticket, now: START + 3 * HOUR })).lesson.endedAt).toBe(START + 3 * HOUR);
-    expect((await roomChannelCaller({ store, lessonId: second.lessonId, key: second.people[0].ticket, now: START + 3 * HOUR - 1 })).lesson.endedAt).toBe(null);
+    const planned = Date.parse((await store.lesson(second.lessonId)).endsAt);
+    const callerAt = now => roomChannelCaller({ store, lessonId: second.lessonId, key: second.people[0].ticket, now });
+    expect((await callerAt(planned)).lesson.endedAt).toBe(planned);
+    expect((await callerAt(planned - 1)).lesson.endedAt).toBe(null);
+    // The iHear teacher makes the lesson longer: the channel's end is the classroom's new end, so the
+    // room's board, chat and turn stay open exactly as long as the lesson does.
+    const longer = await manage("extend_lesson", { room: second.room.id }, planned - 5 * MIN);
+    expect(longer.status, JSON.stringify(longer.body)).toBe(200);
+    const moved = Date.parse(longer.body.endsAt);
+    expect(moved).toBeGreaterThan(planned);
+    expect((await callerAt(planned)).lesson).toMatchObject({ scheduledEnd: moved, endedAt: null });
+    expect((await callerAt(moved - 1)).lesson.endedAt).toBe(null);
+    expect((await callerAt(moved)).lesson.endedAt).toBe(moved);
   });
 
   test("RR-7: the request itself: same origin only; a body too large or not JSON goes no further; a refused limit answers alone", async () => {
