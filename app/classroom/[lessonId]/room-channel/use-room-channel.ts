@@ -46,8 +46,9 @@ type Client = {
   beginLine(options: { color: number; width: number }): string; addPoints(line: string, points: [number, number][]): boolean; endLine(line: string): void;
   erase(line: string): void; clear(): void; undoClear(): void; say(text: string): void;
   claimTurn(): void; releaseTurn(): void; handOver(to: string): void; showsShareOf(person: string): boolean;
+  parting(what: { turn: boolean }): unknown;
 };
-type ShareControl = { sharing: boolean; changed(what: Changed): void; start(): Promise<boolean>; stop(): Promise<void>; handOver(to: string): Promise<void>; close(): void };
+type ShareControl = { sharing: boolean; holding: boolean; changed(what: Changed): void; start(): Promise<boolean>; stop(): Promise<void>; handOver(to: string): Promise<void>; close(): void };
 
 // The plain-JavaScript pieces, with the shapes this hook uses of them.
 const makeClient = createRoomClient as unknown as (options: { post: (body: unknown) => Promise<{ status: number; body: unknown }>; key: string; changed: (what: Changed) => void }) => Client;
@@ -77,11 +78,12 @@ export function useRoomChannel({ lessonId, ticket, media = null, enabled = true 
   useEffect(() => {
     if (!enabled || !ticket) return undefined;
     let alive = true;
+    const address = `/api/classroom/${encodeURIComponent(lessonId)}/room-channel`;
     const post = async (body: unknown) => {
       const abort = new AbortController();
       const timer = window.setTimeout(() => abort.abort(), REQUEST_MS);
       try {
-        const response = await fetch(`/api/classroom/${encodeURIComponent(lessonId)}/room-channel`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), cache: "no-store", credentials: "same-origin", signal: abort.signal });
+        const response = await fetch(address, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), cache: "no-store", credentials: "same-origin", signal: abort.signal });
         const answer = await response.json().catch(() => null);
         if (alive) {
           setOnline(response.status < 500 && response.status !== 429);
@@ -124,9 +126,25 @@ export function useRoomChannel({ lessonId, ticket, media = null, enabled = true 
     made.start();
     const seen = () => made.setIdle(document.hidden);
     document.addEventListener("visibilitychange", seen);
+    // The page goes away while it shares (closed, reloaded, the room left): its turn goes back with
+    // one last request, which the browser sends even as the page is unloaded (its "beacon", or a
+    // request marked "keepalive" where there is none). Without it the turn would only be free when
+    // its 15 seconds ran out. Never for a turn another window of the same person holds: only this
+    // page's own share counts. (Sent twice it does no harm: the second gives back nothing.)
+    const part = () => {
+      const body = control.current?.holding ? made.parting({ turn: true }) : null;
+      if (!body) return;
+      const words = JSON.stringify(body);
+      let handed = false;
+      try { handed = typeof navigator.sendBeacon === "function" && navigator.sendBeacon(address, new Blob([words], { type: "application/json" })); } catch { handed = false; }
+      if (!handed) void fetch(address, { method: "POST", headers: { "content-type": "application/json" }, body: words, cache: "no-store", credentials: "same-origin", keepalive: true }).catch(() => undefined);
+    };
+    window.addEventListener("pagehide", part);
     return () => {
       alive = false;
       document.removeEventListener("visibilitychange", seen);
+      window.removeEventListener("pagehide", part);
+      part();
       control.current?.close();
       made.stop();
       client.current = null;
@@ -157,7 +175,7 @@ export function useRoomChannel({ lessonId, ticket, media = null, enabled = true 
       },
       chat: { messages: view.chat.messages, ended: view.chat.ended, say: (text: string) => act((made) => made.say(text), undefined) },
       share: {
-        holder: view.turn.holder, mine: view.turn.mine, offeredToMe: view.turn.offeredToMe, sharing,
+        holder: view.turn.holder, mine: view.turn.mine, offeredTo: view.turn.offeredTo, offeredToMe: view.turn.offeredToMe, sharing,
         // Whether someone else holds the turn (the page's share button says so instead of starting).
         busy: view.turn.holder !== null && !view.turn.mine,
         // Ask the server for the turn first; only with it start the share. False: not started (the notice says why).

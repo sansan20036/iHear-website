@@ -2,7 +2,10 @@
 // disposable local storage and test-only sessions; the synthetic provider stands in for Zoom, and
 // the room channel keeps its things in the server's memory. Four people in one fixed room: they
 // draw, erase, clear and bring back, write to each other, take the share turn in turns, one loses
-// the connection and comes back, one is taken out, one is on a phone.
+// the connection and comes back, one is taken out, one is on a phone. Then the user's standard for
+// a demonstration (2026-11-24): the share is handed over, pages are reloaded, the one who shares
+// drops off the network, someone leaves and comes back, there is one whiteboard and no other, and
+// with the three switches off the room is as it was before any of this.
 //
 // It needs a build in which the classroom page mounts the pieces. Until the page's owner has
 // written that mount, a private one stands in (output/a0-multiroom/room-channel-private-mount.mjs
@@ -25,8 +28,15 @@ Object.assign(process.env, {
 });
 const server = await startAcademyServer({ port: Number(process.env.ROOM_CHANNEL_SMOKE_PORT ?? 3350), secret, owners: [owner], name: 'room-channel' });
 const { origin, directory } = server;
-const report = { startedAt: new Date().toISOString(), origin, synthetic: true, zoomVerified: false, checks: [], externalRequests: [], pageProblems: [], status: 'running' };
-let browser, failure;
+const report = { startedAt: new Date().toISOString(), origin, synthetic: true, zoomVerified: false, checks: [], timings: {}, externalRequests: [], pageProblems: [], status: 'running' };
+let browser, failure, serverOff = null;
+// The classroom page's own places (the page is not this folder's): one list, to follow its mount.
+const PAGE = {
+  shareButton: '[data-room-turn-button]',        // the page's share button, wired to the turn
+  zoomBoardTool: '[data-tool="whiteboard"]',     // Zoom's own whiteboard tool: not offered while the room's board is on
+  leave: '[data-control="leave"]',               // the page's own "leave the room"
+  connected: '.room2-top .classroom-room-connection',
+};
 
 async function check(id, name, action) {
   try { await action(); report.checks.push({ id, name, status: 'PASS' }); console.log(`PASS ${id} ${name}`); }
@@ -57,6 +67,24 @@ async function draw(page, from, to) {
   await page.mouse.down();
   for (let step = 1; step <= 10; step += 1) await page.mouse.move(at(from[0] + ((to[0] - from[0]) * step) / 10, 0), at(from[1] + ((to[1] - from[1]) * step) / 10, 1));
   await page.mouse.up();
+}
+const mount = page => page.locator('[data-room-channel]');
+const turn = page => page.locator('[data-room-turn]');
+const shareButton = page => page.locator(PAGE.shareButton);
+const chat = page => page.locator('[data-room-chat]');
+// Past the page's own door (after a reload, or coming back): in the room, connected, known to the channel.
+async function intoRoom(page) {
+  await page.getByRole('button', { name: '進入教室' }).click();
+  await expect(page.locator(PAGE.connected)).toHaveText('已連線');
+  await expect(mount(page)).toHaveAttribute('data-you', /^P-[0-9a-f]{32}$/);
+}
+// What a page shows of the board and the chat, to compare before and after.
+const shownOn = async page => ({ lines: await board(page).getAttribute('data-lines'), messages: await chat(page).getAttribute('data-messages'), you: await mount(page).getAttribute('data-you') });
+async function startShare(person) { await shareButton(person.page).click(); await expect(turn(person.page)).toHaveAttribute('data-sharing', 'true'); }
+async function stopShare(person, everyone) {
+  await shareButton(person.page).click();
+  await expect(turn(person.page)).toHaveAttribute('data-sharing', 'false');
+  for (const other of everyone) await expect(turn(other.page)).toHaveAttribute('data-holder', '');
 }
 // How many of the board's pixels are painted.
 const painted = page => page.evaluate(() => {
@@ -251,8 +279,135 @@ try {
     await shot(Kyle.page, 'c11-after-removal');
   });
 
+  // ---- The demonstration standard (the user, 2026-11-24). Kyle, Ann and Dee (on the phone) are in the room. ----
+  const here = [Kyle, Ann, Dee];
+  const ids = { Kyle: await mount(Kyle.page).getAttribute('data-you'), Ann: await mount(Ann.page).getAttribute('data-you'), Dee: await mount(Dee.page).getAttribute('data-you') };
+  const lessonUrl = Ann.page.url();
+
+  await check('D1', '轉交分享權：持有人把分享權交給指定的人，對方按「開始分享」就接手；這段時間其他人拿不到；沒有人接手的話，10 秒後任何人都可以分享', async () => {
+    await startShare(Kyle);
+    await Kyle.page.locator('[data-room-turn-to]').selectOption(ids.Ann);
+    await Kyle.page.locator('[data-room-turn-give]').click();
+    await expect(turn(Kyle.page)).toHaveAttribute('data-sharing', 'false');
+    await expect(turn(Ann.page)).toHaveAttribute('data-offered-to-me', 'true');
+    await expect(turn(Dee.page)).toHaveAttribute('data-offered-to', ids.Ann);
+    await expect(shareButton(Kyle.page), 'while it waits for Ann, nobody else can take it').toBeDisabled();
+    await Ann.page.locator('[data-room-turn-take]').click();
+    await expect(turn(Ann.page)).toHaveAttribute('data-sharing', 'true');
+    for (const person of here) await expect(turn(person.page)).toHaveAttribute('data-holder', ids.Ann);
+    await shot(Kyle.page, 'd1-handed-over');
+    // Handed on and not taken: after ten seconds the turn is anyone's again.
+    await Ann.page.locator('[data-room-turn-to]').selectOption(ids.Kyle);
+    await Ann.page.locator('[data-room-turn-give]').click();
+    await expect(turn(Kyle.page)).toHaveAttribute('data-offered-to-me', 'true');
+    for (const person of here) await expect(turn(person.page)).toHaveAttribute('data-offered-to', '', { timeout: 20_000 });
+    await startShare(Ann);
+    await stopShare(Ann, here);
+  });
+
+  await check('D2', '重新整理：頁面回來後白板的線和聊天訊息都在，自己還是同一個人；正在分享的人重新整理，分享權馬上空出來（不用等 15 秒），回來後可以再分享', async () => {
+    const before = await shownOn(Ann.page);
+    await Ann.page.reload();
+    await intoRoom(Ann.page);
+    expect(await shownOn(Ann.page)).toEqual(before);
+    // The one who shares reloads.
+    await startShare(Kyle);
+    await expect(turn(Ann.page)).toHaveAttribute('data-holder', ids.Kyle);
+    const kyleBefore = await shownOn(Kyle.page);
+    const at = Date.now();
+    await Kyle.page.reload();
+    await expect(turn(Ann.page), 'the turn is given back as the page goes, not when its 15 seconds run out').toHaveAttribute('data-holder', '', { timeout: 6_000 });
+    report.timings.reloadFreesTurnMs = Date.now() - at;
+    await intoRoom(Kyle.page);
+    expect(await shownOn(Kyle.page)).toEqual(kyleBefore);
+    await expect(turn(Kyle.page)).toHaveAttribute('data-mine', 'false');
+    await startShare(Kyle);
+    await stopShare(Kyle, here);
+  });
+
+  await check('D3', '分享的人斷線：沒有回報超過 15 秒，分享權自動空出來，別人可以分享；他回來後自己的分享已經停止，頁面會說原因', async () => {
+    cutting = true;
+    await startShare(Kyle);
+    await expect(turn(Ann.page)).toHaveAttribute('data-holder', ids.Kyle);
+    const at = Date.now();
+    await Kyle.context.setOffline(true);
+    await expect(turn(Ann.page)).toHaveAttribute('data-holder', '', { timeout: 30_000 });
+    report.timings.dropFreesTurnMs = Date.now() - at;
+    expect(report.timings.dropFreesTurnMs, 'not before the holder had a fair chance to say "still sharing"').toBeGreaterThan(8_000);
+    await startShare(Ann);
+    await Kyle.context.setOffline(false);
+    await expect(turn(Kyle.page)).toHaveAttribute('data-sharing', 'false', { timeout: 30_000 });
+    await expect(turn(Kyle.page)).toHaveAttribute('data-holder', ids.Ann);
+    await expect(Kyle.page.locator('[data-room-turn-note]')).toContainText('連線中斷太久');
+    await stopShare(Ann, here);
+    cutting = false;
+  });
+
+  await check('D4', '離開教室：正在分享的人按「離開」，分享權馬上空出來，他畫的線還在；他再進來還是同一個人，白板和聊天都在', async () => {
+    const before = await shownOn(Ann.page);
+    await startShare(Ann);
+    await expect(turn(Kyle.page)).toHaveAttribute('data-holder', ids.Ann);
+    const at = Date.now();
+    await Ann.page.locator(PAGE.leave).first().click();
+    await expect(turn(Kyle.page)).toHaveAttribute('data-holder', '', { timeout: 6_000 });
+    report.timings.leaveFreesTurnMs = Date.now() - at;
+    await lines(Kyle.page, before.lines);
+    await draw(Kyle.page, [0.2, 0.5], [0.3, 0.6]);                     // drawn while Ann is out
+    await lines(Kyle.page, Number(before.lines) + 1);
+    await Ann.page.goto(lessonUrl);
+    await intoRoom(Ann.page);
+    expect(await shownOn(Ann.page)).toEqual({ ...before, lines: String(Number(before.lines) + 1) });
+    await startShare(Ann);
+    await stopShare(Ann, here);
+  });
+
+  await check('D5', '一間教室只有一套白板：頁面上只有教室自己的白板，沒有 Zoom 白板的按鈕', async () => {
+    for (const person of here) {
+      await expect(board(person.page)).toHaveCount(1);
+      await expect(person.page.locator(PAGE.zoomBoardTool)).toHaveCount(0);
+    }
+  });
+
   await check('C12', '整個過程沒有連到網站以外的地方，頁面沒有非預期的錯誤', async () => {
     expect(report.externalRequests).toEqual([]);
+    expect(report.pageProblems).toEqual([]);
+  });
+
+  await check('D6', '三個開關都關閉時：教室頁面沒有白板、聊天和分享權的任何東西，不向這條路徑發任何請求，路徑回 404；教室照原來的方式進得去', async () => {
+    await browser.close();
+    server.child.kill();
+    Object.assign(process.env, { CLASSROOM_ROOM_BOARD: '', CLASSROOM_ROOM_CHAT: '', CLASSROOM_ROOM_SHARE_TURN: '' });
+    serverOff = await startAcademyServer({ port: Number(process.env.ROOM_CHANNEL_SMOKE_PORT ?? 3350) + 1, secret, owners: [owner], name: 'room-channel-off' });
+    const offOrigin = serverOff.origin;
+    browser = await chromium.launch({ headless: process.env.IHEAR_HEADED !== '1' });
+    const offContext = options => localContext(browser, offOrigin, { external: report.externalRequests, secret, locale: 'zh-TW', ...options });
+    const teacher = watch(await (await offContext({ email: owner })).newPage(), 'owner (switches off)');
+    await teacher.goto(`${offOrigin}/admin/classrooms/rooms`);
+    await teacher.getByLabel('教室名稱（例如 Room 1）').fill('Room 1');
+    await teacher.getByRole('button', { name: '建立教室' }).click();
+    const shown = teacher.locator('[data-room-link] code');
+    await expect(shown).toContainText('/classroom/r/FR-');
+    const offLink = (await shown.innerText()).trim();
+    await teacher.getByRole('button', { name: '我已經記下連結' }).click();
+    const page = watch(await (await offContext({})).newPage(), 'Kyle (switches off)');
+    const asked = [];
+    page.on('request', request => { if (request.url().includes('/room-channel')) asked.push(request.url()); });
+    await page.goto(offLink);
+    await page.getByLabel(/Please enter your first name/).fill('Kyle');
+    await page.getByRole('button', { name: '進入教室' }).click();
+    await expect(page.locator('[data-room-waiting]')).toBeVisible();
+    await teacher.locator('[data-room="Room 1"]').locator('[data-waiting-person="Kyle"]').getByRole('button', { name: '讓他進入', exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`${offOrigin}/classroom/L-[0-9a-f]{32}$`));
+    await page.getByRole('button', { name: '進入教室' }).click();
+    await expect(page.locator(PAGE.connected)).toHaveText('已連線');
+    // Long enough for a page that asked the channel to have asked several times.
+    await page.waitForTimeout(3000);
+    for (const piece of ['[data-room-channel]', '[data-room-board]', '[data-room-chat]', '[data-room-turn]']) await expect(page.locator(piece)).toHaveCount(0);
+    expect(asked, 'with the switches off the page never asks the room channel').toEqual([]);
+    const lessonId = new URL(page.url()).pathname.split('/').pop();
+    const status = await page.evaluate(async id => (await fetch(`/api/classroom/${id}/room-channel`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status, lessonId);
+    expect(status).toBe(404);
+    await shot(page, 'd6-switches-off');
     expect(report.pageProblems).toEqual([]);
   });
 
@@ -266,6 +421,7 @@ try {
   await writeFile(path.join(directory, 'report.json'), `${redactLinks(JSON.stringify(report, null, 2))}\n`);
   console.log(`report: ${path.join(directory, 'report.json')}`);
   server.child.kill();
+  serverOff?.child.kill();
 }
 if (failure) { console.error(redactLinks(failure.stack ?? failure.message)); process.exit(1); }
 console.log(`room channel smoke: ${report.checks.length} checks passed (synthetic provider; nothing about Zoom)`);
