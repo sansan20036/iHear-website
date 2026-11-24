@@ -1,0 +1,49 @@
+/* The room's own whiteboard and public chat (local integration only, 2026-11-24). The classroom's
+   own colours where the page gives them (classroom.css), with fallbacks so the pieces also stand alone. */
+.room-channel-board, .room-channel-chat { --rc-ink: var(--room-ink, #1A2B4C); --rc-muted: var(--room-muted, #5d6877); --rc-line: var(--room-line, #e3e8ef); --rc-accent: var(--room-accent, #263974);
+  --rc-surface: var(--room-surface, #fff); --rc-bad: var(--room-bad, #a3261d); --rc-focus: var(--room-focus, #1264A3);
+  box-sizing: border-box; color: var(--rc-ink); font: inherit; min-width: 0; min-height: 0; }
+.room-channel-board *, .room-channel-chat * { box-sizing: border-box; }
+
+/* The whiteboard: its tools, a line of words, and the board itself filling what is left. */
+.room-channel-board { display: grid; grid-template-rows: auto auto minmax(0, 1fr); gap: 8px; width: 100%; height: 100%; background: var(--rc-surface); border-radius: 12px; padding: 8px; }
+.room-channel-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.room-channel-group { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.room-channel-tool { font: inherit; font-weight: 700; min-height: 40px; padding: 6px 14px; border-radius: 10px; border: 1px solid var(--rc-line); background: var(--rc-surface); color: var(--rc-ink); cursor: pointer; }
+.room-channel-tool[aria-pressed="true"] { background: var(--rc-accent); border-color: var(--rc-accent); color: #fff; }
+.room-channel-tool:disabled { opacity: .5; cursor: default; }
+.room-channel-danger { border-color: var(--rc-bad); color: var(--rc-bad); }
+.room-channel-colour { width: 32px; height: 32px; min-width: 32px; border-radius: 50%; border: 2px solid var(--rc-surface); box-shadow: 0 0 0 1px var(--rc-line); cursor: pointer; padding: 0; }
+.room-channel-colour[aria-pressed="true"] { box-shadow: 0 0 0 3px var(--rc-accent); }
+.room-channel-colour:disabled { opacity: .5; cursor: default; }
+.room-channel-width { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 10px; border: 1px solid var(--rc-line); background: var(--rc-surface); cursor: pointer; padding: 0 8px; }
+.room-channel-width span { display: block; width: 100%; border-radius: 999px; background: var(--rc-ink); }
+.room-channel-width[aria-pressed="true"] { border-color: var(--rc-accent); box-shadow: 0 0 0 2px var(--rc-accent); }
+.room-channel-width:disabled { opacity: .5; cursor: default; }
+.room-channel-tool:focus-visible, .room-channel-colour:focus-visible, .room-channel-width:focus-visible, .room-channel-send input:focus-visible { outline: 3px solid var(--rc-focus); outline-offset: 2px; }
+.room-channel-ask { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; font-weight: 700; }
+.room-channel-hint { margin: 0; color: var(--rc-muted); font-size: 14px; line-height: 1.5; }
+.room-channel-frame { display: grid; place-items: center; min-height: 160px; overflow: hidden; background: #eef1f6; border-radius: 10px; }
+/* The board never scrolls or zooms the page under a finger: every touch on it is a stroke. */
+.room-channel-canvas { background: #fff; border-radius: 6px; box-shadow: 0 0 0 1px var(--rc-line); touch-action: none; cursor: crosshair; display: block; }
+.room-channel-canvas[data-tool="eraser"] { cursor: cell; }
+
+/* The chat: what it is, the messages, and one line to write in. */
+.room-channel-chat { display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto; gap: 8px; height: 100%; }
+.room-channel-messages { list-style: none; margin: 0; padding: 0; overflow-y: auto; display: grid; align-content: start; gap: 8px; min-height: 80px; }
+.room-channel-message { display: grid; gap: 2px; padding: 8px 10px; border-radius: 10px; background: #f3f5f9; overflow-wrap: anywhere; }
+.room-channel-message[data-own="true"] { background: #e7ecf8; }
+.room-channel-name { font-size: 13px; font-weight: 700; color: var(--rc-muted); }
+.room-channel-text { white-space: pre-wrap; line-height: 1.5; }
+.room-channel-empty { color: var(--rc-muted); font-size: 14px; }
+.room-channel-send { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.room-channel-send input { flex: 1 1 160px; min-width: 0; min-height: 40px; font: inherit; padding: 6px 12px; border-radius: 10px; border: 1px solid var(--rc-line); background: var(--rc-surface); color: var(--rc-ink); }
+.room-channel-left { font-size: 13px; color: var(--rc-muted); }
+.room-channel-chat .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+@media (max-width: 640px) {
+  .room-channel-board { padding: 6px; gap: 6px; }
+  .room-channel-tool { min-height: 44px; padding: 6px 12px; }
+  .room-channel-colour { width: 36px; height: 36px; min-width: 36px; }
+  .room-channel-width { width: 44px; height: 44px; }
+}
