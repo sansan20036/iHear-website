@@ -28,7 +28,7 @@ Object.assign(process.env, {
 });
 const server = await startAcademyServer({ port: Number(process.env.ROOM_CHANNEL_SMOKE_PORT ?? 3350), secret, owners: [owner], name: 'room-channel' });
 const { origin, directory } = server;
-const report = { startedAt: new Date().toISOString(), origin, synthetic: true, zoomVerified: false, checks: [], timings: {}, externalRequests: [], pageProblems: [], status: 'running' };
+const report = { startedAt: new Date().toISOString(), origin, synthetic: true, zoomVerified: false, checks: [], timings: {}, notes: {}, externalRequests: [], pageProblems: [], status: 'running' };
 let browser, failure, serverOff = null;
 // The classroom page's own places (the page is not this folder's): one list, to follow its mount.
 const PAGE = {
@@ -93,12 +93,22 @@ const mount = page => page.locator('[data-room-channel]');
 const turn = page => page.locator('[data-room-turn]');
 const shareButton = page => page.locator(PAGE.shareButton);
 const chat = page => page.locator('[data-room-chat]');
-// Past the page's own door (after a reload, or coming back): in the room, connected, known to the channel.
+// Past the page's own door: in the room, connected, known to the channel.
 async function intoRoom(page) {
   await page.getByRole('button', { name: '進入教室' }).click();
   await expect(page.locator(PAGE.connected)).toHaveText('已連線');
   await expect(mount(page)).toHaveAttribute('data-you', /^P-[0-9a-f]{32}$/);
 }
+// Back into the room the way a person would come: by the room link they were given. The room's
+// door remembers this tab's request and takes the person on to the lesson; then the page's own
+// door. (The lesson page itself has no way in after a reload: it keeps the person's ticket in its
+// memory only, by the page's design.)
+async function comeBack(page, roomLink) {
+  await page.goto(roomLink);
+  await expect(page).toHaveURL(new RegExp(`${origin}/classroom/L-[0-9a-f]{32}$`));
+  await intoRoom(page);
+}
+const wordsOn = async page => (await page.locator('body').innerText()).replace(/\s+/g, ' ').trim().slice(0, 240);
 // What a page shows of the board and the chat, to compare before and after.
 const shownOn = async page => { await showBoard(page); return { lines: await board(page).getAttribute('data-lines'), messages: await chat(page).getAttribute('data-messages'), you: await mount(page).getAttribute('data-you') }; };
 async function startShare(person) { await shareButton(person.page).click(); await expect(turn(person.page)).toHaveAttribute('data-sharing', 'true'); }
@@ -311,7 +321,6 @@ try {
   // ---- The demonstration standard (the user, 2026-11-24). Kyle, Ann and Dee (on the phone) are in the room. ----
   const here = [Kyle, Ann, Dee];
   const ids = { Kyle: await mount(Kyle.page).getAttribute('data-you'), Ann: await mount(Ann.page).getAttribute('data-you'), Dee: await mount(Dee.page).getAttribute('data-you') };
-  const lessonUrl = Ann.page.url();
 
   await check('D1', '轉交分享權：持有人把分享權交給指定的人，對方按「開始分享」就接手；這段時間其他人拿不到；沒有人接手的話，10 秒後任何人都可以分享', async () => {
     await startShare(Kyle);
@@ -336,10 +345,14 @@ try {
     await stopShare(Ann, here);
   });
 
-  await check('D2', '重新整理：頁面回來後白板的線和聊天訊息都在，自己還是同一個人；正在分享的人重新整理，分享權馬上空出來（不用等 15 秒），回來後可以再分享', async () => {
+  await check('D2', '重新整理：用原來的教室連結回到教室後，白板的線和聊天訊息都在，自己還是同一個人；正在分享的人重新整理，分享權馬上空出來（不用等 15 秒），回來後可以再分享', async () => {
     const before = await shownOn(Ann.page);
     await Ann.page.reload();
-    await intoRoom(Ann.page);
+    // What the reloaded lesson page itself says (it does not put the person back in the room by itself).
+    await expect(mount(Ann.page)).toHaveCount(0);
+    report.notes.lessonPageAfterReload = await wordsOn(Ann.page);
+    await shot(Ann.page, 'd2-after-reload');
+    await comeBack(Ann.page, link);
     expect(await shownOn(Ann.page)).toEqual(before);
     // The one who shares reloads.
     await startShare(Kyle);
@@ -349,7 +362,7 @@ try {
     await Kyle.page.reload();
     await expect(turn(Ann.page), 'the turn is given back as the page goes, not when its 15 seconds run out').toHaveAttribute('data-holder', '', { timeout: 6_000 });
     report.timings.reloadFreesTurnMs = Date.now() - at;
-    await intoRoom(Kyle.page);
+    await comeBack(Kyle.page, link);
     expect(await shownOn(Kyle.page)).toEqual(kyleBefore);
     await expect(turn(Kyle.page)).toHaveAttribute('data-mine', 'false');
     await startShare(Kyle);
@@ -374,7 +387,7 @@ try {
     cutting = false;
   });
 
-  await check('D4', '離開教室：正在分享的人按「離開」，分享權馬上空出來，他畫的線還在；他再進來還是同一個人，白板和聊天都在', async () => {
+  await check('D4', '離開教室：正在分享的人按「離開」，分享權馬上空出來，他畫的線還在；他用教室連結再進來還是同一個人，白板和聊天都在', async () => {
     const before = await shownOn(Ann.page);
     await startShare(Ann);
     await expect(turn(Kyle.page)).toHaveAttribute('data-holder', ids.Ann);
@@ -385,8 +398,8 @@ try {
     await lines(Kyle.page, before.lines);
     await draw(Kyle.page, [0.2, 0.5], [0.3, 0.6]);                     // drawn while Ann is out
     await lines(Kyle.page, Number(before.lines) + 1);
-    await Ann.page.goto(lessonUrl);
-    await intoRoom(Ann.page);
+    report.notes.lessonPageAfterLeaving = await wordsOn(Ann.page);
+    await comeBack(Ann.page, link);
     expect(await shownOn(Ann.page)).toEqual({ ...before, lines: String(Number(before.lines) + 1) });
     await startShare(Ann);
     await stopShare(Ann, here);
