@@ -67,13 +67,24 @@ async function check(id, name, action) {
 // WebKit's words for a request the reload cut off are "Fetch API cannot load <address> due to
 // access control checks." (seen 2026-11-25 for the channel's own request, in one run of three).
 // What is let through this way is counted in the report, by browser, never dropped unseen.
-let leaving = false;
+// Those words of WebKit's can come late: in a run of 2026-11-25 (04:29, another heavy run beside
+// it) they came after the reloaded page was back in the room, and counted as a page problem. So
+// for those words alone, and only for the channel's own request, the window stays open TAIL_MS
+// after the page is back; each one that comes in that tail is written down with how late it was.
+// At no other time are they let through.
+const TAIL_MS = 10_000;
+const CUT_WORDS = '/room-channel due to access control checks';
+let leaving = false, backAt = 0;
+const left = () => { leaving = true; };
+const cameBack = () => { leaving = false; backAt = Date.now(); };
 const whileLeaving = text => leaving && /Failed to load resource|NetworkError|Load failed|net::ERR_|Failed to fetch|cancelled|aborted|NS_BINDING_ABORTED|due to access control checks/i.test(text);
-const expected = text => /Failed to load resource: the server responded with a status of (403|404|409|410)/.test(text) || whileLeaving(text);
+const justAfter = text => !leaving && backAt > 0 && Date.now() - backAt <= TAIL_MS && text.includes(CUT_WORDS);
+const expected = text => /Failed to load resource: the server responded with a status of (403|404|409|410)/.test(text) || whileLeaving(text) || justAfter(text);
 function watch(page, who) {
   page.on('console', message => {
     if (message.type() !== 'error') return;
     if (whileLeaving(message.text())) { const said = (report.notes.saidWhileReloading ??= {}); said[who] = (said[who] ?? 0) + 1; }
+    else if (justAfter(message.text())) (report.notes.saidAfterReload ??= []).push({ who, msAfterBack: Date.now() - backAt });
     if (!expected(message.text())) report.pageProblems.push(`${who}: ${message.text()}`);
   });
   page.on('pageerror', error => report.pageProblems.push(`${who}: ${error.message}`));
@@ -289,10 +300,10 @@ try {
     for (const person of reloading) {
       const before = await shownOn(person.page);
       const at = Date.now();
-      leaving = true;
+      left();
       await person.page.reload();
       await backByItself(person.page);
-      leaving = false;
+      cameBack();
       report.timings[`reloadBackInRoomMs${person.engine}`] = Date.now() - at;
       expect(await shownOn(person.page), `${person.engine}: the same person, lines and messages`).toEqual(before);
     }
@@ -310,7 +321,7 @@ try {
       await startShare(person);
       await expect(turn(watcher.page)).toHaveAttribute('data-holder', person.id);
       const at = Date.now();
-      leaving = true;
+      left();
       await person.page.reload();
       const free = () => turn(watcher.page).getAttribute('data-holder').then(holder => holder === '');
       const fast = await expect.poll(free, { timeout: 6_000 }).toBe(true).then(() => true, () => false);
@@ -321,7 +332,7 @@ try {
       report.timings[`reloadFreesTurnMs${person.engine}`] = Date.now() - at;
       expect(fast || person.engine === 'WebKit', `${person.engine}: the turn is given back as the page goes`).toBe(true);
       await backByItself(person.page);
-      leaving = false;
+      cameBack();
       await expect(turn(person.page)).toHaveAttribute('data-mine', 'false');
       await startShare(person);
       await stopShare(person, people);
@@ -329,6 +340,9 @@ try {
   });
 
   await check('E9', '整個過程沒有連到網站以外的地方，頁面沒有非預期的錯誤', async () => {
+    // What a page still has to say about its last reload is heard out first.
+    const tail = backAt + TAIL_MS - Date.now();
+    if (tail > 0) await new Promise(resolve => { setTimeout(resolve, tail); });
     expect(report.externalRequests).toEqual([]);
     expect(report.pageProblems).toEqual([]);
   });
