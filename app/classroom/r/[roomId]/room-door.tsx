@@ -13,7 +13,9 @@ import { ROOM_COPY as COPY } from "./room-copy";
 
 // pass (Gate B, round 10): a student's own link (#p=) instead of the room's (#k=): no name is typed
 // (the room's list gives it); the server answers it only where the site may record fixed rooms.
-type Saved = { key: string | null; pass?: string | null; requestId?: string; ticket?: string; at?: number };
+// lessonId (round 16, the user's choice B): the lesson this tab was taken to, so that lesson's page,
+// reloaded without its key, can come back through this door (backAt: when it last did).
+type Saved = { key: string | null; pass?: string | null; requestId?: string; ticket?: string; at?: number; lessonId?: string; backAt?: number };
 type Phase = "loading" | "form" | "waiting" | "admitted" | "done" | "nolink";
 const SAVED = (roomId: string) => `ihear-fixed-room:${roomId}`;
 const KEEP_MS = 4 * 60 * 60_000;
@@ -76,7 +78,8 @@ export default function RoomDoor({ roomId }: { roomId: string }) {
         const data = await response.json().catch(() => null);
         if (stopped) return;
         if (response.ok && data?.ok && data.state === "admitted" && typeof data.lessonId === "string" && ticket) {
-          if (saved.current.pass) keep(roomId, { key: saved.current.key, requestId, ticket, at: saved.current.at });
+          saved.current = saved.current.pass ? { key: saved.current.key, requestId, ticket, at: saved.current.at, lessonId: data.lessonId } : { ...saved.current, lessonId: data.lessonId };
+          keep(roomId, saved.current);
           setPhase("admitted");
           window.location.assign(`/classroom/${encodeURIComponent(data.lessonId)}#k=${ticket}`);
           return;

@@ -117,6 +117,32 @@ function takeJoinKey(): string | null {
   return key || null;
 }
 
+// Round 16 (2026-11-24, the user's choice B): a fixed room's lesson page that was reloaded has no key
+// (above: it lives in the page's memory only). The room's door keeps this tab's request for 4 hours,
+// as before, and notes which lesson it took the person to; this page then goes back through that door,
+// which asks the server where the request stands: taken out, ended or lapsed, the door says so and
+// nobody comes back; still in, the door takes the person on to this lesson again. At most once in
+// 15 seconds, so a door that cannot take them on never sends them round in a loop. One-to-one and
+// block lessons have no door: nothing changes for them.
+const DOOR_PREFIX = "ihear-fixed-room:";
+const DOOR_KEEP_MS = 4 * 60 * 60_000;
+const DOOR_AGAIN_MS = 15_000;
+function doorBackTo(lessonId: string): string | null {
+  try {
+    for (let index = 0; index < sessionStorage.length; index += 1) {
+      const name = sessionStorage.key(index);
+      if (!name?.startsWith(DOOR_PREFIX)) continue;
+      const kept = JSON.parse(sessionStorage.getItem(name) ?? "null") as { lessonId?: string; requestId?: string; ticket?: string; at?: number; backAt?: number } | null;
+      if (!kept || kept.lessonId !== lessonId || !kept.requestId || !kept.ticket) continue;
+      if (kept.at && Date.now() - kept.at >= DOOR_KEEP_MS) continue;
+      if (kept.backAt && Date.now() - kept.backAt < DOOR_AGAIN_MS) return null;
+      sessionStorage.setItem(name, JSON.stringify({ ...kept, backAt: Date.now() }));
+      return `/classroom/r/${encodeURIComponent(name.slice(DOOR_PREFIX.length))}`;
+    }
+  } catch { /* storage refused (a private window): as before */ }
+  return null;
+}
+
 // One word for the badge both people see, from the recording status.
 function badgeOf(recording: Recording | null): "recording" | "starting" | "paused" | "off" | "unknown" {
   if (!recording) return "unknown";
@@ -330,6 +356,10 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
     if (blockMode) return;
     const key = takeJoinKey();
     if (key) setJoinKey(key);
+    else {
+      const door = doorBackTo(lessonId);
+      if (door) { window.location.replace(door); return; }
+    }
     setKeyRead(true);
     // A new link opened in a tab that already shows this room changes only the part after #,
     // which reloads nothing; its key is taken the same way.
@@ -339,7 +369,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
     };
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
-  }, [blockMode]);
+  }, [blockMode, lessonId]);
   useEffect(() => {
     document.documentElement.lang = htmlLangOf(locale);
   }, [locale]);
