@@ -399,8 +399,9 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
     const answer = await requestJoin(lessonId, joinKey);
     if (answer.ok) {
       session.current = answer.session;
-      setJoined({ provider: answer.provider, lesson: answer.lesson, role: answer.role, participantCode: answer.participantCode, sessionReports: answer.sessionReports === true, fixedRoom: answer.fixedRoom === true, displayName: answer.fixedRoom === true && answer.displayName ? answer.displayName : null,
-        roomChannel: answer.fixedRoom === true && !!answer.roomChannel && (answer.roomChannel.board || answer.roomChannel.chat || answer.roomChannel.turn) });
+      setJoined({ provider: answer.provider, lesson: answer.lesson, role: answer.role, participantCode: answer.participantCode, sessionReports: answer.sessionReports === true, fixedRoom: answer.fixedRoom === true,
+        roomChannel: answer.fixedRoom === true && !!answer.roomChannel && (answer.roomChannel.board || answer.roomChannel.chat || answer.roomChannel.turn),
+        displayName: answer.fixedRoom === true && answer.displayName ? answer.displayName : null });
       setRecording(null);
       setMedia(initialMedia());
       setPhase("joined");
