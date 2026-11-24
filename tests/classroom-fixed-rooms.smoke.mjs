@@ -93,7 +93,7 @@ try {
   const kyle = watch(await (await context({})).newPage(), 'student-kyle');
   await check('R2', '學生打開連結：網址裡的金鑰立刻拿掉；輸入英文名字後等待，還沒有進教室', async () => {
     await kyle.goto(link);
-    await expect(kyle.getByLabel(/Please enter your first name \(in English\)/)).toBeVisible();
+    await expect(kyle.getByLabel(/Please enter your first name \(English or Chinese\)/)).toBeVisible();
     expect(new URL(kyle.url()).hash).toBe('');
     await kyle.getByLabel(/Please enter your first name/).fill('  Kyle ');
     await kyle.getByRole('button', { name: '進入教室' }).click();

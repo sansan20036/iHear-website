@@ -1948,7 +1948,7 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     return user ? (user.userKey ?? user.userIdentity ?? null) : null;
   }
 
-  private shareAllowed(userId: number) {
+  private showsShareOf(userId: number) {
     return this.shareShownFor === undefined || (this.shareShownFor !== null && this.keyOfUser(userId) === this.shareShownFor);
   }
 
@@ -1957,7 +1957,7 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     if (!this.stream) return;
     let active: number | null = null;
     try { active = this.stream.getActiveShareUserId() || null; } catch { return; }
-    if (this.sharer !== null && !this.shareAllowed(this.sharer)) await this.remoteShare({ state: "Inactive", userId: this.sharer });
+    if (this.sharer !== null && !this.showsShareOf(this.sharer)) await this.remoteShare({ state: "Inactive", userId: this.sharer });
     if (active !== null && this.sharer === null) await this.remoteShare({ state: "Active", userId: active });
   }
 
@@ -1967,7 +1967,7 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     const stream = this.stream, stage = this.stage;
     if (!stream || !stage || payload.userId == null || payload.userId === this.client?.getCurrentUserInfo()?.userId) return;
     if (payload.state === "Active" && this.sharer !== payload.userId) {
-      if (!this.shareAllowed(payload.userId)) return;
+      if (!this.showsShareOf(payload.userId)) return;
       const view = await stream.attachShareView(payload.userId).catch(() => null);
       if (!isNode(view)) return;
       stage.share.replaceChildren(view);

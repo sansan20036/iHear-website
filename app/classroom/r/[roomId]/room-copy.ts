@@ -4,7 +4,7 @@
 
 export const ROOM_COPY = {
   zhHant: {
-    title: "iHear 線上教室", prompt: "Please enter your name (English or Chinese)", promptLocal: "請輸入你的名字（中文或英文）",
+    title: "iHear 線上教室", prompt: "Please enter your first name (English or Chinese)", promptLocal: "請輸入你的名字（中文或英文）",
     note: "名字只用來讓老師認出你，不是登入。", enter: "進入教室", entering: "送出中…",
     waiting: "已經通知老師。老師讓你進入後，這個頁面會自動帶你進教室。請不要關掉這個頁面。",
     admitted: "老師已經讓你進入，正在帶你進教室…",
@@ -33,7 +33,7 @@ export const ROOM_COPY = {
     } as Record<string, string>,
   },
   en: {
-    title: "iHear Classroom", prompt: "Please enter your name (English or Chinese)", promptLocal: "",
+    title: "iHear Classroom", prompt: "Please enter your first name (English or Chinese)", promptLocal: "",
     note: "Your name only helps your teacher recognize you; it is not a sign-in.", enter: "Join Classroom", entering: "Sending…",
     waiting: "Your teacher has been told. Once they let you in, this page takes you into the classroom. Please keep this page open.",
     admitted: "Your teacher let you in; taking you to the classroom…",
@@ -62,7 +62,7 @@ export const ROOM_COPY = {
     } as Record<string, string>,
   },
   zhHans: {
-    title: "iHear 在线教室", prompt: "Please enter your name (English or Chinese)", promptLocal: "请输入你的名字（中文或英文）",
+    title: "iHear 在线教室", prompt: "Please enter your first name (English or Chinese)", promptLocal: "请输入你的名字（中文或英文）",
     note: "名字只用来让老师认出你，不是登录。", enter: "进入教室", entering: "发送中…",
     waiting: "已经通知老师。老师让你进入后，这个页面会自动带你进教室。请不要关掉这个页面。",
     admitted: "老师已经让你进入，正在带你进教室…",
