@@ -23,9 +23,13 @@ import { getJoinEligibility } from "../../tools/recording-pathway/classroom/elig
 // @ts-ignore - the room channel's own rules, plain JavaScript tested with node --test.
 import { lessonEnd } from "./retention.mjs";
 
+// people: only when asked for (named: true): everyone in the lesson now, in the list's own order,
+// each with the name the room shows for them (the same name as beside their messages). It is what a
+// person holding the share turn chooses from when handing it over.
+export type RoomChannelPerson = { id: string; name: string };
 export type RoomChannelCaller =
   | { ok: false; status: number; code: string }
-  | { ok: true; who: { id: string; name: string; member: true }; lesson: RoomChannelLesson };
+  | { ok: true; who: { id: string; name: string; member: true }; lesson: RoomChannelLesson; people?: RoomChannelPerson[] };
 export type RoomChannelLesson = { id: string; roomId: string; scheduledEnd: number; endedAt: number | null; people: string[] };
 
 const refuse = (status: number, code: string) => ({ ok: false as const, status, code });
@@ -62,7 +66,11 @@ export async function roomChannelLesson(store: ClassroomStore, lessonId: string,
   return { lesson, events, facts: { id: lesson.id, roomId, scheduledEnd, endedAt, people } };
 }
 
-export async function roomChannelCaller({ store, lessonId, key, now }: { store: ClassroomStore; lessonId: string; key: string | null; now: number }): Promise<RoomChannelCaller> {
+// What the room shows for a person: the name the server recorded when they were let in, as Zoom
+// shows it; none recorded, the code the room shows for them.
+const shownName = (events: readonly ClassroomEvent[], code: string) => displayNameOf(events, code) ?? shownCodeOf(events, code);
+
+export async function roomChannelCaller({ store, lessonId, key, now, named = false }: { store: ClassroomStore; lessonId: string; key: string | null; now: number; named?: boolean }): Promise<RoomChannelCaller> {
   const found = await roomChannelLesson(store, lessonId, now);
   // Not a fixed room's lesson, or no such lesson: the same answer, so nothing is told about either.
   if (!found) return refuse(404, "NOT_FOUND");
@@ -78,5 +86,10 @@ export async function roomChannelCaller({ store, lessonId, key, now }: { store: 
   // were let in, as Zoom shows it (the user's decisions of 2026-11-24: typed names, Chinese or
   // English, checked again when read); none recorded, the code the room shows for them.
   // (The integrator's line, round 16, with f1's leave.)
-  return { ok: true, who: { id: participant.id, name: displayNameOf(events, participant.code) ?? shownCodeOf(events, participant.code), member: true }, lesson: facts };
+  const who = { id: participant.id, name: shownName(events, participant.code), member: true as const };
+  if (!named) return { ok: true, who, lesson: facts };
+  // The same people as facts.people (let in, not taken out), with their names.
+  const listed = new Set(facts.people);
+  const people = lesson.participants.filter((entry) => listed.has(entry.id)).map((entry) => ({ id: entry.id, name: shownName(events, entry.code) }));
+  return { ok: true, who, lesson: facts, people };
 }

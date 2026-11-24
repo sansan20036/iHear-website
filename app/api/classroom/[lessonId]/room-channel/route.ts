@@ -56,12 +56,14 @@ export async function POST(request: Request, context: Context) {
   const respond = (result: unknown, status: number) => withRateLimitHeaders(NextResponse.json(result, { status, headers: NO_STORE_HEADERS }), decision);
   try {
     const now = Date.now();
-    const caller = await roomChannelCaller({ store: classroomStore(), lessonId, key, now });
+    const caller = await roomChannelCaller({ store: classroomStore(), lessonId, key, now, named: on.turn === true });
     if (!caller.ok) return respond({ error: caller.status === 404 ? "Not found" : "You are not in this classroom", code: caller.code }, caller.status);
     const result = await roomChannel().exchange({ lesson: caller.lesson, who: caller.who, on, cursors: plain(body.cursors), send: Array.isArray(body.send) ? body.send : [], now });
     // you: the person asking, as the room knows them (their place on the lesson's list), so a page
-    // knows its own lines and its own turn. on: which parts this classroom offers now.
-    return respond({ ...result, you: caller.who.id, on }, result.ok === true ? 200 : 400);
+    // knows its own lines and its own turn. on: which parts this classroom offers now. people: with
+    // the share turn, who is in the lesson now and the name the room shows for each (the turn can
+    // be handed to one of them, and to nobody else).
+    return respond({ ...result, you: caller.who.id, on, ...(caller.people ? { people: caller.people } : {}) }, result.ok === true ? 200 : 400);
   } catch {
     return respond({ error: "The classroom is temporarily unavailable" }, 503);
   }

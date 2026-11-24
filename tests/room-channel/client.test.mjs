@@ -25,7 +25,7 @@ function world(people = ['P-1', 'P-2', 'P-3']) {
   let ids = 0;
   const timer = { set(fn, ms) { ids += 1; timers.push({ id: ids, at: clock.now + ms, fn }); return ids; }, clear(id) { const at = timers.findIndex(entry => entry.id === id); if (at >= 0) timers.splice(at, 1); } };
   const lesson = { id: 'L-1', roomId: 'FR-1', scheduledEnd: T0 + 3 * HOUR, endedAt: null, people: [...people] };
-  const net = new Map(), requests = new Map();
+  const net = new Map(), requests = new Map(), names = new Map();
   const settle = async () => { for (let turn = 0; turn < 8; turn += 1) await new Promise(resolve => { setImmediate(resolve); }); };
   const page = (id, options = {}) => {
     const told = [], hooks = {};
@@ -43,7 +43,8 @@ function world(people = ['P-1', 'P-2', 'P-3']) {
         if (!lesson.people.includes(id)) return { status: 403, body: { error: 'You are not in this classroom', code: 'NOT_IN_ROOM' } };
         const result = await channel.exchange({ lesson, who: { id, name: id, member: true }, on: ON, cursors: body.cursors, send: body.send, now: clock.now });
         if (mode === 'lose-answer') throw new Error('offline');
-        return { status: result.ok ? 200 : 400, body: { ...result, you: id } };
+        // As the route answers: who is asking, and (with the share turn) who is in the lesson now.
+        return { status: result.ok ? 200 : 400, body: { ...result, you: id, people: lesson.people.map(person => ({ id: person, name: names.get(person) ?? `Name of ${person}` })) } };
       },
     });
     return { client, told, id, hooks };
@@ -67,7 +68,7 @@ function world(people = ['P-1', 'P-2', 'P-3']) {
   const boardOf = entry => entry.client.view().board.lines.map(({ unconfirmed: _unconfirmed, ...line }) => line);
   // A request that does not come from a page's own queue: the one a page hands to the browser as it goes away.
   const send = (id, body) => channel.exchange({ lesson, who: { id, name: id, member: lesson.people.includes(id) }, on: ON, cursors: body.cursors, send: body.send, now: clock.now });
-  return { store, channel, clock, lesson, net, requests, page, advance, settle, server, boardOf, timer, send };
+  return { store, channel, clock, lesson, net, requests, names, page, advance, settle, server, boardOf, timer, send };
 }
 const draw = (client, points, more = {}) => { const line = client.beginLine({ color: 2, width: 4, ...more }); client.addPoints(line, points); client.endLine(line); return line; };
 
@@ -76,8 +77,8 @@ test('CL-1: what one person draws shows on their page at once, and on everyone e
   const a = w.page('P-1'), b = w.page('P-2');
   a.client.start(); b.client.start();
   await w.advance(100);
-  // The first answer says who the page is, and the page is told at once (nothing else has happened yet).
-  assert.deepEqual([a.client.view().you, a.told[0]], ['P-1', { you: true }]);
+  // The first answer says who the page is and who is in the lesson, and the page is told at once (nothing else has happened yet).
+  assert.deepEqual([a.client.view().you, a.told[0]], ['P-1', { you: true, people: true }]);
   const line = a.client.beginLine({ color: 3, width: 2 });
   a.client.addPoints(line, [[100, 100], [200, 200]]);
   // On the drawer's own page before any answer: there, marked as not confirmed yet.
@@ -522,4 +523,26 @@ test('SC-8: the page that shares goes away (closed, reloaded): its turn is free 
   w.lesson.people = ['P-2', 'P-3'];
   await w.advance(2000);
   assert.deepEqual([again.client.view().stopped, again.client.parting({ turn: true })], ['NOT_IN_ROOM', null]);
+});
+
+test('CL-10: who is in the lesson, as the server names them: the page has the list, hears of a change once, and takes nothing that is not a person', async () => {
+  const w = world();
+  const a = w.page('P-1');
+  a.client.start();
+  await w.advance(600);
+  assert.deepEqual(a.client.view().people, [{ id: 'P-1', name: 'Name of P-1' }, { id: 'P-2', name: 'Name of P-2' }, { id: 'P-3', name: 'Name of P-3' }]);
+  assert.equal(a.told.filter(what => what.people).length, 1, 'said once, not with every answer');
+  // Someone is taken out, and someone's name is set right: the list follows, said once each time.
+  w.lesson.people = ['P-1', 'P-3'];
+  await w.advance(1200);
+  assert.deepEqual(a.client.view().people.map(person => person.id), ['P-1', 'P-3']);
+  w.names.set('P-3', '小明');
+  await w.advance(1200);
+  assert.deepEqual(a.client.view().people.at(-1), { id: 'P-3', name: '小明' });
+  assert.equal(a.told.filter(what => what.people).length, 3);
+  // The same list again changes nothing; the list is the same object for a page that compares.
+  const before = a.client.view().people;
+  await w.advance(2000);
+  assert.equal(a.client.view().people, before);
+  assert.equal(a.told.filter(what => what.people).length, 3);
 });

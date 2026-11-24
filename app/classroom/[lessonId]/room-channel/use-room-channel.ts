@@ -39,8 +39,9 @@ type View = {
   board: { seq: number; ended: boolean; lines: BoardLine[]; undo: { clear: number; until: number } | null };
   chat: { messages: ChatMessage[]; ended: boolean };
   turn: { holder: string | null; offeredTo: string | null; mine: boolean; offeredToMe: boolean };
+  people: readonly { id: string; name: string }[];
 };
-type Changed = { board?: boolean; chat?: boolean; turn?: boolean | "lost"; refused?: { part: string; error: string; line?: string }[]; stopped?: string };
+type Changed = { board?: boolean; chat?: boolean; turn?: boolean | "lost"; people?: boolean; refused?: { part: string; error: string; line?: string }[]; stopped?: string };
 type Client = {
   start(): void; stop(): void; setIdle(value: boolean): void; view(): View;
   beginLine(options: { color: number; width: number }): string; addPoints(line: string, points: [number, number][]): boolean; endLine(line: string): void;
@@ -55,7 +56,7 @@ const makeClient = createRoomClient as unknown as (options: { post: (body: unkno
 const makeShare = createShareControl as unknown as (options: { client: Client; media: RoomChannelMedia; notify: (what: { sharing: boolean; notice?: string }) => void }) => ShareControl;
 const boardPoint = toBoard as unknown as (x: number, y: number, width: number, height: number) => [number, number];
 
-const EMPTY: View = { you: null, stopped: null, waiting: 0, board: { seq: 0, ended: false, lines: [], undo: null }, chat: { messages: [], ended: false }, turn: { holder: null, offeredTo: null, mine: false, offeredToMe: false } };
+const EMPTY: View = { you: null, stopped: null, waiting: 0, board: { seq: 0, ended: false, lines: [], undo: null }, chat: { messages: [], ended: false }, turn: { holder: null, offeredTo: null, mine: false, offeredToMe: false }, people: [] };
 const REQUEST_MS = 10_000;
 // A media adapter that does nothing, for a page that mounts the board and the chat without the turn.
 const NO_MEDIA: RoomChannelMedia = { startShare: async () => false, stopShare: async () => undefined, sharers: () => [], onSharersChange: () => () => undefined, showShareOf: () => undefined };
@@ -157,6 +158,9 @@ export function useRoomChannel({ lessonId, ticket, media = null, enabled = true 
     return {
       // null until the first answer; then what this classroom offers. The pieces show nothing for a part that is off.
       parts, you: view.you, stopped: view.stopped, online, waiting: view.waiting, notice,
+      // With the share turn: who is in the lesson now, as the server names them ({ id, name }; the
+      // person's own entry is among them). Empty without the turn.
+      people: view.people,
       dismissNotice: () => setNotice(null),
       board: {
         lines: view.board.lines, undo: view.board.undo,

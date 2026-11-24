@@ -284,8 +284,36 @@ describe("the room channel's routes", () => {
     vi.setSystemTime(START + 2000);
     const gone = await exchange(lessonId, ann.ticket, last);
     expect([gone.status, gone.body.sent[0].wasHolder]).toEqual([200, true]);
-    expect(Object.keys(gone.body).sort()).toEqual(["ok", "on", "sent", "you"]);
+    expect(Object.keys(gone.body).sort()).toEqual(["ok", "on", "people", "sent", "you"]);
     expect((await exchange(lessonId, bo.ticket, { cursors: { turn: 0 } })).body.turn.holder).toBe(null);
     expect((await exchange(lessonId, bo.ticket, { cursors: { turn: 0 }, send: [{ part: "turn", action: "claim" }] })).body.turn.holder).not.toBe(annName);
+  });
+
+  test("RR-10: with the share turn, the answer says who is in the lesson: the people let in, by the names beside their messages; a person taken out is gone from it; without the turn it is not sent", async () => {
+    const { room, people: [ann, bo, cy], lessonId } = await roomWith(["Ann", "Bo", "Cy"]);
+    const said = {};
+    for (const person of [ann, bo, cy]) {
+      const answer = await exchange(lessonId, person.ticket, { cursors: { chat: 0 }, send: [{ part: "chat", input: { op: `hello-${person.name}`, text: person.name } }] });
+      said[answer.body.you] = answer.body.chat.messages.find(message => message.by === answer.body.you).name;
+    }
+    const first = await exchange(lessonId, ann.ticket, { cursors: { turn: 0 } });
+    // Everyone let in, each once, the asker among them, each with the name their messages carry.
+    expect(first.body.people.map(person => person.id).sort()).toEqual(Object.keys(said).sort());
+    expect(first.body.people.map(person => person.id)).toContain(first.body.you);
+    for (const person of first.body.people) expect(person).toEqual({ id: person.id, name: said[person.id] });
+    // Handing the turn to someone on the list works; that is what the list is for.
+    const boId = (await exchange(lessonId, bo.ticket, {})).body.you;
+    await exchange(lessonId, ann.ticket, { send: [{ part: "turn", action: "claim" }] });
+    expect((await exchange(lessonId, ann.ticket, { cursors: { turn: 0 }, send: [{ part: "turn", action: "handOver", to: boId }] })).body.turn.offeredTo).toBe(boId);
+    // Bo is taken out: gone from the list on the next answer of anyone.
+    vi.setSystemTime(START + MIN);
+    expect((await manage("remove", { room: room.id, request: bo.requestId }, START + MIN)).status).toBe(200);
+    const after = await exchange(lessonId, cy.ticket, { cursors: { turn: 0 } });
+    expect(after.body.people.map(person => person.id)).not.toContain(boId);
+    expect(after.body.people).toHaveLength(2);
+    // Without the share turn nobody is listed: the board and the chat do not need it.
+    vi.stubEnv("CLASSROOM_ROOM_SHARE_TURN", "");
+    const quiet = await exchange(lessonId, cy.ticket, { cursors: { board: 0 } });
+    expect([quiet.status, "people" in quiet.body]).toEqual([200, false]);
   });
 });

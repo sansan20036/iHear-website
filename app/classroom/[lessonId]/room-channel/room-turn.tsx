@@ -10,11 +10,13 @@ import "./room-channel.css";
 // The share turn as people see it (local integration only, 2026-11-24): who shares now, the
 // button that starts or stops one's own share, and handing the share to one named person.
 //
-//   <RoomTurn channel={channel} people={people} locale={locale} />
+//   <RoomTurn channel={channel} locale={locale} />
 //
-// people: who is in the room now, as the page knows them: { id, name }, id being the person's
-// place on the lesson's list (the participant id, which is also the userKey Zoom carries). The
-// person's own entry may be in the list; it is left out of "hand the share to".
+// people: who can be handed the share: { id, name }, id being the person's place on the lesson's
+// list (the participant id, which is also the userKey Zoom carries). Left out, it is the server's
+// own list (channel.people: everyone let into the lesson and not taken out); a page that knows who
+// is really connected may give a shorter one. The person's own entry may be in the list; it is left
+// out of "hand the share to".
 // button={false}: the page has a share button of its own (which calls channel.share.start() and
 // .stop()); this piece then shows only who shares, the offer and the hand-over.
 //
@@ -28,7 +30,7 @@ import "./room-channel.css";
 
 export type RoomTurnPerson = { id: string; name: string };
 
-export default function RoomTurn({ channel, people, locale, button = true }: { channel: RoomChannel; people: readonly RoomTurnPerson[]; locale: ClassroomLocale; button?: boolean }) {
+export default function RoomTurn({ channel, people = channel.people, locale, button = true }: { channel: RoomChannel; people?: readonly RoomTurnPerson[]; locale: ClassroomLocale; button?: boolean }) {
   const text = roomChannelCopy[locale];
   const share = channel.share;
   const field = useId();
@@ -38,7 +40,7 @@ export default function RoomTurn({ channel, people, locale, button = true }: { c
   const others = people.filter((person) => person.id !== channel.you);
   // Someone chosen who has left the room since is no longer chosen.
   const to = others.some((person) => person.id === chosen) ? chosen : "";
-  const nameOf = (id: string) => people.find((person) => person.id === id)?.name ?? text.turnSomeone;
+  const nameOf = (id: string) => (people.find((person) => person.id === id) ?? channel.people.find((person) => person.id === id))?.name ?? text.turnSomeone;
   const gone = channel.stopped !== null;
   const offeredElsewhere = share.offeredTo !== null && !share.offeredToMe;
 
