@@ -1124,8 +1124,11 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   const roomTurn = equalTools && channel.parts?.turn === true;
   const boardOnStage = roomBoard && roomBoardShown;
   const boardTools = !roomBoard && (isTutor || (equalTools && (tools.whiteboard === true || media.whiteboard === "presenting"))) && !!adapter.current?.setWhiteboard && (zoom || !!simulator);
-  // With the turn, someone else holding it is what keeps this page from sharing (the server's word).
-  const shareBusy = roomTurn ? !channel.share.sharing && (channel.share.busy || (channel.share.offeredTo !== null && !channel.share.offeredToMe)) : !isTutor && equalTools && tools.share === false && media.share !== "sending";
+  // Someone else shares in Zoom (D-14: one at a time), or, with the turn, it is someone else's or
+  // offered to someone else (the server's word): either keeps this page from sharing.
+  const zoomShareBusy = !isTutor && equalTools && tools.share === false && media.share !== "sending";
+  const turnBusy = roomTurn && !channel.share.sharing && (channel.share.busy || (channel.share.offeredTo !== null && !channel.share.offeredToMe));
+  const shareBusy = zoomShareBusy || turnBusy;
   const sharingNow = roomTurn ? channel.share.sharing : media.share === "sending";
   const boardBusy = !isTutor && equalTools && media.whiteboard === "viewing";
   const canExport = !roomBoard && media.whiteboard === "presenting" && !!adapter.current?.exportWhiteboard;
@@ -1521,7 +1524,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
           {(shareTools || boardTools || roomBoard || (features.raiseHand && isStudent)) && (
             <div className="room2-group" role="group" aria-label={text.groups.teach}>
               {shareTools && device === "desktop" && toolButton({
-                tool: "share", icon: "share", label: sharingNow ? v.shareStopShort : v.shareShort, name: sharingNow ? v.shareStop : shareBusy ? (roomTurn ? v.turnBusy : v.shareBusy) : v.share,
+                tool: "share", icon: "share", label: sharingNow ? v.shareStopShort : v.shareShort, name: sharingNow ? v.shareStop : zoomShareBusy ? v.shareBusy : turnBusy ? v.turnBusy : v.share,
                 pressed: sharingNow, disabled: !connected || device !== "desktop" || sdkCheck?.screenShare === false || shareBusy, ...(roomTurn ? { marks: { "data-room-turn-button": "" } } : {}),
                 onClick: () => void (roomTurn ? (channel.share.sharing ? channel.share.stop() : channel.share.start()) : toggleShare()),
               })}

@@ -12,6 +12,12 @@ import { redactLinks, withoutLinkKeys, screenshotSafely, localContext, startAcad
 const expect = playwrightExpect.configure({ timeout: 15_000 });
 const secret = 'classroom-rooms-local-acceptance-only';
 const owner = 'rooms-owner@example.test';
+// Round 16: the room channel's three switches as this run was started with them (they are not set
+// here): off is the site today; on, the room's own chat is in the panel and its own board replaces
+// Zoom's (one board per room), and everything else (entry, room management, video) is the same.
+const ROOM_CHAT_ON = process.env.CLASSROOM_ROOM_CHAT === 'on';
+const ROOM_BOARD_ON = process.env.CLASSROOM_ROOM_BOARD === 'on';
+console.log(`room channel switches: board ${ROOM_BOARD_ON ? 'on' : 'off'}, chat ${ROOM_CHAT_ON ? 'on' : 'off'}, turn ${process.env.CLASSROOM_ROOM_SHARE_TURN === 'on' ? 'on' : 'off'}`);
 Object.assign(process.env, {
   CLASSROOM_PROVIDER: 'synthetic', CLASSROOM_DRIVE: 'local', CLASSROOM_WEBHOOK_SECRET: 'classroom-rooms-webhook-local-only',
   CLASSROOM_SYNTHETIC_SECRET: 'classroom-rooms-token-local-only', VERCEL_ENV: '', CLASSROOM_MULTI_RECORDING: '', CLASSROOM_FIXED_ROOMS: 'on', CLASSROOM_FIXED_ROOM_RECORDING: '',
@@ -116,7 +122,8 @@ try {
     await expect(sound).toHaveAttribute('data-sound', 'off');
     await sound.getByRole('button', { name: '開啟聲音', exact: true }).click();
     await expect(sound).toHaveCount(0);
-    await expect(kyle.getByRole('tab', { name: /聊天/ })).toHaveCount(0);
+    // Zoom's chat stays off in a fixed room; with the room channel's chat on, the room's own chat is the tab.
+    await expect(kyle.getByRole('tab', { name: /聊天/ })).toHaveCount(ROOM_CHAT_ON ? 1 : 0);
     // The user, 2026-11-24: raised hands are on in a fixed room (Zoom's command channel needs no
     // host; W1 on real Zoom). The person raises and lowers their own hand.
     const hand = kyle.locator('[data-control="hand"]');
@@ -148,6 +155,14 @@ try {
     await expect(shareButton).toHaveAttribute('aria-pressed', 'true');
     await shareButton.click();
     await expect(shareButton).toHaveAttribute('aria-pressed', 'false');
+    if (ROOM_BOARD_ON) {
+      // One board per room: Zoom's whiteboard is never offered, whatever Zoom allows; the room's own is.
+      await play('Zoom 讓所有人開白板');
+      await expect(boardButton).toHaveCount(0);
+      await expect(kyle.locator('[data-room-board-toggle]')).toHaveCount(1);
+      await expect(kyle.locator('[data-room-board-stage]')).toHaveCount(1);
+      await shot(kyle, 'r3b-room-board');
+    } else {
     await play('Zoom 讓所有人開白板');
     await expect(boardButton).toBeEnabled();
     await play('對方開啟白板');
@@ -160,6 +175,7 @@ try {
     await expect(boardButton).toHaveAttribute('aria-pressed', 'true');
     await boardButton.click();
     await expect(boardButton).toHaveCount(0);
+    }
     // Management stays on the owner's admin page: nothing here lowers hands, takes anyone out or ends
     // the lesson (the simulation panel, which names such cases, is closed first).
     await panel.locator('summary').click();
