@@ -64,6 +64,14 @@ describe("production operations configuration", () => {
     expect(csp["media-src"]).toBe("media-src 'self' blob: mediastream:");
   });
 
+  it("runs the functions in one region, Tokyo, beside the database (P3 test branch, 2026-11-25)", async () => {
+    // Vercel Hobby allows one function region per deployment; the database is in Tokyo (ap-northeast-1).
+    // Measured on the P3 Preview in iad1 (the default): one database query 430 ms from Taiwan, the room
+    // channel 3-6 s from drawn to seen. Production keeps its own commit (no region, iad1) until R1 is decided.
+    const vercel = JSON.parse(await read("vercel.json"));
+    expect(vercel.regions).toEqual(["hnd1"]);
+  });
+
   it("does not bypass current-data page routes with legacy static HTML rewrites", async () => {
     const vercel = JSON.parse(await read("vercel.json"));
     expect((vercel.rewrites || []).filter(rule => /\.html(?:$|\?)/.test(rule.destination))).toEqual([]);
