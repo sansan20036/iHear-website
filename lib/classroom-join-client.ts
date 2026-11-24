@@ -11,7 +11,7 @@ export type JoinAnswer =
   // sessionReports: the server asks this (tutor's) page to report the vendor's session id (P1).
   // fixedRoom: a fixed room's lesson (round 3): no host, so no Zoom chat on the page.
   // displayName: a fixed room's recorded first name, shown in Zoom (the user, 2026-11-24).
-  | { ok: true; provider: string; lesson: { code: string; startsAt: string; endsAt: string }; role: MediaRole; participantCode: string; session: JoinedSession | null; sessionReports?: boolean; fixedRoom?: boolean; displayName?: string }
+  | { ok: true; provider: string; lesson: { code: string; startsAt: string; endsAt: string }; role: MediaRole; participantCode: string; session: JoinedSession | null; sessionReports?: boolean; fixedRoom?: boolean; displayName?: string; roomChannel?: { board: boolean; chat: boolean; turn: boolean } }
   | { ok: false; code: string };
 export type RejoinResult = { ok: true; session: JoinedSession } | { ok: false; code: string };
 
@@ -31,6 +31,9 @@ export async function requestJoin(lessonId: string, joinKey: string | null, fetc
         ...(data.sessionReports === true ? { sessionReports: true } : {}),
         ...(data.fixedRoom === true ? { fixedRoom: true } : {}),
         ...(data.fixedRoom === true && typeof data.displayName === "string" && data.displayName ? { displayName: data.displayName } : {}),
+        // Round 16: the room channel's parts the site offers (only in a fixed room, only when one is on).
+        ...(data.fixedRoom === true && data.roomChannel && typeof data.roomChannel === "object"
+          ? { roomChannel: { board: data.roomChannel.board === true, chat: data.roomChannel.chat === true, turn: data.roomChannel.turn === true } } : {}),
       };
     }
     const code = response.status === 429 ? "RATE_LIMITED" : typeof data?.code === "string" ? data.code : "UNAVAILABLE";

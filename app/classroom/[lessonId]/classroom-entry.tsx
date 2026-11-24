@@ -81,7 +81,7 @@ type Phase = "ready" | "joining" | "joined" | "blocked" | "left";
 // fixedRoom: a fixed room's lesson (round 3): no host. Everyone gets the same teaching tools as far
 // as Zoom allows an ordinary participant (D-14, 2026-11-21); chat and raised hands stay off.
 // displayName: a fixed room's recorded first name, which Zoom shows (the user, 2026-11-24); null elsewhere.
-type Joined = { provider: string; lesson: { code: string; startsAt: string; endsAt: string }; role: "tutor" | "student"; participantCode: string; sessionReports: boolean; fixedRoom: boolean; displayName: string | null };
+type Joined = { provider: string; lesson: { code: string; startsAt: string; endsAt: string }; role: "tutor" | "student"; participantCode: string; sessionReports: boolean; fixedRoom: boolean; displayName: string | null; roomChannel: boolean };
 type Recording = { decided: boolean; allowed: boolean; status: string; basis: string };
 type Media = {
   available: boolean;
@@ -313,7 +313,9 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
     // Only while the room offers the turn: without it every share shows, as before the turn.
     showShareOf: (key) => { if (turnOffered.current) adapter.current?.showShareOf?.(key); },
   }), []);
-  const channel = useRoomChannel({ lessonId, ticket: joinKey, media: channelMedia, enabled: phase === "joined" && joined?.fixedRoom === true });
+  // Only where the join answer says the site offers a part of it: with all three switches off the page
+  // never asks the channel (as before it existed).
+  const channel = useRoomChannel({ lessonId, ticket: joinKey, media: channelMedia, enabled: phase === "joined" && joined?.fixedRoom === true && joined.roomChannel });
   turnOffered.current = joined?.fixedRoom === true && channel.parts?.turn === true;
   // The room's board on this page's stage (each page chooses; it starts shown). Someone else's share
   // coming in puts the share first; when it ends the board comes back by itself, unless the person
@@ -397,7 +399,8 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
     const answer = await requestJoin(lessonId, joinKey);
     if (answer.ok) {
       session.current = answer.session;
-      setJoined({ provider: answer.provider, lesson: answer.lesson, role: answer.role, participantCode: answer.participantCode, sessionReports: answer.sessionReports === true, fixedRoom: answer.fixedRoom === true, displayName: answer.fixedRoom === true && answer.displayName ? answer.displayName : null });
+      setJoined({ provider: answer.provider, lesson: answer.lesson, role: answer.role, participantCode: answer.participantCode, sessionReports: answer.sessionReports === true, fixedRoom: answer.fixedRoom === true, displayName: answer.fixedRoom === true && answer.displayName ? answer.displayName : null,
+        roomChannel: answer.fixedRoom === true && !!answer.roomChannel && (answer.roomChannel.board || answer.roomChannel.chat || answer.roomChannel.turn) });
       setRecording(null);
       setMedia(initialMedia());
       setPhase("joined");

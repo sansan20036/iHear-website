@@ -164,6 +164,22 @@ describe("fixed classroom links", () => {
     expect(displayNameOf([fact("Kyle")], "R00000000-000000")).toBeNull();
   });
 
+  // Round 16: the page asks the room channel only when the site offers a part of it (D6: with the
+  // three switches off it sends nothing new).
+  test("RC-1: a fixed room's join answer says which parts of the room channel are on, and nothing while all three are off", async () => {
+    const r = await room();
+    const kyle = await ask(r, "Kyle");
+    await manage("admit", { room: r.id, request: kyle.body.requestId });
+    const lessonId = (await status(r, kyle)).body.lessonId;
+    expect((await join(lessonId, kyle.body.ticket)).body.roomChannel).toBeUndefined();
+    vi.stubEnv("CLASSROOM_ROOM_BOARD", "on");
+    vi.stubEnv("CLASSROOM_ROOM_SHARE_TURN", "on");
+    expect((await join(lessonId, kyle.body.ticket)).body.roomChannel).toEqual({ board: true, chat: false, turn: true });
+    vi.stubEnv("CLASSROOM_ROOM_BOARD", "On");
+    vi.stubEnv("CLASSROOM_ROOM_SHARE_TURN", "");
+    expect((await join(lessonId, kyle.body.ticket)).body.roomChannel).toBeUndefined();
+  });
+
   test("FR-5: rooms are apart, and a typed name takes nobody's place: another room's ticket or key gets nothing; the same name again is a new person waiting (\"Kyle B\" for the teacher, never in the answer)", async () => {
     const a = await room(), b = await room();
     const kyle = await ask(a, "Kyle");

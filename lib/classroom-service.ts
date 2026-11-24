@@ -17,6 +17,8 @@ import type { ClassroomProvider } from "./classroom-provider";
 import type { ClassroomBlock, ClassroomBlockMember, ClassroomEvent, ClassroomLesson, ClassroomStore, OperationState, RecordingFile } from "./classroom-store";
 import { fixedRoomRecordingEnabled, sessionReportsEnabled, vendorDeletionEnabled } from "./classroom-switches";
 import { HOUSE_TIME_ZONE, LEGACY_LESSON_TIME_ZONE, parseClock, parseIsoDate, validTimeZone, wallIn, zonedInstant } from "./zoned-time";
+// @ts-ignore - the room channel's own code, plain JavaScript tested with node --test.
+import { anyOn, roomChannelSwitches } from "./room-channel/switches.mjs";
 
 const RECORDING_LABELS: Record<string, string> = LABELS.recording;
 const ANOMALY_LABELS: Record<string, string> = LABELS.anomaly;
@@ -462,6 +464,10 @@ export async function joinClassroom({ store, provider, lessonId, key, sessionEma
       // The user, 2026-11-24: in a fixed room Zoom shows the first name recorded when the person was
       // let in (checked again as it is read); nothing for any other lesson.
       ...(fixedRoomOf(events) && displayNameOf(events, participant!.code) ? { displayName: displayNameOf(events, participant!.code) } : {}),
+      // Round 16: which parts of the fixed room's own channel (whiteboard, chat, share turn) the site
+      // offers (three switches, off unless set). The page asks the channel only when one is on, so
+      // with all off it sends nothing it did not send before.
+      ...(fixedRoomOf(events) && anyOn(roomChannelSwitches()) ? { roomChannel: roomChannelSwitches() } : {}),
       ...(lesson.blockId ? { block: { roomKind: lesson.roomKind, roomLabel: lesson.roomLabel, memberRole: member?.role ?? null } } : {}),
       // The token goes only to the media adapter. LCIC's address carries its own login.
       session: token.kind === "embed"
