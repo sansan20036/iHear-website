@@ -99,10 +99,22 @@ async function intoRoom(page) {
   await expect(page.locator(PAGE.connected)).toHaveText('已連線');
   await expect(mount(page)).toHaveAttribute('data-you', /^P-[0-9a-f]{32}$/);
 }
-// Back into the room the way a person would come: by the room link they were given. The room's
-// door remembers this tab's request and takes the person on to the lesson; then the page's own
-// door. (The lesson page itself has no way in after a reload: it keeps the person's ticket in its
-// memory only, by the page's design.)
+// After a reload the page brings a fixed-room person back by itself (the user's decision of
+// 2026-11-24: 「選 B，自動帶回教室」): through the room's door, which remembers this tab, and on to
+// the lesson. Whether the page's own door (「進入教室」) is shown again is the page's choice: pressed
+// when it is there.
+async function backByItself(page) {
+  const door = page.getByRole('button', { name: '進入教室' });
+  const connected = page.locator(PAGE.connected).filter({ hasText: '已連線' });
+  await expect(door.or(connected).first()).toBeVisible({ timeout: 30_000 });
+  await expect(page).toHaveURL(new RegExp(`${origin}/classroom/L-[0-9a-f]{32}$`));
+  if (await door.isVisible().catch(() => false)) await door.click();
+  await expect(page.locator(PAGE.connected)).toHaveText('已連線');
+  await expect(mount(page)).toHaveAttribute('data-you', /^P-[0-9a-f]{32}$/);
+}
+// Back into the room after leaving it on purpose: by the room link the person was given. The
+// room's door remembers this tab's request and takes the person on to the lesson; then the page's
+// own door.
 async function comeBack(page, roomLink) {
   await page.goto(roomLink);
   await expect(page).toHaveURL(new RegExp(`${origin}/classroom/L-[0-9a-f]{32}$`));
@@ -345,14 +357,12 @@ try {
     await stopShare(Ann, here);
   });
 
-  await check('D2', '重新整理：用原來的教室連結回到教室後，白板的線和聊天訊息都在，自己還是同一個人；正在分享的人重新整理，分享權馬上空出來（不用等 15 秒），回來後可以再分享', async () => {
+  await check('D2', '重新整理：頁面自己把人帶回教室，白板的線和聊天訊息都在，自己還是同一個人；正在分享的人重新整理，分享權馬上空出來（不用等 15 秒），回來後可以再分享；被請出的人重新整理不會回到教室', async () => {
     const before = await shownOn(Ann.page);
+    const reloadedAt = Date.now();
     await Ann.page.reload();
-    // What the reloaded lesson page itself says (it does not put the person back in the room by itself).
-    await expect(mount(Ann.page)).toHaveCount(0);
-    report.notes.lessonPageAfterReload = await wordsOn(Ann.page);
-    await shot(Ann.page, 'd2-after-reload');
-    await comeBack(Ann.page, link);
+    await backByItself(Ann.page);
+    report.timings.reloadBackInRoomMs = Date.now() - reloadedAt;
     expect(await shownOn(Ann.page)).toEqual(before);
     // The one who shares reloads.
     await startShare(Kyle);
@@ -362,11 +372,18 @@ try {
     await Kyle.page.reload();
     await expect(turn(Ann.page), 'the turn is given back as the page goes, not when its 15 seconds run out').toHaveAttribute('data-holder', '', { timeout: 6_000 });
     report.timings.reloadFreesTurnMs = Date.now() - at;
-    await comeBack(Kyle.page, link);
+    await backByItself(Kyle.page);
     expect(await shownOn(Kyle.page)).toEqual(kyleBefore);
     await expect(turn(Kyle.page)).toHaveAttribute('data-mine', 'false');
     await startShare(Kyle);
     await stopShare(Kyle, here);
+    // Bo was taken out of the room (C11). A reload does not bring Bo back: who is in the room is the room's to say.
+    await Bo.page.reload();
+    await Bo.page.waitForTimeout(8000);
+    await expect(mount(Bo.page)).toHaveCount(0);
+    await expect(Bo.page.locator(PAGE.connected).filter({ hasText: '已連線' })).toHaveCount(0);
+    report.notes.removedPersonAfterReload = await wordsOn(Bo.page);
+    await shot(Bo.page, 'd2-removed-person-after-reload');
   });
 
   await check('D3', '分享的人斷線：沒有回報超過 15 秒，分享權自動空出來，別人可以分享；他回來後自己的分享已經停止，頁面會說原因', async () => {
