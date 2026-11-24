@@ -202,8 +202,9 @@ try {
     await lines(Kyle.page, 1);
     for (const person of [Ann, Bo, Dee]) await lines(person.page, 1);
     await canvas(Ann.page).scrollIntoViewIfNeeded();
-    expect(await painted(Ann.page)).toBeGreaterThan(200);
-    expect(await painted(Kyle.page)).toBeGreaterThan(200);
+    // Read until it is there: a browser may paint a moment after the count of lines changed.
+    await expect.poll(() => painted(Ann.page)).toBeGreaterThan(200);
+    await expect.poll(() => painted(Kyle.page)).toBeGreaterThan(200);
     await shot(Ann.page, 'c2-line-seen');
   });
 
@@ -231,7 +232,7 @@ try {
     await Kyle.page.locator('[data-board-clear]').click();
     await Kyle.page.locator('[data-board-clear-yes]').click();
     for (const person of [Kyle, Ann, Bo, Dee]) await lines(person.page, 0);
-    expect(await painted(Ann.page)).toBe(0);
+    await expect.poll(() => painted(Ann.page)).toBe(0);
     await Ann.page.locator('[data-board-undo]').click();
     for (const person of [Kyle, Ann, Bo, Dee]) await lines(person.page, 2);
     await expect(Ann.page.locator('[data-board-undo]')).toHaveCount(0);
