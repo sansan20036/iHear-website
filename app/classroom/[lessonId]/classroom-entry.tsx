@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode, type Ref, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode, type Ref, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 
 import { appendChat, CHAT_MAX_LENGTH, chatTextOf, type ChatLine, type RaisedHand } from "../../../lib/classroom-chat";
@@ -17,6 +17,7 @@ import { claimLessonTab, lessonTabName, type TabClaim } from "../../../lib/class
 import { roomCopy as copy, vendorCopy } from "./classroom-copy";
 import { RoomIcon, type RoomIconName } from "./classroom-icons";
 import ClassroomPrejoin from "./classroom-prejoin";
+import { RoomBoard, RoomChat, roomChannelNoticeText, useRoomChannel, type RoomChannelMedia } from "./room-channel";
 import { useLessonPreview } from "./use-lesson-preview";
 
 // The vendor-specific parts of the room (2026-10-30): Zoom draws its video in our page; LCIC is
@@ -271,6 +272,37 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   const deviceRef = useRef<ClassroomDevice>("desktop");
   deviceRef.current = device;
   const adapter = useRef<ClassroomMediaAdapter | null>(null);
+  // Round 16 (2026-11-24, the user's item 5): a fixed room's own whiteboard, public chat and share
+  // turn (lib/room-channel, built by f1), each only where the server offers it (three switches, off
+  // unless set: then nothing of this shows and the page is as before). One whiteboard per room:
+  // while the room's own is offered, Zoom's is not. The turn knows people by participant id (Zoom's
+  // user key); the adapter says who shares (shareKeys) and shows the holder's share only.
+  const shareKeyListeners = useRef(new Set<() => void>());
+  const turnOffered = useRef(false);
+  const channelMedia = useMemo<RoomChannelMedia>(() => ({
+    startShare: async () => Boolean(await adapter.current?.setScreenShare?.(true).catch(() => false)),
+    stopShare: async () => { await adapter.current?.setScreenShare?.(false).catch(() => false); },
+    sharers: () => adapter.current?.shareKeys?.() ?? [],
+    onSharersChange: (listener) => { shareKeyListeners.current.add(listener); return () => { shareKeyListeners.current.delete(listener); }; },
+    // Only while the room offers the turn: without it every share shows, as before the turn.
+    showShareOf: (key) => { if (turnOffered.current) adapter.current?.showShareOf?.(key); },
+  }), []);
+  const channel = useRoomChannel({ lessonId, ticket: joinKey, media: channelMedia, enabled: phase === "joined" && joined?.fixedRoom === true });
+  turnOffered.current = joined?.fixedRoom === true && channel.parts?.turn === true;
+  // The room's board on this page's stage (each page chooses; it starts shown, and someone else's
+  // share coming in puts the share first, the board one press away).
+  const [roomBoardShown, setRoomBoardShown] = useState(true);
+  const shareBefore = useRef(media.share);
+  useEffect(() => {
+    if (media.share === "receiving" && shareBefore.current !== "receiving") setRoomBoardShown(false);
+    shareBefore.current = media.share;
+  }, [media.share]);
+  // The room's chat: messages from others not yet seen while the chat is closed.
+  const roomChatSeen = useRef(0);
+  const roomChatNewest = channel.chat.messages.at(-1)?.seq ?? 0;
+  useEffect(() => {
+    if (chatOpen) roomChatSeen.current = roomChatNewest;
+  }, [chatOpen, roomChatNewest]);
   const connection = useRef<ConnectionState>("idle");
   const text = copy[locale];
   const hostUrl = `/api/classroom/${encodeURIComponent(lessonId)}/host-events`;
@@ -415,6 +447,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
     // A new room starts with both devices off and nothing pressed yet.
     wanted.current = { camera: false, microphone: false };
     let lost = false;
+    const offShareKeys = current.onShareKeysChange?.(() => { for (const listener of [...shareKeyListeners.current]) listener(); });
     const unsubscribe = current.subscribe((event: MediaEvent) => {
       if (event.type === "connection") {
         const step = connectionStep(lost, connection.current, event.state);
@@ -478,6 +511,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
     }
     return () => {
       unsubscribe();
+      offShareKeys?.();
       void current.leave();
       adapter.current = null;
       setSimulator(null);
@@ -1037,14 +1071,26 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   // admin page: nothing on this page does it, and Zoom gives nobody here the host's powers.
   const equalTools = joined.fixedRoom;
   const shareTools = (isTutor || equalTools) && !!adapter.current?.setScreenShare && (zoom || !!simulator);
-  const boardTools = (isTutor || (equalTools && (tools.whiteboard === true || media.whiteboard === "presenting"))) && !!adapter.current?.setWhiteboard && (zoom || !!simulator);
-  const shareBusy = !isTutor && equalTools && tools.share === false && media.share !== "sending";
+  const roomBoard = equalTools && channel.parts?.board === true;
+  const roomChat = equalTools && channel.parts?.chat === true;
+  const roomTurn = equalTools && channel.parts?.turn === true;
+  const boardOnStage = roomBoard && roomBoardShown;
+  const boardTools = !roomBoard && (isTutor || (equalTools && (tools.whiteboard === true || media.whiteboard === "presenting"))) && !!adapter.current?.setWhiteboard && (zoom || !!simulator);
+  // With the turn, someone else holding it is what keeps this page from sharing (the server's word).
+  const shareBusy = roomTurn ? channel.share.busy && !channel.share.sharing : !isTutor && equalTools && tools.share === false && media.share !== "sending";
+  const sharingNow = roomTurn ? channel.share.sharing : media.share === "sending";
   const boardBusy = !isTutor && equalTools && media.whiteboard === "viewing";
-  const canExport = media.whiteboard === "presenting" && !!adapter.current?.exportWhiteboard;
-  const stageLabel = mode === "share" ? (media.share === "sending" ? text.stageLabel.ownShare : text.stageLabel.share) : text.stageLabel[mode];
+  const canExport = !roomBoard && media.whiteboard === "presenting" && !!adapter.current?.exportWhiteboard;
+  const turnHolder = roomTurn && channel.share.holder ? people.find((person) => person.key === channel.share.holder) ?? null : null;
+  const turnNote = roomTurn ? roomChannelNoticeText(locale, channel.notice?.part === "turn" ? channel.notice : null) : null;
+  const roomUnread = roomChat && !chatOpen ? channel.chat.messages.filter((message) => message.by !== channel.you && message.seq > roomChatSeen.current).length : 0;
+  const chatUnread = roomChat ? roomUnread : unread;
+  const stageLabel = boardOnStage ? text.stageLabel.board : mode === "share" ? (media.share === "sending" ? text.stageLabel.ownShare : text.stageLabel.share) : text.stageLabel[mode];
   // Someone else's screen on this page (2026-11-19): the material comes first (the videos go to a
   // narrow column) and can be enlarged, scrolled, or shown full screen.
-  const reading = mode === "share" && media.share === "receiving";
+  const reading = !boardOnStage && mode === "share" && media.share === "receiving";
+  // The room's own board is on the stage the way Zoom's was (the material first).
+  const shownMode = boardOnStage ? "board" : mode;
   const zoomed = reading && shareZoom > 1;
   const roomName = roomLabel === "Lobby" ? (locale === "en" ? "Lobby" : "主會議室") : roomLabel;
   const headcount = blockMode && media.remote.others != null ? media.remote.others + 1 : null;
@@ -1084,8 +1130,8 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
 
   // A toolbar button: an icon with a short word under it; the whole name for screen readers and the
   // tooltip. `name` stays the button's name exactly as before 2.0 where tests and people rely on it.
-  const toolButton = (props: { control?: string; tool?: string; icon: RoomIconName; label: ReactNode; name?: string; tip?: string; pressed?: boolean; expanded?: boolean; controls?: string; popup?: "menu"; disabled?: boolean; danger?: boolean; badge?: ReactNode; onClick: (event: ReactMouseEvent<HTMLButtonElement>) => void; refTo?: Ref<HTMLButtonElement> }) => (
-    <button type="button" ref={props.refTo} className={`classroom-room-control classroom-room-iconbutton room2-tool${props.danger ? " room2-leave" : ""}`}
+  const toolButton = (props: { control?: string; tool?: string; icon: RoomIconName; label: ReactNode; name?: string; tip?: string; pressed?: boolean; expanded?: boolean; controls?: string; popup?: "menu"; disabled?: boolean; danger?: boolean; badge?: ReactNode; marks?: Record<string, string>; onClick: (event: ReactMouseEvent<HTMLButtonElement>) => void; refTo?: Ref<HTMLButtonElement> }) => (
+    <button type="button" ref={props.refTo} className={`classroom-room-control classroom-room-iconbutton room2-tool${props.danger ? " room2-leave" : ""}`} {...props.marks}
       data-control={props.control} data-tool={props.tool} data-tip={props.tip ?? props.name}
       aria-label={props.name} aria-pressed={props.pressed} aria-expanded={props.expanded} aria-controls={props.controls} aria-haspopup={props.popup}
       disabled={props.disabled} onClick={props.onClick}>
@@ -1105,9 +1151,10 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   );
 
   return (
-    <Shell className="classroom-room room2" data-mode={mode} data-panel={panel} data-focus={focus ? "on" : "off"} data-role={joined.role}
+    <Shell className="classroom-room room2" data-mode={shownMode} data-panel={panel} data-focus={focus ? "on" : "off"} data-role={joined.role}
       data-provider={provider} data-device={device} data-count={people.length} data-spot={spotlight ? "on" : "off"}
       data-reading={reading ? "on" : "off"} data-share-zoom={zoomed ? "zoomed" : "fit"}
+      {...(roomBoard || roomChat || roomTurn ? { "data-room-channel": "", "data-you": channel.you ?? "", "data-stopped": channel.stopped ?? "", "data-online": String(channel.online), "data-room-board-shown": String(boardOnStage) } : {})}
       style={reading ? ({ "--share-zoom": String(shareZoom) } as CSSProperties) : undefined}>
       <div className="room2-shell">
         <header className="room2-top">
@@ -1233,7 +1280,8 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
                 )}
               </div>
             </div>
-            <div className={`classroom-vendor-stage ${provider}`} ref={vendorStage} data-provider={provider} />
+            {boardOnStage && <div className="room2-room-board" data-room-board-stage><RoomBoard channel={channel} locale={locale} /></div>}
+            <div className={`classroom-vendor-stage ${provider}`} ref={vendorStage} data-provider={provider} hidden={boardOnStage} />
             {simulator && mode === "share" && <p className="room2-simulated">{text.simulatedShare}</p>}
             {reading && device !== "desktop" && <p className="room2-reading-tip">{text.readingTip}</p>}
             {simulator && mode === "board" && <p className="room2-simulated">{text.simulatedBoard}</p>}
@@ -1279,7 +1327,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
           <aside className="room2-panel" ref={panelBox} hidden={panel === "none"} aria-label={panel === "chat" ? text.chat : panel === "people" ? text.people : text.info}>
             <div className="room2-panel-head">
               <div className="room2-tabs" role="tablist">
-                {features.chat && <button type="button" role="tab" id="classroom-tab-chat" aria-selected={panel === "chat"} aria-controls="classroom-chat" onClick={() => setPanel("chat")}>{text.chat}{unread > 0 && <span className="room2-tab-count">{unread}</span>}</button>}
+                {(features.chat || roomChat) && <button type="button" role="tab" id="classroom-tab-chat" aria-selected={panel === "chat"} aria-controls="classroom-chat" onClick={() => setPanel("chat")}>{text.chat}{chatUnread > 0 && <span className="room2-tab-count">{chatUnread}</span>}</button>}
                 {!lcic && <button type="button" role="tab" id="classroom-tab-people" aria-selected={panel === "people"} aria-controls="classroom-people" onClick={() => setPanel("people")}>{text.people}{seesHands && othersHands.length > 0 && <span className="room2-tab-count">{othersHands.length}</span>}</button>}
                 <button type="button" role="tab" id="classroom-tab-info" aria-selected={panel === "info"} aria-controls="classroom-info" onClick={() => setPanel("info")}>{text.info}</button>
               </div>
@@ -1287,6 +1335,13 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
                 <RoomIcon name="close" />
               </button>
             </div>
+
+            {roomChat && (
+              <section id="classroom-chat" role="tabpanel" aria-labelledby="classroom-tab-chat" className="room2-tabpanel room2-room-chat" hidden={panel !== "chat"} data-room-chat-panel>
+                <h2 className="sr-only">{text.chat}</h2>
+                <RoomChat channel={channel} locale={locale} />
+              </section>
+            )}
 
             {features.chat && (
               <section id="classroom-chat" role="tabpanel" aria-labelledby="classroom-tab-chat" className="room2-tabpanel classroom-room-chat" hidden={panel !== "chat"}>
@@ -1325,6 +1380,12 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
                       <button key={hand.id} type="button" className="classroom-room-secondary" onClick={() => void lowerHand(hand.id)}>{text.handLower(hand.name)}</button>
                     ))}
                   </div>
+                )}
+                {roomTurn && (
+                  <p className="room2-turn" role="status" data-room-turn data-holder={channel.share.holder ?? ""} data-mine={String(channel.share.mine)} data-sharing={String(channel.share.sharing)}>
+                    {channel.share.mine ? v.turnMine : turnHolder ? v.turnHeld(labelOf(turnHolder)) : channel.share.holder ? v.turnHeldUnknown : v.turnFree}
+                    {turnNote && <span className="room2-turn-note" data-room-turn-note> {turnNote}</span>}
+                  </p>
                 )}
                 <ul className="room2-people">
                   {ordered.map((person) => (
@@ -1408,11 +1469,16 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
               })}
             </div>
           )}
-          {(shareTools || boardTools || (features.raiseHand && isStudent)) && (
+          {(shareTools || boardTools || roomBoard || (features.raiseHand && isStudent)) && (
             <div className="room2-group" role="group" aria-label={text.groups.teach}>
               {shareTools && device === "desktop" && toolButton({
-                tool: "share", icon: "share", label: media.share === "sending" ? v.shareStopShort : v.shareShort, name: media.share === "sending" ? v.shareStop : shareBusy ? v.shareBusy : v.share,
-                pressed: media.share === "sending", disabled: !connected || device !== "desktop" || sdkCheck?.screenShare === false || shareBusy, onClick: () => void toggleShare(),
+                tool: "share", icon: "share", label: sharingNow ? v.shareStopShort : v.shareShort, name: sharingNow ? v.shareStop : shareBusy ? (roomTurn ? v.turnBusy : v.shareBusy) : v.share,
+                pressed: sharingNow, disabled: !connected || device !== "desktop" || sdkCheck?.screenShare === false || shareBusy, ...(roomTurn ? { marks: { "data-room-turn-button": "" } } : {}),
+                onClick: () => void (roomTurn ? (channel.share.sharing ? channel.share.stop() : channel.share.start()) : toggleShare()),
+              })}
+              {roomBoard && toolButton({
+                tool: "room-board", icon: "whiteboard", label: v.whiteboardShort, name: boardOnStage ? v.roomBoardHide : v.roomBoardShow,
+                pressed: boardOnStage, marks: { "data-room-board-toggle": "" }, onClick: () => setRoomBoardShown((shown) => !shown),
               })}
               {boardTools && toolButton({
                 tool: "whiteboard", icon: "whiteboard", label: v.whiteboardShort, name: media.whiteboard === "presenting" ? v.whiteboardStop : v.whiteboard,
@@ -1426,13 +1492,13 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
               )}
             </div>
           )}
-          {(features.chat || !lcic) && (
+          {(features.chat || roomChat || !lcic) && (
             <div className="room2-group" role="group" aria-label={text.groups.together}>
-              {features.chat && (
+              {(features.chat || roomChat) && (
                 <button type="button" className="classroom-room-control classroom-room-iconbutton room2-tool" data-control="chat" data-tip={text.chat} aria-expanded={chatOpen} aria-controls="classroom-chat"
-                  aria-label={unread > 0 ? `${text.chat}（${text.chatUnread(unread)}）` : text.chat} onClick={(event) => togglePanel("chat", event.currentTarget)}>
+                  aria-label={chatUnread > 0 ? `${text.chat}（${text.chatUnread(chatUnread)}）` : text.chat} onClick={(event) => togglePanel("chat", event.currentTarget)}>
                   <RoomIcon name="chat" /><span className="classroom-room-iconlabel">{text.chat}</span>
-                  {unread > 0 && <span className="classroom-room-unread" aria-hidden="true">{unread > 99 ? "99+" : unread}</span>}
+                  {chatUnread > 0 && <span className="classroom-room-unread" aria-hidden="true">{chatUnread > 99 ? "99+" : chatUnread}</span>}
                 </button>
               )}
               {!lcic && toolButton({

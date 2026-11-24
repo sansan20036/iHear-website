@@ -58,7 +58,8 @@ export function personLabel(person: RoomPerson, words: { tutor: string; student:
 // first letter.
 export function initialsOf(person: RoomPerson, words: { tutor: string; student: string }): string {
   const tail = person.name.split("-").pop()?.trim() ?? "";
-  if (tail) return tail.slice(0, 3).toUpperCase();
+  // By characters, not UTF-16 units: a rare Chinese character (round 16) is never cut in two.
+  if (tail) return [...tail].slice(0, 3).join("").toUpperCase();
   return [...(person.host ? words.tutor : words.student)][0] ?? "?";
 }
 

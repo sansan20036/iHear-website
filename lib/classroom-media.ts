@@ -76,7 +76,9 @@ export type MediaEvent =
 // A person as the room shows them. The name is the participant code (the join passes the code as the
 // display name, so no student's name reaches the video service); the host is the tutor. `video`:
 // their video is drawn, waits for a free tile (P3-Multi), or is off.
-export type RoomPerson = { id: string; name: string; host: boolean; self: boolean; camera: boolean; microphone: boolean; video: "shown" | "waiting" | "off" };
+// key (round 16): the participant id Zoom carries as the user key, when Zoom says it; the fixed room's
+// share turn knows people by it (who holds the turn, to whom it is handed).
+export type RoomPerson = { id: string; name: string; host: boolean; self: boolean; camera: boolean; microphone: boolean; video: "shown" | "waiting" | "off"; key?: string };
 
 export type MediaCapabilities = {
   // True only for an adapter that really carries audio and video.
@@ -134,6 +136,12 @@ export interface ClassroomMediaAdapter {
   systemCheck?(): Promise<MediaSystemCheck>;
   // The tutor's materials (sharing a screen, window or tab) and the whiteboard. True when started.
   setScreenShare?(on: boolean): Promise<boolean>;
+  // Round 16 (2026-11-24, the fixed room's own share turn, lib/room-channel): who shares now, by
+  // participant id (Zoom's user key from the join token), and a word when that changes; and whose
+  // share this page shows (null: nobody's; never called: anyone's, as before the turn).
+  shareKeys?(): string[];
+  onShareKeysChange?(listener: () => void): () => void;
+  showShareOf?(key: string | null): void;
   setWhiteboard?(on: boolean): Promise<boolean>;
   exportWhiteboard?(name: string): Promise<void>;
   // A chat line to everyone in the room; true once it was sent. A student raises or lowers their
@@ -675,7 +683,8 @@ export type ZoomClient = {
   // Present in Zoom's client; a stand-in without them simply has no chat or raised hands.
   getChatClient?(): ZoomChat;
   getCommandClient?(): ZoomCommand;
-  getCurrentUserInfo(): { userId: number; audio?: string; isHost?: boolean; displayName?: string } | null;
+  // SDK 2.6.0 returns the Participant: with the user key (our participant id) too (round 16, the share turn).
+  getCurrentUserInfo(): { userId: number; audio?: string; isHost?: boolean; displayName?: string; userKey?: string; userIdentity?: string } | null;
   getAllUser(): ZoomParticipant[];
   // Video SDK 2.6.0: SessionInfo.sessionId, Zoom's id for the session joined.
   getSessionInfo?(): { sessionId?: string } | null;
@@ -1002,7 +1011,8 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
       listen("chat-on-message", (payload) => this.receiveChat(payload as ZoomChatMessage));
       listen("command-channel-message", (payload) => this.receiveCommand(payload as { senderId?: number; text?: string }));
       listen("peer-video-state-change", (payload) => void this.peerVideo(payload as { action?: string; userId?: number }));
-      listen("active-share-change", (payload) => void this.remoteShare(payload as { state?: string; userId?: number }));
+      // Round 16: the share turn hears of every change of who shares, shown here or not.
+      listen("active-share-change", (payload) => void this.remoteShare(payload as { state?: string; userId?: number }).finally(() => this.shareKeysChanged()));
       // The browser's own "stop sharing" button.
       listen("passively-stop-share", () => this.endOwnShare());
       listen("peer-whiteboard-state-change", (payload) => void this.remoteBoard(payload as { action?: string; userId?: number }));
@@ -1627,6 +1637,7 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
         id: String(user.userId), name: chatNameOf(user.displayName), host: user.isHost === true, self: own, camera,
         microphone: own ? this.devices.microphone === "on" : Boolean(user.audio && !user.muted),
         video: camera && this.tiles.get(user.userId) ? "shown" : this.waitingVideos.has(user.userId) ? "waiting" : "off",
+        ...(user.userKey ?? user.userIdentity ? { key: String(user.userKey ?? user.userIdentity) } : {}),
       };
     });
     this.peopleTiles?.sync(people);
@@ -1899,11 +1910,64 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     this.reportPeople();
   }
 
-  // The other person's shared screen, shown while they share.
+  // Round 16 (the fixed room's share turn): who shares now by participant id, whose share is shown.
+  // undefined: no turn on this page, any share is shown as before; null: none; else that person's.
+  private shareShownFor: string | null | undefined = undefined;
+  private shareKeyListeners = new Set<() => void>();
+
+  shareKeys(): string[] {
+    const self = this.client?.getCurrentUserInfo() ?? null;
+    const keys: string[] = [];
+    const own = self ? (self.userKey ?? self.userIdentity ?? this.keyOfUser(self.userId)) : null;
+    if (this.sharing === "sending" && own) keys.push(own);
+    let active: number | null = null;
+    try { active = this.stream?.getActiveShareUserId() || null; } catch { active = null; }
+    const other = active !== null && active !== self?.userId ? this.keyOfUser(active) : null;
+    if (other) keys.push(other);
+    return [...new Set(keys)];
+  }
+
+  onShareKeysChange(listener: () => void) {
+    this.shareKeyListeners.add(listener);
+    return () => { this.shareKeyListeners.delete(listener); };
+  }
+
+  showShareOf(key: string | null) {
+    this.shareShownFor = key;
+    void this.followShownShare();
+  }
+
+  private shareKeysChanged() {
+    for (const listener of [...this.shareKeyListeners]) {
+      try { listener(); } catch { /* a listener's own fault stays its own */ }
+    }
+  }
+
+  private keyOfUser(userId: number): string | null {
+    const user = (this.client?.getAllUser() ?? []).find((entry) => entry.userId === userId);
+    return user ? (user.userKey ?? user.userIdentity ?? null) : null;
+  }
+
+  private shareAllowed(userId: number) {
+    return this.shareShownFor === undefined || (this.shareShownFor !== null && this.keyOfUser(userId) === this.shareShownFor);
+  }
+
+  // After the turn changed hands: the share shown is the holder's only, also when it began before.
+  private async followShownShare() {
+    if (!this.stream) return;
+    let active: number | null = null;
+    try { active = this.stream.getActiveShareUserId() || null; } catch { return; }
+    if (this.sharer !== null && !this.shareAllowed(this.sharer)) await this.remoteShare({ state: "Inactive", userId: this.sharer });
+    if (active !== null && this.sharer === null) await this.remoteShare({ state: "Active", userId: active });
+  }
+
+  // The other person's shared screen, shown while they share (round 16: in a room with the share
+  // turn, only the turn holder's).
   private async remoteShare(payload: { state?: string; userId?: number }) {
     const stream = this.stream, stage = this.stage;
     if (!stream || !stage || payload.userId == null || payload.userId === this.client?.getCurrentUserInfo()?.userId) return;
     if (payload.state === "Active" && this.sharer !== payload.userId) {
+      if (!this.shareAllowed(payload.userId)) return;
       const view = await stream.attachShareView(payload.userId).catch(() => null);
       if (!isNode(view)) return;
       stage.share.replaceChildren(view);
@@ -1974,6 +2038,8 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     this.sharing = state;
     this.reportTools();
     this.emit({ type: "share", state, at: this.now() });
+    // Round 16: this page's own share started or ended, so who shares changed (the share turn).
+    this.shareKeysChanged();
   }
 
   private setBoard(state: "none" | "presenting" | "viewing") {

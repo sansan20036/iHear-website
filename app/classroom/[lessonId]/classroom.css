@@ -400,3 +400,10 @@ body:has(.classroom-room) > :is(.site-theme-trigger, .ihear-layout-trigger, .ihe
   .room2-stage-tool[data-stage-fullscreen] span { display: none; }
   .room2-zoom-fit { min-width: 0; }
 }
+
+/* Round 16 (2026-11-24): a fixed room's own whiteboard on the stage, over Zoom's area (which stays
+   in place, hidden, so Zoom keeps drawing into it); the room's chat fills its tab; who holds the turn. */
+.room2 .classroom-vendor-stage[hidden] { display: none; }
+.room2-room-board { min-height: 0; height: 100%; color: initial; }
+.room2-tabpanel.room2-room-chat { overflow: hidden; grid-template-rows: minmax(0, 1fr); align-content: stretch; }
+.room2-turn { margin: 0; font-weight: 600; }

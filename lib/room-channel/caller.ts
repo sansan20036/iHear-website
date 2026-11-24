@@ -15,7 +15,7 @@
 // kept equal to it by tests/room-channel-caller.test.mjs. It gives way to an exported function of
 // the service when there is one.
 import { hashKey } from "../classroom-block-rules";
-import { fixedRoomOf, shownCodeOf } from "../classroom-fixed-room-facts";
+import { displayNameOf, fixedRoomOf, shownCodeOf } from "../classroom-fixed-room-facts";
 import { forRules } from "../classroom-service";
 import type { ClassroomEvent, ClassroomLesson, ClassroomStore } from "../classroom-store";
 // @ts-ignore - shared classroom logic, plain JavaScript tested with node --test.
@@ -74,8 +74,9 @@ export async function roomChannelCaller({ store, lessonId, key, now }: { store: 
     const decision = getJoinEligibility({ lesson: forRules(lesson, events), participantId: participant.id, identity: { verified: true, participantId: participant.id, method: "join_link" }, now });
     if (!decision.allowed) return refuse(403, String(decision.reason));
   }
-  // name: what the room shows beside this person's messages. Today that is the code the room
-  // shows for them; when the fixed rooms show the first name a person typed at the door (the user's
-  // decision of 2026-11-24, on the integrator's branch), it is to be that same checked name.
-  return { ok: true, who: { id: participant.id, name: shownCodeOf(events, participant.code), member: true }, lesson: facts };
+  // name: what the room shows beside this person's messages: the name the server recorded when they
+  // were let in, as Zoom shows it (the user's decisions of 2026-11-24: typed names, Chinese or
+  // English, checked again when read); none recorded, the code the room shows for them.
+  // (The integrator's line, round 16, with f1's leave.)
+  return { ok: true, who: { id: participant.id, name: displayNameOf(events, participant.code) ?? shownCodeOf(events, participant.code), member: true }, lesson: facts };
 }

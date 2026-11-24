@@ -720,8 +720,9 @@ describe("browser adapters", () => {
     await settle();
     const peopleOf = () => events.filter(event => event.type === "people").at(-1).people;
     expect(peopleOf()).toEqual([
-      { id: "1", name: "TEST-T01", host: true, self: true, camera: false, microphone: false, video: "off" },
-      { id: "2", name: "TEST-S01", host: false, self: false, camera: true, microphone: false, video: "shown" },
+      // key (round 16): the participant id Zoom carries as the user key, for the fixed room's share turn.
+      { id: "1", name: "TEST-T01", host: true, self: true, camera: false, microphone: false, video: "off", key: "P-TEST-T01" },
+      { id: "2", name: "TEST-S01", host: false, self: false, camera: true, microphone: false, video: "shown", key: "P-TEST-S01" },
     ]);
     const tiles = () => videos.children.map(cell => [cell.attributes["data-person"], cell.className, cell.attributes["data-host"], cell.attributes["data-video"], cell.children.map(child => child.tag)]);
     expect(tiles()).toEqual([["1", "classroom-media-tile self", "true", "off", []], ["2", "classroom-media-tile remote", "false", "shown", ["video:2"]]]);
@@ -1587,6 +1588,48 @@ describe("browser adapters", () => {
       expect(await joinedAs({ equalTools: true, displayName: unsafe }), JSON.stringify(unsafe)).toBe("join:ihear-l-test-v01:synthetic.jwt.token:R0123abcd-0a1b2c");
     }
     expect(zoomDisplayNameOf({ participantCode: "X1", displayName: " Ann ", equalTools: true })).toBe("Ann");
+  });
+
+  // Round 16 (2026-11-24): the media the fixed room's share turn (lib/room-channel) uses.
+  test("TURN-1: who shares, by participant id (Zoom's user key), with a word on every change; once the room offers the turn only the holder's share is shown; without the turn every share shows as before", async () => {
+    const { zoom, adapter } = await joined({ others: [{ userId: 2, userKey: "P-2" }, { userId: 3, userIdentity: "P-3" }] });
+    const told = [];
+    const off = adapter.onShareKeysChange(() => told.push(adapter.shareKeys()));
+    expect(adapter.shareKeys()).toEqual([]);
+    const shares = (state, userId) => { zoom.setSharer(state === "Active" ? userId : 0); zoom.handlers.get("active-share-change")({ state, userId }); };
+    // Without the turn (showShareOf never called): someone's share is shown, as before round 16.
+    shares("Active", 2); await settle();
+    expect(adapter.shareKeys()).toEqual(["P-2"]);
+    expect(told.at(-1)).toEqual(["P-2"]);
+    expect(zoom.calls).toContain("shareView:2");
+    // The turn is P-3's: P-2's share is no longer shown on this page (Zoom still says P-2 shares).
+    adapter.showShareOf("P-3"); await settle();
+    expect(zoom.calls).toContain("shareViewOff:2");
+    expect(adapter.shareKeys()).toEqual(["P-2"]);
+    shares("Inactive", 2); await settle();
+    expect(told.at(-1)).toEqual([]);
+    shares("Active", 3); await settle();
+    expect(zoom.calls).toContain("shareView:3");
+    expect(adapter.shareKeys()).toEqual(["P-3"]);
+    // Nobody holds the turn: no share is shown, and a share starting now is not shown either.
+    adapter.showShareOf(null); await settle();
+    expect(zoom.calls.filter(call => call === "shareViewOff:3")).toHaveLength(1);
+    shares("Inactive", 3); await settle();
+    shares("Active", 2); await settle();
+    expect(zoom.calls.filter(call => call === "shareView:2")).toHaveLength(1);
+    // The turn comes to P-2 while P-2 already shares: shown now.
+    adapter.showShareOf("P-2"); await settle();
+    expect(zoom.calls.filter(call => call === "shareView:2")).toHaveLength(2);
+    // This page's own share counts with its own participant id; a listener taken off hears nothing more.
+    shares("Inactive", 2); await settle();
+    expect(await adapter.setScreenShare(true)).toBe(true);
+    expect(adapter.shareKeys()).toEqual(["P-TEST-T01"]);
+    expect(told.at(-1)).toEqual(["P-TEST-T01"]);
+    off();
+    const heard = told.length;
+    await adapter.setScreenShare(false);
+    expect(told).toHaveLength(heard);
+    expect(adapter.shareKeys()).toEqual([]);
   });
 
   test("Zoom whiteboard: a start Zoom refuses keeps only Zoom's code (8000–8006), never Zoom's words, links or tokens", async () => {
