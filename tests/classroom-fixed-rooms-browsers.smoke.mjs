@@ -128,7 +128,10 @@ try {
       const connection = page.locator('.room2-top .classroom-room-connection');
       await expect(connection).toHaveText(words.connected);
       await expect(page.locator('html')).toHaveAttribute('lang', words.lang);
-      await expect(page.getByRole('toolbar')).toHaveCount(1);
+      // The page's own toolbar, once; round 16: with the room's own board on (CLASSROOM_ROOM_BOARD), its
+      // drawing tools are a second toolbar with a name of its own.
+      await expect(page.locator('.room2-bar[role="toolbar"]')).toHaveCount(1);
+      await expect(page.getByRole('toolbar')).toHaveCount(process.env.CLASSROOM_ROOM_BOARD === 'on' ? 2 : 1);
       const sound = page.locator('[data-sound]');
       await sound.getByRole('button', { name: words.sound, exact: true }).click();
       await expect(sound).toHaveCount(0);
