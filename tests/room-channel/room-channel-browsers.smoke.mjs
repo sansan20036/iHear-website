@@ -44,17 +44,38 @@ const PAGE = {
   doorBack: '[data-room-door-back]',
 };
 
+// The lesson's door counts entries by network address: for a fixed room's lesson, ten a minute
+// from one address for everyone together (lib/classroom-rate-limit.ts, the "single" branch; found
+// 2026-11-25 when a quick run had the eleventh entry within the minute refused: "too many
+// attempts"). Here four people share one address and each enters three times (E1, E7, E8): twelve.
+// So the third round (E8) waits until the minute in which the first entries were made is over;
+// no minute then holds more than eight. The wait is written in the report. It is this harness's
+// doing (one address for four people), and says nothing about the browsers.
+const DOOR_MINUTE_MS = 62_000;
+let firstEntriesAt = 0;
+async function newDoorMinute(round) {
+  const wait = firstEntriesAt + DOOR_MINUTE_MS - Date.now();
+  if (wait > 0) { (report.notes.waitedForDoorMinuteMs ??= {})[round] = wait; await new Promise(resolve => { setTimeout(resolve, wait); }); }
+}
+
 async function check(id, name, action) {
   try { await action(); report.checks.push({ id, name, status: 'PASS' }); console.log(`PASS ${id} ${name}`); }
   catch (error) { report.checks.push({ id, name, status: 'FAIL', error: redactLinks(error.message) }); throw error; }
 }
 // A page that is reloaded on purpose drops the requests it had open; each browser says so in its
 // own words. Only then are those words not a page problem.
+// WebKit's words for a request the reload cut off are "Fetch API cannot load <address> due to
+// access control checks." (seen 2026-11-25 for the channel's own request, in one run of three).
+// What is let through this way is counted in the report, by browser, never dropped unseen.
 let leaving = false;
-const expected = text => /Failed to load resource: the server responded with a status of (403|404|409|410)/.test(text)
-  || (leaving && /Failed to load resource|NetworkError|Load failed|net::ERR_|Failed to fetch|cancelled|aborted|NS_BINDING_ABORTED/i.test(text));
+const whileLeaving = text => leaving && /Failed to load resource|NetworkError|Load failed|net::ERR_|Failed to fetch|cancelled|aborted|NS_BINDING_ABORTED|due to access control checks/i.test(text);
+const expected = text => /Failed to load resource: the server responded with a status of (403|404|409|410)/.test(text) || whileLeaving(text);
 function watch(page, who) {
-  page.on('console', message => { if (message.type() === 'error' && !expected(message.text())) report.pageProblems.push(`${who}: ${message.text()}`); });
+  page.on('console', message => {
+    if (message.type() !== 'error') return;
+    if (whileLeaving(message.text())) { const said = (report.notes.saidWhileReloading ??= {}); said[who] = (said[who] ?? 0) + 1; }
+    if (!expected(message.text())) report.pageProblems.push(`${who}: ${message.text()}`);
+  });
   page.on('pageerror', error => report.pageProblems.push(`${who}: ${error.message}`));
   page.on('dialog', dialog => dialog.accept());
   return page;
@@ -162,6 +183,7 @@ try {
   const card = admin.locator('[data-room="Browser Room"]');
 
   await check('E1', '四種瀏覽器（Chromium、Edge、Firefox、WebKit；都是這台電腦上的版本）各一個人進同一間固定教室；每個頁面都有教室自己的白板、聊天和分享權，四個人的身分各不相同', async () => {
+    firstEntriesAt = Date.now();
     for (const engine of ENGINES) {
       const browser = await engine.type.launch({ headless: process.env.IHEAR_HEADED !== '1', ...engine.launch });
       browsers.push(browser);
@@ -282,6 +304,7 @@ try {
     // request once (2026-11-25, while another heavy program ran beside it): whether Safari itself
     // does is not known, so there the lease is accepted and written down, never silently.
     report.notes.freedByLease = [];
+    await newDoorMinute('E8');
     for (const person of reloading) {
       const watcher = people.find(one => one !== person);
       await startShare(person);
