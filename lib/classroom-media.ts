@@ -705,6 +705,22 @@ export type OfficialZoomSdk = MustProvide<ZoomVideoSdk, typeof ZoomVideo>;
 // The official package, loaded only in the browser and only when a Zoom room opens, so its code
 // stays out of every other page. Its WebAssembly and worker files come from Zoom's "Global"
 // location (https://source.zoom.us/videosdk/<version>/lib/), which the classroom's CSP allows.
+/**
+ * Round 17 (2026-11-25): a video's shape (width over height) as Zoom reports it, or null when it is
+ * not one a camera sends (a number between 1:5 and 5:1).
+ */
+export function videoRatioOf(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0.2 && value <= 5 ? Math.round(value * 10_000) / 10_000 : null;
+}
+
+/** The player takes the video's shape (--video-ratio); classroom.css makes it cover its tile. */
+function shapePlayer(element: unknown, ratio: number | null) {
+  const style = (element as { style?: { setProperty?: (name: string, value: string) => void; removeProperty?: (name: string) => void } } | null)?.style;
+  if (!style?.setProperty) return;
+  if (ratio == null) style.removeProperty?.("--video-ratio");
+  else style.setProperty("--video-ratio", String(ratio));
+}
+
 export async function loadZoomVideoSdkPackage(): Promise<ZoomVideoSdk> {
   if (typeof window === "undefined") throw new MediaAdapterUnavailableError("zoom-video-sdk", "The Zoom Video SDK runs only in a browser");
   const official = await import("@zoom/videosdk");
@@ -1011,6 +1027,9 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
       listen("chat-on-message", (payload) => this.receiveChat(payload as ZoomChatMessage));
       listen("command-channel-message", (payload) => this.receiveCommand(payload as { senderId?: number; text?: string }));
       listen("peer-video-state-change", (payload) => void this.peerVideo(payload as { action?: string; userId?: number }));
+      // Round 17: Zoom says when a video's real shape differs from its player's (a phone held upright
+      // sends 9:16); the player takes that shape and covers its tile (classroom.css).
+      listen("video-aspect-ratio-change", (payload) => this.videoShape(payload as { userId?: number; aspectRatio?: number }));
       // Round 16: the share turn hears of every change of who shares, shown here or not.
       listen("active-share-change", (payload) => void this.remoteShare(payload as { state?: string; userId?: number }).finally(() => this.shareKeysChanged()));
       // The browser's own "stop sharing" button.
@@ -1892,6 +1911,17 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     this.reportRemote();
   }
 
+  // Round 17 (2026-11-25): each person's video shape as Zoom last reported it, kept for a player
+  // attached later (a camera turned off and on again keeps its shape).
+  private readonly videoShapes = new Map<number, number>();
+
+  private videoShape(payload: { userId?: number; aspectRatio?: number }) {
+    const ratio = videoRatioOf(payload?.aspectRatio);
+    if (payload?.userId == null || ratio == null) return;
+    this.videoShapes.set(payload.userId, ratio);
+    shapePlayer(this.tiles.get(payload.userId), ratio);
+  }
+
   private async attach(userId: number) {
     if (!this.stream || !this.stage || this.tiles.has(userId)) return;
     // No free tile (P3-Multi): the video waits until one is.
@@ -1901,6 +1931,7 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     try {
       const element = await this.stream.attachVideo(userId, this.tiles.size > 3 ? VIDEO_360P : VIDEO_720P);
       this.tiles.set(userId, element);
+      shapePlayer(element, this.videoShapes.get(userId) ?? null);
       // Into the person's own tile inside the videos container (Zoom's documented pattern).
       if (isNode(element)) (this.peopleTiles?.cellOf(String(userId)) ?? this.stage.videos).append(element);
     } catch (error) {

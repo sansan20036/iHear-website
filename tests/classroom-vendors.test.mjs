@@ -1,9 +1,10 @@
 import { createHash, createHmac } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { CLASSROOM_CAPABILITIES, classroomDeviceOf, deviceLimits } from "../lib/classroom-capabilities";
 import { handCommand } from "../lib/classroom-chat";
-import { hostReportFor, LcicEmbedAdapter, LCIC_FRAME_PERMISSIONS, MediaAdapterUnavailableError, ZoomVideoSdkMediaAdapter, zoomDisplayNameOf } from "../lib/classroom-media";
+import { hostReportFor, LcicEmbedAdapter, LCIC_FRAME_PERMISSIONS, MediaAdapterUnavailableError, videoRatioOf, ZoomVideoSdkMediaAdapter, zoomDisplayNameOf } from "../lib/classroom-media";
 import { ClassroomProviderUnavailableError, classroomProvider } from "../lib/classroom-provider";
 import { isTestLesson, LcicApiError, lcicStatusOf, memoryRoomRegistry, tc3Sign, tencentLcicConfig, tencentLcicProvider, verifyLcicCallback } from "../lib/classroom-vendors/tencent-lcic";
 import { zoomApiToken, zoomSessionPath, zoomVideoSdkConfig, zoomVideoSdkProvider } from "../lib/classroom-vendors/zoom-video-sdk";
@@ -535,6 +536,8 @@ describe("browser adapters", () => {
   // several); setSharePrivilege and setCanBoard change Zoom's answers after joining.
   function fakeZoom({ joinError = null, videoError = null, shareError = null, canBoard = true, boardEnabled = true, boardError = null, boardViewError = null, presenter = null, sharingAtJoin = 0, videoHangs = 0, slowVideo = 0, audioHangs = 0, audioError = null, ignoresMute = false, slowJoin = false, failedJoins = 0, sessionId = "", chatAnswer = null, commandAnswer = null, others = [], sharePrivilege = 0 } = {}) {
     const calls = [];
+    // Round 17: every video player handed out, to read the shape the page gives it.
+    const players = [];
     // In-class chat and the command channel (2026-11-12), recorded apart from `calls` so the older
     // checks of the call order stay as they were. A *Answer option stands for Zoom's failure answer.
     const chatSent = [], privileges = [], commandsSent = [];
@@ -591,7 +594,10 @@ describe("browser adapters", () => {
       stopVideo: async () => { calls.push("stopVideo"); capturing = false; }, isCapturingVideo: () => capturing,
       attachVideo: async (userId, quality) => {
         calls.push(`attach:${userId}`); qualities.push([userId, quality]);
-        const video = { nodeType: 1, tag: `video:${userId}`, parentNode: null, remove() { if (video.parentNode) video.parentNode.children = video.parentNode.children.filter(child => child !== video); video.parentNode = null; } };
+        const video = { nodeType: 1, tag: `video:${userId}`, parentNode: null, remove() { if (video.parentNode) video.parentNode.children = video.parentNode.children.filter(child => child !== video); video.parentNode = null; },
+          // Round 17: the player's inline style, as far as the page sets it (the video's shape).
+          style: { props: {}, setProperty(name, value) { this.props[name] = value; }, removeProperty(name) { delete this.props[name]; } } };
+        players.push(video);
         return video;
       },
       detachVideo: async (userId) => calls.push(`detach:${userId}`),
@@ -658,7 +664,7 @@ describe("browser adapters", () => {
     const failViews = (error, times) => { failingView = error; viewFailures = times; };
     const setSharePrivilege = value => { sharePrivilege = value; };
     const setCanBoard = value => { canBoard = value; };
-    return { calls, handlers, users, sdk, created, listening, holdNextJoin, holdNextView, holdNextAudio, failNextAudio, isMuted: () => audioMuted, setPresenter, setSharer, failViews, setSharePrivilege, setCanBoard, releaseJoin: () => releaseJoin(), releaseVideo: () => releaseVideo(), qualities, chatSent, privileges, commandsSent };
+    return { calls, players, handlers, users, sdk, created, listening, holdNextJoin, holdNextView, holdNextAudio, failNextAudio, isMuted: () => audioMuted, setPresenter, setSharer, failViews, setSharePrivilege, setCanBoard, releaseJoin: () => releaseJoin(), releaseVideo: () => releaseVideo(), qualities, chatSent, privileges, commandsSent };
   }
   const zoomJoin = { sessionToken: "synthetic.jwt.token", sessionName: "ihear-l-test-v01", lessonCode: "TEST-V01", participantCode: "TEST-T01", role: "tutor" };
   // Zoom calls its handlers without waiting; let their asynchronous work finish.
@@ -1630,6 +1636,34 @@ describe("browser adapters", () => {
     await adapter.setScreenShare(false);
     expect(told).toHaveLength(heard);
     expect(adapter.shareKeys()).toEqual([]);
+  });
+
+  test("FILL-1: a video takes the shape Zoom reports (a phone held upright, 9:16) so that it covers its tile; a shape reported before the player, or kept over a camera turned off and on, still applies; nonsense is ignored", async () => {
+    const { zoom } = await joined({ others: [{ userId: 2 }, { userId: 3 }] });
+    const shape = (payload) => zoom.handlers.get("video-aspect-ratio-change")(payload);
+    const playerOf = (id) => zoom.players.filter(video => video.tag === `video:${id}`).at(-1);
+    zoom.handlers.get("peer-video-state-change")({ action: "Start", userId: 2 }); await settle();
+    expect(playerOf(2).style.props).toEqual({});
+    shape({ userId: 2, aspectRatio: 9 / 16 });
+    expect(playerOf(2).style.props).toEqual({ "--video-ratio": "0.5625" });
+    // Nonsense or another person's report changes nothing here.
+    for (const aspectRatio of [Number.NaN, 0, 9, "0.5", null]) shape({ userId: 2, aspectRatio });
+    shape({ aspectRatio: 1 });
+    expect(playerOf(2).style.props).toEqual({ "--video-ratio": "0.5625" });
+    // The camera off and on again: the new player has the shape at once.
+    zoom.handlers.get("peer-video-state-change")({ action: "Stop", userId: 2 }); await settle();
+    zoom.handlers.get("peer-video-state-change")({ action: "Start", userId: 2 }); await settle();
+    expect(zoom.players.filter(video => video.tag === "video:2")).toHaveLength(2);
+    expect(playerOf(2).style.props).toEqual({ "--video-ratio": "0.5625" });
+    // Reported before the player exists: applied when it comes.
+    shape({ userId: 3, aspectRatio: 4 / 3 });
+    zoom.handlers.get("peer-video-state-change")({ action: "Start", userId: 3 }); await settle();
+    expect(playerOf(3).style.props).toEqual({ "--video-ratio": "1.3333" });
+    expect(videoRatioOf(16 / 9)).toBe(1.7778);
+    // The page's rules: a tile is a size container and its player covers it with that shape.
+    const css = readFileSync(new URL("../app/classroom/[lessonId]/classroom.css", import.meta.url), "utf8");
+    expect(css).toContain(".classroom-media-tile { position: relative; container-type: size; aspect-ratio: 16 / 9;");
+    expect(css).toContain("width: max(100cqw, calc(100cqh * var(--video-ratio, 1.7778))); height: max(100cqh, calc(100cqw / var(--video-ratio, 1.7778))); }");
   });
 
   test("Zoom whiteboard: a start Zoom refuses keeps only Zoom's code (8000–8006), never Zoom's words, links or tokens", async () => {
