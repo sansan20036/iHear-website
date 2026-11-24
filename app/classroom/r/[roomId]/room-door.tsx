@@ -145,7 +145,7 @@ export default function RoomDoor({ roomId }: { roomId: string }) {
               <span lang="en">{text.prompt}</span>
               {text.promptLocal && <span>{text.promptLocal}</span>}
             </label>
-            <input id="classroom-room-name" name="name" autoComplete="given-name" autoCapitalize="words" spellCheck={false} maxLength={40} required lang="en"
+            <input id="classroom-room-name" name="name" autoComplete="name" autoCapitalize="words" spellCheck={false} maxLength={40} required
               value={name} onChange={(event) => setName(event.target.value)} />
             <p className="classroom-join-note">{text.note}</p>
             {problem && <p className="classroom-room-problem" role="alert" data-room-problem>{problem}</p>}

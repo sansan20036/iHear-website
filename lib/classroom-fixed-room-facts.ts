@@ -1,3 +1,4 @@
+import { shownNameIsSafe } from "./classroom-display-names";
 import type { ClassroomEvent, ClassroomLesson } from "./classroom-store";
 
 // Classroom 3.0 round 3 (2026-11-21): what marks a lesson as a fixed room's lesson, read from the
@@ -21,15 +22,15 @@ export function shownCodeOf(events: readonly ClassroomEvent[], code: string): st
 
 // The user's decision (2026-11-24): in a fixed room Zoom shows the first name a person typed, as the
 // server checked and shows it to the iHear teacher (a second "Kyle" as "Kyle B"), recorded when they
-// are let in. Read back only when it is still a safe name (English letters first, then letters,
-// spaces, . and ', at most 42); otherwise none, and the page shows the code as before.
+// are let in. Read back only when it is still a safe name (round 16: Chinese or English, the door's
+// rule with the mark the server adds, lib/classroom-display-names.ts); otherwise none, and the page
+// shows the code as before.
 export const PARTICIPANT_DISPLAY_NAME = "server.participant_display_name";
-const SHOWN_NAME = /^[A-Za-z][A-Za-z .']{0,41}$/;
 export function displayNameOf(events: readonly ClassroomEvent[], code: string): string | null {
   const given = events.filter((event) => event.source === "server" && event.type === PARTICIPANT_DISPLAY_NAME && event.participantCode === code && typeof event.name === "string")
     .sort((a, b) => a.occurredAt - b.occurredAt || String(a.key).localeCompare(String(b.key))).at(-1);
   const name = given ? String(given.name).trim() : "";
-  return SHOWN_NAME.test(name) ? name : null;
+  return shownNameIsSafe(name) ? name : null;
 }
 
 // A fixed room's lesson the server ended because its time was over (the user, 2026-11-24: at most 120

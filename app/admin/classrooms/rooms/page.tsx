@@ -409,7 +409,7 @@ export default function FixedRoomsPage() {
   return (
     <section className="admin-panel" data-fixed-rooms>
       <h1>固定教室</h1>
-      <p role="note">每間教室一個固定連結，每間最多 10 人。打開連結的人輸入英文名字後會在這裡等待，由您讓他進入。名字是自己填的，不是身分：請先用畫面、聲音或詢問認出本人。Zoom 裡顯示的是代碼，不會拿到名字。</p>
+      <p role="note">每間教室一個固定連結，每間最多 10 人。打開連結的人輸入名字（中文或英文）後會在這裡等待，由您讓他進入。名字是自己填的，不是身分：請先用畫面、聲音或詢問認出本人。讓他進入後，Zoom 和教室裡會顯示這個名字；同名的人會自動加上「B」或「（2）」。</p>
       <form onSubmit={(event) => { event.preventDefault(); void act("create", { label }).then((done) => { if (done) setLabel(""); }); }} aria-label="建立固定教室">
         <label className="admin-field"><span>教室名稱（例如 Room 1）</span><input value={label} onChange={(event) => setLabel(event.target.value)} maxLength={40} /></label>
         <button type="submit" disabled={busy || !label.trim()}>建立教室</button>

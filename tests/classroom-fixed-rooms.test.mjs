@@ -84,12 +84,14 @@ describe("fixed classroom links", () => {
     expect((await manage("bogus", {})).body.code).toBe("INVALID_ACTION");
   });
 
-  test("FR-3: a request needs the room's current link and an English first name; a wrong key is the same as no room; the answer gives the typed name and a ticket that opens nothing yet", async () => {
+  test("FR-3: a request needs the room's current link and a name in Chinese or English (round 16); a wrong key is the same as no room; the answer gives the typed name and a ticket that opens nothing yet", async () => {
     const r = await room();
     expect((await ask(r, "Kyle", { key: "not-the-key" })).body.code).toBe("NOT_FOUND");
     expect((await rooms.requestEntry({ store, roomId: "FR-00000000000000000000000000000000", key: r.key, name: "Kyle", now: START })).body.code).toBe("NOT_FOUND");
     expect((await rooms.requestEntry({ store, roomId: "../etc", key: r.key, name: "Kyle", now: START })).body.code).toBe("NOT_FOUND");
-    expect((await ask(r, "小明")).body.code).toBe("INVALID_NAME");
+    for (const bad of ["小明2", "小明（2）", "Kyle😀", "Ky​le", "Кyle", "小".repeat(21)]) expect((await ask(r, bad)).body.code, JSON.stringify(bad)).toBe("INVALID_NAME");
+    expect((await ask(r, "小明")).body).toMatchObject({ ok: true, name: "小明" });
+    expect((await ask(r, "　王　晓明 ")).body).toMatchObject({ ok: true, name: "王 晓明" });
     const asked = await ask(r, "  Kyle ");
     expect(asked.body).toMatchObject({ ok: true, name: "Kyle" });
     expect(asked.body.ticket).toMatch(/^[A-Za-z0-9_-]{43}$/);
@@ -140,6 +142,13 @@ describe("fixed classroom links", () => {
     const first = await join(lessonId, kyle.body.ticket), second = await join(lessonId, twin.body.ticket);
     expect(first.body.displayName).toBe("Kyle");
     expect(second.body.displayName).toBe("kyle B");
+    // Round 16: a Chinese name the same way; the second gets "（2）", never folded with 陈 for 陳.
+    const wang = await ask(r, "王小明"), wang2 = await ask(r, "王 小明"), chen = await ask(r, "陳大文"), chen2 = await ask(r, "陈大文");
+    expect([wang.body.name, wang2.body.name, chen.body.name, chen2.body.name]).toEqual(["王小明", "王 小明", "陳大文", "陈大文"]);
+    for (const asked of [wang, wang2, chen, chen2]) await manage("admit", { room: r.id, request: asked.body.requestId });
+    const joinedAs = await Promise.all([wang, wang2, chen, chen2].map((asked) => join(lessonId, asked.body.ticket)));
+    expect(joinedAs.map((answer) => answer.body.displayName)).toEqual(["王小明", "王 小明（2）", "陳大文", "陈大文"]);
+    expect(JSON.stringify(joinedAs.map((answer) => claimsOf(answer.body.session.token)))).not.toMatch(/[王陳陈]/);
     // The token never carries the name; the code stays the person's identity in the lesson.
     expect(JSON.stringify(claimsOf(first.body.session.token))).not.toMatch(/kyle/i);
     expect(first.body.participantCode).toMatch(/^R[0-9a-f]{8}-[0-9a-f]{6}$/);
@@ -148,7 +157,9 @@ describe("fixed classroom links", () => {
     const code = first.body.participantCode;
     const fact = (name, extra = {}) => ({ source: "server", type: PARTICIPANT_DISPLAY_NAME, lessonId, participantCode: code, name, occurredAt: START + 1, receivedAt: START + 1, key: `t:${name}`, ...extra });
     expect(displayNameOf([fact("Kyle")], code)).toBe("Kyle");
-    for (const bad of ["<b>Kyle</b>", "Kyle\u0000", "K".repeat(43), "", "1Kyle", "Kyle_B"]) expect(displayNameOf([fact(bad)], code), JSON.stringify(bad)).toBeNull();
+    // Round 16: Chinese names and the server's own marks read back too; a mark nobody could get does not.
+    for (const good of ["王小明", "王小明（2）", "陳 Amy（26）", "K".repeat(40) + " Z"]) expect(displayNameOf([fact(good)], code), good).toBe(good);
+    for (const bad of ["<b>Kyle</b>", "Kyle\u0000", "K".repeat(43), "", "1Kyle", "Kyle_B", "王小明（1）", "王小明（27）", "Kyle（2）", "王‮小明"]) expect(displayNameOf([fact(bad)], code), JSON.stringify(bad)).toBeNull();
     expect(displayNameOf([fact("Kyle", { source: "page" })], code)).toBeNull();
     expect(displayNameOf([fact("Kyle")], "R00000000-000000")).toBeNull();
   });

@@ -16,6 +16,7 @@
 import type ZoomVideo from "@zoom/videosdk";
 
 import { chatNameOf, chatTextOf, handCommand, parseHandCommand, type ChatFrom, type ChatLine, type RaisedHand } from "./classroom-chat";
+import { shownNameIsSafe } from "./classroom-display-names";
 
 export const MEDIA_PROVIDERS = ["synthetic", "zoom-video-sdk", "tencent-lcic"] as const;
 export type MediaProviderName = (typeof MEDIA_PROVIDERS)[number];
@@ -91,14 +92,14 @@ export type MediaCapabilities = {
   raiseHand: boolean;
 };
 
-// What Zoom shows for this person (the user, 2026-11-24): in a fixed room the first name the server
-// recorded when they were let in, if it is a safe one (English letters first, then letters, spaces,
-// . and ', at most 42: a typed name of up to 40 plus " B"); otherwise, and in every other lesson, the
-// participant code. The server checks the name first; this is the page's second check.
-const SHOWN_NAME = /^[A-Za-z][A-Za-z .']{0,41}$/;
+// What Zoom shows for this person (the user, 2026-11-24): in a fixed room the name the server
+// recorded when they were let in, if it is a safe one (round 16: Chinese or English, at most 40
+// columns plus the mark the server adds, far below the 200 units Zoom cuts at without a word;
+// lib/classroom-display-names.ts); otherwise, and in every other lesson, the participant code. The
+// server checks the name first; this is the page's second check.
 export function zoomDisplayNameOf(input: Pick<MediaJoin, "participantCode" | "displayName" | "equalTools">): string {
   const name = typeof input.displayName === "string" ? input.displayName.trim() : "";
-  return input.equalTools === true && SHOWN_NAME.test(name) ? name : input.participantCode;
+  return input.equalTools === true && shownNameIsSafe(name) ? name : input.participantCode;
 }
 
 export type MediaJoin = {

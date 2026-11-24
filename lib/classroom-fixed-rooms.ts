@@ -7,8 +7,9 @@
 //   - a link and a typed name never let anyone in by themselves: every person waits for the iHear
 //     teacher's decision. Direct entry is not built: D-16 is not approved.
 //   - nobody in a room can let others in or remove them; only owners act, from the admin pages.
-//   - the typed name is shown to the iHear teacher (a second "Kyle" as "Kyle B"); the person's own
-//     answer never says who else is there; in Zoom everyone shows by code (no name reaches Zoom).
+//   - the typed name is shown to the iHear teacher (a second "Kyle" as "Kyle B", a second "王小明" as
+//     "王小明（2）"); the person's own answer never says who else is there. Since 2026-11-24 Zoom shows
+//     the name the server recorded when they were let in (Chinese or English, round 16), not the code.
 //   - at most 10 people in a room, at most 20 waiting; a request nobody answers lapses in 30 minutes.
 //   - a replaced link lets nobody new in: people already let in stay, requests made with an older
 //     link are no longer valid. Removing a person moves the room's lesson to a new Zoom session (D-4,
@@ -27,7 +28,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 
 import { hashKey } from "./classroom-block-rules";
 import type { ClassroomDrive } from "./classroom-drive";
-import { distinctName, entryNameOf } from "./classroom-names";
+import { distinctName, entryNameOf, rosterNameOf } from "./classroom-names";
 import type { ClassroomProvider } from "./classroom-provider";
 import { LESSON_TIME_UP, PARTICIPANT_ALIAS, PARTICIPANT_DISPLAY_NAME, roomRecordingOn } from "./classroom-fixed-room-facts";
 import { changeLessonAccess, consentPolicy, forRules, PERSON_CODE, roomMayRecordNow, stopRecordingForCancelledLesson } from "./classroom-service";
@@ -238,7 +239,7 @@ export async function requestEntry({ store, roomId, key, name, pass, now }: { st
   // gets "not found" above.
   if (room.disabled) return refused(409, "ROOM_DISABLED", "This classroom is not in use now; please check with your teacher");
   const clean = entryNameOf(name);
-  if (!clean) return refused(400, "INVALID_NAME", "Enter your first name in English letters");
+  if (!clean) return refused(400, "INVALID_NAME", "Enter your name in Chinese or English letters");
   const present = inRoom(room, now), queued = waiting(room, now);
   if (present.length >= room.capacity) return refused(409, "ROOM_FULL", "The classroom is full now; please ask your teacher");
   if (queued.length >= WAITING_MAX) return refused(409, "TOO_MANY_WAITING", "Many people are waiting; please try again in a moment");
@@ -618,7 +619,8 @@ async function addMember({ store, room, code, name, actor, now }: { store: Class
   if (!fixedRoomRecordingEnabled()) return rosterClosed();
   const clean = rosterCode(code);
   if (!clean) return refused(400, "INVALID_CODE", "Use the student's code: 1–20 letters, digits or hyphens (not a code the room made up)");
-  const first = entryNameOf(name);
+  // A name on a room's list also names files in Drive: English letters only (lib/classroom-names.ts).
+  const first = rosterNameOf(name);
   if (!first) return refused(400, "INVALID_NAME", "Enter the student's first name in English letters");
   if (room.members.some((entry) => entry.code.toLowerCase() === clean.toLowerCase())) return refused(409, "MEMBER_EXISTS", "This student is on the room's list already");
   if (room.members.length >= ROSTER_MAX) return refused(409, "ROSTER_FULL", `At most ${ROSTER_MAX} students on a room's list`);
