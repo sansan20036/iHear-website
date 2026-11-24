@@ -113,8 +113,9 @@
   grid-template-columns: minmax(0, 1fr) clamp(280px, 26vw, 380px); grid-template-rows: minmax(0, 1fr); grid-template-areas: "main side"; }
 .room2-stage { grid-area: main; }
 /* Round 17 (the user, 2026-11-25: the people were too small beside a board): with a board or a share on
-   the stage the people's column is wider. Focus mode and the reading view keep their own columns. */
-.room2:is([data-mode="share"], [data-mode="board"]) .room2-main { grid-template-columns: minmax(0, 1fr) clamp(300px, 32vw, 600px); }
+   the stage the people's column is wider, on computers only (under 1024 px the page is one column).
+   Focus mode and the reading view keep their own columns. */
+@media (min-width: 1024px) { .room2:is([data-mode="share"], [data-mode="board"]) .room2-main { grid-template-columns: minmax(0, 1fr) clamp(300px, 32vw, 600px); } }
 .room2-videos, .room2-panel { grid-area: side; }
 /* Nobody shares: the people fill the stage; the stage stays laid out (hidden) so that a share or a
    whiteboard starting in it gets its real size at once. */
