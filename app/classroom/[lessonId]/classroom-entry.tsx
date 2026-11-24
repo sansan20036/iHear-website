@@ -1095,8 +1095,12 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   const sharingNow = roomTurn ? channel.share.sharing : media.share === "sending";
   const boardBusy = !isTutor && equalTools && media.whiteboard === "viewing";
   const canExport = !roomBoard && media.whiteboard === "presenting" && !!adapter.current?.exportWhiteboard;
-  // Who is in the room for the turn (f1's RoomTurn): by participant id, with the name the page shows.
-  const turnPeople = roomTurn ? people.filter((person) => person.key).map((person) => ({ id: person.key as string, name: labelOf(person) })) : [];
+  // Who the share can be handed to (f1's RoomTurn): the server's list of people let into the lesson
+  // (channel.people: participant id and the name the server recorded); where Zoom says who is here
+  // (people carry their participant id), only those. The stand-in's people are a simulation, never the
+  // other real pages, so there the server's list is used as it is.
+  const presentKeys = new Set(people.flatMap((person) => (person.key ? [person.key] : [])));
+  const turnPeople = !roomTurn ? [] : presentKeys.size > 0 ? channel.people.filter((person) => presentKeys.has(person.id)) : channel.people;
   const roomUnread = roomChat && !chatOpen ? channel.chat.messages.filter((message) => message.by !== channel.you && message.seq > roomChatSeen.current).length : 0;
   const chatUnread = roomChat ? roomUnread : unread;
   const stageLabel = boardOnStage ? text.stageLabel.board : mode === "share" ? (media.share === "sending" ? text.stageLabel.ownShare : text.stageLabel.share) : text.stageLabel[mode];
