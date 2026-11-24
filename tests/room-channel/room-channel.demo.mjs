@@ -45,6 +45,18 @@ async function finish(why) {
   server?.child.kill();
 }
 process.on('SIGINT', () => { void finish('按了 Ctrl+C').then(() => process.exit(0)); });
+// The people's windows side by side across the screen, so what one does is seen in the other at
+// once. Asked of the browser itself; if it will not say, the window stays where it opened.
+async function place(page, index, of) {
+  try {
+    const session = await page.context().newCDPSession(page);
+    const { windowId } = await session.send('Browser.getWindowForTarget');
+    const screen = await page.evaluate(() => ({ left: window.screen.availLeft ?? 0, top: window.screen.availTop ?? 0, width: window.screen.availWidth, height: window.screen.availHeight }));
+    const width = Math.floor(screen.width / of);
+    await session.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'normal' } });
+    await session.send('Browser.setWindowBounds', { windowId, bounds: { left: screen.left + index * width, top: screen.top, width, height: screen.height } });
+  } catch { /* stays where it opened */ }
+}
 
 try {
   server = await startAcademyServer({ port: Number(process.env.ROOM_CHANNEL_DEMO_PORT ?? 3360), secret, owners: [owner], name: 'room-channel-demo' });
@@ -65,8 +77,9 @@ try {
   const card = admin.locator('[data-room="Demo Room"]');
 
   const pages = [];
-  for (const name of NAMES) {
+  for (const [index, name] of NAMES.entries()) {
     const page = await (await windowFor({})).newPage();
+    await place(page, index, NAMES.length);
     await page.goto(link);
     await page.getByLabel(/Please enter your first name/).fill(name);
     await page.getByRole('button', { name: '進入教室' }).click();
@@ -81,7 +94,7 @@ try {
   const mounted = off ? 0 : await pages[0].locator('[data-room-channel]').count();
 
   say('');
-  say(`本機展示已就緒（${NAMES.length} 個人在同一間固定教室；另一個視窗是 iHear 老師的教室管理頁）。`);
+  say(`本機展示已就緒（${NAMES.length} 個人在同一間固定教室，視窗左右並排：${NAMES.join('、')}；iHear 老師的教室管理頁在它們後面的另一個視窗，從工作列切換）。`);
   if (off) say('這次三個開關都是關閉的：教室應該和原來一樣，沒有教室自己的白板、聊天和分享權。');
   else if (!mounted) say('注意：這個建置的教室頁面還沒有接上白板、聊天和分享權（找不到接點），所以看不到它們。');
   else {
