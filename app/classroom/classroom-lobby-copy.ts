@@ -30,6 +30,8 @@ const en = {
   unknown: "Your lesson could not be checked just now. You can still try to enter.",
   recheck: "Check again",
   reloadHint: "Students: after this page reloads, open the personal link from iHear again.",
+  // Round 16 (the reload fix): a fixed room's person whose way back was not taken automatically.
+  roomDoorBack: "This page was reloaded. Go back through your classroom's entrance to continue.", roomDoorBackButton: "Back to the classroom",
   // The device check
   checkTitle: "Check your devices", optional: "Optional",
   checkIntro: "The check runs only on this device. Nothing is recorded or sent.",
@@ -84,6 +86,7 @@ const zhHant: LobbyCopy = {
   unknown: "暫時無法確認課程資訊，你仍然可以試著進入教室。",
   recheck: "重新確認",
   reloadHint: "學生：頁面重新整理後，需要再打開一次 iHear 寄給你的個人連結。",
+  roomDoorBack: "這個頁面重新整理過了。請從教室入口回到教室。", roomDoorBackButton: "回到教室",
   checkTitle: "課前裝置檢查", optional: "可略過",
   checkIntro: "檢查只在這台裝置上進行，不會錄影，也不會傳送任何畫面或聲音。",
   camera: "攝影機", microphone: "麥克風", speaker: "喇叭或耳機", browser: "瀏覽器", thisDevice: (name: string) => `這台裝置：${name}`,
@@ -134,6 +137,7 @@ const zhHans: LobbyCopy = {
   unknown: "暂时无法确认课程信息，你仍然可以试着进入教室。",
   recheck: "重新确认",
   reloadHint: "学生：页面刷新后，需要再打开一次 iHear 发给你的个人链接。",
+  roomDoorBack: "这个页面刷新过了。请从教室入口回到教室。", roomDoorBackButton: "回到教室",
   checkTitle: "课前设备检查", optional: "可跳过",
   checkIntro: "检查只在这台设备上进行，不会录像，也不会发送任何画面或声音。",
   camera: "摄像头", microphone: "麦克风", speaker: "扬声器或耳机", browser: "浏览器", thisDevice: (name: string) => `这台设备：${name}`,

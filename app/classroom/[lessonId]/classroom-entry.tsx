@@ -121,23 +121,30 @@ function takeJoinKey(): string | null {
 // (above: it lives in the page's memory only). The room's door keeps this tab's request for 4 hours,
 // as before, and notes which lesson it took the person to; this page then goes back through that door,
 // which asks the server where the request stands: taken out, ended or lapsed, the door says so and
-// nobody comes back; still in, the door takes the person on to this lesson again. At most once in
-// 15 seconds, so a door that cannot take them on never sends them round in a loop. One-to-one and
+// nobody comes back; still in, the door takes the person on to this lesson again. One-to-one and
 // block lessons have no door: nothing changes for them.
+// The reload fix (round 16, f1's finding F1): trips back are counted, at most 3 automatic ones in 2
+// minutes (until then one trip in 15 s: a second reload inside that left the person on the one-to-one
+// refusal for good). A double or triple reload comes back; a real loop still stops after 3 trips, and
+// then, as whenever no automatic trip is left, the page offers the room's door by a button.
 const DOOR_PREFIX = "ihear-fixed-room:";
 const DOOR_KEEP_MS = 4 * 60 * 60_000;
-const DOOR_AGAIN_MS = 15_000;
-function doorBackTo(lessonId: string): string | null {
+const DOOR_TRIPS_MAX = 3;
+const DOOR_TRIPS_WINDOW_MS = 2 * 60_000;
+function doorBackTo(lessonId: string): { door: string; automatic: boolean } | null {
   try {
     for (let index = 0; index < sessionStorage.length; index += 1) {
       const name = sessionStorage.key(index);
       if (!name?.startsWith(DOOR_PREFIX)) continue;
-      const kept = JSON.parse(sessionStorage.getItem(name) ?? "null") as { lessonId?: string; requestId?: string; ticket?: string; at?: number; backAt?: number } | null;
+      const kept = JSON.parse(sessionStorage.getItem(name) ?? "null") as { lessonId?: string; requestId?: string; ticket?: string; at?: number; backs?: unknown } | null;
       if (!kept || kept.lessonId !== lessonId || !kept.requestId || !kept.ticket) continue;
-      if (kept.at && Date.now() - kept.at >= DOOR_KEEP_MS) continue;
-      if (kept.backAt && Date.now() - kept.backAt < DOOR_AGAIN_MS) return null;
-      sessionStorage.setItem(name, JSON.stringify({ ...kept, backAt: Date.now() }));
-      return `/classroom/r/${encodeURIComponent(name.slice(DOOR_PREFIX.length))}`;
+      const now = Date.now();
+      if (kept.at && now - kept.at >= DOOR_KEEP_MS) continue;
+      const door = `/classroom/r/${encodeURIComponent(name.slice(DOOR_PREFIX.length))}`;
+      const backs = (Array.isArray(kept.backs) ? kept.backs : []).filter((at): at is number => typeof at === "number" && now - at < DOOR_TRIPS_WINDOW_MS && at <= now);
+      if (backs.length >= DOOR_TRIPS_MAX) return { door, automatic: false };
+      sessionStorage.setItem(name, JSON.stringify({ ...kept, backs: [...backs, now] }));
+      return { door, automatic: true };
     }
   } catch { /* storage refused (a private window): as before */ }
   return null;
@@ -209,6 +216,8 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   // Classroom 2.1 lobby (2026-11-13): the one-to-one lesson's pre-class screen looks at its lesson
   // once the personal key has been taken from the address (never before, so it is not asked twice).
   const [keyRead, setKeyRead] = useState(false);
+  // A fixed room's door for this tab when no automatic trip back is left (the reload fix, round 16).
+  const [roomDoor, setRoomDoor] = useState<string | null>(null);
   const { view: preview, recheck: recheckPreview } = useLessonPreview(lessonId, joinKey, keyRead && !blockMode);
   const onEnded = useRef(onEntryEnded);
   onEnded.current = onEntryEnded;
@@ -359,8 +368,10 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
     const key = takeJoinKey();
     if (key) setJoinKey(key);
     else {
-      const door = doorBackTo(lessonId);
-      if (door) { window.location.replace(door); return; }
+      const back = doorBackTo(lessonId);
+      if (back?.automatic) { window.location.replace(back.door); return; }
+      // No automatic trip left: the room's door is offered by a button, not the one-to-one words.
+      if (back) setRoomDoor(back.door);
     }
     setKeyRead(true);
     // A new link opened in a tab that already shows this room changes only the part after #,
@@ -1076,6 +1087,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
         locale={locale} onLocale={setLocale} phase={phase === "joined" ? "joining" : phase} reason={shownReason} synthetic={synthetic}
         preview={preview} onRecheck={recheckPreview} onEnter={() => void enter(phase === "blocked" && (reason === "OTHER_TAB" || reason === "TAKEN_OVER"))} showSignIn={showSignIn} signInUrl={signInUrl}
         enterLabel={phase === "blocked" && (reason === "OTHER_TAB" || reason === "TAKEN_OVER") ? text.continueHere : undefined}
+        roomDoor={roomDoor}
       />
     );
   }

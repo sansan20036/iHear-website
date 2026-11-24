@@ -17,11 +17,13 @@ import { roomCopy } from "./classroom-copy";
 
 type Phase = "ready" | "joining" | "blocked" | "left";
 
-export default function ClassroomPrejoin({ locale, onLocale, phase, reason, synthetic, preview, onRecheck, onEnter, showSignIn, signInUrl, enterLabel }: {
+export default function ClassroomPrejoin({ locale, onLocale, phase, reason, synthetic, preview, onRecheck, onEnter, showSignIn, signInUrl, enterLabel, roomDoor = null }: {
   locale: ClassroomLocale; onLocale: (locale: ClassroomLocale) => void; phase: Phase; reason: string; synthetic: boolean;
   preview: PreviewView; onRecheck: () => void; onEnter: () => void; showSignIn: boolean; signInUrl: string;
   // The button's word when the way back is not "try again" (2026-11-19: "Continue in this tab").
   enterLabel?: string;
+  // A fixed room's door for this tab (round 16, the reload fix): offered in place of the one-to-one words.
+  roomDoor?: string | null;
 }) {
   const text = roomCopy[locale];
   const words = lobbyCopy[locale];
@@ -128,7 +130,13 @@ export default function ClassroomPrejoin({ locale, onLocale, phase, reason, synt
               )}
             </dl>
           )}
-          {refusal && (
+          {refusal && roomDoor && (
+            <div className="prejoin-refusal" data-room-door-back-box>
+              <p className="classroom-room-note" role="status">{words.roomDoorBack}</p>
+              <div className="classroom-room-actions"><a className="classroom-room-primary" href={roomDoor} data-room-door-back>{words.roomDoorBackButton}</a></div>
+            </div>
+          )}
+          {refusal && !roomDoor && (
             <div className="prejoin-refusal">
               <p className="classroom-room-problem" role="alert">{text.reasons[refusal] ?? text.reasons.UNAVAILABLE}</p>
               {refusal === "NOT_ON_ROSTER" && <p className="lobby-muted">{words.reloadHint}</p>}
