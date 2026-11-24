@@ -459,6 +459,116 @@ try {
     for (const person of [Kyle, Ann]) await expect(person.page.locator(PAGE.connected)).toHaveText('已連線');
   });
 
+  await check('D8', '手機的觸控：有「移動頁面」工具（電腦沒有）；白板在窄螢幕上照紙張的形狀佔滿寬度；選畫筆時手指在白板上滑是畫線，頁面不動；選「移動頁面」時手指在白板上滑是捲動頁面，不會畫出東西；回到畫筆又能畫；兩根手指同時在白板上只畫出一條線', async () => {
+    // Found in the real-Zoom sitting of 2026-11-25: on a phone the page could hardly be scrolled
+    // while the board was open, because every touch on the board is a stroke. The touches here are
+    // the browser's own touch input (not events made up in the page), so that the browser itself
+    // decides between a stroke and a scroll, as on a phone. Chromium's touch emulation, not a phone.
+    // Every touch holds still for a moment before it lifts: in this emulation a finger lifted while
+    // still moving fast makes the browser swallow the next tap (seen 2026-11-25 on a page of its
+    // own, with no code of ours: no click after such a flick, a click after a held one).
+    const HOLD = 300;
+    const page = Dee.page;
+    const cdp = await page.context().newCDPSession(page);
+    const touch = (type, touchPoints) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: touchPoints.map(([x, y], id) => ({ x: Math.round(x), y: Math.round(y), id })) });
+    const between = ([from, to], step, steps) => [from[0] + ((to[0] - from[0]) * step) / steps, from[1] + ((to[1] - from[1]) * step) / steps];
+    const swipe = async (path, steps = 12) => {
+      await touch('touchStart', [path[0]]);
+      for (let step = 1; step <= steps; step += 1) { await page.waitForTimeout(16); await touch('touchMove', [between(path, step, steps)]); }
+      await page.waitForTimeout(HOLD);
+      await touch('touchEnd', []);
+    };
+    const scrolled = () => page.evaluate(() => Math.round(window.scrollY));
+    // The board in the middle of the screen; where it is, and how far the page can still go each way.
+    const place = async () => {
+      await page.evaluate(() => document.querySelector('.room-channel-canvas').scrollIntoView({ block: 'center', behavior: 'instant' }));
+      await page.waitForTimeout(200);
+      return page.evaluate(() => {
+        const box = document.querySelector('.room-channel-canvas').getBoundingClientRect();
+        return { x: box.x, y: box.y, width: box.width, height: box.height, scrollY: Math.round(window.scrollY), max: Math.round(document.scrollingElement.scrollHeight - window.innerHeight), screen: window.innerHeight };
+      });
+    };
+    // A finger's way over the board, up or down, the way the page has more room to go.
+    const way = at => {
+      const down = at.scrollY >= at.max - at.scrollY;
+      expect(down ? at.scrollY : at.max - at.scrollY, 'room for the page to scroll').toBeGreaterThanOrEqual(60);
+      expect(at.y + at.height * 0.25, 'the board is on the screen').toBeGreaterThan(0);
+      expect(at.y + at.height * 0.75, 'the board is clear of the page\'s own bar').toBeLessThan(at.screen - 100);
+      const x = at.x + at.width * 0.5;
+      return { down, path: [[x, at.y + at.height * (down ? 0.25 : 0.75)], [x, at.y + at.height * (down ? 0.75 : 0.25)]] };
+    };
+    const touchAction = () => canvas(page).evaluate(node => getComputedStyle(node).touchAction);
+    const hint = board(page).locator('.room-channel-hint');
+
+    await showBoard(page);
+    await showBoard(Kyle.page);
+    await expect(page.locator('[data-board-move]')).toBeVisible();
+    await expect(Kyle.page.locator('[data-board-move]')).toHaveCount(0);
+    await expect(hint).toContainText('要捲動頁面，請先按「移動頁面」');
+
+    // A shorter screen, so that the page is surely longer than the screen. The board keeps the
+    // paper's shape (4:3) over the whole width of its frame: the frame asks for its own height.
+    await page.setViewportSize({ width: 390, height: 600 });
+    await expect(async () => {
+      const shape = await page.evaluate(() => {
+        const box = document.querySelector('.room-channel-canvas').getBoundingClientRect(), frame = document.querySelector('.room-channel-frame').getBoundingClientRect();
+        return { width: box.width, height: box.height, frame: frame.width };
+      });
+      expect(shape.frame).toBeGreaterThan(300);
+      expect(shape.width).toBeGreaterThanOrEqual(shape.frame - 2);
+      expect(Math.abs(shape.height / shape.width - 0.75)).toBeLessThan(0.02);
+      report.notes.phoneBoard = { width: Math.round(shape.width), height: Math.round(shape.height), frameWidth: Math.round(shape.frame) };
+    }).toPass({ timeout: 5000 });
+    const before = Number(await board(page).getAttribute('data-lines'));
+
+    // The pen: a finger over the board is a line for everyone, and the page stays where it is.
+    let at = await place();
+    await expect(canvas(page)).toHaveAttribute('data-touch', 'board');
+    expect(await touchAction()).toBe('none');
+    await swipe(way(at).path);
+    for (const person of [Dee, Kyle]) await lines(person.page, before + 1);
+    expect(await scrolled()).toBe(at.scrollY);
+
+    // "Move the page": the same finger scrolls the page and draws nothing.
+    await page.locator('[data-board-move]').tap();
+    await expect(page.locator('[data-board-move]')).toHaveAttribute('aria-pressed', 'true');
+    await expect(canvas(page)).toHaveAttribute('data-touch', 'page');
+    expect(await touchAction()).toBe('manipulation');
+    await expect(hint).toContainText('現在用手指可以捲動頁面');
+    at = await place();
+    const moved = way(at);
+    await swipe(moved.path);
+    await expect.poll(async () => (moved.down ? at.scrollY - (await scrolled()) : (await scrolled()) - at.scrollY), { timeout: 5000 }).toBeGreaterThanOrEqual(30);
+    report.notes.phoneScroll = { from: at.scrollY, to: await scrolled(), of: at.max };
+    await page.waitForTimeout(800);
+    for (const person of [Dee, Kyle]) await lines(person.page, before + 1);
+
+    // The pen again: it draws again. Two fingers on the board at once make one line, not two and
+    // not one pulled to and fro between them; the page stays where it is.
+    await board(page).getByRole('button', { name: '畫筆', exact: true }).tap();
+    await expect(canvas(page)).toHaveAttribute('data-touch', 'board');
+    expect(await touchAction()).toBe('none');
+    at = await place();
+    const first = [[at.x + at.width * 0.2, at.y + at.height * 0.3], [at.x + at.width * 0.4, at.y + at.height * 0.6]];
+    const second = [[at.x + at.width * 0.7, at.y + at.height * 0.3], [at.x + at.width * 0.8, at.y + at.height * 0.6]];
+    await touch('touchStart', [first[0]]);
+    await page.waitForTimeout(16);
+    await touch('touchMove', [between(first, 1, 10)]);
+    await touch('touchStart', [between(first, 1, 10), second[0]]);
+    for (let step = 2; step <= 10; step += 1) { await page.waitForTimeout(16); await touch('touchMove', [between(first, step, 10), between(second, step, 10)]); }
+    await page.waitForTimeout(HOLD);
+    await touch('touchEnd', []);
+    for (const person of [Dee, Kyle]) await lines(person.page, before + 2);
+    await page.waitForTimeout(600);
+    for (const person of [Dee, Kyle]) await lines(person.page, before + 2);
+    expect(await scrolled()).toBe(at.scrollY);
+
+    await shot(page, 'd8-phone-touch');
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(await noHorizontalOverflow(page)).toBe(true);
+    await cdp.detach();
+  });
+
   await check('C12', '整個過程沒有連到網站以外的地方，頁面沒有非預期的錯誤', async () => {
     expect(report.externalRequests).toEqual([]);
     expect(report.pageProblems).toEqual([]);

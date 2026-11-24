@@ -24,9 +24,13 @@
 .room-channel-ask { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; font-weight: 700; }
 .room-channel-hint { margin: 0; color: var(--rc-muted); font-size: 14px; line-height: 1.5; }
 .room-channel-frame { display: grid; place-items: center; min-height: 160px; overflow: hidden; background: #eef1f6; border-radius: 10px; }
-/* The board never scrolls or zooms the page under a finger: every touch on it is a stroke. */
+/* The board never scrolls or zooms the page under a finger: every touch on it is a stroke. Except
+   when the person has chosen "move the page", or the board can no longer be changed: then a touch
+   on it is the page's, as anywhere else (data-touch="page"; the board sets it). */
 .room-channel-canvas { background: #fff; border-radius: 6px; box-shadow: 0 0 0 1px var(--rc-line); touch-action: none; cursor: crosshair; display: block; }
 .room-channel-canvas[data-tool="eraser"] { cursor: cell; }
+.room-channel-canvas[data-touch="page"] { touch-action: manipulation; cursor: default; }
+.room-channel-canvas[data-tool="move"] { cursor: grab; }
 
 /* The chat: what it is, the messages, and one line to write in. */
 .room-channel-chat { display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto; gap: 8px; height: 100%; }
@@ -47,6 +51,14 @@
 .room-channel-give { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .room-channel-give label { font-size: 14px; color: var(--rc-muted); }
 .room-channel-give select { flex: 1 1 140px; min-width: 0; min-height: 40px; font: inherit; padding: 6px 10px; border-radius: 10px; border: 1px solid var(--rc-line); background: var(--rc-surface); color: var(--rc-ink); }
+
+/* Where the page stacks its parts in one column and gives the board no height of its own (the
+   classroom under 1024 px, 2026-11-25): the frame takes the paper's shape over the full width, and
+   is never taller than what the screen shows at once beside the page's own bars. */
+@media (max-width: 1023px) {
+  .room-channel-board { height: auto; }
+  .room-channel-frame { width: 100%; aspect-ratio: 4 / 3; max-height: max(160px, calc(100vh - 200px)); max-height: max(160px, calc(100dvh - 200px)); }
+}
 
 @media (max-width: 640px) {
   .room-channel-board { padding: 6px; gap: 6px; }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from "react";
 
 import type { ClassroomLocale } from "../../../../lib/classroom-locale";
 // @ts-ignore - the room channel's own code, plain JavaScript tested with node --test.
@@ -16,6 +16,13 @@ import "./room-channel.css";
 //
 // The board is one picture of fixed shape (4:3) whatever the screen, so that a line sits in the
 // same place for everyone. It works with a mouse, a finger or a pen.
+//
+// A touch on the board is a stroke, so a finger on it does not scroll the page. On a phone the
+// board is as wide as the screen and the page under it is longer than the screen (found in the
+// real-Zoom sitting of 2026-11-25: the page could hardly be scrolled). So a device with a touch
+// screen is offered a third tool, "move the page": while it is chosen a finger on the board scrolls
+// and zooms the page as anywhere else, and draws nothing. A board that can no longer be changed
+// gives its touches to the page too.
 
 export const BOARD_COLOURS = ["#111827", "#dc2626", "#ea580c", "#16a34a", "#2563eb", "#7c3aed", "#db2777", "#6b7280"];
 export const BOARD_WIDTHS = [1, 2, 4, 8];
@@ -26,24 +33,35 @@ const lineAt = lineUnder as unknown as (lines: BoardLine[], x: number, y: number
 const movedEnough = farEnough as unknown as (last: [number, number], x: number, y: number) => boolean;
 
 type Stroke = { id: string; colour: number; width: number; points: [number, number][] };
+// Whether this device has a touch screen: known in the browser only, and it does not change.
+const neverChanges = () => () => undefined;
+const touchScreen = () => navigator.maxTouchPoints > 0;
+const noTouchScreen = () => false;
 
 export default function RoomBoard({ channel, locale }: { channel: RoomChannel; locale: ClassroomLocale }) {
   const text = roomChannelCopy[locale];
   const frame = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
-  const [tool, setTool] = useState<"pen" | "eraser">("pen");
+  const [tool, setTool] = useState<"pen" | "eraser" | "move">("pen");
+  const hasTouch = useSyncExternalStore(neverChanges, touchScreen, noTouchScreen);
   const [colour, setColour] = useState(0);
   const [width, setWidth] = useState(2);
   const [asking, setAsking] = useState(false);
   const [, setTick] = useState(0);
   const stroke = useRef<Stroke | null>(null);
+  // The pointer that draws or erases now (a mouse, one finger, a pen), from its press to its release.
+  const drawingWith = useRef<number | null>(null);
   const erasing = useRef(new Set<string>());
   const lines = channel.board.lines;
   const linesNow = useRef(lines);
   linesNow.current = lines;
   const ended = channel.board.ended;
   const readOnly = ended || channel.stopped !== null;
+  const boardNow = useRef(channel.board);
+  boardNow.current = channel.board;
+  // The board goes from the page while a line is being drawn (a share takes the stage): the line is closed.
+  useEffect(() => () => { const own = stroke.current; if (own) { boardNow.current.end(own.id); stroke.current = null; } }, []);
 
   // The largest 4:3 box that fits the frame.
   useEffect(() => {
@@ -113,11 +131,29 @@ export default function RoomBoard({ channel, locale }: { channel: RoomChannel; l
     const found = lineAt(linesNow.current, x, y, { skip: erasing.current });
     if (found) { erasing.current.add(found); channel.board.erase(found); }
   };
+  // The line under the pen is closed and is the room's from here on.
+  const finish = () => {
+    drawingWith.current = null;
+    const own = stroke.current;
+    if (!own) return;
+    channel.board.end(own.id);
+    stroke.current = null;
+    // The finished line is the room's now (shown as "not confirmed yet" until the server has it).
+    channel.board.refresh();
+  };
   const down = (event: ReactPointerEvent<HTMLCanvasElement>) => {
-    if (readOnly || (event.pointerType === "mouse" && event.button !== 0)) return;
+    if (readOnly || tool === "move" || (event.pointerType === "mouse" && event.button !== 0)) return;
+    // One pointer draws at a time: a second finger, or the side of a hand, coming down while a line
+    // is being drawn is left alone (two touches used to pull one line to and fro between them). A
+    // pointer the board no longer holds has gone without saying so: its line is closed first.
+    if (drawingWith.current !== null) {
+      if (event.currentTarget.hasPointerCapture(drawingWith.current)) return;
+      finish();
+    }
     event.preventDefault();
     const [x, y] = placeOf(event);
     event.currentTarget.setPointerCapture(event.pointerId);
+    drawingWith.current = event.pointerId;
     if (tool === "eraser") { eraseAt(x, y); return; }
     const id = channel.board.begin(colour, width);
     if (!id) return;
@@ -126,11 +162,12 @@ export default function RoomBoard({ channel, locale }: { channel: RoomChannel; l
     redraw();
   };
   const move = (event: ReactPointerEvent<HTMLCanvasElement>) => {
-    if (readOnly) return;
+    // Only the pointer that was pressed on the board, and only until it is released.
+    if (readOnly || event.pointerId !== drawingWith.current) return;
     const own = stroke.current;
-    if (tool === "eraser") { if (event.buttons !== 0 || event.pointerType !== "mouse") { const [x, y] = placeOf(event); if (event.pressure > 0 || event.buttons !== 0) eraseAt(x, y); } return; }
-    if (!own) return;
     const [x, y] = placeOf(event);
+    if (tool === "eraser") { eraseAt(x, y); return; }
+    if (!own) return;
     const last = own.points[own.points.length - 1];
     if (!movedEnough(last, x, y)) return;
     own.points.push([x, y]);
@@ -139,14 +176,10 @@ export default function RoomBoard({ channel, locale }: { channel: RoomChannel; l
     const context = canvas.current?.getContext("2d");
     if (context) pen(context, { color: own.colour, width: own.width, points: own.points }, own.points.length - 1);
   };
-  const up = () => {
-    const own = stroke.current;
-    if (!own) return;
-    channel.board.end(own.id);
-    stroke.current = null;
-    // The finished line is the room's now (shown as "not confirmed yet" until the server has it).
-    channel.board.refresh();
-  };
+  // Released, taken over by the browser, or no longer held by the board: all three end the line.
+  const up = (event: ReactPointerEvent<HTMLCanvasElement>) => { if (event.pointerId === drawingWith.current) finish(); };
+  // Where a finger on the board goes: to the board (a stroke), or to the page (scrolling, zooming).
+  const touchGoesTo = readOnly || tool === "move" ? "page" : "board";
 
   const undo = channel.board.undo;
   const undoLeft = undo ? Math.max(0, (undo.until - Date.now()) / 1000) : 0;
@@ -158,6 +191,7 @@ export default function RoomBoard({ channel, locale }: { channel: RoomChannel; l
         <div className="room-channel-group">
           <button type="button" className="room-channel-tool" aria-pressed={tool === "pen"} disabled={readOnly} onClick={() => setTool("pen")}>{text.pen}</button>
           <button type="button" className="room-channel-tool" aria-pressed={tool === "eraser"} disabled={readOnly} onClick={() => setTool("eraser")}>{text.eraser}</button>
+          {hasTouch && <button type="button" className="room-channel-tool" data-board-move aria-pressed={tool === "move"} disabled={readOnly} onClick={() => setTool("move")}>{text.move}</button>}
         </div>
         <div className="room-channel-group" role="group" aria-label={text.colour}>
           {BOARD_COLOURS.map((value, index) => (
@@ -188,12 +222,12 @@ export default function RoomBoard({ channel, locale }: { channel: RoomChannel; l
         </div>
       </div>
       <p className="room-channel-hint" aria-live="polite">
-        {channel.stopped ? text.stopped : ended ? text.ended : !channel.online ? text.reconnecting : note ?? (tool === "eraser" ? text.eraserHint : text.boardHint)}
+        {channel.stopped ? text.stopped : ended ? text.ended : !channel.online ? text.reconnecting : note ?? (tool === "move" ? text.moveHint : tool === "eraser" ? text.eraserHint : hasTouch ? text.boardHintTouch : text.boardHint)}
         {channel.waiting > 0 && channel.online && !readOnly ? ` ${text.sending(channel.waiting)}` : ""}
       </p>
       <div className="room-channel-frame" ref={frame}>
-        <canvas ref={canvas} className="room-channel-canvas" data-tool={tool} role="img" aria-label={text.board} style={{ width: size.width, height: size.height }}
-          onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} />
+        <canvas ref={canvas} className="room-channel-canvas" data-tool={tool} data-touch={touchGoesTo} role="img" aria-label={text.board} style={{ width: size.width, height: size.height }}
+          onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} onLostPointerCapture={up} />
       </div>
     </section>
   );

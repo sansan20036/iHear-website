@@ -4,7 +4,7 @@ import type { RoomChannelNotice } from "./use-room-channel";
 // The words of the room's own whiteboard, public chat and share turn (local integration only,
 // 2026-11-24), in the page's three languages. Kept beside the pieces that use them.
 type Copy = {
-  board: string; boardHint: string; pen: string; eraser: string; eraserHint: string; colour: string; colours: string[]; width: string; widths: string[];
+  board: string; boardHint: string; boardHintTouch: string; pen: string; eraser: string; eraserHint: string; move: string; moveHint: string; colour: string; colours: string[]; width: string; widths: string[];
   clear: string; clearAsk: string; clearYes: string; clearNo: string; undoClear: string; undoClearUntil: (seconds: number) => string; sending: (count: number) => string;
   chat: string; chatPublic: string; chatDeleted: string; chatEmpty: string; chatLabel: string; chatPlaceholder: string; chatSend: string; chatYou: string; chatEnded: string;
   chatLeft: (count: number) => string;
@@ -17,7 +17,8 @@ type Copy = {
 
 export const roomChannelCopy: Record<ClassroomLocale, Copy> = {
   en: {
-    board: "Whiteboard", boardHint: "Everyone in the classroom can draw here.", pen: "Pen", eraser: "Eraser", eraserHint: "Tap a line to erase it.", colour: "Colour",
+    board: "Whiteboard", boardHint: "Everyone in the classroom can draw here.", boardHintTouch: "Everyone in the classroom can draw here. To scroll the page, choose “Move page” first.",
+    pen: "Pen", eraser: "Eraser", eraserHint: "Tap a line to erase it.", move: "Move page", moveHint: "Your finger now scrolls the page. Choose “Pen” to draw again.", colour: "Colour",
     colours: ["Black", "Red", "Orange", "Green", "Blue", "Purple", "Pink", "Grey"], width: "Line width", widths: ["Fine", "Medium", "Thick", "Very thick"],
     clear: "Clear all", clearAsk: "Clear the whole whiteboard for everyone?", clearYes: "Clear", clearNo: "Keep", undoClear: "Bring back what was cleared",
     undoClearUntil: (seconds) => `Can be brought back for ${Math.max(1, Math.ceil(seconds / 60))} more min`, sending: (count) => `Sending… (${count})`,
@@ -39,7 +40,8 @@ export const roomChannelCopy: Record<ClassroomLocale, Copy> = {
     refusedOther: (code) => `That did not work (${code}).`,
   },
   zhHant: {
-    board: "白板", boardHint: "教室裡的每個人都可以在這裡畫。", pen: "畫筆", eraser: "橡皮擦", eraserHint: "點一條線就會擦掉它。", colour: "顏色",
+    board: "白板", boardHint: "教室裡的每個人都可以在這裡畫。", boardHintTouch: "教室裡的每個人都可以在這裡畫。要捲動頁面，請先按「移動頁面」。",
+    pen: "畫筆", eraser: "橡皮擦", eraserHint: "點一條線就會擦掉它。", move: "移動頁面", moveHint: "現在用手指可以捲動頁面。要畫圖請再按「畫筆」。", colour: "顏色",
     colours: ["黑色", "紅色", "橘色", "綠色", "藍色", "紫色", "粉紅色", "灰色"], width: "粗細", widths: ["細", "中", "粗", "很粗"],
     clear: "全部清除", clearAsk: "要清除整塊白板嗎？所有人的白板都會被清除。", clearYes: "清除", clearNo: "保留", undoClear: "復原剛才清除的內容",
     undoClearUntil: (seconds) => `還可以復原 ${Math.max(1, Math.ceil(seconds / 60))} 分鐘`, sending: (count) => `傳送中…（${count}）`,
@@ -61,7 +63,8 @@ export const roomChannelCopy: Record<ClassroomLocale, Copy> = {
     refusedOther: (code) => `沒有成功（${code}）。`,
   },
   zhHans: {
-    board: "白板", boardHint: "教室里的每个人都可以在这里画。", pen: "画笔", eraser: "橡皮擦", eraserHint: "点一条线就会擦掉它。", colour: "颜色",
+    board: "白板", boardHint: "教室里的每个人都可以在这里画。", boardHintTouch: "教室里的每个人都可以在这里画。要滚动页面，请先按“移动页面”。",
+    pen: "画笔", eraser: "橡皮擦", eraserHint: "点一条线就会擦掉它。", move: "移动页面", moveHint: "现在用手指可以滚动页面。要画图请再按“画笔”。", colour: "颜色",
     colours: ["黑色", "红色", "橙色", "绿色", "蓝色", "紫色", "粉红色", "灰色"], width: "粗细", widths: ["细", "中", "粗", "很粗"],
     clear: "全部清除", clearAsk: "要清除整块白板吗？所有人的白板都会被清除。", clearYes: "清除", clearNo: "保留", undoClear: "恢复刚才清除的内容",
     undoClearUntil: (seconds) => `还可以恢复 ${Math.max(1, Math.ceil(seconds / 60))} 分钟`, sending: (count) => `发送中…（${count}）`,
