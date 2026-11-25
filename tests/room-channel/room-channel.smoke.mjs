@@ -563,6 +563,28 @@ try {
     for (const person of [Dee, Kyle]) await lines(person.page, before + 2);
     expect(await scrolled()).toBe(at.scrollY);
 
+    // A hand rests on the board, then a stylus draws (a tablet: the side of the hand lands first).
+    // The pen's line must be drawn; the touch's own line is closed where the hand rested. Found by
+    // the review of 2026-11-25: with "the first pointer keeps the board" the pen drew nothing until
+    // the hand was lifted. The pen is the browser's own pen input (a pointer of type "pen").
+    at = await place();
+    await page.evaluate(() => { window.__boardPointers = []; document.querySelector('.room-channel-canvas').addEventListener('pointerdown', event => window.__boardPointers.push(event.pointerType), true); });
+    const pen = (type, [x, y], buttons) => cdp.send('Input.dispatchMouseEvent', { type, x: Math.round(x), y: Math.round(y), button: buttons === 0 && type === 'mouseMoved' ? 'none' : 'left', buttons, clickCount: type === 'mouseMoved' ? 0 : 1, pointerType: 'pen' });
+    const hand = [at.x + at.width * 0.85, at.y + at.height * 0.85];
+    const written = [[at.x + at.width * 0.15, at.y + at.height * 0.75], [at.x + at.width * 0.45, at.y + at.height * 0.9]];
+    await touch('touchStart', [hand]);
+    await page.waitForTimeout(100);
+    await pen('mouseMoved', written[0], 0);
+    await pen('mousePressed', written[0], 1);
+    for (let step = 1; step <= 10; step += 1) { await page.waitForTimeout(16); await pen('mouseMoved', between(written, step, 10), 1); }
+    await pen('mouseReleased', written[1], 0);
+    await page.waitForTimeout(HOLD);
+    await touch('touchEnd', []);
+    expect(await page.evaluate(() => window.__boardPointers), 'the board saw a touch, then a pen').toEqual(['touch', 'pen']);
+    // Two more lines: the dot where the hand rested, and what the pen wrote.
+    for (const person of [Dee, Kyle]) await lines(person.page, before + 4);
+    expect(await scrolled()).toBe(at.scrollY);
+
     await shot(page, 'd8-phone-touch');
     await page.setViewportSize({ width: 390, height: 844 });
     expect(await noHorizontalOverflow(page)).toBe(true);

@@ -52,6 +52,8 @@ export default function RoomBoard({ channel, locale }: { channel: RoomChannel; l
   const stroke = useRef<Stroke | null>(null);
   // The pointer that draws or erases now (a mouse, one finger, a pen), from its press to its release.
   const drawingWith = useRef<number | null>(null);
+  // What kind of pointer that is ("mouse", "touch", "pen"): a pen may take the board over from a touch.
+  const drawingKind = useRef<string | null>(null);
   const erasing = useRef(new Set<string>());
   const lines = channel.board.lines;
   const linesNow = useRef(lines);
@@ -134,6 +136,7 @@ export default function RoomBoard({ channel, locale }: { channel: RoomChannel; l
   // The line under the pen is closed and is the room's from here on.
   const finish = () => {
     drawingWith.current = null;
+    drawingKind.current = null;
     const own = stroke.current;
     if (!own) return;
     channel.board.end(own.id);
@@ -146,14 +149,20 @@ export default function RoomBoard({ channel, locale }: { channel: RoomChannel; l
     // One pointer draws at a time: a second finger, or the side of a hand, coming down while a line
     // is being drawn is left alone (two touches used to pull one line to and fro between them). A
     // pointer the board no longer holds has gone without saying so: its line is closed first.
+    // One pointer does take the board over: a pen that comes down while a touch holds it. On a
+    // tablet the side of the hand lands before the stylus; left alone, the hand kept the board and
+    // the pen drew nothing until the hand was lifted (the review of 2026-11-25). The touch's line
+    // is closed where it is, and the pen draws. A touch never takes the board from a pen.
     if (drawingWith.current !== null) {
-      if (event.currentTarget.hasPointerCapture(drawingWith.current)) return;
+      const penOverHand = event.pointerType === "pen" && drawingKind.current === "touch";
+      if (!penOverHand && event.currentTarget.hasPointerCapture(drawingWith.current)) return;
       finish();
     }
     event.preventDefault();
     const [x, y] = placeOf(event);
     event.currentTarget.setPointerCapture(event.pointerId);
     drawingWith.current = event.pointerId;
+    drawingKind.current = event.pointerType;
     if (tool === "eraser") { eraseAt(x, y); return; }
     const id = channel.board.begin(colour, width);
     if (!id) return;
