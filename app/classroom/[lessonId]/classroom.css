@@ -115,7 +115,12 @@
 /* Round 17 (the user, 2026-11-25: the people were too small beside a board): with a board or a share on
    the stage the people's column is wider, on computers only (under 1024 px the page is one column).
    Focus mode and the reading view keep their own columns. */
-@media (min-width: 1024px) { .room2:is([data-mode="share"], [data-mode="board"]) .room2-main { grid-template-columns: minmax(0, 1fr) clamp(300px, 32vw, 600px); } }
+@media (min-width: 1024px) {
+  /* After the review: two tiles one above the other also fit the screen's height (about 280 px of the
+     page is not the people's column); three or more take two columns while no panel is open. */
+  .room2:is([data-mode="share"], [data-mode="board"]) .room2-main { grid-template-columns: minmax(0, 1fr) clamp(300px, min(32vw, calc((100dvh - 280px) * 0.8889)), 600px); }
+  .room2:is([data-mode="share"], [data-mode="board"])[data-panel="none"] .room2-videos-host > :has(> .classroom-media-tile:nth-child(3)) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 .room2-videos, .room2-panel { grid-area: side; }
 /* Nobody shares: the people fill the stage; the stage stays laid out (hidden) so that a share or a
    whiteboard starting in it gets its real size at once. */

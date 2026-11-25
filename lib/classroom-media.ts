@@ -713,6 +713,21 @@ export function videoRatioOf(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) && value >= 0.2 && value <= 5 ? Math.round(value * 10_000) / 10_000 : null;
 }
 
+/**
+ * The page's own video (round 17, after the review): Zoom reports the shape of the videos it decodes,
+ * never of this page's own camera. A phone or tablet held upright sends 9:16 (Zoom's Video SDK guide);
+ * anything else keeps 16:9 (null).
+ */
+export function ownVideoRatio(): number | null {
+  try {
+    const touch = typeof navigator !== "undefined" && (navigator.maxTouchPoints ?? 0) > 0;
+    const upright = typeof matchMedia === "function" && matchMedia("(orientation: portrait)").matches;
+    return touch && upright ? 0.5625 : null;
+  } catch {
+    return null;
+  }
+}
+
 /** The player takes the video's shape (--video-ratio); classroom.css makes it cover its tile. */
 function shapePlayer(element: unknown, ratio: number | null) {
   const style = (element as { style?: { setProperty?: (name: string, value: string) => void; removeProperty?: (name: string) => void } } | null)?.style;
@@ -946,7 +961,7 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     if (!input.sessionToken || !input.sessionName) throw new Error("A Zoom join token and its session name are required");
     if (this.joining) return this.joining;
     if (this.client && ZOOM_IN_SESSION.has(this.connection) && input.sessionName === this.sessionName) return;
-    if (input.sessionName !== this.sessionName) { this.pastSelf.clear(); this.firstSeen.clear(); this.selfId = null; }
+    if (input.sessionName !== this.sessionName) { this.pastSelf.clear(); this.firstSeen.clear(); this.selfId = null; this.videoShapes.clear(); }
     this.sessionName = input.sessionName;
     const joining = this.connect({ ...input, sessionName: input.sessionName });
     this.joining = joining;
@@ -1123,6 +1138,7 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     if (this.selfId !== null) this.pastSelf.add(this.selfId);
     this.selfId = null;
     this.client = null; this.stream = null; this.audioStarted = false; this.tiles.clear(); this.sharer = null;
+    this.videoShapes.clear(); this.turnWatch?.(); this.turnWatch = null;
     // The room's sound goes with the room: the next join hears nothing until the person turns it on.
     this.soundJoin = null; this.soundOnly = false; this.soundBlockedNow = false;
     this.setSound("off");
@@ -1754,6 +1770,7 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     await this.stream?.detachVideo(userId).catch(() => undefined);
     const player = this.tiles.get(userId);
     this.tiles.delete(userId);
+    this.videoShapes.delete(userId);
     // As Zoom's documentation does after detachVideo: the empty video-player leaves the page. The
     // person's tile stays (Classroom 2.0), now without video.
     if (isNode(player) && typeof (player as ChildNode).remove === "function") (player as ChildNode).remove();
@@ -1911,9 +1928,25 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     this.reportRemote();
   }
 
-  // Round 17 (2026-11-25): each person's video shape as Zoom last reported it, kept for a player
-  // attached later (a camera turned off and on again keeps its shape).
+  // Round 17 (2026-11-25): each person's video shape as Zoom reported it for the current player; a
+  // shape reported while the player is still being attached is applied when it comes. Forgotten with
+  // the player and with the session (Zoom reports again for a new player; ids restart in a new room).
   private readonly videoShapes = new Map<number, number>();
+  // The page's own tile follows the screen turning (ownVideoRatio); undone when the session ends.
+  private turnWatch: (() => void) | null = null;
+
+  private shapeOwnVideo(self: number) {
+    shapePlayer(this.tiles.get(self), ownVideoRatio());
+    if (this.turnWatch || typeof matchMedia !== "function") return;
+    try {
+      const query = matchMedia("(orientation: portrait)");
+      const turned = () => { const own = this.client?.getCurrentUserInfo()?.userId; if (own != null) shapePlayer(this.tiles.get(own), ownVideoRatio()); };
+      query.addEventListener("change", turned);
+      this.turnWatch = () => query.removeEventListener("change", turned);
+    } catch {
+      this.turnWatch = null;
+    }
+  }
 
   private videoShape(payload: { userId?: number; aspectRatio?: number }) {
     const ratio = videoRatioOf(payload?.aspectRatio);
@@ -1931,7 +1964,8 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     try {
       const element = await this.stream.attachVideo(userId, this.tiles.size > 3 ? VIDEO_360P : VIDEO_720P);
       this.tiles.set(userId, element);
-      shapePlayer(element, this.videoShapes.get(userId) ?? null);
+      if (userId === this.client?.getCurrentUserInfo()?.userId) this.shapeOwnVideo(userId);
+      else shapePlayer(element, this.videoShapes.get(userId) ?? null);
       // Into the person's own tile inside the videos container (Zoom's documented pattern).
       if (isNode(element)) (this.peopleTiles?.cellOf(String(userId)) ?? this.stage.videos).append(element);
     } catch (error) {

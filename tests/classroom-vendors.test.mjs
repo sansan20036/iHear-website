@@ -4,7 +4,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { CLASSROOM_CAPABILITIES, classroomDeviceOf, deviceLimits } from "../lib/classroom-capabilities";
 import { handCommand } from "../lib/classroom-chat";
-import { hostReportFor, LcicEmbedAdapter, LCIC_FRAME_PERMISSIONS, MediaAdapterUnavailableError, videoRatioOf, ZoomVideoSdkMediaAdapter, zoomDisplayNameOf } from "../lib/classroom-media";
+import { hostReportFor, LcicEmbedAdapter, LCIC_FRAME_PERMISSIONS, MediaAdapterUnavailableError, ownVideoRatio, videoRatioOf, ZoomVideoSdkMediaAdapter, zoomDisplayNameOf } from "../lib/classroom-media";
 import { ClassroomProviderUnavailableError, classroomProvider } from "../lib/classroom-provider";
 import { isTestLesson, LcicApiError, lcicStatusOf, memoryRoomRegistry, tc3Sign, tencentLcicConfig, tencentLcicProvider, verifyLcicCallback } from "../lib/classroom-vendors/tencent-lcic";
 import { zoomApiToken, zoomSessionPath, zoomVideoSdkConfig, zoomVideoSdkProvider } from "../lib/classroom-vendors/zoom-video-sdk";
@@ -1638,8 +1638,8 @@ describe("browser adapters", () => {
     expect(adapter.shareKeys()).toEqual([]);
   });
 
-  test("FILL-1: a video takes the shape Zoom reports (a phone held upright, 9:16) so that it covers its tile; a shape reported before the player, or kept over a camera turned off and on, still applies; nonsense is ignored", async () => {
-    const { zoom } = await joined({ others: [{ userId: 2 }, { userId: 3 }] });
+  test("FILL-1: a video takes the shape Zoom reports (a phone held upright, 9:16) so that it covers its tile; a shape reported while the player comes still applies; a new player waits for Zoom's new report; nonsense is ignored", async () => {
+    const { zoom, adapter } = await joined({ others: [{ userId: 2 }, { userId: 3 }] });
     const shape = (payload) => zoom.handlers.get("video-aspect-ratio-change")(payload);
     const playerOf = (id) => zoom.players.filter(video => video.tag === `video:${id}`).at(-1);
     zoom.handlers.get("peer-video-state-change")({ action: "Start", userId: 2 }); await settle();
@@ -1650,20 +1650,53 @@ describe("browser adapters", () => {
     for (const aspectRatio of [Number.NaN, 0, 9, "0.5", null]) shape({ userId: 2, aspectRatio });
     shape({ aspectRatio: 1 });
     expect(playerOf(2).style.props).toEqual({ "--video-ratio": "0.5625" });
-    // The camera off and on again: the new player has the shape at once.
+    // The camera off and on again (the sender may have turned the phone): the old shape is forgotten
+    // with the old player; Zoom reports the new player's shape again by itself.
     zoom.handlers.get("peer-video-state-change")({ action: "Stop", userId: 2 }); await settle();
     zoom.handlers.get("peer-video-state-change")({ action: "Start", userId: 2 }); await settle();
     expect(zoom.players.filter(video => video.tag === "video:2")).toHaveLength(2);
-    expect(playerOf(2).style.props).toEqual({ "--video-ratio": "0.5625" });
-    // Reported before the player exists: applied when it comes.
+    expect(playerOf(2).style.props).toEqual({});
+    shape({ userId: 2, aspectRatio: 16 / 9 });
+    expect(playerOf(2).style.props).toEqual({ "--video-ratio": "1.7778" });
+    // Reported while the player is still coming: applied when it comes.
     shape({ userId: 3, aspectRatio: 4 / 3 });
     zoom.handlers.get("peer-video-state-change")({ action: "Start", userId: 3 }); await settle();
     expect(playerOf(3).style.props).toEqual({ "--video-ratio": "1.3333" });
     expect(videoRatioOf(16 / 9)).toBe(1.7778);
+    // The page's own video (Zoom reports only decoded videos): 16:9 on a computer; leaving forgets every shape.
+    expect(await adapter.setDevice("camera", true)).toBe("on"); await settle();
+    expect(playerOf(1).style.props).toEqual({});
+    await adapter.leave(); await settle();
+    expect(zoom.handlers.get("video-aspect-ratio-change")).toBeUndefined();
     // The page's rules: a tile is a size container and its player covers it with that shape.
     const css = readFileSync(new URL("../app/classroom/[lessonId]/classroom.css", import.meta.url), "utf8");
+    // The people's column beside a board or a share (computers only) also fits two tiles in the screen's height.
+    expect(css).toContain("clamp(300px, min(32vw, calc((100dvh - 280px) * 0.8889)), 600px)");
     expect(css).toContain(".classroom-media-tile { position: relative; container-type: size; aspect-ratio: 16 / 9;");
     expect(css).toContain("width: max(100cqw, calc(100cqh * var(--video-ratio, 1.7778))); height: max(100cqh, calc(100cqw / var(--video-ratio, 1.7778))); }");
+  });
+
+  test("FILL-2: on a touch screen held upright the page's own video is 9:16 (Zoom does not report it); turning the screen re-shapes it; leaving stops listening", async () => {
+    const listeners = new Set();
+    let upright = true;
+    vi.stubGlobal("navigator", { ...globalThis.navigator, maxTouchPoints: 5 });
+    vi.stubGlobal("matchMedia", () => ({ get matches() { return upright; }, addEventListener: (_, fn) => listeners.add(fn), removeEventListener: (_, fn) => listeners.delete(fn) }));
+    try {
+      const { zoom, adapter } = await joined();
+      expect(ownVideoRatio()).toBe(0.5625);
+      expect(await adapter.setDevice("camera", true)).toBe("on"); await settle();
+      const own = zoom.players.filter(video => video.tag === "video:1").at(-1);
+      expect(own.style.props).toEqual({ "--video-ratio": "0.5625" });
+      expect(listeners.size).toBe(1);
+      upright = false;
+      for (const fn of listeners) fn();
+      expect(own.style.props).toEqual({});
+      await adapter.leave(); await settle();
+      expect(listeners.size).toBe(0);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(ownVideoRatio()).toBe(null);
   });
 
   test("Zoom whiteboard: a start Zoom refuses keeps only Zoom's code (8000–8006), never Zoom's words, links or tokens", async () => {
