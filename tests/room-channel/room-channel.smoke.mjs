@@ -36,6 +36,7 @@ const PAGE = {
   zoomBoardTool: '[data-tool="whiteboard"]',     // Zoom's own whiteboard tool: not offered while the room's board is on
   leave: '[data-control="leave"]',               // the page's own "leave the room"
   connected: '.room2-top .classroom-room-connection',
+  directChoice: '[data-room-direct-choice] input[type="checkbox"]', // the admin page's "let people in directly" for rooms made there
   boardToggle: '[data-room-board-toggle]',       // shows or hides the room's board on this page's stage
   boardStage: '[data-room-board-stage]',         // where the board is while shown
   panelControl: name => `[data-control="${name}"]`,   // the toolbar button of a side-panel tab: "chat", "people" (the share turn is there)
@@ -159,10 +160,15 @@ try {
   await check('C1', '老師建立教室，四個人（三台電腦、一支手機）用同一個連結申請、被讓進入、進到教室頁；頁面上有教室自己的白板、聊天和分享權', async () => {
     await admin.goto(`${origin}/admin/classrooms/rooms`);
     await admin.getByLabel('教室名稱（例如 Room 1）').fill('Room 1');
+    // Round 18: rooms made on the page let people in directly unless this is unticked. This room is
+    // the owner's to let people into (C11 takes someone out for good); the four-browser check goes
+    // in directly. By the form's own mark: a label with 直接進入 is also on every room's settings.
+    await admin.locator(PAGE.directChoice).uncheck();
     await admin.getByRole('button', { name: '建立教室' }).click();
     const shown = admin.locator('[data-room-link] code');
     await expect(shown).toContainText('/classroom/r/FR-');
     link = (await shown.innerText()).trim();
+    await expect(roomCard().locator('[data-room-settings-now]')).toHaveAttribute('data-room-settings-now', /:approval$/);
     await admin.getByRole('button', { name: '我已經記下連結' }).click();
     for (const [name, options] of [['Kyle', {}], ['Ann', {}], ['Bo', {}], ['Dee', { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true }]]) {
       const own = await context(options);
@@ -607,6 +613,7 @@ try {
     const teacher = watch(await (await offContext({ email: owner })).newPage(), 'owner (switches off)');
     await teacher.goto(`${offOrigin}/admin/classrooms/rooms`);
     await teacher.getByLabel('教室名稱（例如 Room 1）').fill('Room 1');
+    await teacher.locator(PAGE.directChoice).uncheck();
     await teacher.getByRole('button', { name: '建立教室' }).click();
     const shown = teacher.locator('[data-room-link] code');
     await expect(shown).toContainText('/classroom/r/FR-');

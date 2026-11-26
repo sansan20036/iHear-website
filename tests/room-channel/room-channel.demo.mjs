@@ -61,7 +61,9 @@ async function place(page, index, of) {
 try {
   server = await startAcademyServer({ port: Number(process.env.ROOM_CHANNEL_DEMO_PORT ?? 3360), secret, owners: [owner], name: 'room-channel-demo' });
   const { origin } = server;
-  browser = await chromium.launch({ headless: false });
+  // Windows for a person to operate; ROOM_CHANNEL_DEMO_HEADLESS=1 opens none (to prove this script
+  // itself after a change, with --minutes 1).
+  browser = await chromium.launch({ headless: process.env.ROOM_CHANNEL_DEMO_HEADLESS === '1' });
   browser.on('disconnected', () => { void finish('瀏覽器已關閉').then(() => process.exit(0)); });
   // Every window has its own people: nothing is shared between them but the server.
   const windowFor = options => localContext(browser, origin, { secret, locale: 'zh-TW', viewport: null, ...options });
@@ -69,6 +71,10 @@ try {
   const admin = await (await windowFor({ email: owner })).newPage();
   await admin.goto(`${origin}/admin/classrooms/rooms`);
   await admin.getByLabel('教室名稱（例如 Room 1）').fill('Demo Room');
+  // Round 18: rooms made on the page let people in directly unless this is unticked. The demo keeps
+  // the way it was shown (the owner's window lets each person in). By the form's own mark: every
+  // room's settings also have a label with 直接進入.
+  await admin.locator('[data-room-direct-choice] input[type="checkbox"]').uncheck();
   await admin.getByRole('button', { name: '建立教室' }).click();
   const shown = admin.locator('[data-room-link] code');
   await shown.waitFor();
