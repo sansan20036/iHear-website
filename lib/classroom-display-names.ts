@@ -71,6 +71,8 @@ export const hasChinese = (name: string) => HAN.test(name);
 // Two names are the same name when they differ only in capitals and separators ("Kyle" and "kyle.",
 // "王小明" and "王 小明"): the second person gets a mark, so the teacher can tell them apart.
 const sameKey = (name: string) => name.toLowerCase().replace(/[ .'·]/g, "");
+/** Two names count as the same when these agree (round 18: the key a fixed room claims a name by). */
+export const nameKeyOf = sameKey;
 
 /** The name as shown: the typed one, or with a mark when someone present or waiting has it already; null when every mark is taken. */
 export function distinctName(name: string, taken: readonly string[]): string | null {

@@ -358,6 +358,8 @@ describe("fixed classroom links", () => {
     expect(seen.inRoom.map(person => person.name)).toEqual(["Kyle"]);
     const decision = (await store.eventsFor([r.id])).find(event => event.type === "server.room_decision");
     expect(decision).toMatchObject({ decision: "admitted", actor: "door" });
+    // Ended, so the recording checks later in this file do not carry this lesson along.
+    expect(await manage("end_lesson", { room: r.id })).toMatchObject({ status: 200 });
   });
 
   test("FR-D2: in a direct room a second Kyle is Kyle B and a second 小明 is 小明（2）; a full room refuses before anything is kept; taking someone out ends their ticket", async () => {
@@ -376,6 +378,7 @@ describe("fixed classroom links", () => {
     expect((await ask(r, "Kyle")).body).toMatchObject({ ok: true, admitted: true });
     expect(await manage("replace_link", { room: r.id })).toMatchObject({ status: 200 });
     expect((await ask(r, "Kyle")).body.code).toBe("LINK_REPLACED");
+    expect(await manage("end_lesson", { room: r.id })).toMatchObject({ status: 200 });
   });
 
   test("FR-D3: the entry is a setting: a room without one (and the API without one) waits for the owner, as before; the owner switches it either way; anything else is refused", async () => {
@@ -386,12 +389,30 @@ describe("fixed classroom links", () => {
     expect((await status(r, waiting)).body.state).toBe("waiting");
     expect(await manage("set_settings", { room: r.id, entry: "direct" })).toMatchObject({ status: 200, body: { settings: { entry: "direct" } } });
     expect((await ask(r, "Ben")).body.admitted).toBe(true);
-    expect((await status(r, waiting)).body.state).toBe("waiting");
+    // Ann, who asked while the room still waited for the owner, is let in the next time her page asks.
+    expect((await status(r, waiting)).body.state).toBe("admitted");
     expect(await manage("set_settings", { room: r.id, entry: "approval" })).toMatchObject({ status: 200 });
     expect((await ask(r, "Cara")).body.admitted).toBeUndefined();
     for (const bad of ["open", "", 1, null]) expect((await manage("set_settings", { room: r.id, entry: bad })).body.code, String(bad)).toBe("INVALID_ENTRY");
     expect((await manage("create", { label: "Direct Bad", entry: "open" })).body.code).toBe("INVALID_ENTRY");
-    // A setting changed later keeps the entry when it is not given.
+    expect(await manage("end_lesson", { room: r.id })).toMatchObject({ status: 200 });
+  });
+
+  test("FR-D4 (f1's question): eight people opening a direct room's link at the same moment are all let in, nobody left waiting; three typing the same name are told apart", async () => {
+    const r = await directRoom();
+    const names = ["Ann", "Ben", "Cara", "Dan", "Eve", "Kyle", "kyle", "KYLE"];
+    const asked = await Promise.all(names.map(name => ask(r, name)));
+    for (const one of asked) expect(one.status, JSON.stringify(one.body)).toBe(200);
+    const seen = await view(r);
+    expect(seen.waiting.map(person => person.name)).toEqual([]);
+    expect(seen.inRoom).toHaveLength(8);
+    expect(new Set(seen.inRoom.map(person => person.name.toLowerCase())).size).toBe(8);
+    for (const one of asked) expect((await status(r, one)).body.state).toBe("admitted");
+    expect(await manage("end_lesson", { room: r.id })).toMatchObject({ status: 200 });
+  });
+
+  test("FR-D3b: a setting changed later keeps the entry when it is not given", async () => {
+    const r = await room();
     expect(await manage("set_settings", { room: r.id, entry: "direct" })).toMatchObject({ status: 200 });
     expect(await manage("set_settings", { room: r.id, minutes: 60 })).toMatchObject({ status: 200, body: { settings: { entry: "direct", minutes: 60 } } });
   });

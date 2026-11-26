@@ -29,6 +29,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { hashKey } from "./classroom-block-rules";
 import type { ClassroomDrive } from "./classroom-drive";
 import { distinctName, entryNameOf, rosterNameOf } from "./classroom-names";
+import { nameKeyOf } from "./classroom-display-names";
 import type { ClassroomProvider } from "./classroom-provider";
 import { LESSON_TIME_UP, PARTICIPANT_ALIAS, PARTICIPANT_DISPLAY_NAME, roomRecordingOn } from "./classroom-fixed-room-facts";
 import { changeLessonAccess, consentPolicy, forRules, PERSON_CODE, roomMayRecordNow, stopRecordingForCancelledLesson } from "./classroom-service";
@@ -249,14 +250,27 @@ export async function requestEntry({ store, roomId, key, name, pass, now }: { st
   const present = inRoom(room, now), queued = waiting(room, now);
   if (present.length >= room.capacity) return refused(409, "ROOM_FULL", "The classroom is full now; please ask your teacher");
   if (queued.length >= WAITING_MAX) return refused(409, "TOO_MANY_WAITING", "Many people are waiting; please try again in a moment");
-  const shown = distinctName(clean, [...present, ...queued].map((request) => request.shown));
-  if (!shown) return refused(409, "NAME_TAKEN", "Too many people with this name; add an initial");
   const ticket = randomBytes(32).toString("base64url");
   const requestId = shortId("Q");
-  await remember(store, [{
-    source: "server", type: "server.room_request", lessonId: room.id, roomId: room.id, requestId, name: clean, shown, ticketHash: hashKey(ticket),
-    generation: room.links.at(-1)!.generation, occurredAt: now, receivedAt: now, key: `server.room_request:${room.id}:${requestId}`,
-  }]);
+  // Round 18 (f1's question): the shown name is claimed for this lesson of the room, so two people
+  // typing the same name at the same moment are told apart; the request is written only with its claim.
+  const lessonNo = currentLesson(room, now)?.n ?? ((room.lessons.at(-1)?.n ?? 0) + 1);
+  const taken = [...present, ...queued].map((request) => request.shown);
+  let shown: string | null = null;
+  for (let attempt = 0; attempt < 27; attempt += 1) {
+    const candidate = distinctName(clean, taken);
+    if (!candidate) break;
+    const kept = await store.transaction(async (tx) => {
+      if (!(await tx.insertEvent({ source: "server", type: "server.room_name_claim", lessonId: room.id, roomId: room.id, requestId, lessonNo, occurredAt: now, receivedAt: now, key: `server.room_name_claim:${room.id}:${lessonNo}:${nameKeyOf(candidate)}` }))) return false;
+      return tx.insertEvent({
+        source: "server", type: "server.room_request", lessonId: room.id, roomId: room.id, requestId, name: clean, shown: candidate, ticketHash: hashKey(ticket),
+        generation: room.links.at(-1)!.generation, occurredAt: now, receivedAt: now, key: `server.room_request:${room.id}:${requestId}`,
+      });
+    });
+    if (kept) { shown = candidate; break; }
+    taken.push(candidate);
+  }
+  if (!shown) return refused(409, "NAME_TAKEN", "Too many people with this name; add an initial");
   // Round 18: a direct room lets the person in now, through the owner's own admit (capacity, the
   // lesson, the name Zoom shows). If that does not go through (full meanwhile, many changes at once),
   // the request stays waiting as before, and the page keeps asking.
@@ -301,6 +315,17 @@ export async function requestStatus({ store, roomId, requestId, ticket, now }: {
   const request = room?.requests.find((entry) => entry.id === String(requestId ?? ""));
   if (!room || !request || typeof ticket !== "string" || hashKey(ticket) !== request.ticketHash) return refused(404, "NOT_FOUND", "Not found");
   const state = requestState(room, request, now);
+  // Round 18: in a direct room nobody may be there to let a waiting person in; their page asks every
+  // few seconds, and each time the door tries again (an admit that lost a race at the door, a room that
+  // was switched to direct while they waited).
+  if (state === "waiting" && room.entry === "direct") {
+    const admitted = await admit({ store, roomId: room.id, requestId: request.id, actor: DOOR_ACTOR, now });
+    if (admitted.status === 200) {
+      const again = await readRoom(store, room.id);
+      const now2 = again?.requests.find((entry) => entry.id === request.id);
+      if (again && now2 && requestState(again, now2, now) === "admitted") return { status: 200, body: { ok: true, state: "admitted", lessonId: latestDecision(now2)!.classLessonId } };
+    }
+  }
   return { status: 200, body: { ok: true, state, ...(state === "admitted" ? { lessonId: latestDecision(request)!.classLessonId } : {}) } };
 }
 
