@@ -1,7 +1,5 @@
 import postgres from "postgres";
 
-import { sharedSql } from "./shared-sql";
-
 export type LiveContentScope = "content" | "impact" | "team" | "theme" | "layout";
 
 export type LiveRevision = {
@@ -32,8 +30,14 @@ const globalForLiveRevisions = globalThis as typeof globalThis & {
 function sqlClient() {
   if (!databaseUrl) return null;
   if (!globalForLiveRevisions.ihearLiveRevisionSql) {
-    // Round 18c (load check 2026-11-27): the site's one pool per instance (lib/shared-sql.ts).
-    globalForLiveRevisions.ihearLiveRevisionSql = sharedSql(databaseUrl);
+    globalForLiveRevisions.ihearLiveRevisionSql = postgres(databaseUrl, {
+      max: 2,
+      prepare: false,
+      ssl: process.env.POSTGRES_SSL === "disable" ? false : "require",
+      // Round 18c (load checks 2026-11-27): closed after 10 s idle, so an instance left over from a burst
+      // gives its connections back (the pooler takes 200 client connections in all).
+      idle_timeout: 10,
+    });
   }
   return globalForLiveRevisions.ihearLiveRevisionSql;
 }

@@ -7,8 +7,6 @@
 // is not this folder's; it is asked of its owner before any release.
 import postgres from "postgres";
 
-import { sharedSql } from "../shared-sql";
-
 // @ts-ignore - the room channel's own code, plain JavaScript tested with node --test.
 import { createRoomChannel } from "./service.mjs";
 // @ts-ignore - as above.
@@ -26,8 +24,15 @@ export function roomChannel(): RoomChannel {
   if (globalForRoomChannel.ihearRoomChannel) return globalForRoomChannel.ihearRoomChannel;
   const databaseUrl = process.env.IHEAR_FORCE_FILE_STORE === "1" ? "" : process.env.POSTGRES_URL || process.env.DATABASE_URL || "";
   if (databaseUrl) {
-    // Round 18c: the site's one pool per instance (lib/shared-sql.ts), not a second one of its own.
-    globalForRoomChannel.ihearRoomChannelSql ??= sharedSql(databaseUrl);
+    globalForRoomChannel.ihearRoomChannelSql ??= postgres(databaseUrl, {
+      max: 2,
+      prepare: false,
+      ssl: process.env.POSTGRES_SSL === "disable" ? false : "require",
+      onnotice: () => undefined,
+      // Round 18c (load checks 2026-11-27): closed after 10 s idle, so an instance left over from a burst
+      // gives its connections back (the pooler takes 200 client connections in all).
+      idle_timeout: 10,
+    });
     globalForRoomChannel.ihearRoomChannel = createRoomChannel(createPostgresStore(globalForRoomChannel.ihearRoomChannelSql)) as RoomChannel;
   } else {
     globalForRoomChannel.ihearRoomChannel = createRoomChannel(createMemoryStore()) as RoomChannel;

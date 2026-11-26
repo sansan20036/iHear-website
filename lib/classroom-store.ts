@@ -3,8 +3,6 @@ import path from "node:path";
 
 import postgres from "postgres";
 
-import { sharedSql } from "./shared-sql";
-
 import { claimFor, finishFor, operationEvent, operationKey } from "../tools/recording-pathway/classroom/operations.mjs";
 
 // Storage for the P3 classroom: lessons and their participants (codes only), recording consent
@@ -1772,9 +1770,15 @@ export function classroomStore(): ClassroomStore {
   if (globalForClassroom.ihearClassroomStore) return globalForClassroom.ihearClassroomStore;
   const databaseUrl = process.env.IHEAR_FORCE_FILE_STORE === "1" ? "" : process.env.POSTGRES_URL || process.env.DATABASE_URL || "";
   if (databaseUrl) {
-    // Round 18c: the site's one pool per instance (lib/shared-sql.ts), shared with the rate limit,
-    // the room channel and the live revisions.
-    globalForClassroom.ihearClassroomSql ??= sharedSql(databaseUrl);
+    globalForClassroom.ihearClassroomSql ??= postgres(databaseUrl, {
+      max: 3,
+      prepare: false,
+      ssl: process.env.POSTGRES_SSL === "disable" ? false : "require",
+      onnotice: () => undefined,
+      // Round 18c (load checks 2026-11-27): closed after 10 s idle, so an instance left over from a burst
+      // gives its connections back (the pooler takes 200 client connections in all).
+      idle_timeout: 10,
+    });
     globalForClassroom.ihearClassroomStore = createPostgresClassroomStore(globalForClassroom.ihearClassroomSql);
   } else {
     const directory = process.env.IHEAR_TEST_DATA_DIR || path.join(process.cwd(), "data");

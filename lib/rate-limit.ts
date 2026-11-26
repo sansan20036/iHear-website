@@ -3,8 +3,6 @@ import { createHmac } from "node:crypto";
 import { NextResponse } from "next/server";
 import postgres from "postgres";
 
-import { sharedSql } from "./shared-sql";
-
 
 type RateLimitSql = ReturnType<typeof postgres>;
 type RateLimitRow = {
@@ -45,8 +43,13 @@ const globalForRateLimit = globalThis as typeof globalThis & {
 function sqlClient() {
   if (!databaseUrl) return null;
   if (!globalForRateLimit.ihearRateLimitSql) {
-    // Round 18c (load check 2026-11-27): the site's one pool per instance (lib/shared-sql.ts).
-    globalForRateLimit.ihearRateLimitSql = sharedSql(databaseUrl);
+    globalForRateLimit.ihearRateLimitSql = postgres(databaseUrl, {
+      max: 1,
+      prepare: false,
+      ssl: process.env.POSTGRES_SSL === "disable" ? false : "require",
+      connect_timeout: 10,
+      idle_timeout: 20,
+    });
   }
   return globalForRateLimit.ihearRateLimitSql;
 }
