@@ -308,8 +308,11 @@ describe('round 15 on PostgreSQL: the very first request on a new connection', (
   const pair = (policy, person, shared = 'f-address') => limiter.enforceRateLimits(request(), [{ ...policy, identifier: shared }, { ...policy, scope: `${policy.scope}-person`, identifier: person }]);
 
   test('F-1 (initialization): a new server process: the limiter makes its own connection, and its very first request is a several-allowance one: allowed, each allowance counted once, nothing refused as unavailable', async () => {
-    await globalThis.ihearRateLimitSql?.end({ timeout: 2 });
+    // A new server process has no pool yet. Round 18c (fcdeaa1): the limiter's pool is the site's
+    // shared one (lib/shared-sql.ts), so both references are forgotten; the old pool is not ended here,
+    // since other modules of this process may still hold it (it closes its idle connections itself).
     delete globalThis.ihearRateLimitSql;
+    delete globalThis.ihearSharedSql;
     const policy = { scope: 'first-own', limit: 10, windowSeconds: 60 };
     const { value, errors } = await logged(() => limiter.enforceRateLimits(request(), [{ ...policy, identifier: 'f1-a' }, { ...policy, identifier: 'f1-b' }]));
     console.log(`F-1: status ${statusOf(value)}; logged: ${JSON.stringify(errors)}`);
