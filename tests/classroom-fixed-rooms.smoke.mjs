@@ -55,7 +55,7 @@ try {
     await admin.goto(`${origin}/admin/classrooms/rooms`);
     await admin.getByLabel('教室名稱（例如 Room 1）').fill('Room 1');
     // Round 18: rooms made on the page are direct by default; this check is about the owner letting people in.
-    await admin.getByLabel(/直接進入/).uncheck();
+    await admin.locator('[data-room-direct-choice] input[type="checkbox"]').uncheck();
     await admin.getByRole('button', { name: '建立教室' }).click();
     const shown = admin.locator('[data-room-link] code');
     await expect(shown).toContainText('/classroom/r/FR-');
@@ -83,7 +83,7 @@ try {
     try {
       await admin.getByLabel('教室名稱（例如 Room 1）').fill('Room 2');
       // Round 18: rooms made on the page are direct by default; this check is about the owner letting people in.
-      await admin.getByLabel(/直接進入/).uncheck();
+      await admin.locator('[data-room-direct-choice] input[type="checkbox"]').uncheck();
       await admin.getByRole('button', { name: '建立教室' }).click();
       await expect(admin.getByText('教室「Room 2」已經建立，但它的連結沒有送到這個頁面（沒有人看過這個連結）。請在這間教室按「更換連結」，取得新的連結。')).toBeVisible();
       await expect(admin.getByLabel('教室名稱（例如 Room 1）')).toHaveValue('Room 2');
@@ -310,7 +310,7 @@ try {
   // Round 18 (the user's plan, 2026-11-26, points 2 and 3): a name and Join, and you are in.
   await check('R8', '直接進入的教室：輸入名字按「進入教室」就到教室頁並進入，老師不用讓他進入；同一個瀏覽器重開連結（新分頁）回到同一個人，不會變成 Dana B', async () => {
     await admin.goto(`${origin}/admin/classrooms/rooms`);
-    await admin.getByLabel(/直接進入/).check();
+    await admin.locator('[data-room-direct-choice] input[type="checkbox"]').check();
     await admin.getByLabel('教室名稱（例如 Room 1）').fill('Room D');
     await admin.getByRole('button', { name: '建立教室' }).click();
     const shown = admin.locator('[data-room-link] code');

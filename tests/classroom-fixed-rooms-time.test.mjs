@@ -71,10 +71,10 @@ describe("a room's settings", () => {
     const bad = [[{ form: "class" }, "INVALID_FORM"], [{ capacity: 1 }, "INVALID_CAPACITY"], [{ capacity: 11 }, "INVALID_CAPACITY"], [{ capacity: 2.5 }, "INVALID_CAPACITY"], [{ capacity: "4" }, "INVALID_CAPACITY"], [{ minutes: 29 }, "INVALID_MINUTES"], [{ minutes: 181 }, "INVALID_MINUTES"], [{ minutes: "90" }, "INVALID_MINUTES"]];
     for (const [input, code] of bad) expect((await manage("set_settings", { room: r.id, ...input })).body.code, JSON.stringify(input)).toBe(code);
     expect(await view(r)).toMatchObject({ form: "group", capacity: 10, minutes: 120 });
-    expect((await manage("set_settings", { room: r.id, form: "one_to_one" })).body.settings).toEqual({ form: "one_to_one", capacity: 2, minutes: 120 });
-    expect((await manage("set_settings", { room: r.id, capacity: 3, minutes: 90 })).body.settings).toEqual({ form: "one_to_one", capacity: 3, minutes: 90 });
+    expect((await manage("set_settings", { room: r.id, form: "one_to_one" })).body.settings).toEqual({ form: "one_to_one", capacity: 2, minutes: 120, entry: "approval" });
+    expect((await manage("set_settings", { room: r.id, capacity: 3, minutes: 90 })).body.settings).toEqual({ form: "one_to_one", capacity: 3, minutes: 90, entry: "approval" });
     expect(await view(r)).toMatchObject({ form: "one_to_one", capacity: 3, minutes: 90 });
-    expect((await manage("set_settings", { room: r.id, form: "group" })).body.settings).toEqual({ form: "group", capacity: 10, minutes: 90 });
+    expect((await manage("set_settings", { room: r.id, form: "group" })).body.settings).toEqual({ form: "group", capacity: 10, minutes: 90, entry: "approval" });
     // Two owners at the same moment: one change is made, the other is told so.
     const [a, b] = await Promise.all([manage("set_settings", { room: r.id, capacity: 5 }), manage("set_settings", { room: r.id, capacity: 6 })]);
     expect([a.status, b.status].sort()).toEqual([200, 409]);
