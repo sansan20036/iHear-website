@@ -867,6 +867,13 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
     setToolProblem("");
     setBoardCode(null);
     const on = media.whiteboard !== "presenting";
+    // Round 18 (the user, 2026-11-26: Zoom's whiteboard menus were cut off; full screen showed them):
+    // Zoom's board is an iframe, so its menus fit only in a tall stage. Opening it takes the stage full
+    // screen in the same press (a browser allows that only during the press); closing the board leaves
+    // it again (the effect on media.whiteboard above). Nobody else is taken full screen: their stage bar
+    // offers it ("全螢幕檢視教材").
+    const refused = on && media.share !== "none" && media.share !== "sending";
+    if (on && !refused && canFullscreen && !document.fullscreenElement) void stageBox.current?.requestFullscreen?.().catch(() => undefined);
     // Zoom does not open its whiteboard during a screen share (its error 8002). This page's own share
     // is stopped first, so one press opens the board (2026-11-19); someone else's share is said at
     // once, and nothing is tried.
@@ -878,6 +885,8 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
     }
     const started = await current.setWhiteboard(on).catch(() => false);
     if (on && !started) setToolProblem("board");
+    // A board that did not open leaves no empty full screen behind.
+    if (on && !started && document.fullscreenElement && document.fullscreenElement === stageBox.current) void document.exitFullscreen().catch(() => undefined);
   }
 
   // The side panel (Classroom 2.0): a toolbar button opens its panel or closes it again; closing
