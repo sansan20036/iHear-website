@@ -653,6 +653,8 @@ export type ZoomStream = {
   isAudioMuted?(): boolean;
   startVideo(): Promise<unknown>; stopVideo(): Promise<unknown>; isCapturingVideo(): boolean;
   attachVideo(userId: number, quality: number): Promise<unknown>; detachVideo(userId: number): Promise<unknown>;
+  // Round 18: each received video's width and height, as "video-detailed-data-change" (Zoom's reference).
+  subscribeVideoStatisticData?(type?: { encode?: boolean; decode?: boolean; detailed?: boolean }): unknown;
   // Materials: the tutor shares a screen, window or tab; the other side sees it in a container of its own.
   isStartShareScreenWithVideoElement(): boolean;
   startShareScreen(target: HTMLCanvasElement | HTMLVideoElement): Promise<unknown>;
@@ -934,6 +936,9 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
       share: part("video-player-container", "share", true), whiteboard: part("div", "whiteboard", true),
       videos: part("video-player-container", "videos", false), ownShare: part("div", "own-share", true),
     };
+    // Round 18: each player draws inside itself (Zoom's "inside-render"), so a tile can crop its video
+    // when the player covers it (classroom.css); on Zoom's default single canvas it cannot.
+    this.stage.videos.setAttribute("inside-render", "true");
     if (videos) {
       element.replaceChildren(this.stage.share, this.stage.whiteboard, this.stage.ownShare);
       videos.replaceChildren(this.stage.videos);
@@ -1045,6 +1050,11 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
       // Round 17: Zoom says when a video's real shape differs from its player's (a phone held upright
       // sends 9:16); the player takes that shape and covers its tile (classroom.css).
       listen("video-aspect-ratio-change", (payload) => this.videoShape(payload as { userId?: number; aspectRatio?: number }));
+      // Round 18: each received video's width and height (the event above did not come on Zoom's default path).
+      listen("video-detailed-data-change", (payload) => {
+        const seen = payload as { userId?: number; width?: number; height?: number };
+        if (typeof seen?.width === "number" && typeof seen?.height === "number" && seen.height > 0) this.videoShape({ userId: seen.userId, aspectRatio: seen.width / seen.height });
+      });
       // Round 16: the share turn hears of every change of who shares, shown here or not.
       listen("active-share-change", (payload) => void this.remoteShare(payload as { state?: string; userId?: number }).finally(() => this.shareKeysChanged()));
       // The browser's own "stop sharing" button.
@@ -1091,6 +1101,9 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
       if (await overtaken()) return;
       this.stream = zoom.getMediaStream();
       for (const ready of [...this.streamWaiters]) ready();
+      // Round 18: the shape of each received video (a phone held upright is 9:16), for its tile. Never
+      // waited for, and a refusal only means the tile keeps 16:9.
+      try { void Promise.resolve(this.stream.subscribeVideoStatisticData?.({ decode: true, detailed: true })).catch(() => undefined); } catch { /* an older SDK */ }
       this.setConnection("connected");
       // Zoom's id for this session, for the server to confirm and then use without webhooks. An
       // SDK without it (or an empty id) just says nothing.

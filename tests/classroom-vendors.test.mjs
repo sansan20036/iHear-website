@@ -601,6 +601,8 @@ describe("browser adapters", () => {
         return video;
       },
       detachVideo: async (userId) => calls.push(`detach:${userId}`),
+      // Round 18: the subscription to each received video's width and height.
+      subscribeVideoStatisticData: (type) => { calls.push(`stats:${Object.keys(type ?? {}).filter(key => type[key]).join(",")}`); },
       isStartShareScreenWithVideoElement: () => true,
       startShareScreen: async (target) => { calls.push(`share:${target.tag}`); if (shareError) throw shareError; },
       stopShareScreen: async () => calls.push("stopShare"),
@@ -1674,6 +1676,23 @@ describe("browser adapters", () => {
     expect(css).toContain("clamp(300px, min(32vw, calc((100dvh - 280px) * 0.8889)), 600px)");
     expect(css).toContain(".classroom-media-tile { position: relative; container-type: size; aspect-ratio: 16 / 9;");
     expect(css).toContain("width: max(100cqw, calc(100cqh * var(--video-ratio, 1.7778))); height: max(100cqh, calc(100cqw / var(--video-ratio, 1.7778))); }");
+  });
+
+  test("FILL-3: each player draws inside itself (Zoom's inside-render) so a tile crops it; the shape also comes from each received video's width and height (video-detailed-data-change), subscribed once joined", async () => {
+    const { zoom, videos } = await joined({ others: [{ userId: 2 }] });
+    expect(videos.attributes["inside-render"]).toBe("true");
+    expect(zoom.calls).toContain("stats:decode,detailed");
+    zoom.handlers.get("peer-video-state-change")({ action: "Start", userId: 2 }); await settle();
+    const player = zoom.players.filter(video => video.tag === "video:2").at(-1);
+    expect(player.style.props).toEqual({});
+    zoom.handlers.get("video-detailed-data-change")({ userId: 2, width: 720, height: 1280, fps: 24 });
+    expect(player.style.props).toEqual({ "--video-ratio": "0.5625" });
+    // Without a size (Zoom sends fps alone at times) or with a zero height, nothing changes.
+    zoom.handlers.get("video-detailed-data-change")({ userId: 2, fps: 30 });
+    zoom.handlers.get("video-detailed-data-change")({ userId: 2, width: 1280, height: 0 });
+    expect(player.style.props).toEqual({ "--video-ratio": "0.5625" });
+    zoom.handlers.get("video-detailed-data-change")({ userId: 2, width: 1280, height: 720 });
+    expect(player.style.props).toEqual({ "--video-ratio": "1.7778" });
   });
 
   test("FILL-2: on a touch screen held upright the page's own video is 9:16 (Zoom does not report it); turning the screen re-shapes it; leaving stops listening", async () => {
