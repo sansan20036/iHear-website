@@ -362,6 +362,36 @@ describe("fixed classroom links", () => {
     expect(await manage("end_lesson", { room: r.id })).toMatchObject({ status: 200 });
   });
 
+  // Round 18c (the user's point 17, 2026-11-27): who is in the room now, by Zoom's word when the owner asks.
+  test("FR-L1: an owner asks who is in a room now: each person let in is in or not by Zoom's list of participant ids; strangers are counted; no lesson, no Zoom, or no answer are said as such", async () => {
+    const r = await directRoom();
+    // No lesson yet: nothing to ask Zoom about.
+    expect((await rooms.fixedRoomLive({ store, provider, roomId: r.id, now: START })).body).toMatchObject({ ok: true, lesson: false });
+    const kyle = await ask(r, "Kyle"), ann = await ask(r, "Ann");
+    const lessonId = (await status(r, kyle)).body.lessonId;
+    const lesson = await store.lesson(lessonId);
+    const people = (await view(r)).inRoom;
+    const idOf = name => lesson.participants.find(entry => entry.code === people.find(person => person.name === name).code).id;
+    const asked = [];
+    const zoom = answer => ({ ...provider, livePeople: async row => { asked.push(row.id); return answer; } });
+    const live = await rooms.fixedRoomLive({ store, provider: zoom({ sessions: 1, userKeys: [idOf("Kyle"), "P-not-ours"], others: 1 }), roomId: r.id, now: START });
+    expect(live.status).toBe(200);
+    expect(live.body).toMatchObject({ ok: true, lesson: true, available: true, sessions: 1, others: 2 });
+    expect(live.body.people).toEqual([{ request: kyle.body.requestId, in: true }, { request: ann.body.requestId, in: false }]);
+    expect(asked).toEqual([lessonId]);
+    // A stand-in that cannot ask Zoom, and a Zoom that does not answer now.
+    expect((await rooms.fixedRoomLive({ store, provider, roomId: r.id, now: START })).body).toMatchObject({ ok: true, lesson: true, available: false });
+    expect((await rooms.fixedRoomLive({ store, provider: zoom(null), roomId: r.id, now: START })).body).toMatchObject({ ok: false, code: "ZOOM_UNAVAILABLE" });
+    expect((await rooms.fixedRoomLive({ store, provider: zoom(null), roomId: r.id, now: START })).status).toBe(503);
+    // No such room.
+    expect((await rooms.fixedRoomLive({ store, provider, roomId: "ROOM-none", now: START })).status).toBe(404);
+    // Read only: nothing was written by asking.
+    const before = (await store.eventsFor([r.id, lessonId])).length;
+    await rooms.fixedRoomLive({ store, provider: zoom({ sessions: 0, userKeys: [], others: 0 }), roomId: r.id, now: START });
+    expect((await store.eventsFor([r.id, lessonId])).length).toBe(before);
+    expect(await manage("end_lesson", { room: r.id })).toMatchObject({ status: 200 });
+  });
+
   test("FR-D2: in a direct room a second Kyle is Kyle B and a second 小明 is 小明（2）; a full room refuses before anything is kept; taking someone out ends their ticket", async () => {
     const r = await directRoom();
     expect(await manage("set_settings", { room: r.id, capacity: 3 })).toMatchObject({ status: 200 });

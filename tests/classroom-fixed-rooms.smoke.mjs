@@ -350,6 +350,11 @@ try {
     await admin.reload();
     await expect(card.locator('[data-in-room-person]')).toHaveCount(1);
     await expect(card.locator('[data-in-room-person="Dana"]')).toBeVisible();
+    // Round 18c (the user's point 17): the owner asks Zoom who is in the room now. This local site has the
+    // synthetic stand-in, which cannot ask Zoom: the card says so (real Zoom: the online test site).
+    await card.getByRole('button', { name: '問 Zoom：現在誰在教室裡' }).click();
+    await expect(card.locator('[data-room-live]')).toHaveAttribute('data-room-live', 'unavailable');
+    await expect(card.locator('[data-room-live]')).toContainText('這個網站的教室沒有連到 Zoom，無法查詢。');
     await again.close();
   });
 

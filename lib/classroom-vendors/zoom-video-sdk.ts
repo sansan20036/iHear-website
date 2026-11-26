@@ -180,6 +180,34 @@ export function zoomVideoSdkProvider(config: ZoomVideoSdkConfig, options: Option
       const started = flag === true ? true : flag === false && found.type === "past" ? false : null;
       return found.type === "past" ? { live: false, recording: false, started } : { live: true, recording: null, started };
     },
+    // Round 18c (the user's point 17, 2026-11-27): who is in the lesson's room now, when the owner asks.
+    // Read only, and no webhook needed (the online test site gets none): Zoom's live sessions whose key
+    // is the lesson's id (the token's session_key; every generation of the room carries it), then the
+    // people of each who have not left, by user_key (the token's, our participant id). Zoom lists
+    // people who left a live session too, with a leave time. A session id that needs the other
+    // encoding (see control above) is asked once more under it. null: Zoom would not say now.
+    async livePeople(lesson) {
+      const day = (offset: number) => new Date(now() + offset).toISOString().slice(0, 10);
+      const listed = await request("GET", `/videosdk/sessions?type=live&from=${day(-86_400_000)}&to=${day(86_400_000)}&page_size=300`);
+      if (listed.status !== 200) return null;
+      const sessions = ((json(listed.body)?.sessions as Record<string, unknown>[] | undefined) ?? [])
+        .filter((entry) => entry.session_key === lesson.id && typeof entry.id === "string" && entry.id);
+      const keys = new Set<string>();
+      let others = 0;
+      for (const session of sessions) {
+        const id = String(session.id);
+        const first = `${sessionPath(id, "/users")}?type=live&page_size=300`, other = `${sessionPath(id, "/users", true)}?type=live&page_size=300`;
+        let response = await request("GET", first);
+        if (response.status === 404 && other !== first) response = await request("GET", other);
+        if (response.status !== 200) return null;
+        for (const user of (json(response.body)?.users as Record<string, unknown>[] | undefined) ?? []) {
+          if (user.leave_time) continue;
+          if (typeof user.user_key === "string" && user.user_key) keys.add(user.user_key);
+          else others += 1;
+        }
+      }
+      return { sessions: sessions.length, userKeys: [...keys], others };
+    },
     // The current session's details and people (as past once it has ended), its recordings, and
     // the recordings of any earlier session whose files are not known yet. Recordings are asked
     // for even when Zoom no longer describes the session.

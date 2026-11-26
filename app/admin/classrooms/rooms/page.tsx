@@ -135,6 +135,18 @@ function unknownOutcome(action: string, input: Record<string, unknown>, before: 
   return ERRORS.SINGLE_UNKNOWN;
 }
 const PRESENCE: Record<string, string> = { in: "在教室裡（Zoom 回報）", out: "已離開（Zoom 回報）" };
+// Round 18c (point 17): Zoom's answer for one room, asked on the owner's press.
+type Live = { state: "asking" | "failed" | "no-lesson" | "unavailable" | "answered"; at?: string; people?: Record<string, boolean>; others?: number };
+const timeOf = (at?: string) => (at ? new Date(at).toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "");
+function liveNote(answer: Live | undefined) {
+  if (!answer) return "按下後向 Zoom 查詢一次，不會改變教室。";
+  if (answer.state === "asking") return "查詢中…";
+  if (answer.state === "failed") return "這次沒有查到（Zoom 沒有回應），請再按一次。";
+  if (answer.state === "no-lesson") return `現在沒有在上課（${timeOf(answer.at)}）。`;
+  if (answer.state === "unavailable") return "這個網站的教室沒有連到 Zoom，無法查詢。";
+  const count = Object.values(answer.people ?? {}).filter(Boolean).length;
+  return `Zoom 說現在有 ${count} 位在教室裡${answer.others ? `，另有 ${answer.others} 位不在名單上` : ""}（${timeOf(answer.at)}）。`;
+}
 const time = (value: string) => new Date(value).toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit" });
 const problemOf = (data: { code?: string; error?: string; labels?: unknown }) => {
   const names = Array.isArray(data?.labels) ? data.labels.filter((label): label is string => typeof label === "string") : [];
@@ -175,6 +187,23 @@ export default function FixedRoomsPage() {
     return chosen && room.recording?.available && !person.student && (room.members ?? []).some((member) => member.code === chosen) ? chosen : null;
   };
   const [newMember, setNewMember] = useState<Record<string, { code: string; name: string }>>({});
+  // Round 18c (the user's point 17): who is in each room now, by Zoom's word when the owner asks (by room).
+  const [live, setLive] = useState<Record<string, Live>>({});
+  async function askLive(roomId: string) {
+    setLive((now) => ({ ...now, [roomId]: { state: "asking" } }));
+    try {
+      const response = await fetch(`/api/admin/classrooms/rooms?live=${encodeURIComponent(roomId)}`, { cache: "no-store", signal: AbortSignal.timeout(READ_WITHIN_MS) });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data?.ok) { setLive((now) => ({ ...now, [roomId]: { state: "failed" } })); return; }
+      if (!data.lesson) { setLive((now) => ({ ...now, [roomId]: { state: "no-lesson", at: data.checkedAt } })); return; }
+      if (!data.available) { setLive((now) => ({ ...now, [roomId]: { state: "unavailable" } })); return; }
+      const people: Record<string, boolean> = {};
+      for (const person of data.people ?? []) people[person.request] = person.in === true;
+      setLive((now) => ({ ...now, [roomId]: { state: "answered", at: data.checkedAt, people, others: Number(data.others) || 0 } }));
+    } catch {
+      setLive((now) => ({ ...now, [roomId]: { state: "failed" } }));
+    }
+  }
 
   // The rooms as the server lists them now; null when they could not be read. The page's only read.
   const readRooms = useCallback(async (): Promise<Room[] | null> => {
@@ -582,11 +611,18 @@ export default function FixedRoomsPage() {
             </ul>
           )}
           <h3>已讓進入</h3>
+          <p data-room-live={live[room.id]?.state ?? "not-asked"}>
+            <button type="button" disabled={live[room.id]?.state === "asking"} onClick={() => void askLive(room.id)}>問 Zoom：現在誰在教室裡</button>
+            {" "}{liveNote(live[room.id])}
+          </p>
           {room.inRoom.length === 0 ? <p>還沒有人。</p> : (
             <ul data-in-room>
               {room.inRoom.map((person) => (
                 <li key={person.request} data-in-room-person={person.name}>
                   {person.name}（代碼 {person.code}{person.student ? (person.boundBy === "pass" ? "・個人連結" : "・您指定的名單學生") : ""}）・{person.presence ? PRESENCE[person.presence] : "是否在線：Zoom 還沒有回報"}
+                  {live[room.id]?.state === "answered" && person.request in (live[room.id]?.people ?? {}) && (
+                    <span data-live-in={live[room.id]!.people![person.request] ? "in" : "out"}>・{live[room.id]!.people![person.request] ? "現在在教室裡" : "現在不在教室裡"}（Zoom，{timeOf(live[room.id]!.at)}）</span>
+                  )}
                   {person.consent && <span data-consent={person.consent}>・{CONSENT[person.consent] ?? person.consent}</span>}
                   <button type="button" disabled={busy} onClick={() => void act("remove", { room: room.id, request: person.request }, `請「${person.name}」離開這間教室？教室會換到新的 Zoom Session，其他人會自動重新連線。${room.entry === "direct" ? "這間教室是「直接進入」：他可以用同一個連結再進來。要擋住他，請接著按「更換連結」，再把新連結發給教室裡的其他人。" : "他手上的連結不能再進來。"}`)}>請出教室</button>
                 </li>

@@ -246,6 +246,37 @@ describe("Zoom Video SDK, server side", () => {
     expect(await provider(() => ({ status: 500, body: "" }), "s-1").provider.snapshot(lesson)).toBeNull();
   });
 
+  // Round 18c (the user's point 17, 2026-11-27): who is in a lesson's room now, asked of Zoom (read only).
+  test("LIVE-1: who is in the room now: the lesson's live sessions by session_key, their people still in by user_key; another encoding on 404; null when Zoom would not say", async () => {
+    const answer = request => {
+      if (request.url.includes("/videosdk/sessions?type=live")) return { status: 200, body: JSON.stringify({ sessions: [
+        { id: "a/b+c==", session_key: lesson.id }, { id: "other-1", session_key: "L-someone-else" }, { id: "s-2", session_key: lesson.id },
+      ] }) };
+      // The id with "/" and "+" answers under the second encoding only, as on real Zoom (W1).
+      if (request.url.includes("/videosdk/sessions/a%2Fb%2Bc%3D%3D/users")) return { status: 404, body: "{}" };
+      if (request.url.includes("/videosdk/sessions/a%252Fb%252Bc%253D%253D/users")) return { status: 200, body: JSON.stringify({ users: [
+        { user_key: tutor.id, join_time: "2026-11-27T00:12:00Z" },
+        { user_key: student.id, join_time: "2026-11-27T00:13:00Z", leave_time: "2026-11-27T00:20:00Z" },
+      ] }) };
+      if (request.url.includes("/videosdk/sessions/s-2/users")) return { status: 200, body: JSON.stringify({ users: [{ user_key: "" }, { user_key: "P-not-ours" }] }) };
+      return { status: 500, body: "" };
+    };
+    const zoom = provider(answer);
+    expect(await zoom.provider.livePeople(lesson)).toEqual({ sessions: 2, userKeys: [tutor.id, "P-not-ours"], others: 1 });
+    // Read only: every request is a GET, and the other sessions are never asked about.
+    expect(zoom.requests.every(request => request.method === "GET")).toBe(true);
+    expect(zoom.requests.some(request => request.url.includes("other-1"))).toBe(false);
+    expect(zoom.requests[0].url).toMatch(/\/videosdk\/sessions\?type=live&from=\d{4}-\d{2}-\d{2}&to=\d{4}-\d{2}-\d{2}&page_size=300$/);
+    // No live session of this lesson: nobody, and no people asked for.
+    const none = provider(() => ({ status: 200, body: JSON.stringify({ sessions: [{ id: "x", session_key: "L-other" }] }) }));
+    expect(await none.provider.livePeople(lesson)).toEqual({ sessions: 0, userKeys: [], others: 0 });
+    expect(none.requests).toHaveLength(1);
+    // Zoom would not list the sessions, or a session's people: no answer.
+    expect(await provider(() => ({ status: 401, body: "" })).provider.livePeople(lesson)).toBeNull();
+    const halfway = provider(request => (request.url.includes("/users") ? { status: 500, body: "" } : { status: 200, body: JSON.stringify({ sessions: [{ id: "s-3", session_key: lesson.id }] }) }));
+    expect(await halfway.provider.livePeople(lesson)).toBeNull();
+  });
+
   // P3-R1 (2026-11-11): has_recording in a session's details (seen on an ended session Zoom recorded).
   test("P3-R1: has_recording — true confirms a start; an ended session's false says nothing was recorded; a live session's false, or none, is no answer", async () => {
     const details = (type, extra) => request => (request.url.endsWith(`?type=${type}`) ? { status: 200, body: JSON.stringify({ id: "s-1", ...extra }) } : { status: 404, body: "{}" });

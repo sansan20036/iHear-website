@@ -749,6 +749,27 @@ function presenceOf(lesson: ClassroomLesson | null, events: readonly ClassroomEv
   return last ? (IN.has(String(last.type)) ? "in" : "out") : null;
 }
 
+// Round 18c (the user's point 17, 2026-11-27): who of the people let in is in the room now, by Zoom's
+// word when the owner asks (read only, so no webhook is needed: the online test site gets none). Each
+// person let in this lesson: in (Zoom lists one of their participant ids among the people still in
+// the room's live session) or not; others: people in that session who are none of ours. available
+// false: this site's classroom cannot ask (the synthetic stand-in); 503: Zoom could not be asked now.
+export async function fixedRoomLive({ store, provider, roomId, now }: { store: ClassroomStore; provider: ClassroomProvider; roomId: unknown; now: number }) {
+  const room = await readRoom(store, roomId);
+  if (!room) return refused(404, "NOT_FOUND", "Not found");
+  const lessonNow = currentLesson(room, now);
+  const lesson = lessonNow ? await store.lesson(lessonNow.classLessonId) : null;
+  if (!lesson) return { status: 200, body: { ok: true, room: room.id, lesson: false, checkedAt: iso(now) } };
+  if (!provider.livePeople) return { status: 200, body: { ok: true, room: room.id, lesson: true, available: false, checkedAt: iso(now) } };
+  const live = await provider.livePeople(lesson);
+  if (!live) return refused(503, "ZOOM_UNAVAILABLE", "Zoom could not be asked now; try again in a moment");
+  const codeOf = new Map(lesson.participants.map((entry) => [entry.id, entry.code]));
+  const codesIn = new Set(live.userKeys.map((key) => codeOf.get(key)).filter((code): code is string => Boolean(code)));
+  const others = live.userKeys.filter((key) => !codeOf.has(key)).length + live.others;
+  const people = inRoom(room, now).map((request) => ({ request: request.id, in: codesIn.has(String(latestDecision(request)!.code)) }));
+  return { status: 200, body: { ok: true, room: room.id, lesson: true, available: true, sessions: live.sessions, people, others, checkedAt: iso(now) } };
+}
+
 // What an owner sees: each room, its lesson now, who waits and who was let in (with Zoom's word on
 // who is in, where Zoom has said so). Names are for the iHear teacher only; never a key or ticket.
 export async function fixedRoomsView({ store, now }: { store: ClassroomStore; now: number }) {

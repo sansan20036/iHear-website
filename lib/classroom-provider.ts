@@ -50,6 +50,11 @@ export type PreparedJoin =
   | (SessionToken & { kind: "sdk"; sessionName?: string })
   | (SessionToken & { kind: "embed"; embedUrl: string; recordingDisabled: boolean });
 
+// Who is in a lesson's room now by the vendor's word (round 18c, the user's point 17): its live
+// sessions, the participant ids (our ids, the token's user_key) of the people still in them, and how
+// many people in them carry no id of ours.
+export type ProviderLivePeople = { sessions: number; userKeys: string[]; others: number };
+
 export type ClassroomProvider = {
   name: MediaProviderName;
   webhookSecret: string | null;
@@ -68,6 +73,9 @@ export type ClassroomProvider = {
   endSession(lesson: ClassroomLesson, sessionId?: string): Promise<ProviderCall>;
   removeUser(lesson: ClassroomLesson, userKey: string): Promise<ProviderCall>;
   snapshot(lesson: ClassroomLesson): Promise<ProviderSnapshot | null>;
+  // Who is in the lesson's room now, asked of the vendor (read only). null: it could not be asked now;
+  // absent: the vendor cannot say (the synthetic stand-in).
+  livePeople?(lesson: ClassroomLesson): Promise<ProviderLivePeople | null>;
   // Whether a session id the tutor's page reported is really this lesson's session.
   verifySession?(lesson: ClassroomLesson, sessionId: string): Promise<SessionCheck>;
   // One byte range [start, end) of a finished recording; the filing worker moves it in chunks.

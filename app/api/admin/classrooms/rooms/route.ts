@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { authorizeAdminRequest } from "../../../../../lib/admin-auth";
 import { appendAdminActivity } from "../../../../../lib/admin-store";
 import { classroomDrive } from "../../../../../lib/classroom-drive";
-import { FIXED_ROOM_BULK_ACTIONS, fixedRoomsEnabled, fixedRoomsView, manageFixedRoom, manageFixedRoomsBulk } from "../../../../../lib/classroom-fixed-rooms";
+import { FIXED_ROOM_BULK_ACTIONS, fixedRoomLive, fixedRoomsEnabled, fixedRoomsView, manageFixedRoom, manageFixedRoomsBulk } from "../../../../../lib/classroom-fixed-rooms";
 import { classroomProvider } from "../../../../../lib/classroom-provider";
 import { classroomStore } from "../../../../../lib/classroom-store";
 import { withRateLimitHeaders } from "../../../../../lib/rate-limit";
@@ -19,6 +19,22 @@ export async function GET(request: Request) {
   if (!fixedRoomsEnabled()) return notFound();
   const access = await authorizeAdminRequest(request, { owner: true });
   if ("response" in access) return access.response;
+  // Round 18c (point 17): ?live=<room> asks Zoom who is in that room now (read only, on the owner's press).
+  const liveRoom = new URL(request.url).searchParams.get("live");
+  if (liveRoom !== null) {
+    let provider;
+    try {
+      provider = classroomProvider();
+    } catch {
+      return NextResponse.json({ error: "The classroom is not available yet", code: "PROVIDER_UNAVAILABLE" }, { status: 503, headers: NO_STORE_HEADERS });
+    }
+    try {
+      const result = await fixedRoomLive({ store: classroomStore(), provider, roomId: liveRoom, now: Date.now() });
+      return NextResponse.json(result.body, { status: result.status, headers: NO_STORE_HEADERS });
+    } catch {
+      return NextResponse.json({ error: "The rooms are temporarily unavailable" }, { status: 503, headers: NO_STORE_HEADERS });
+    }
+  }
   try {
     return NextResponse.json({ ok: true, rooms: await fixedRoomsView({ store: classroomStore(), now: Date.now() }) }, { headers: NO_STORE_HEADERS });
   } catch {
