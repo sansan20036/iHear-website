@@ -162,6 +162,14 @@ try {
     await shareButton.click();
     await expect(shareButton).toHaveAttribute('aria-pressed', 'false');
     if (ROOM_BOARD_ON) {
+      // Round 18c (load check 2026-11-27): with the room channel on, the lesson's status comes in the
+      // channel's answers, so the page sends no status request of its own (it did every 15 s).
+      const statusAsked = [];
+      const onRequest = request => { if (request.method() === 'POST' && /^\/api\/classroom\/L-[0-9a-f]{32}\/status$/.test(new URL(request.url()).pathname)) statusAsked.push(request.url()); };
+      kyle.on('request', onRequest);
+      await kyle.waitForTimeout(17_000);
+      kyle.off('request', onRequest);
+      expect(statusAsked).toEqual([]);
       // One board per room: Zoom's whiteboard is never offered, whatever Zoom allows; the room's own is.
       await play('Zoom 讓所有人開白板');
       await expect(boardButton).toHaveCount(0);

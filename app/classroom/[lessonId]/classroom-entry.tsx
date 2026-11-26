@@ -65,6 +65,8 @@ const NO_TOOLS = { share: null, whiteboard: null } as const;
 const HEARTBEAT_MS = 30_000;
 const RECORDING_HEARTBEAT_MS = 10_000;
 const STATUS_MS = 15_000;
+// Round 18c: the lesson's status from the room channel counts while it is at most this old.
+const CHANNEL_STATUS_FRESH_MS = 40_000;
 // A fixed room's lesson (2026-11-24): its "ends in … minutes" note shows from this many minutes before
 // its planned end; the page's clock for it moves every CLOCK_MS.
 const TIME_LEFT_NOTE_MINUTES = 10;
@@ -335,7 +337,12 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   }), []);
   // Only where the join answer says the site offers a part of it: with all three switches off the page
   // never asks the channel (as before it existed).
-  const channel = useRoomChannel({ lessonId, ticket: joinKey, media: channelMedia, enabled: phase === "joined" && joined?.fixedRoom === true && joined.roomChannel });
+  const channelOn = phase === "joined" && joined?.fixedRoom === true && joined.roomChannel === true;
+  // Round 18c (load check 2026-11-27): the channel's requests also bring the lesson's status every
+  // STATUS_MS, so the page's own status request (below) is left out while that answer is fresh.
+  const channel = useRoomChannel({ lessonId, ticket: joinKey, media: channelMedia, enabled: channelOn, lessonStatusEveryMs: STATUS_MS });
+  const channelStatus = useRef<{ status: number; body: unknown; at: number } | null>(null);
+  useEffect(() => { channelStatus.current = channelOn && !channel.stopped ? channel.lessonStatus : null; });
   turnOffered.current = joined?.fixedRoom === true && channel.parts?.turn === true;
   // The room's board on this page's stage (each page chooses; it starts shown). Someone else's share
   // coming in puts the share first; when it ends the board comes back by itself, unless the person
@@ -784,14 +791,24 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
     let timer: ReturnType<typeof setTimeout> | undefined;
     const read = async () => {
       try {
-        const response = await fetch(statusUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(joinKey ? { key: joinKey } : {}),
-        });
-        const data = await response.json().catch(() => null);
+        // Round 18c: the room channel's fresh answer about the lesson (the same answer this request
+        // would get), else this page's own request as before.
+        const fresh = channelStatus.current && Date.now() - channelStatus.current.at <= CHANNEL_STATUS_FRESH_MS ? channelStatus.current : null;
+        let status: number, data: { ok?: boolean; code?: string; recordingDecided?: boolean; recordingAllowed?: boolean; recording?: { status?: unknown; basis?: unknown }; room?: unknown; endsAt?: unknown } | null;
+        if (fresh) {
+          status = fresh.status;
+          data = (fresh.body && typeof fresh.body === "object" ? fresh.body : null) as typeof data;
+        } else {
+          const response = await fetch(statusUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(joinKey ? { key: joinKey } : {}),
+          });
+          status = response.status;
+          data = await response.json().catch(() => null);
+        }
         // The lesson was cancelled, or this link was revoked or replaced: leave the room.
-        const ended = entryEndedBy({ status: response.status, code: data?.code }, { role: "student", hasKey: Boolean(joinKey) });
+        const ended = entryEndedBy({ status, code: data?.code }, { role: "student", hasKey: Boolean(joinKey) });
         if (ended) {
           stopped = true;
           setReason(ended);
@@ -799,7 +816,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
           onEnded.current?.(ended);
           return;
         }
-        if (response.ok && data?.ok) {
+        if (status >= 200 && status < 300 && data?.ok) {
           setStatusProblem(false);
           setRecording({ decided: data.recordingDecided === true, allowed: data.recordingAllowed === true, status: String(data.recording?.status ?? ""), basis: String(data.recording?.basis ?? "") });
           followRoom(data.room);
