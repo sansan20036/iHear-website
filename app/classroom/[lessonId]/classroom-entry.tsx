@@ -65,8 +65,13 @@ const NO_TOOLS = { share: null, whiteboard: null } as const;
 const HEARTBEAT_MS = 30_000;
 const RECORDING_HEARTBEAT_MS = 10_000;
 const STATUS_MS = 15_000;
-// Round 18c: the lesson's status from the room channel counts while it is at most this old.
+// Round 18c: the room channel brings the lesson's status this often (f1's review: then a change reaches
+// the page within about 15 s, as the page's own 15 s request did); its answer counts while at most
+// this old, after which the page asks itself again.
+const CHANNEL_STATUS_EVERY_MS = 10_000;
 const CHANNEL_STATUS_FRESH_MS = 40_000;
+// What the lesson's status says (the status route's answer, or the same inside the room channel's).
+type LessonAnswer = { ok?: boolean; code?: string; recordingDecided?: boolean; recordingAllowed?: boolean; recording?: { status?: unknown; basis?: unknown }; room?: unknown; endsAt?: unknown };
 // A fixed room's lesson (2026-11-24): its "ends in … minutes" note shows from this many minutes before
 // its planned end; the page's clock for it moves every CLOCK_MS.
 const TIME_LEFT_NOTE_MINUTES = 10;
@@ -340,7 +345,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   const channelOn = phase === "joined" && joined?.fixedRoom === true && joined.roomChannel === true;
   // Round 18c (load check 2026-11-27): the channel's requests also bring the lesson's status every
   // STATUS_MS, so the page's own status request (below) is left out while that answer is fresh.
-  const channel = useRoomChannel({ lessonId, ticket: joinKey, media: channelMedia, enabled: channelOn, lessonStatusEveryMs: STATUS_MS });
+  const channel = useRoomChannel({ lessonId, ticket: joinKey, media: channelMedia, enabled: channelOn, lessonStatusEveryMs: CHANNEL_STATUS_EVERY_MS });
   const channelStatus = useRef<{ status: number; body: unknown; at: number } | null>(null);
   useEffect(() => { channelStatus.current = channelOn && !channel.stopped ? channel.lessonStatus : null; });
   turnOffered.current = joined?.fixedRoom === true && channel.parts?.turn === true;
@@ -785,56 +790,79 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
 
   // The student is told whether the lesson is being recorded, from the same server state the
   // tutor sees.
+  // Round 18c (load check 2026-11-27; f1's review): one handling for an answer about the lesson, from
+  // this page's own request or from the room channel's, which brings it every 10 s and is taken the
+  // moment it arrives. Once the lesson has ended for this page, nothing more is handled.
+  const statusDone = useRef(false);
+  const applyStatus = useCallback((status: number, data: LessonAnswer | null) => {
+    if (statusDone.current) return true;
+    // The lesson was cancelled, or this link was revoked or replaced: leave the room.
+    const ended = entryEndedBy({ status, code: data?.code }, { role: "student", hasKey: Boolean(joinKey) });
+    if (ended) {
+      statusDone.current = true;
+      setReason(ended);
+      setPhase("blocked");
+      onEnded.current?.(ended);
+      return true;
+    }
+    if (status >= 200 && status < 300 && data?.ok) {
+      setStatusProblem(false);
+      setRecording({ decided: data.recordingDecided === true, allowed: data.recordingAllowed === true, status: String(data.recording?.status ?? ""), basis: String(data.recording?.basis ?? "") });
+      followRoom(data.room);
+      if (typeof data.endsAt === "string" && Number.isFinite(Date.parse(data.endsAt))) setLessonEndsAt(data.endsAt);
+    } else {
+      setStatusProblem(true);
+    }
+    return false;
+  }, [joinKey, followRoom]);
+  // Asks at once (the room channel stopped); null while no status loop runs.
+  const statusKick = useRef<(() => void) | null>(null);
   useEffect(() => {
     if (!isStudent) return;
     let stopped = false;
+    let reading = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const read = async () => {
-      try {
-        // Round 18c: the room channel's fresh answer about the lesson (the same answer this request
-        // would get), else this page's own request as before.
-        const fresh = channelStatus.current && Date.now() - channelStatus.current.at <= CHANNEL_STATUS_FRESH_MS ? channelStatus.current : null;
-        let status: number, data: { ok?: boolean; code?: string; recordingDecided?: boolean; recordingAllowed?: boolean; recording?: { status?: unknown; basis?: unknown }; room?: unknown; endsAt?: unknown } | null;
-        if (fresh) {
-          status = fresh.status;
-          data = (fresh.body && typeof fresh.body === "object" ? fresh.body : null) as typeof data;
-        } else {
+      if (reading || stopped) return;
+      reading = true;
+      clearTimeout(timer);
+      // Round 18c: while the room channel's answer is fresh it was handled when it came (below), and
+      // this page sends no request of its own.
+      const fresh = channelStatus.current !== null && Date.now() - channelStatus.current.at <= CHANNEL_STATUS_FRESH_MS;
+      if (!fresh) {
+        try {
           const response = await fetch(statusUrl, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(joinKey ? { key: joinKey } : {}),
           });
-          status = response.status;
-          data = await response.json().catch(() => null);
+          const data = (await response.json().catch(() => null)) as LessonAnswer | null;
+          if (!stopped && applyStatus(response.status, data)) stopped = true;
+        } catch {
+          if (!stopped) setStatusProblem(true);
         }
-        // The lesson was cancelled, or this link was revoked or replaced: leave the room.
-        const ended = entryEndedBy({ status, code: data?.code }, { role: "student", hasKey: Boolean(joinKey) });
-        if (ended) {
-          stopped = true;
-          setReason(ended);
-          setPhase("blocked");
-          onEnded.current?.(ended);
-          return;
-        }
-        if (status >= 200 && status < 300 && data?.ok) {
-          setStatusProblem(false);
-          setRecording({ decided: data.recordingDecided === true, allowed: data.recordingAllowed === true, status: String(data.recording?.status ?? ""), basis: String(data.recording?.basis ?? "") });
-          followRoom(data.room);
-          if (typeof data.endsAt === "string" && Number.isFinite(Date.parse(data.endsAt))) setLessonEndsAt(data.endsAt);
-        } else {
-          setStatusProblem(true);
-        }
-      } catch {
-        setStatusProblem(true);
       }
-      if (!stopped) timer = setTimeout(read, STATUS_MS);
+      reading = false;
+      if (!stopped) timer = setTimeout(() => { void read(); }, STATUS_MS);
     };
-    read();
+    statusKick.current = () => { void read(); };
+    void read();
     return () => {
       stopped = true;
       clearTimeout(timer);
+      statusKick.current = null;
     };
-  }, [isStudent, statusUrl, joinKey, followRoom]);
+  }, [isStudent, statusUrl, joinKey, applyStatus]);
+  // Round 18c: the room channel's answer about the lesson, taken when it arrives.
+  useEffect(() => {
+    if (!isStudent || !channelOn || channel.stopped || !channel.lessonStatus) return;
+    const body = channel.lessonStatus.body;
+    applyStatus(channel.lessonStatus.status, (body && typeof body === "object" ? body : null) as LessonAnswer | null);
+  }, [isStudent, channelOn, channel.stopped, channel.lessonStatus, applyStatus]);
+  // Round 18c: the room channel stopped (taken out, the lesson over, the link replaced): ask at once.
+  useEffect(() => {
+    if (channel.stopped) statusKick.current?.();
+  }, [channel.stopped]);
 
   async function toggle(kind: DeviceKind) {
     const current = adapter.current;
