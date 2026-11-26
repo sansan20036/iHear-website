@@ -319,7 +319,8 @@ describe("the room channel's routes", () => {
     vi.setSystemTime(START + 2000);
     const gone = await exchange(lessonId, ann.ticket, last);
     expect([gone.status, gone.body.sent[0].wasHolder]).toEqual([200, true]);
-    expect(Object.keys(gone.body).sort()).toEqual(["ok", "on", "people", "sent", "you"]);
+    // Nothing of the board, the chat or the turn is read for it (the room's pace is no reading: it is the site's own).
+    expect(Object.keys(gone.body).sort()).toEqual(["ok", "on", "pace", "people", "sent", "you"]);
     expect((await exchange(lessonId, bo.ticket, { cursors: { turn: 0 } })).body.turn.holder).toBe(null);
     expect((await exchange(lessonId, bo.ticket, { cursors: { turn: 0 }, send: [{ part: "turn", action: "claim" }] })).body.turn.holder).not.toBe(annName);
   });
@@ -350,5 +351,48 @@ describe("the room channel's routes", () => {
     vi.stubEnv("CLASSROOM_ROOM_SHARE_TURN", "");
     const quiet = await exchange(lessonId, cy.ticket, { cursors: { board: 0 } });
     expect([quiet.status, "people" in quiet.body]).toEqual([200, false]);
+  });
+
+  test("RR-11: every answer says the room's pace: the figures decided on 2026-11-27, or what the site sets, never a figure outside the bounds", async () => {
+    const { people: [ann], lessonId } = await roomWith(["Ann"]);
+    const decided = { activeMs: 1000, idleMs: 5000, quietAfterMs: 20000, flushMs: 500, hiddenMs: 15000 };
+    expect((await exchange(lessonId, ann.ticket, { cursors: { board: 0 } })).body.pace).toEqual(decided);
+    // With something sent, and with nothing asked at all.
+    expect((await exchange(lessonId, ann.ticket, { send: [{ part: "board", input: stroke("pace-1") }] })).body.pace).toEqual(decided);
+    expect((await exchange(lessonId, ann.ticket, {})).body.pace).toEqual(decided);
+    // The site changes it without a new page.
+    vi.stubEnv("CLASSROOM_ROOM_CHANNEL_PACE", "active=2000,idle=8000");
+    expect((await exchange(lessonId, ann.ticket, { cursors: { board: 0 } })).body.pace).toEqual({ ...decided, activeMs: 2000, idleMs: 8000 });
+    // A setting that makes no sense leaves the decided figures.
+    vi.stubEnv("CLASSROOM_ROOM_CHANNEL_PACE", "active=1,idle=never,flush=99999999");
+    expect((await exchange(lessonId, ann.ticket, { cursors: { board: 0 } })).body.pace).toEqual(decided);
+    vi.stubEnv("CLASSROOM_ROOM_CHANNEL_PACE", "");
+    // A refusal carries none.
+    expect("pace" in (await exchange(lessonId, "no-such-ticket", { cursors: { board: 0 } })).body).toBe(false);
+  });
+
+  test("RR-12: the lesson's status in the channel's answer: only for a request that asks, and exactly what the classroom's own status answers that person then", async () => {
+    const { room, people: [ann, bo], lessonId } = await roomWith(["Ann", "Bo"]);
+    // Not asked: not there, whatever else the request does.
+    expect("lessonStatus" in (await exchange(lessonId, ann.ticket, { cursors: { board: 0, chat: 0, turn: 0 } })).body).toBe(false);
+    for (const notAsking of [false, "true", 1, null, {}]) expect("lessonStatus" in (await exchange(lessonId, ann.ticket, { status: notAsking })).body, JSON.stringify(notAsking)).toBe(false);
+    // Asked: the same status and the same body as the status check itself gives this person now.
+    const own = await classroomStatus({ store, lessonId, key: ann.ticket, sessionEmail: null, now: START });
+    const asked = await exchange(lessonId, ann.ticket, { cursors: { board: 0 }, status: true });
+    expect(own.status).toBe(200);
+    expect(asked.body.lessonStatus).toEqual({ status: own.status, body: JSON.parse(JSON.stringify(own.body)) });
+    expect(asked.body.board.ok).toBe(true);
+    // It is this person's, by their ticket: nothing in the body can ask for another's.
+    const other = await exchange(lessonId, bo.ticket, { status: true, key2: ann.ticket, participant: "someone" });
+    expect(other.body.lessonStatus.status).toBe(200);
+    // The lesson is ended by the iHear teacher: the channel still answers (the board can be read),
+    // and the status in it is what the status check says now, for the page to act on.
+    vi.setSystemTime(START + 5 * MIN);
+    expect((await manage("end_lesson", { room: room.id }, START + 5 * MIN)).status).toBe(200);
+    const ended = await classroomStatus({ store, lessonId, key: ann.ticket, sessionEmail: null, now: START + 5 * MIN });
+    const after = await exchange(lessonId, ann.ticket, { cursors: { board: 0 }, status: true });
+    expect(after.status).toBe(200);
+    expect(after.body.lessonStatus).toEqual({ status: ended.status, body: JSON.parse(JSON.stringify(ended.body)) });
+    expect(ended.status).not.toBe(200);
   });
 });

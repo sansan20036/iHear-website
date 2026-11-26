@@ -387,7 +387,8 @@ try {
       left();
       await person.page.reload();
       const free = () => turn(watcher.page).getAttribute('data-holder').then(holder => holder === '');
-      const fast = await expect.poll(free, { timeout: 6_000 }).toBe(true).then(() => true, () => false);
+      // 9 seconds: the watching page may be in a room gone quiet, which is asked every 5 (2026-11-27); the lease is 15.
+      const fast = await expect.poll(free, { timeout: 9_000 }).toBe(true).then(() => true, () => false);
       if (!fast) {
         await expect.poll(free, { timeout: 25_000, message: `${person.engine}: not even the 15-second lease gave the turn back` }).toBe(true);
         report.notes.freedByLease.push(person.engine);

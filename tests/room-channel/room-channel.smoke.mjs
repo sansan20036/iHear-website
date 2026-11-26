@@ -388,7 +388,8 @@ try {
     const kyleBefore = await shownOn(Kyle.page);
     const at = Date.now();
     await Kyle.page.reload();
-    await expect(turn(Ann.page), 'the turn is given back as the page goes, not when its 15 seconds run out').toHaveAttribute('data-holder', '', { timeout: 6_000 });
+    // 9 seconds: a page in a room that has gone quiet asks every 5 (the room's pace, 2026-11-27); still well inside the 15.
+    await expect(turn(Ann.page), 'the turn is given back as the page goes, not when its 15 seconds run out').toHaveAttribute('data-holder', '', { timeout: 9_000 });
     report.timings.reloadFreesTurnMs = Date.now() - at;
     await backByItself(Kyle.page);
     expect(await shownOn(Kyle.page)).toEqual(kyleBefore);
@@ -428,7 +429,7 @@ try {
     await expect(turn(Kyle.page)).toHaveAttribute('data-holder', ids.Ann);
     const at = Date.now();
     await Ann.page.locator(PAGE.leave).first().click();
-    await expect(turn(Kyle.page)).toHaveAttribute('data-holder', '', { timeout: 6_000 });
+    await expect(turn(Kyle.page)).toHaveAttribute('data-holder', '', { timeout: 9_000 });
     report.timings.leaveFreesTurnMs = Date.now() - at;
     await lines(Kyle.page, before.lines);
     await draw(Kyle.page, [0.2, 0.5], [0.3, 0.6]);                     // drawn while Ann is out

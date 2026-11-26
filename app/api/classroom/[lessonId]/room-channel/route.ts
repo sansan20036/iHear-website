@@ -3,11 +3,14 @@ import { NextResponse } from "next/server";
 import { isSameOrigin } from "../../../../../lib/admin-auth";
 import { fixedRoomsEnabled } from "../../../../../lib/classroom-fixed-rooms";
 import { personAndPlaceLimit } from "../../../../../lib/classroom-rate-limit";
+import { classroomStatus } from "../../../../../lib/classroom-service";
 import { classroomStore } from "../../../../../lib/classroom-store";
 import { withRateLimitHeaders } from "../../../../../lib/rate-limit";
 import { NO_STORE_HEADERS } from "../../../../../lib/response-headers";
 import { roomChannelCaller } from "../../../../../lib/room-channel/caller";
 import { roomChannel } from "../../../../../lib/room-channel/channel";
+// @ts-ignore - the room channel's own code, plain JavaScript tested with node --test.
+import { paceOfSite } from "../../../../../lib/room-channel/pace.mjs";
 // @ts-ignore - the room channel's own code, plain JavaScript tested with node --test.
 import { anyOn, roomChannelSwitches } from "../../../../../lib/room-channel/switches.mjs";
 
@@ -59,11 +62,18 @@ export async function POST(request: Request, context: Context) {
     const caller = await roomChannelCaller({ store: classroomStore(), lessonId, key, now, named: on.turn === true });
     if (!caller.ok) return respond({ error: caller.status === 404 ? "Not found" : "You are not in this classroom", code: caller.code }, caller.status);
     const result = await roomChannel().exchange({ lesson: caller.lesson, who: caller.who, on, cursors: plain(body.cursors), send: Array.isArray(body.send) ? body.send : [], now });
+    // lessonStatus (2026-11-27): a page that asks for it ({ status: true }, every 15 seconds) gets
+    // the lesson's status in this answer, exactly as the status route would answer this person now
+    // ({ status, body }), so that it needs no request of its own for it. Only when asked: it reads
+    // what the status route reads.
+    const lessonStatus = body.status === true ? await classroomStatus({ store: classroomStore(), lessonId, key, sessionEmail: null, now }).then(({ status, body: said }) => ({ status, body: said }), () => ({ status: 503, body: { error: "The classroom is temporarily unavailable" } })) : null;
     // you: the person asking, as the room knows them (their place on the lesson's list), so a page
     // knows its own lines and its own turn. on: which parts this classroom offers now. people: with
     // the share turn, who is in the lesson now and the name the room shows for each (the turn can
-    // be handed to one of them, and to nobody else).
-    return respond({ ...result, you: caller.who.id, on, ...(caller.people ? { people: caller.people } : {}) }, result.ok === true ? 200 : 400);
+    // be handed to one of them, and to nobody else). pace: how long a page waits before it asks
+    // again and how far apart a pen's batches go (lib/room-channel/pace.mjs): said in every answer,
+    // so the site can change it without a new page.
+    return respond({ ...result, you: caller.who.id, on, pace: paceOfSite(), ...(caller.people ? { people: caller.people } : {}), ...(lessonStatus ? { lessonStatus } : {}) }, result.ok === true ? 200 : 400);
   } catch {
     return respond({ error: "The classroom is temporarily unavailable" }, 503);
   }

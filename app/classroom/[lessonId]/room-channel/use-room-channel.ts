@@ -41,9 +41,12 @@ type View = {
   turn: { holder: string | null; offeredTo: string | null; mine: boolean; offeredToMe: boolean };
   people: readonly { id: string; name: string }[];
 };
-type Changed = { board?: boolean; chat?: boolean; turn?: boolean | "lost"; people?: boolean; refused?: { part: string; error: string; line?: string }[]; stopped?: string };
+type Changed = { board?: boolean; chat?: boolean; turn?: boolean | "lost"; people?: boolean; refused?: { part: string; error: string; line?: string }[]; stopped?: string; lessonStatus?: boolean };
+// The lesson's status as the status route would answer this person ({ status, body }), and when
+// this page heard it.
+export type RoomChannelLessonStatus = { status: number; body: unknown; at: number };
 type Client = {
-  start(): void; stop(): void; setIdle(value: boolean): void; view(): View;
+  start(): void; stop(): void; setIdle(value: boolean): void; view(): View; lessonStatus(): RoomChannelLessonStatus | null;
   beginLine(options: { color: number; width: number }): string; addPoints(line: string, points: [number, number][]): boolean; endLine(line: string): void;
   erase(line: string): void; clear(): void; undoClear(): void; say(text: string): void;
   claimTurn(): void; releaseTurn(): void; handOver(to: string): void; showsShareOf(person: string): boolean;
@@ -52,7 +55,7 @@ type Client = {
 type ShareControl = { sharing: boolean; holding: boolean; changed(what: Changed): void; start(): Promise<boolean>; stop(): Promise<void>; handOver(to: string): Promise<void>; close(): void };
 
 // The plain-JavaScript pieces, with the shapes this hook uses of them.
-const makeClient = createRoomClient as unknown as (options: { post: (body: unknown) => Promise<{ status: number; body: unknown }>; key: string; changed: (what: Changed) => void }) => Client;
+const makeClient = createRoomClient as unknown as (options: { post: (body: unknown) => Promise<{ status: number; body: unknown }>; key: string; changed: (what: Changed) => void; lessonStatusEveryMs?: number }) => Client;
 const makeShare = createShareControl as unknown as (options: { client: Client; media: RoomChannelMedia; notify: (what: { sharing: boolean; notice?: string }) => void }) => ShareControl;
 const boardPoint = toBoard as unknown as (x: number, y: number, width: number, height: number) => [number, number];
 
@@ -63,8 +66,12 @@ const NO_MEDIA: RoomChannelMedia = { startShare: async () => false, stopShare: a
 
 export type RoomChannel = ReturnType<typeof useRoomChannel>;
 
-export function useRoomChannel({ lessonId, ticket, media = null, enabled = true }: { lessonId: string; ticket: string | null; media?: RoomChannelMedia | null; enabled?: boolean }) {
+// lessonStatusEveryMs (2026-11-27): when given, the channel's own requests also bring the lesson's
+// status this often (the page that mounts the channel then needs no status request of its own
+// while the channel runs: `lessonStatus` below, and `stopped` / `online` say when it does not).
+export function useRoomChannel({ lessonId, ticket, media = null, enabled = true, lessonStatusEveryMs = 0 }: { lessonId: string; ticket: string | null; media?: RoomChannelMedia | null; enabled?: boolean; lessonStatusEveryMs?: number }) {
   const [view, setView] = useState<View>(EMPTY);
+  const [lessonStatus, setLessonStatus] = useState<RoomChannelLessonStatus | null>(null);
   // Which parts this classroom offers, as the server says with every answer (null: not known yet).
   const [parts, setParts] = useState<RoomChannelParts | null>(null);
   const [notice, setNotice] = useState<RoomChannelNotice | null>(null);
@@ -112,9 +119,10 @@ export function useRoomChannel({ lessonId, ticket, media = null, enabled = true 
     };
     const control: { current: ShareControl | null } = { current: null };
     const made = makeClient({
-      post, key: ticket,
+      post, key: ticket, lessonStatusEveryMs,
       changed: (what) => {
         if (!alive) return;
+        if (what.lessonStatus) setLessonStatus(made.lessonStatus());
         setView(made.view());
         const refused = what.refused?.at(-1);
         if (refused) setNotice({ part: refused.part, code: refused.error, at: Date.now() });
@@ -151,13 +159,15 @@ export function useRoomChannel({ lessonId, ticket, media = null, enabled = true 
       client.current = null;
       share.current = null;
     };
-  }, [enabled, lessonId, ticket]);
+  }, [enabled, lessonId, ticket, lessonStatusEveryMs]);
 
   return useMemo(() => {
     const act = <T,>(work: (made: Client) => T, otherwise: T): T => (client.current ? work(client.current) : otherwise);
     return {
       // null until the first answer; then what this classroom offers. The pieces show nothing for a part that is off.
       parts, you: view.you, stopped: view.stopped, online, waiting: view.waiting, notice,
+      // The lesson's status as the channel last brought it (null: not asked for, or not answered yet).
+      lessonStatus,
       // With the share turn: who is in the lesson now, as the server names them ({ id, name }; the
       // person's own entry is among them). Empty without the turn.
       people: view.people,
@@ -189,5 +199,5 @@ export function useRoomChannel({ lessonId, ticket, media = null, enabled = true 
         handOver: (to: string): Promise<void> => share.current?.handOver(to) ?? Promise.resolve(),
       },
     };
-  }, [view, parts, notice, online, sharing]);
+  }, [view, parts, notice, online, sharing, lessonStatus]);
 }

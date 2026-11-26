@@ -13,6 +13,13 @@ import { createMemoryStore } from '../../lib/room-channel/store-memory.mjs';
 
 const T0 = 1_800_000_000_000, HOUR = 3_600_000;
 const ON = { board: true, chat: true, turn: true };
+// The pace the pages of these tests keep unless a test says otherwise: quick, as pages asked before
+// the room's pace was the server's to say (2026-11-27), so that what CL-1 to CL-10 and SC-1 to SC-8
+// are about (loss, order, the turn) is seen within the times they wait. The pace itself, with the
+// figures a real page follows, is CL-11 to CL-15.
+const QUICK = { activeMs: 250, idleMs: 500, quietAfterMs: 2_000, flushMs: 200, hiddenMs: 2_000 };
+// No figure kept by the page: the defaults, and then whatever the server says.
+const AS_A_PAGE = { pace: null };
 const seeded = seed => () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
 
 // A room with its server, a clock that moves only when the test moves it, and a network per page
@@ -26,17 +33,20 @@ function world(people = ['P-1', 'P-2', 'P-3']) {
   const timer = { set(fn, ms) { ids += 1; timers.push({ id: ids, at: clock.now + ms, fn }); return ids; }, clear(id) { const at = timers.findIndex(entry => entry.id === id); if (at >= 0) timers.splice(at, 1); } };
   const lesson = { id: 'L-1', roomId: 'FR-1', scheduledEnd: T0 + 3 * HOUR, endedAt: null, people: [...people] };
   const net = new Map(), requests = new Map(), names = new Map();
+  // What the server says beside the exchange itself, when a test sets it: the room's pace, and the
+  // lesson's status for a page that asks for it.
+  const said = { pace: null, lessonStatus: null };
   const settle = async () => { for (let turn = 0; turn < 8; turn += 1) await new Promise(resolve => { setImmediate(resolve); }); };
   const page = (id, options = {}) => {
     const told = [], hooks = {};
     const client = createRoomClient({
-      key: `ticket-${id}`, now: () => clock.now, timer, changed: what => { told.push(what); hooks.changed?.(what); }, ...options,
+      key: `ticket-${id}`, now: () => clock.now, timer, changed: what => { told.push(what); hooks.changed?.(what); }, pace: QUICK, ...options,
       post: async body => {
         const list = requests.get(id) ?? [];
-        list.push({ at: clock.now, sent: body.send.length });
+        list.push({ at: clock.now, sent: body.send.length, board: body.send.filter(item => item.part === 'board').length, status: body.status === true });
         requests.set(id, list);
         assert.equal(body.key, `ticket-${id}`);
-        assert.deepEqual(Object.keys(body).sort(), ['cursors', 'key', 'send'], 'a request says nothing about who is asking but the ticket');
+        assert.deepEqual(Object.keys(body).sort(), body.status === undefined ? ['cursors', 'key', 'send'] : ['cursors', 'key', 'send', 'status'], 'a request says nothing about who is asking but the ticket');
         const mode = net.get(id)?.(list.length, body) ?? 'ok';
         if (mode === 'lose-request') throw new Error('offline');
         if (mode === 'fail') return { status: 503, body: { error: 'temporarily unavailable' } };
@@ -44,7 +54,7 @@ function world(people = ['P-1', 'P-2', 'P-3']) {
         const result = await channel.exchange({ lesson, who: { id, name: id, member: true }, on: ON, cursors: body.cursors, send: body.send, now: clock.now });
         if (mode === 'lose-answer') throw new Error('offline');
         // As the route answers: who is asking, and (with the share turn) who is in the lesson now.
-        return { status: result.ok ? 200 : 400, body: { ...result, you: id, people: lesson.people.map(person => ({ id: person, name: names.get(person) ?? `Name of ${person}` })) } };
+        return { status: result.ok ? 200 : 400, body: { ...result, you: id, people: lesson.people.map(person => ({ id: person, name: names.get(person) ?? `Name of ${person}` })), ...(said.pace ? { pace: said.pace } : {}), ...(body.status === true && said.lessonStatus ? { lessonStatus: said.lessonStatus(id) } : {}) } };
       },
     });
     return { client, told, id, hooks };
@@ -68,7 +78,7 @@ function world(people = ['P-1', 'P-2', 'P-3']) {
   const boardOf = entry => entry.client.view().board.lines.map(({ unconfirmed: _unconfirmed, ...line }) => line);
   // A request that does not come from a page's own queue: the one a page hands to the browser as it goes away.
   const send = (id, body) => channel.exchange({ lesson, who: { id, name: id, member: lesson.people.includes(id) }, on: ON, cursors: body.cursors, send: body.send, now: clock.now });
-  return { store, channel, clock, lesson, net, requests, names, page, advance, settle, server, boardOf, timer, send };
+  return { store, channel, clock, lesson, net, requests, names, said, page, advance, settle, server, boardOf, timer, send };
 }
 const draw = (client, points, more = {}) => { const line = client.beginLine({ color: 2, width: 4, ...more }); client.addPoints(line, points); client.endLine(line); return line; };
 
@@ -545,4 +555,164 @@ test('CL-10: who is in the lesson, as the server names them: the page has the li
   await w.advance(2000);
   assert.equal(a.client.view().people, before);
   assert.equal(a.told.filter(what => what.people).length, 3);
+});
+
+// ---------------------------------------------------------------------------------------------
+// The room's pace (2026-11-27), with the figures a real page follows (lib/room-channel/pace.mjs).
+// In these tests an answer comes back in no time, so the times between requests are the waits alone.
+const askedBetween = (w, id, from, to) => (w.requests.get(id) ?? []).filter(entry => entry.at > from && entry.at <= to);
+
+test('CL-11: a quiet room is asked every 5 seconds; a line drawn into it shows within that, then the room is asked every second, and every 5 again 20 seconds after the last news', async () => {
+  const w = world();
+  const a = w.page('P-1', AS_A_PAGE), b = w.page('P-2', AS_A_PAGE);
+  a.client.start(); b.client.start();
+  // Coming in is news (who is here): the first 20 seconds count as active. After them the room is quiet.
+  await w.advance(30_000);
+  let from = w.clock.now;
+  await w.advance(60_000);
+  assert.equal(askedBetween(w, 'P-2', from, w.clock.now).length, 12, 'one request every 5 seconds in a quiet room');
+  // Someone draws between two of the other page's requests: it shows there at that page's next one.
+  await w.advance(2_000);
+  let seenAt = null;
+  b.hooks.changed = what => { if (what.board && seenAt === null) seenAt = w.clock.now; };
+  const drawnAt = w.clock.now;
+  draw(a.client, [[100, 100], [200, 200]]);
+  await w.advance(5_000);
+  assert.equal(w.boardOf(b).length, 1);
+  assert.ok(seenAt - drawnAt > 1_000 && seenAt - drawnAt <= 5_000, `seen ${seenAt - drawnAt} ms after it was drawn`);
+  // From that news on: every second for 20 seconds, then every 5 seconds again.
+  await w.advance(seenAt + 20_000 - w.clock.now);
+  assert.equal(askedBetween(w, 'P-2', seenAt, seenAt + 20_000).length, 20, 'one request a second while the room has news');
+  from = w.clock.now;
+  await w.advance(60_000);
+  assert.equal(askedBetween(w, 'P-2', from, w.clock.now).length, 12, 'quiet again');
+});
+
+test('CL-12: the pace is the server\'s to say: a page follows what an answer says from the next request on, inside the bounds, and a figure a page was told to keep stays', async () => {
+  const w = world();
+  w.said.pace = { activeMs: 2_000, idleMs: 10_000, quietAfterMs: 4_000, flushMs: 1_000, hiddenMs: 30_000 };
+  const a = w.page('P-1', AS_A_PAGE), kept = w.page('P-2');
+  a.client.start(); kept.client.start();
+  await w.advance(100);
+  assert.deepEqual(a.client.pace(), w.said.pace);
+  assert.deepEqual(kept.client.pace(), QUICK, 'a page told to keep its own figures keeps them');
+  await w.advance(20_000);
+  let from = w.clock.now;
+  await w.advance(60_000);
+  assert.equal(askedBetween(w, 'P-1', from, w.clock.now).length, 6, 'every 10 seconds, as the server said');
+  // The site changes one figure: the page has it with its next answer.
+  w.said.pace = { idleMs: 3_000 };
+  await w.advance(10_000);
+  assert.deepEqual(a.client.pace(), { activeMs: 2_000, idleMs: 3_000, quietAfterMs: 4_000, flushMs: 1_000, hiddenMs: 30_000 });
+  from = w.clock.now;
+  await w.advance(30_000);
+  assert.equal(askedBetween(w, 'P-1', from, w.clock.now).length, 10);
+  // Figures outside the bounds, or that are no figures, change nothing.
+  const before = a.client.pace();
+  w.said.pace = { idleMs: 5, activeMs: 'fast', flushMs: 999_999, quietAfterMs: -1, hiddenMs: null, other: 1 };
+  await w.advance(6_000);
+  assert.deepEqual(a.client.pace(), before);
+  // A page nobody looks at asks no more often than the server's figure for that.
+  a.client.setIdle(true);
+  await w.advance(3_000);
+  from = w.clock.now;
+  await w.advance(90_000);
+  assert.equal(askedBetween(w, 'P-1', from, w.clock.now).length, 3, 'every 30 seconds while hidden');
+});
+
+test('CL-13: a pen\'s points go in batches half a second apart: a long stroke, quick strokes one after the other, and a single stroke after a pause', async () => {
+  const w = world();
+  const a = w.page('P-1', AS_A_PAGE);
+  a.client.start();
+  await w.advance(100);
+  const boardSends = (from, to) => askedBetween(w, 'P-1', from, to).filter(entry => entry.board > 0).map(entry => entry.at);
+  // A long stroke: a point every 20 ms for 5 seconds.
+  let from = w.clock.now;
+  const long = a.client.beginLine();
+  for (let step = 0; step < 250; step += 1) { a.client.addPoints(long, [[step, step]]); await w.advance(20, 20); }
+  a.client.endLine(long);
+  await w.advance(3_000, 20);
+  let sends = boardSends(from, w.clock.now);
+  assert.ok(sends.length >= 9 && sends.length <= 11, `${sends.length} requests for 5 seconds of drawing`);
+  for (let index = 1; index < sends.length; index += 1) assert.ok(sends[index] - sends[index - 1] >= 500, `batches ${sends[index] - sends[index - 1]} ms apart`);
+  // Six quick strokes within a second: sent together, not one request each.
+  from = w.clock.now;
+  for (let stroke = 0; stroke < 6; stroke += 1) {
+    const line = a.client.beginLine();
+    a.client.addPoints(line, [[stroke, 1], [stroke, 2], [stroke, 3]]);
+    await w.advance(60, 20);
+    a.client.endLine(line);
+    await w.advance(100, 20);
+  }
+  sends = boardSends(from, w.clock.now);
+  assert.ok(sends.length <= 2, `${sends.length} requests while six strokes were drawn in a second`);
+  await w.advance(3_000, 20);
+  sends = boardSends(from, w.clock.now);
+  assert.ok(sends.length <= 3);
+  for (let index = 1; index < sends.length; index += 1) assert.ok(sends[index] - sends[index - 1] >= 500);
+  // A single stroke after a pause: its end goes at once.
+  from = w.clock.now;
+  draw(a.client, [[7, 7], [8, 8]]);
+  await w.advance(40, 20);
+  assert.equal(boardSends(from, w.clock.now).length, 1, 'sent at once');
+  await w.advance(1_000, 20);
+  // Nothing lost on the way: the long line whole, the six, and the one.
+  const server = await w.server();
+  assert.equal(server.length, 8);
+  assert.deepEqual(server.find(line => line.line === `P-1:${long}`).points, Array.from({ length: 250 }, (_unused, index) => [index, index]));
+  assert.ok(server.every(line => line.done));
+  assert.equal(a.client.view().waiting, 0);
+});
+
+test('CL-14: the person who shares keeps the turn on a hidden page in a quiet room: "still sharing" is never waited past', async () => {
+  const w = world();
+  const a = w.page('P-1', AS_A_PAGE), b = w.page('P-2', AS_A_PAGE);
+  a.client.start(); b.client.start();
+  await w.advance(100);
+  a.client.claimTurn();
+  await w.advance(1_000);
+  assert.equal(a.client.view().turn.mine, true);
+  // They share another window, so the classroom's own page is hidden; nothing else happens in the room.
+  a.client.setIdle(true);
+  let from = w.clock.now;
+  await w.advance(6 * TURN_LIMITS.leaseMs, 250);
+  assert.equal(a.client.view().turn.mine, true, 'the turn is kept for six times the lease');
+  assert.equal(b.client.view().turn.holder, 'P-1');
+  assert.ok(!a.told.some(what => what.turn === 'lost'));
+  const times = askedBetween(w, 'P-1', from, w.clock.now).map(entry => entry.at);
+  for (let index = 1; index < times.length; index += 1) assert.ok(times[index] - times[index - 1] <= TURN_LIMITS.beatEveryMs, `${times[index] - times[index - 1]} ms between two requests of the holder`);
+  // Without the turn, the same hidden page asks every 15 seconds.
+  a.client.releaseTurn();
+  await w.advance(30_000, 250);
+  assert.equal(b.client.view().turn.holder, null);
+  from = w.clock.now;
+  await w.advance(60_000, 250);
+  assert.equal(askedBetween(w, 'P-1', from, w.clock.now).length, 4);
+});
+
+test('CL-15: the lesson\'s status rides in the channel\'s own requests: asked every 15 seconds by a page that wants it, answered as the status route would, never asked otherwise', async () => {
+  const w = world();
+  let answers = 0;
+  w.said.lessonStatus = id => ({ status: 200, body: { ok: true, recordingAllowed: false, answer: (answers += 1), for: id } });
+  const a = w.page('P-1', { ...AS_A_PAGE, lessonStatusEveryMs: 15_000 }), b = w.page('P-2', AS_A_PAGE);
+  a.client.start(); b.client.start();
+  await w.advance(100);
+  // With the very first request.
+  assert.deepEqual(a.client.lessonStatus(), { status: 200, body: { ok: true, recordingAllowed: false, answer: 1, for: 'P-1' }, at: T0 + 50 });
+  assert.ok(a.told.some(what => what.lessonStatus === true));
+  await w.advance(60_000);
+  assert.equal(w.requests.get('P-1').filter(entry => entry.status).length, 5, 'once at first, then every 15 seconds, in requests the page makes anyway');
+  assert.equal(a.client.lessonStatus().body.answer, 5);
+  assert.ok(w.requests.get('P-2').every(entry => !entry.status), 'a page that does not want it never asks');
+  assert.equal(b.client.lessonStatus(), null);
+  // What the status route refuses comes through as it is, for the page to act on.
+  w.said.lessonStatus = () => ({ status: 403, body: { error: 'You cannot enter this classroom', code: 'LESSON_CANCELLED' } });
+  await w.advance(15_000);
+  assert.deepEqual([a.client.lessonStatus().status, a.client.lessonStatus().body.code], [403, 'LESSON_CANCELLED']);
+  // A server that says nothing about it: the page keeps what it had, and asks again in 15 seconds, not with every request.
+  w.said.lessonStatus = null;
+  const from = w.clock.now;
+  await w.advance(30_000);
+  assert.equal(askedBetween(w, 'P-1', from, w.clock.now).filter(entry => entry.status).length, 2);
+  assert.equal(a.client.lessonStatus().status, 403);
 });
