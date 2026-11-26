@@ -483,7 +483,9 @@ describe("the admin page's helpers for many rooms", () => {
     // The list is made in the browser and offered for download; it is never sent anywhere.
     expect(page).toContain("new Blob([linksCsv(window.location.origin, rows)]");
     expect(page).toContain("const rows = rowsToExport(list.made, states);");
-    expect(page.match(/fetch\(/g)).toHaveLength(3);
+    // Round 18c (point 17): the fourth is the read-only question to Zoom, which carries a room's id only.
+    expect(page.match(/fetch\(/g)).toHaveLength(4);
+    expect(page).toContain("fetch(`/api/admin/classrooms/rooms?live=${encodeURIComponent(roomId)}`, { cache: \"no-store\", signal: AbortSignal.timeout(READ_WITHIN_MS) })");
     expect(page).not.toMatch(/localStorage|sessionStorage|console\./);
     // Every link anew: the rooms go in parts the server takes, and the confirm says what happens to
     // the links handed out and to the people waiting.
