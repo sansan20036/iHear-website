@@ -453,6 +453,12 @@ try {
     await expect(board).toHaveAccessibleName('關閉白板');
     await expect(share).toHaveAttribute('aria-pressed', 'false');
     await expect(shareConflict).toHaveCount(0);
+    // Round 18 (the user, 2026-11-26: Zoom's whiteboard menus were cut off): the press that opens the
+    // board also takes the stage full screen; the stage bar's button leaves it, and the layout is as before.
+    await expect.poll(() => page.evaluate(() => document.fullscreenElement?.classList.contains('room2-stage') ?? false)).toBe(true);
+    await expect(page.locator('[data-stage-fullscreen]')).toHaveAttribute('aria-pressed', 'true');
+    await page.locator('[data-stage-fullscreen]').click();
+    await expect.poll(() => page.evaluate(() => document.fullscreenElement === null)).toBe(true);
     // The material alone, full screen, works for the whiteboard too.
     await expect(page.locator('[data-stage-fullscreen]')).toBeVisible();
     await layout(page, 'tutor-1440-whiteboard', { material: true });
@@ -467,6 +473,10 @@ try {
     await board.click();
     await expect(page.locator('.room2')).toHaveAttribute('data-mode', 'board');
     await expect(share).toHaveAttribute('aria-pressed', 'false');
+    // This press opened the board too, so the stage is full screen again; leave it for the checks below.
+    await expect.poll(() => page.evaluate(() => document.fullscreenElement?.classList.contains('room2-stage') ?? false)).toBe(true);
+    await page.locator('[data-stage-fullscreen]').click();
+    await expect.poll(() => page.evaluate(() => document.fullscreenElement === null)).toBe(true);
     // Focus mode from the stage, and Escape leaves it.
     await page.locator('.room2-stage-tool', { hasText: '專注模式' }).click();
     await expect(page.locator('.room2')).toHaveAttribute('data-focus', 'on');

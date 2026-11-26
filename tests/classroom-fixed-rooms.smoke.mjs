@@ -176,6 +176,11 @@ try {
     await play('對方關閉白板');
     await boardButton.click();
     await expect(boardButton).toHaveAttribute('aria-pressed', 'true');
+    // Round 18: the press that opens Zoom's board takes the stage full screen (its menus are not cut
+    // off); the stage's button leaves it, which the test panel below needs.
+    await expect.poll(() => kyle.evaluate(() => document.fullscreenElement?.classList.contains('room2-stage') ?? false)).toBe(true);
+    await kyle.locator('[data-stage-fullscreen]').click();
+    await expect.poll(() => kyle.evaluate(() => document.fullscreenElement === null)).toBe(true);
     await shot(kyle, 'r3b-whiteboard');
     await play('Zoom 只讓主持人開白板');
     await expect(boardButton).toHaveAttribute('aria-pressed', 'true');
@@ -245,8 +250,10 @@ try {
     await settings.locator('select[name="form"]').selectOption('one_to_one');
     await settings.locator('input[name="capacity"]').fill('2');
     await settings.getByRole('button', { name: '儲存設定' }).click();
-    await expect(roomCard().locator('[data-room-settings-now]')).toHaveAttribute('data-room-settings-now', 'one_to_one:2:120');
-    await expect(roomCard().locator('[data-room-settings-now]')).toContainText('一對一・最多 2 人・每次上課 120 分鐘');
+    // Round 18: the mark ends with the room's entry; this room was made for the owner's admission and
+    // saving the form above keeps that entry.
+    await expect(roomCard().locator('[data-room-settings-now]')).toHaveAttribute('data-room-settings-now', 'one_to_one:2:120:approval');
+    await expect(roomCard().locator('[data-room-settings-now]')).toContainText('老師讓他進入・一對一・最多 2 人・每次上課 120 分鐘');
     // The page shows the time the zh-TW way (上午/下午 and a 12-hour clock, or 24 hours).
     const until = async () => {
       const text = await roomCard().getByText(/上課中，最晚到 /).innerText();
