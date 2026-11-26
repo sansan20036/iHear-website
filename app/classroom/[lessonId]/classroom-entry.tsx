@@ -132,18 +132,29 @@ const DOOR_KEEP_MS = 4 * 60 * 60_000;
 const DOOR_TRIPS_MAX = 3;
 const DOOR_TRIPS_WINDOW_MS = 2 * 60_000;
 function doorBackTo(lessonId: string): { door: string; automatic: boolean } | null {
+  // Round 18: the door keeps its record in localStorage (an earlier version: this tab's sessionStorage).
+  // Reaching a storage can itself throw (a private window): that one is skipped.
+  for (const pick of [() => localStorage, () => sessionStorage]) {
+    let storage: Storage;
+    try { storage = pick(); } catch { continue; }
+    const found = doorBackIn(storage, lessonId);
+    if (found) return found;
+  }
+  return null;
+}
+function doorBackIn(storage: Storage, lessonId: string): { door: string; automatic: boolean } | null {
   try {
-    for (let index = 0; index < sessionStorage.length; index += 1) {
-      const name = sessionStorage.key(index);
+    for (let index = 0; index < storage.length; index += 1) {
+      const name = storage.key(index);
       if (!name?.startsWith(DOOR_PREFIX)) continue;
-      const kept = JSON.parse(sessionStorage.getItem(name) ?? "null") as { lessonId?: string; requestId?: string; ticket?: string; at?: number; backs?: unknown } | null;
+      const kept = JSON.parse(storage.getItem(name) ?? "null") as { lessonId?: string; requestId?: string; ticket?: string; at?: number; backs?: unknown } | null;
       if (!kept || kept.lessonId !== lessonId || !kept.requestId || !kept.ticket) continue;
       const now = Date.now();
       if (kept.at && now - kept.at >= DOOR_KEEP_MS) continue;
       const door = `/classroom/r/${encodeURIComponent(name.slice(DOOR_PREFIX.length))}`;
       const backs = (Array.isArray(kept.backs) ? kept.backs : []).filter((at): at is number => typeof at === "number" && now - at < DOOR_TRIPS_WINDOW_MS && at <= now);
       if (backs.length >= DOOR_TRIPS_MAX) return { door, automatic: false };
-      sessionStorage.setItem(name, JSON.stringify({ ...kept, backs: [...backs, now] }));
+      storage.setItem(name, JSON.stringify({ ...kept, backs: [...backs, now] }));
       return { door, automatic: true };
     }
   } catch { /* storage refused (a private window): as before */ }
@@ -1131,7 +1142,9 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   const limits = VENDOR_PROVIDERS.has(provider) ? deviceLimits(provider, device) : [];
   const ordered = orderPeople(people, hands);
   const words = { tutor: text.tutor, student: text.student };
-  const labelOf = (person: RoomPerson) => personLabel(person, words);
+  // Round 18 (the user's plan, point 10: the system does not tell tutors from students): in a fixed
+  // room a person with a name is shown by that name alone, without "Student".
+  const labelOf = (person: RoomPerson) => (joined.fixedRoom && person.name ? person.name : personLabel(person, words));
   const raised = (id: string) => hands.some((hand) => hand.id === id);
   // D-14 (2026-11-21): a fixed room has no host, and everyone in it gets the same teaching tools:
   // sharing on a computer (not while someone else shares: Zoom lets one person share at a time),
@@ -1189,8 +1202,8 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
         <div className="room2-tile-foot">
           {/* The role in its own part: a narrow tile keeps a student's code and hides the word "Student". */}
           <span className="room2-tile-name" title={label}>
-            <span className={`room2-tile-role${person.host || !person.name ? " is-key" : ""}`}>{person.host ? text.tutor : text.student}</span>
-            {person.name && <span className="room2-tile-code"> {person.name}</span>}
+            {!(joined.fixedRoom && person.name) && <span className={`room2-tile-role${person.host || !person.name ? " is-key" : ""}`}>{person.host ? text.tutor : text.student}</span>}
+            {person.name && <span className="room2-tile-code">{joined.fixedRoom ? "" : " "}{person.name}</span>}
             {person.self && <span className="room2-tile-you">{text.youTag}</span>}
           </span>
           {!person.microphone && <span className="room2-tile-icon"><RoomIcon name="microphone-off" /><span className="sr-only">{text.micOff}</span></span>}

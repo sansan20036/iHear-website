@@ -59,8 +59,13 @@ export const EXTEND_MINUTES = 30;
 export const ROOM_FORMS = ["one_to_one", "group"] as const;
 export type RoomForm = (typeof ROOM_FORMS)[number];
 const FORM_CAPACITY: Record<RoomForm, number> = { one_to_one: 2, group: FIXED_ROOM_CAPACITY };
-type RoomSettings = { form: RoomForm; capacity: number; minutes: number };
-const DEFAULT_SETTINGS: RoomSettings = { form: "group", capacity: FIXED_ROOM_CAPACITY, minutes: LESSON_MINUTES };
+// Round 18 (2026-11-26): how people come in. "direct": the door lets them in at once; "approval": an
+// owner lets them in (D-16, as before; the default for rooms with no setting and for the API).
+export const ROOM_ENTRIES = ["direct", "approval"] as const;
+export type RoomEntry = (typeof ROOM_ENTRIES)[number];
+type RoomSettings = { form: RoomForm; capacity: number; minutes: number; entry: RoomEntry };
+const DEFAULT_SETTINGS: RoomSettings = { form: "group", capacity: FIXED_ROOM_CAPACITY, minutes: LESSON_MINUTES, entry: "approval" };
+const DOOR_ACTOR = "door";
 export const ROOM_ID = /^FR-[0-9a-f]{32}$/;
 const REGISTRY = "FR-REGISTRY";
 // A room's name goes into its recordings' file names: letters and digits first, then letters,
@@ -167,6 +172,7 @@ function settingsOf(own: readonly ClassroomEvent[]): RoomSettings {
     form,
     capacity: Number.isInteger(capacity) && capacity >= ROOM_CAPACITY_MIN && capacity <= FIXED_ROOM_CAPACITY ? capacity : FORM_CAPACITY[form],
     minutes: Number.isInteger(minutes) && minutes >= LESSON_MINUTES_MIN && minutes <= LESSON_MAX_MINUTES ? minutes : LESSON_MINUTES,
+    entry: ROOM_ENTRIES.includes(last.entry as RoomEntry) ? (last.entry as RoomEntry) : DEFAULT_SETTINGS.entry,
   };
 }
 
@@ -251,6 +257,13 @@ export async function requestEntry({ store, roomId, key, name, pass, now }: { st
     source: "server", type: "server.room_request", lessonId: room.id, roomId: room.id, requestId, name: clean, shown, ticketHash: hashKey(ticket),
     generation: room.links.at(-1)!.generation, occurredAt: now, receivedAt: now, key: `server.room_request:${room.id}:${requestId}`,
   }]);
+  // Round 18: a direct room lets the person in now, through the owner's own admit (capacity, the
+  // lesson, the name Zoom shows). If that does not go through (full meanwhile, many changes at once),
+  // the request stays waiting as before, and the page keeps asking.
+  if (room.entry === "direct") {
+    const admitted = await admit({ store, roomId: room.id, requestId, actor: DOOR_ACTOR, now });
+    if (admitted.status === 200) return { status: 200, body: { ok: true, requestId, ticket, name: clean, admitted: true } };
+  }
   return { status: 200, body: { ok: true, requestId, ticket, name: clean } };
 }
 
@@ -291,7 +304,8 @@ export async function requestStatus({ store, roomId, requestId, ticket, now }: {
   return { status: 200, body: { ok: true, state, ...(state === "admitted" ? { lessonId: latestDecision(request)!.classLessonId } : {}) } };
 }
 
-async function createRoom({ store, label, actor, now }: { store: ClassroomStore; label: unknown; actor: string; now: number }) {
+async function createRoom({ store, label, entry, actor, now }: { store: ClassroomStore; label: unknown; entry?: unknown; actor: string; now: number }) {
+  if (entry !== undefined && !ROOM_ENTRIES.includes(entry as RoomEntry)) return refused(400, "INVALID_ENTRY", `Use one of: ${ROOM_ENTRIES.join(", ")}`);
   const clean = String(label ?? "").normalize("NFC").trim().replace(/\s+/g, " ");
   if (!ROOM_LABEL.test(clean)) return refused(400, "INVALID_LABEL", "Use English letters and digits (spaces, . and ' too), at most 40, no - or _");
   if ((await definitions(store)).some((event) => String(event.label).toLowerCase() === clean.toLowerCase())) return refused(409, "LABEL_TAKEN", "A room with this name exists");
@@ -302,6 +316,8 @@ async function createRoom({ store, label, actor, now }: { store: ClassroomStore;
   // left a link of a room that never existed).
   const made = await store.transaction(async (tx) => {
     if (!(await tx.insertEvent({ source: "server", type: "server.room_defined", lessonId: REGISTRY, roomId, label: clean, actor, occurredAt: now, receivedAt: now, key: `server.room_defined:${clean.toLowerCase()}` }))) return false;
+    // Round 18: a room made "direct" starts with that setting (the other settings are the defaults).
+    if (entry === "direct" && !(await tx.insertEvent({ source: "server", type: "server.room_settings", lessonId: roomId, roomId, ...DEFAULT_SETTINGS, entry: "direct", seq: 1, actor, occurredAt: now, receivedAt: now, key: `server.room_settings:${roomId}:1` }))) return false;
     return tx.insertEvent({ source: "server", type: "server.room_link", lessonId: roomId, roomId, generation: 1, keyHash: hashKey(key), actor, occurredAt: now, receivedAt: now, key: `server.room_link:${roomId}:1` });
   });
   if (!made) return refused(409, "LABEL_TAKEN", "A room with this name exists");
@@ -577,7 +593,9 @@ async function setSettings({ store, room, input, actor, now }: { store: Classroo
   if (!Number.isInteger(minutes) || (minutes as number) < LESSON_MINUTES_MIN || (minutes as number) > LESSON_MAX_MINUTES) {
     return refused(400, "INVALID_MINUTES", `A lesson lasts ${LESSON_MINUTES_MIN} to ${LESSON_MAX_MINUTES} minutes`);
   }
-  const settings: RoomSettings = { form: form as RoomForm, capacity: capacity as number, minutes: minutes as number };
+  const entry = input.entry === undefined ? room.entry : input.entry;
+  if (!ROOM_ENTRIES.includes(entry as RoomEntry)) return refused(400, "INVALID_ENTRY", `Use one of: ${ROOM_ENTRIES.join(", ")}`);
+  const settings: RoomSettings = { form: form as RoomForm, capacity: capacity as number, minutes: minutes as number, entry: entry as RoomEntry };
   const seq = room.settingsSeq + 1;
   const made = await remember(store, [{ source: "server", type: "server.room_settings", lessonId: room.id, roomId: room.id, ...settings, seq, actor, occurredAt: now, receivedAt: now, key: `server.room_settings:${room.id}:${seq}` }]);
   if (!made) return refused(409, "CHANGED_CONCURRENTLY", "The room's settings were just changed by someone else; look again");
@@ -679,7 +697,7 @@ export async function manageFixedRoom({ store, provider, drive, principal, actio
   if (!principal?.owner || !principal.email) return refused(403, "OWNER_REQUIRED", "Only an owner manages the fixed rooms");
   if (!actionsNow().includes(String(action))) return refused(400, "INVALID_ACTION", `Use one of: ${actionsNow().join(", ")}`);
   const actor = principal.email;
-  if (action === "create") return createRoom({ store, label: input.label, actor, now });
+  if (action === "create") return createRoom({ store, label: input.label, entry: input.entry, actor, now });
   const room = await readRoom(store, input.room);
   if (!room) return refused(404, "NO_SUCH_ROOM", "No such room");
   if (action === "replace_link") return replaceLink({ store, room, actor, now });
@@ -736,7 +754,7 @@ export async function fixedRoomsView({ store, now }: { store: ClassroomStore; no
     const presentCodes = new Set(inRoom(room, now).map((request) => latestDecision(request)!.code));
     const lacking = available ? [...new Set(studentRows(row).map((entry) => entry.code))].filter((code) => consentOf(code) !== "CONSENTED") : [];
     return {
-      id: room.id, label: room.label, createdAt: iso(room.createdAt), linkGeneration: room.links.at(-1)?.generation ?? 0, capacity: room.capacity, form: room.form, minutes: room.minutes,
+      id: room.id, label: room.label, createdAt: iso(room.createdAt), linkGeneration: room.links.at(-1)?.generation ?? 0, capacity: room.capacity, form: room.form, minutes: room.minutes, entry: room.entry,
       recording: {
         on: room.recording, available,
         ...(state ? {
@@ -826,7 +844,7 @@ async function createRooms({ store, input, actor, now }: { store: ClassroomStore
   const notAttempted: { label: string }[] = [];
   for (const [index, label] of labels.entries()) {
     let made;
-    try { made = await createRoom({ store, label, actor, now }); } catch (error) {
+    try { made = await createRoom({ store, label, entry: input.entry, actor, now }); } catch (error) {
       if (!rooms.length) throw error;
       unknown.push({ label });
       notAttempted.push(...labels.slice(index + 1).map((rest) => ({ label: rest })));

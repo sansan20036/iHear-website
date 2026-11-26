@@ -30,7 +30,8 @@ type Member = { code: string; name: string; passIssuedAt?: string };
 type Room = {
   // form, capacity and minutes: the room's settings; the lesson's start, end and whether 30 more minutes
   // fit (the user, 2026-11-24).
-  id: string; label: string; linkGeneration: number; capacity: number; form?: "one_to_one" | "group"; minutes?: number; disabled?: boolean;
+  // entry (round 18): "direct" (in at once with a name) or "approval" (the owner lets them in).
+  id: string; label: string; linkGeneration: number; capacity: number; form?: "one_to_one" | "group"; minutes?: number; entry?: "direct" | "approval"; disabled?: boolean;
   lesson: { lessonId: string; startedAt?: string; endsAt: string; extendable?: boolean } | null; waiting: Person[]; inRoom: Person[];
   recording?: { on: boolean; available: boolean; status?: string; label?: string; anomalies?: { code: string; severity: string }[]; consentLacking?: { inRoom: number; takenOut: string[] } }; members?: Member[];
 };
@@ -67,6 +68,7 @@ const ERRORS: Record<string, string> = {
   INVALID_FORM: "請選擇「一對一」或「小組」。",
   INVALID_CAPACITY: "人數上限請填 2 到 10 的整數。",
   INVALID_MINUTES: "單堂時間請填 30 到 180 分鐘的整數。",
+  INVALID_ENTRY: "請選擇「直接進入」或「老師讓他進入」。",
   EXTEND_LIMIT: "這次上課已經到最長 180 分鐘，不能再延長。",
   INVALID_SWITCH: "請選擇開啟或關閉。",
   RECORDING_NOT_AVAILABLE: "這個網站目前沒有開啟固定教室的錄影。",
@@ -150,6 +152,9 @@ export default function FixedRoomsPage() {
   const [rooms, setRooms] = useState<Room[] | null>(null);
   const [off, setOff] = useState(false);
   const [label, setLabel] = useState("");
+  // Round 18: rooms made here let people in directly unless the owner unticks it.
+  const [direct, setDirect] = useState(true);
+  const entryAsked = direct ? "direct" : "approval";
   const [shown, setShown] = useState<Shown>(null);
   const [problem, setProblem] = useState("");
   const [busy, setBusy] = useState(false);
@@ -321,7 +326,7 @@ export default function FixedRoomsPage() {
     const range = bulkRange(prefix, from, to);
     if (!range) { setProblem(ERRORS.INVALID_BULK); return; }
     if (!mayReplaceList()) return;
-    await makeRooms(labelsOfRange(range), range, null);
+    await makeRooms(labelsOfRange(range), { ...range, entry: entryAsked }, null);
   }
 
   // Every room's link anew (the list was lost, or every link is to change).
@@ -341,7 +346,7 @@ export default function FixedRoomsPage() {
   async function makeMissing(labels: string[]) {
     if (!list || !labels.length) return;
     if (!window.confirm(`建立這 ${labels.length} 間教室：${named(labels)}？`)) return;
-    await makeRooms(labels, { labels }, list);
+    await makeRooms(labels, { labels, entry: entryAsked }, list);
   }
   async function checkAgain() {
     if (!list) return;
@@ -409,8 +414,9 @@ export default function FixedRoomsPage() {
   return (
     <section className="admin-panel" data-fixed-rooms>
       <h1>固定教室</h1>
-      <p role="note">每間教室一個固定連結，每間最多 10 人。打開連結的人輸入名字（中文或英文）後會在這裡等待，由您讓他進入。名字是自己填的，不是身分：請先用畫面、聲音或詢問認出本人。讓他進入後，Zoom 和教室裡會顯示這個名字；同名的人會自動加上「B」或「（2）」。</p>
-      <form onSubmit={(event) => { event.preventDefault(); void act("create", { label }).then((done) => { if (done) setLabel(""); }); }} aria-label="建立固定教室">
+      <p role="note">每間教室一個固定連結，每間最多 10 人。打開連結的人輸入名字（中文或英文）：「直接進入」的教室按下就進教室；「老師讓他進入」的教室會在這裡等待，由您讓他進入。名字是自己填的，不是身分：請先用畫面、聲音或詢問認出本人。讓他進入後，Zoom 和教室裡會顯示這個名字；同名的人會自動加上「B」或「（2）」。</p>
+      <form onSubmit={(event) => { event.preventDefault(); void act("create", { label, entry: entryAsked }).then((done) => { if (done) setLabel(""); }); }} aria-label="建立固定教室">
+        <label className="admin-field" data-room-direct-choice><span><input type="checkbox" checked={direct} onChange={(event) => setDirect(event.target.checked)} /> 直接進入（填名字就進教室，不用等您讓他進入；這裡建立的教室都套用）</span></label>
         <label className="admin-field"><span>教室名稱（例如 Room 1）</span><input value={label} onChange={(event) => setLabel(event.target.value)} maxLength={40} /></label>
         <button type="submit" disabled={busy || !label.trim()}>建立教室</button>
       </form>
@@ -479,7 +485,7 @@ export default function FixedRoomsPage() {
         <article key={room.id} className="admin-card" data-room={room.label} data-room-in-use={room.disabled ? "no" : "yes"}>
           <h2>{room.label}{room.disabled ? "（停用中）" : ""}</h2>
           <p>{room.lesson ? `上課中，最晚到 ${time(room.lesson.endsAt)}` : "目前沒有在上課"}・教室裡 {room.inRoom.length}/{room.capacity} 人・連結第 {room.linkGeneration} 版</p>
-          <p data-room-settings-now={`${room.form ?? "group"}:${room.capacity}:${room.minutes ?? 120}`}>{room.form === "one_to_one" ? "一對一" : "小組"}・最多 {room.capacity} 人・每次上課 {room.minutes ?? 120} 分鐘（可延長，最長 180 分鐘）</p>
+          <p data-room-settings-now={`${room.form ?? "group"}:${room.capacity}:${room.minutes ?? 120}:${room.entry ?? "approval"}`}>{room.entry === "direct" ? "直接進入" : "老師讓他進入"}・{room.form === "one_to_one" ? "一對一" : "小組"}・最多 {room.capacity} 人・每次上課 {room.minutes ?? 120} 分鐘（可延長，最長 180 分鐘）</p>
           {room.disabled && <p role="note" data-room-disabled>這間教室停用中：拿連結的人不能申請進入，也不能讓人進來。連結沒有改變，重新啟用後原本的連結可以再用。</p>}
           <p>
             <button type="button" disabled={busy} onClick={() => void act("replace_link", { room: room.id }, `更換「${room.label}」的連結？舊連結立刻不能再用來進教室；已經在教室裡的人不受影響。新連結只顯示一次。`)}>更換連結</button>
@@ -495,15 +501,21 @@ export default function FixedRoomsPage() {
               room's next lesson. */}
           <details data-room-settings>
             <summary>教室設定</summary>
-            <form key={`${room.id}:${room.form ?? "group"}:${room.capacity}:${room.minutes ?? 120}`} onSubmit={(event) => {
+            <form key={`${room.id}:${room.form ?? "group"}:${room.capacity}:${room.minutes ?? 120}:${room.entry ?? "approval"}`} onSubmit={(event) => {
               event.preventDefault();
               const data = new FormData(event.currentTarget);
-              void act("set_settings", { room: room.id, form: String(data.get("form") ?? ""), capacity: Number(data.get("capacity")), minutes: Number(data.get("minutes")) });
+              void act("set_settings", { room: room.id, form: String(data.get("form") ?? ""), capacity: Number(data.get("capacity")), minutes: Number(data.get("minutes")), entry: String(data.get("entry") ?? "") });
             }}>
               <label className="admin-field"><span>形式</span>
                 <select name="form" defaultValue={room.form ?? "group"}>
                   <option value="one_to_one">一對一</option>
                   <option value="group">小組</option>
+                </select>
+              </label>
+              <label className="admin-field"><span>進入方式</span>
+                <select name="entry" defaultValue={room.entry ?? "approval"}>
+                  <option value="direct">直接進入（填名字就進教室）</option>
+                  <option value="approval">老師讓他進入</option>
                 </select>
               </label>
               <label className="admin-field"><span>人數上限（2–10）</span><input name="capacity" type="number" min={2} max={10} step={1} defaultValue={room.capacity} required /></label>
@@ -576,7 +588,7 @@ export default function FixedRoomsPage() {
                 <li key={person.request} data-in-room-person={person.name}>
                   {person.name}（代碼 {person.code}{person.student ? (person.boundBy === "pass" ? "・個人連結" : "・您指定的名單學生") : ""}）・{person.presence ? PRESENCE[person.presence] : "是否在線：Zoom 還沒有回報"}
                   {person.consent && <span data-consent={person.consent}>・{CONSENT[person.consent] ?? person.consent}</span>}
-                  <button type="button" disabled={busy} onClick={() => void act("remove", { room: room.id, request: person.request }, `請「${person.name}」離開這間教室？教室會換到新的 Zoom Session，其他人會自動重新連線；他手上的連結不能再進來。`)}>請出教室</button>
+                  <button type="button" disabled={busy} onClick={() => void act("remove", { room: room.id, request: person.request }, `請「${person.name}」離開這間教室？教室會換到新的 Zoom Session，其他人會自動重新連線。${room.entry === "direct" ? "這間教室是「直接進入」：他可以用同一個連結再進來。要擋住他，請接著按「更換連結」，再把新連結發給教室裡的其他人。" : "他手上的連結不能再進來。"}`)}>請出教室</button>
                 </li>
               ))}
             </ul>

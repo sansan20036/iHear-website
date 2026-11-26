@@ -23,21 +23,27 @@ const POLL_MS = 3_000;
 // Final answers after which the person may enter a name again (a new request).
 const ASK_AGAIN = new Set(["expired", "ended"]);
 
+// Round 18: kept in localStorage (the same browser coming back is the same person); a record an
+// earlier version kept in this tab's sessionStorage still counts.
 function load(roomId: string): Saved | null {
   try {
-    const kept = JSON.parse(sessionStorage.getItem(SAVED(roomId)) ?? "null") as Saved | null;
+    const kept = JSON.parse(localStorage.getItem(SAVED(roomId)) ?? sessionStorage.getItem(SAVED(roomId)) ?? "null") as Saved | null;
     return kept && (!kept.at || Date.now() - kept.at < KEEP_MS) ? kept : null;
   } catch {
     return null;
   }
 }
 function keep(roomId: string, value: Saved) {
-  try { sessionStorage.setItem(SAVED(roomId), JSON.stringify(value)); } catch { /* a private window: this page only */ }
+  try { localStorage.setItem(SAVED(roomId), JSON.stringify(value)); } catch {
+    try { sessionStorage.setItem(SAVED(roomId), JSON.stringify(value)); } catch { /* a private window: this page only */ }
+  }
 }
 
 export default function RoomDoor({ roomId }: { roomId: string }) {
   const [locale, setLocale] = useState<ClassroomLocale>("zhHant");
   const [phase, setPhase] = useState<Phase>("loading");
+  // Round 18: a direct room let this person in with the answer itself: the page is entering.
+  const [entering, setEntering] = useState(false);
   const [name, setName] = useState("");
   const [sending, setSending] = useState(false);
   const [problem, setProblem] = useState("");
@@ -117,6 +123,7 @@ export default function RoomDoor({ roomId }: { roomId: string }) {
       if (response.ok && data?.ok && typeof data.requestId === "string" && typeof data.ticket === "string") {
         saved.current = { key, pass: pass ?? null, requestId: data.requestId, ticket: data.ticket, at: Date.now() };
         keep(roomId, saved.current);
+        setEntering(data.admitted === true);
         setPhase("waiting");
       } else if (data?.code === "LINK_REPLACED") {
         setFinal(text.reasons.LINK_REPLACED);
@@ -157,7 +164,7 @@ export default function RoomDoor({ roomId }: { roomId: string }) {
         )}
         {phase === "waiting" && (
           <div data-room-waiting>
-            <p className="classroom-room-note" role="status">{text.waiting}</p>
+            <p className="classroom-room-note" role="status" {...(entering ? { "data-room-entering": "" } : {})}>{entering ? text.directEntering : text.waiting}</p>
             {problem && <p className="classroom-room-problem" role="alert">{problem}</p>}
           </div>
         )}

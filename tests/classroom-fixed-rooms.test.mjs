@@ -334,6 +334,67 @@ describe("fixed classroom links", () => {
     expect(fixedRoomOf([{ source: "zoom_webhook", type: "server.lesson_scheduled", lessonId: "L-x", fixedRoomId: r.id, occurredAt: 1, key: "k" }])).toBeNull();
     expect(fixedRoomOf([{ source: "server", type: "server.lesson_scheduled", lessonId: "L-x", fixedRoomId: r.id, occurredAt: 1, key: "k" }])).toBe(r.id);
   });
+
+  // Round 18 (the user, 2026-11-26, the plan's points 2 and 3): a name and Join, and you are in.
+  async function directRoom(label = null) {
+    made += 1;
+    const created = await manage("create", { label: label ?? `Direct ${made}`, entry: "direct" });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    return { id: created.body.room.id, label: created.body.room.label, key: keyOf(created.body.link), link: created.body.link };
+  }
+
+  test("FR-D1: a direct room lets a person in with the answer itself, through the owner's own admit (a lesson opens, the name Zoom shows, the ticket opens it); the record says the door did it", async () => {
+    const r = await directRoom();
+    const asked = await ask(r, "Kyle");
+    expect(asked.body).toMatchObject({ ok: true, name: "Kyle", admitted: true });
+    const now = await status(r, asked);
+    expect(now.body).toMatchObject({ ok: true, state: "admitted" });
+    const joined = await join(now.body.lessonId, asked.body.ticket);
+    expect(joined.status, JSON.stringify(joined.body)).toBe(200);
+    expect(joined.body).toMatchObject({ fixedRoom: true, displayName: "Kyle" });
+    const seen = await view(r);
+    expect(seen.entry).toBe("direct");
+    expect(seen.waiting).toEqual([]);
+    expect(seen.inRoom.map(person => person.name)).toEqual(["Kyle"]);
+    const decision = (await store.eventsFor([r.id])).find(event => event.type === "server.room_decision");
+    expect(decision).toMatchObject({ decision: "admitted", actor: "door" });
+  });
+
+  test("FR-D2: in a direct room a second Kyle is Kyle B and a second 小明 is 小明（2）; a full room refuses before anything is kept; taking someone out ends their ticket", async () => {
+    const r = await directRoom();
+    expect(await manage("set_settings", { room: r.id, capacity: 3 })).toMatchObject({ status: 200 });
+    const first = await ask(r, "Kyle"), second = await ask(r, "kyle"), third = await ask(r, "小明");
+    expect([first.body.admitted, second.body.admitted, third.body.admitted]).toEqual([true, true, true]);
+    expect((await view(r)).inRoom.map(person => person.name)).toEqual(["Kyle", "kyle B", "小明"]);
+    const before = (await store.eventsFor([r.id])).length;
+    expect((await ask(r, "Ann")).body.code).toBe("ROOM_FULL");
+    expect((await store.eventsFor([r.id])).length).toBe(before);
+    const kyle = (await view(r)).inRoom.find(person => person.name === "Kyle");
+    expect(await manage("remove", { room: r.id, request: kyle.request })).toMatchObject({ status: 200 });
+    expect((await status(r, first)).body.state).toBe("removed");
+    // The same link still lets a new request in (the owner replaces the link to stop that: point 16).
+    expect((await ask(r, "Kyle")).body).toMatchObject({ ok: true, admitted: true });
+    expect(await manage("replace_link", { room: r.id })).toMatchObject({ status: 200 });
+    expect((await ask(r, "Kyle")).body.code).toBe("LINK_REPLACED");
+  });
+
+  test("FR-D3: the entry is a setting: a room without one (and the API without one) waits for the owner, as before; the owner switches it either way; anything else is refused", async () => {
+    const r = await room();
+    expect((await view(r)).entry).toBe("approval");
+    const waiting = await ask(r, "Ann");
+    expect(waiting.body.admitted).toBeUndefined();
+    expect((await status(r, waiting)).body.state).toBe("waiting");
+    expect(await manage("set_settings", { room: r.id, entry: "direct" })).toMatchObject({ status: 200, body: { settings: { entry: "direct" } } });
+    expect((await ask(r, "Ben")).body.admitted).toBe(true);
+    expect((await status(r, waiting)).body.state).toBe("waiting");
+    expect(await manage("set_settings", { room: r.id, entry: "approval" })).toMatchObject({ status: 200 });
+    expect((await ask(r, "Cara")).body.admitted).toBeUndefined();
+    for (const bad of ["open", "", 1, null]) expect((await manage("set_settings", { room: r.id, entry: bad })).body.code, String(bad)).toBe("INVALID_ENTRY");
+    expect((await manage("create", { label: "Direct Bad", entry: "open" })).body.code).toBe("INVALID_ENTRY");
+    // A setting changed later keeps the entry when it is not given.
+    expect(await manage("set_settings", { room: r.id, entry: "direct" })).toMatchObject({ status: 200 });
+    expect(await manage("set_settings", { room: r.id, minutes: 60 })).toMatchObject({ status: 200, body: { settings: { entry: "direct", minutes: 60 } } });
+  });
 });
 
 // Round 3, phase 4 (2026-11-21): recording in a fixed room. Its lesson has no tutor, so it records
