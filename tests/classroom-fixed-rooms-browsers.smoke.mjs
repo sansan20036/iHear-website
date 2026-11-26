@@ -65,6 +65,8 @@ try {
   admin.on('dialog', dialog => dialog.accept());
   await admin.goto(`${origin}/admin/classrooms/rooms`);
   await admin.getByLabel('教室名稱（例如 Room 1）').fill('Browser Room');
+  // Round 18: rooms made on the page are direct by default; this check is about the owner letting people in.
+  await admin.getByLabel(/直接進入/).uncheck();
   await admin.getByRole('button', { name: '建立教室' }).click();
   const link = (await admin.locator('[data-room-link] code').innerText()).trim();
   await admin.getByRole('button', { name: '我已經記下連結' }).click();

@@ -60,6 +60,8 @@ try {
   await check('G1', '老師建立教室並把學生加入名單：每位學生的個人連結只顯示這一次；名單上有代碼和名字', async () => {
     await admin.goto(`${origin}/admin/classrooms/rooms`);
     await admin.getByLabel('教室名稱（例如 Room 1）').fill('Room G');
+    // Round 18: rooms made on the page are direct by default; this check is about the owner letting people in.
+    await admin.getByLabel(/直接進入/).uncheck();
     await admin.getByRole('button', { name: '建立教室' }).click();
     const shown = admin.locator('[data-room-link] code');
     await expect(shown).toContainText('/classroom/r/FR-');

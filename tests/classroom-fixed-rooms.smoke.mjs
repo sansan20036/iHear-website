@@ -54,6 +54,8 @@ try {
   await check('R1', '老師在後台建立固定教室：連結只顯示這一次', async () => {
     await admin.goto(`${origin}/admin/classrooms/rooms`);
     await admin.getByLabel('教室名稱（例如 Room 1）').fill('Room 1');
+    // Round 18: rooms made on the page are direct by default; this check is about the owner letting people in.
+    await admin.getByLabel(/直接進入/).uncheck();
     await admin.getByRole('button', { name: '建立教室' }).click();
     const shown = admin.locator('[data-room-link] code');
     await expect(shown).toContainText('/classroom/r/FR-');
@@ -80,6 +82,8 @@ try {
     cuttingAnswers = true;
     try {
       await admin.getByLabel('教室名稱（例如 Room 1）').fill('Room 2');
+      // Round 18: rooms made on the page are direct by default; this check is about the owner letting people in.
+      await admin.getByLabel(/直接進入/).uncheck();
       await admin.getByRole('button', { name: '建立教室' }).click();
       await expect(admin.getByText('教室「Room 2」已經建立，但它的連結沒有送到這個頁面（沒有人看過這個連結）。請在這間教室按「更換連結」，取得新的連結。')).toBeVisible();
       await expect(admin.getByLabel('教室名稱（例如 Room 1）')).toHaveValue('Room 2');
@@ -301,6 +305,45 @@ try {
     // and her lesson ended).
     await expect(roomCard().locator('[data-waiting-person]')).toHaveCount(1);
     await expect(roomCard().locator('[data-waiting-person="Bea"]')).toBeVisible();
+  });
+
+  // Round 18 (the user's plan, 2026-11-26, points 2 and 3): a name and Join, and you are in.
+  await check('R8', '直接進入的教室：輸入名字按「進入教室」就到教室頁並進入，老師不用讓他進入；同一個瀏覽器重開連結（新分頁）回到同一個人，不會變成 Dana B', async () => {
+    await admin.goto(`${origin}/admin/classrooms/rooms`);
+    await admin.getByLabel(/直接進入/).check();
+    await admin.getByLabel('教室名稱（例如 Room 1）').fill('Room D');
+    await admin.getByRole('button', { name: '建立教室' }).click();
+    const shown = admin.locator('[data-room-link] code');
+    await expect(shown).toContainText('/classroom/r/FR-');
+    const direct = (await shown.innerText()).trim();
+    await admin.getByRole('button', { name: '我已經記下連結' }).click();
+    const card = admin.locator('[data-room="Room D"]');
+    await expect(card.locator('[data-room-settings-now]')).toHaveAttribute('data-room-settings-now', /:direct$/);
+    const dana = await context({});
+    const first = watch(await dana.newPage(), 'student-dana');
+    await first.goto(direct);
+    await first.getByLabel(/Please enter your first name/).fill('Dana');
+    await first.getByRole('button', { name: '進入教室' }).click();
+    await expect(first).toHaveURL(new RegExp(`${origin}/classroom/L-[0-9a-f]{32}$`));
+    await first.getByRole('button', { name: '進入教室' }).click();
+    await expect(first.locator('.room2-top .classroom-room-connection')).toHaveText('已連線');
+    // Shown by her name alone (no "Student" in a fixed room).
+    await expect(first.locator('.room2-tile-name').filter({ hasText: 'Dana' }).locator('.room2-tile-role')).toHaveCount(0);
+    await admin.reload();
+    await expect(card.locator('[data-in-room-person]')).toHaveCount(1);
+    await expect(card.locator('[data-waiting-person]')).toHaveCount(0);
+    await shot(first, 'r8-direct-in');
+    // The tab closed; the link opened again in the same browser: the same person, the same place.
+    await first.close();
+    const again = watch(await dana.newPage(), 'student-dana-again');
+    await again.goto(direct);
+    await expect(again).toHaveURL(new RegExp(`${origin}/classroom/L-[0-9a-f]{32}$`));
+    await again.getByRole('button', { name: '進入教室' }).click();
+    await expect(again.locator('.room2-top .classroom-room-connection')).toHaveText('已連線');
+    await admin.reload();
+    await expect(card.locator('[data-in-room-person]')).toHaveCount(1);
+    await expect(card.locator('[data-in-room-person="Dana"]')).toBeVisible();
+    await again.close();
   });
 
   await check('R7', '沒有對外請求，頁面沒有非預期的錯誤', async () => {
