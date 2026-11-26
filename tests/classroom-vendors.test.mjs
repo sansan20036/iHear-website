@@ -1668,12 +1668,15 @@ describe("browser adapters", () => {
     expect(playerOf(1).style.props).toEqual({});
     await adapter.leave(); await settle();
     expect(zoom.handlers.get("video-aspect-ratio-change")).toBeUndefined();
-    // The page's rules: a tile is a size container and its player covers it with that shape.
+    // The page's rules: a tile is a size container and its player is exactly the tile (round 18c: Zoom
+    // draws all videos on one canvas, so a player larger than its tile would be drawn over its
+    // neighbours; the cover from round 17 waits for a way real Zoom shows).
     const css = readFileSync(new URL("../app/classroom/[lessonId]/classroom.css", import.meta.url), "utf8");
     // The people's column beside a board or a share (computers only) also fits two tiles in the screen's height.
     expect(css).toContain("clamp(300px, min(32vw, calc((100dvh - 280px) * 0.8889)), 600px)");
     expect(css).toContain(".classroom-media-tile { position: relative; container-type: size; aspect-ratio: 16 / 9;");
-    expect(css).toContain("width: max(100cqw, calc(100cqh * var(--video-ratio, 1.7778))); height: max(100cqh, calc(100cqw / var(--video-ratio, 1.7778))); }");
+    expect(css).toContain(".classroom-media-tile video-player { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }");
+    expect(css).not.toContain("max(100cqw");
   });
 
   test("FILL-2: on a touch screen held upright the page's own video is 9:16 (Zoom does not report it); turning the screen re-shapes it; leaving stops listening", async () => {

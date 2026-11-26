@@ -180,12 +180,12 @@
 .classroom-media-tile[data-spotlight] { order: -5; }
 .classroom-media-tile[data-speaking] { box-shadow: 0 0 0 3px var(--room-orange), 0 0 18px rgba(232, 150, 79, .45); }
 .classroom-media-tile[data-hand] { box-shadow: 0 0 0 3px #ffd28a; }
-/* Round 17 (the user, 2026-11-25: 「我不要空白，我要完全佔據」): a video covers its tile, whatever its
-   shape. The player takes the video's own shape (--video-ratio, from Zoom's video-aspect-ratio-change,
-   16:9 until Zoom says otherwise) and is as large as needed to cover the tile; the tile (overflow:
-   hidden) crops the rest, as a phone held upright (9:16) in a wide tile loses its top and bottom. */
-.classroom-media-tile video-player { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: block;
-  width: max(100cqw, calc(100cqh * var(--video-ratio, 1.7778))); height: max(100cqh, calc(100cqw / var(--video-ratio, 1.7778))); }
+/* Round 18c (third real-Zoom sitting, 2026-11-27): a player is exactly its tile. Zoom draws every
+   video on one canvas over the videos container, at each player's place; a player larger than its
+   tile (round 17's cover, --video-ratio) would be drawn over the tiles beside it, since the tile's
+   overflow cannot crop that canvas. Each-player drawing (inside-render) drew nothing on real Zoom,
+   so "cover" waits for a way real Zoom shows; --video-ratio is still kept on the player for it. */
+.classroom-media-tile video-player { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
 .classroom-media-tile:is([data-video="off"], [data-video="waiting"]) video-player { opacity: 0; }
 .room2-tile { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 10px 10px 46px; color: #fff; text-align: center; pointer-events: none; }
 .room2-avatar { width: clamp(34px, 22cqi, 76px); aspect-ratio: 1; flex: none; display: grid; place-items: center; border-radius: 50%; background: rgba(255, 255, 255, .16); border: 2px solid rgba(255, 255, 255, .5); font-size: clamp(11px, 7cqi, 24px); font-weight: 800; }
@@ -282,6 +282,11 @@
 /* ---------- Tablets and narrow windows: the stage on top, the people in a row ---------- */
 @media (max-width: 1023px) {
   .room2-shell { height: auto; min-height: 100vh; min-height: 100dvh; padding: 10px 14px calc(92px + env(safe-area-inset-bottom)); grid-template-rows: auto auto auto 1fr; }
+  /* Round 18c (the user, third real-Zoom sitting: on a phone a finger on the people did not scroll the
+     page, one on the screen's edge did). Here the people's strip is as tall as its tiles, so it cannot
+     scroll up or down itself, and "contain" kept the page from scrolling as well (Chromium). Up and
+     down go to the page; sideways (the row of people beside a share or board) stays in the strip. */
+  .room2-strip { overscroll-behavior-y: auto; overscroll-behavior-x: contain; }
   .room2-main, .room2:is([data-mode="people"], [data-mode="embed"])[data-panel="none"] .room2-main, .room2:is([data-mode="share"], [data-mode="board"]):not([data-panel="none"]) .room2-main, .room2[data-focus="on"] .room2-main {
     grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto; grid-template-areas: "main" "videos" "panel"; }
   .room2 .room2-videos, .room2:is([data-mode="share"], [data-mode="board"]):not([data-panel="none"]) .room2-videos { grid-area: videos; }

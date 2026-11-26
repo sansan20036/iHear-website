@@ -579,6 +579,67 @@ try {
     });
   }
 
+  // Round 18c (the user, third real-Zoom sitting 2026-11-27: on a phone a swipe over the people did not
+  // scroll the page, one on the screen's edge did). Chromium's own touch path (raw CDP touches, which
+  // obey touch-action and scroll chaining): a finger on a tile scrolls the page as one beside the tiles.
+  await check('student, phone: a finger on the people scrolls the page, as on the edge', async () => {
+    const device = DEVICES.phone;
+    const page = watch(await (await context(device, device.sizes[0])).newPage(), 'student-phone-swipe');
+    await enter(page, lesson.link);
+    await simulate(page, '5 位測試學生進入');
+    await page.locator('details.classroom-room-simulator summary').click();
+    await expect(page.locator('.room2')).toHaveAttribute('data-mode', 'people');
+    await expect(page.locator('.classroom-media-tile')).toHaveCount(6);
+    const cdp = await page.context().newCDPSession(page);
+    const touch = (type, x, y) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y }] });
+    // A finger moving by dy from the given point (16 ms steps), held still ~300 ms before lifting.
+    const swipe = async (x, y, dy) => {
+      await touch('touchStart', x, y);
+      for (let step = 1; step <= 12; step += 1) { await touch('touchMove', x, y + (dy * step) / 12); await page.waitForTimeout(16); }
+      await page.waitForTimeout(300);
+      await touch('touchEnd', x, y + dy);
+      await page.waitForTimeout(400);
+    };
+    const tries = [];
+    for (const where of ['edge', 'tile']) {
+      // The second tile in the middle of the screen; the swipe goes the way the page can move.
+      await page.locator('.classroom-media-tile').nth(1).evaluate((tile) => tile.scrollIntoView({ block: 'center' }));
+      await page.waitForTimeout(300);
+      const start = await page.evaluate((where) => {
+        const tile = document.querySelectorAll('.classroom-media-tile')[1].getBoundingClientRect();
+        const y = Math.round(tile.top + tile.height / 2);
+        const x = where === 'edge' ? 4 : Math.round(tile.left + tile.width / 2);
+        const room = document.documentElement.scrollHeight - window.innerHeight;
+        return { x, y, scrollY: window.scrollY, room, over: document.elementFromPoint(x, y)?.closest('.classroom-media-tile') ? 'tile' : 'not a tile' };
+      }, where);
+      const dy = start.scrollY > start.room / 2 ? 240 : -240;
+      await swipe(start.x, start.y, dy);
+      const moved = Math.abs((await page.evaluate(() => window.scrollY)) - start.scrollY);
+      tries.push({ where, over: start.over, room: start.room, from: start.scrollY, moved });
+    }
+    // What stands under the finger on a tile: each element up to the page, with what decides a swipe.
+    report.swipeChain = await page.evaluate(() => {
+      const tile = document.querySelectorAll('.classroom-media-tile')[1].getBoundingClientRect();
+      let element = document.elementFromPoint(Math.round(tile.left + tile.width / 2), Math.round(tile.top + tile.height / 2));
+      const chain = [];
+      while (element && chain.length < 14) {
+        const style = getComputedStyle(element);
+        chain.push(`${element.tagName.toLowerCase()}.${String(element.className).split(' ').slice(0, 2).join('.')} ta=${style.touchAction} ov=${style.overflowY} ob=${style.overscrollBehaviorY} h=${element.clientHeight}/${element.scrollHeight}`);
+        element = element.parentElement;
+      }
+      return chain;
+    });
+    console.log(`swipe chain: ${JSON.stringify(report.swipeChain)}`);
+    report.swipes = tries;
+    console.log(`swipes: ${JSON.stringify(tries)}`);
+    const [edge, tile] = tries;
+    expect(edge.over).toBe('not a tile');
+    expect(tile.over).toBe('tile');
+    expect(edge.moved).toBeGreaterThan(60);
+    expect(tile.moved).toBeGreaterThan(edge.moved * 0.6);
+    await page.context().close();
+  });
+
   await check('no request left this computer and no page reported an error', async () => {
     expect(report.externalRequests).toEqual([]);
     expect(report.pageProblems).toEqual([]);
