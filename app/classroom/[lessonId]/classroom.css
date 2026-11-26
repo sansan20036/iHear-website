@@ -186,6 +186,10 @@
    overflow cannot crop that canvas. Each-player drawing (inside-render) drew nothing on real Zoom,
    so "cover" waits for a way real Zoom shows; --video-ratio is still kept on the player for it. */
 .classroom-media-tile video-player { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+/* Round 18c, the test-only render choice (lib/classroom-zoom-render.ts): each player draws inside itself,
+   so it may be as large as needed to cover its tile in the video's own shape; the tile crops the rest. */
+.classroom-zoom-videos[data-zoom-render] .classroom-media-tile video-player { inset: auto; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: max(100cqw, calc(100cqh * var(--video-ratio, 1.7778))); height: max(100cqh, calc(100cqw / var(--video-ratio, 1.7778))); }
 .classroom-media-tile:is([data-video="off"], [data-video="waiting"]) video-player { opacity: 0; }
 .room2-tile { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 10px 10px 46px; color: #fff; text-align: center; pointer-events: none; }
 .room2-avatar { width: clamp(34px, 22cqi, 76px); aspect-ratio: 1; flex: none; display: grid; place-items: center; border-radius: 50%; background: rgba(255, 255, 255, .16); border: 2px solid rgba(255, 255, 255, .5); font-size: clamp(11px, 7cqi, 24px); font-weight: 800; }

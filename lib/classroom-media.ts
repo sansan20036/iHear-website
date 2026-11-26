@@ -14,6 +14,7 @@
 // Video SDK key of a trial account.
 
 import type ZoomVideo from "@zoom/videosdk";
+import { zoomRenderChoice } from "./classroom-zoom-render";
 
 import { chatNameOf, chatTextOf, handCommand, parseHandCommand, type ChatFrom, type ChatLine, type RaisedHand } from "./classroom-chat";
 import { shownNameIsSafe } from "./classroom-display-names";
@@ -652,6 +653,8 @@ export type ZoomStream = {
   startAudio(options?: { mute?: boolean }): Promise<unknown>; stopAudio(): Promise<unknown>; muteAudio(): Promise<unknown>; unmuteAudio(): Promise<unknown>;
   isAudioMuted?(): boolean;
   startVideo(): Promise<unknown>; stopVideo(): Promise<unknown>; isCapturingVideo(): boolean;
+  // Round 18c, the test-only render choice: each received video's width and height ("video-detailed-data-change").
+  subscribeVideoStatisticData?(type?: { encode?: boolean; decode?: boolean; detailed?: boolean }): unknown;
   attachVideo(userId: number, quality: number): Promise<unknown>; detachVideo(userId: number): Promise<unknown>;
   // Materials: the tutor shares a screen, window or tab; the other side sees it in a container of its own.
   isStartShareScreenWithVideoElement(): boolean;
@@ -923,6 +926,9 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
   // (its rule: the two are never mixed); the whiteboard and the tutor's own share get plain elements.
   // Classroom 2.0: the videos container may go into a column of its own (`videos`). Either way every
   // part is placed once, here, before anything is drawn, and never moved afterwards.
+  // Round 18c: the test-only render choice (null: Zoom's default drawing).
+  private renderType: number | null = null;
+
   mount(element: HTMLElement, videos?: HTMLElement) {
     const part = (tag: string, name: string, hidden: boolean) => {
       const child = element.ownerDocument.createElement(tag);
@@ -939,6 +945,13 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
       videos.replaceChildren(this.stage.videos);
     } else {
       element.replaceChildren(this.stage.share, this.stage.whiteboard, this.stage.videos, this.stage.ownShare);
+    }
+    // Round 18c: the test-only render choice (lib/classroom-zoom-render.ts); off, Zoom's default.
+    this.renderType = zoomRenderChoice();
+    if (this.renderType !== null) {
+      this.stage.videos.setAttribute("inside-render", "true");
+      this.stage.videos.setAttribute("inside-render-type", String(this.renderType));
+      this.stage.videos.setAttribute("data-zoom-render", String(this.renderType));
     }
     this.peopleTiles = new MediaTiles(this.stage.videos);
   }
@@ -1045,6 +1058,11 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
       // Round 17: Zoom says when a video's real shape differs from its player's (a phone held upright
       // sends 9:16); the player takes that shape and covers its tile (classroom.css).
       listen("video-aspect-ratio-change", (payload) => this.videoShape(payload as { userId?: number; aspectRatio?: number }));
+      // Round 18c, the test-only render choice: the shape also from each received video's size.
+      if (this.renderType !== null) listen("video-detailed-data-change", (payload) => {
+        const seen = payload as { userId?: number; width?: number; height?: number };
+        if (typeof seen?.width === "number" && typeof seen?.height === "number" && seen.height > 0) this.videoShape({ userId: seen.userId, aspectRatio: seen.width / seen.height });
+      });
       // Round 16: the share turn hears of every change of who shares, shown here or not.
       listen("active-share-change", (payload) => void this.remoteShare(payload as { state?: string; userId?: number }).finally(() => this.shareKeysChanged()));
       // The browser's own "stop sharing" button.
@@ -1090,6 +1108,10 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
       await zoom.join(input.sessionName, input.sessionToken, zoomDisplayNameOf(input));
       if (await overtaken()) return;
       this.stream = zoom.getMediaStream();
+      // Round 18c, the test-only render choice: Zoom reports each received video's size once asked to.
+      if (this.renderType !== null) {
+        try { void Promise.resolve(this.stream.subscribeVideoStatisticData?.({ decode: true, detailed: true })).catch(() => undefined); } catch { /* an older SDK */ }
+      }
       for (const ready of [...this.streamWaiters]) ready();
       this.setConnection("connected");
       // Zoom's id for this session, for the server to confirm and then use without webhooks. An

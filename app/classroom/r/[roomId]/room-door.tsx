@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import { browserClassroomLocale, htmlLangOf, type ClassroomLocale } from "../../../../lib/classroom-locale";
 import { ROOM_COPY as COPY } from "./room-copy";
+import { zoomRenderChoice } from "../../../../lib/classroom-zoom-render";
 
 // Classroom 3.0 round 3 (2026-11-21): a fixed room's page. The room's key comes from behind # in the
 // teacher's link; this tab keeps it and takes it out of the address at once. A first name asks to
@@ -42,6 +43,8 @@ function keep(roomId: string, value: Saved) {
 export default function RoomDoor({ roomId }: { roomId: string }) {
   const [locale, setLocale] = useState<ClassroomLocale>("zhHant");
   const [phase, setPhase] = useState<Phase>("loading");
+  // Round 18c: the test-only render choice (?zoom-render=…) is kept for the classroom page this door leads to.
+  useEffect(() => { zoomRenderChoice(); }, []);
   // Round 18: a direct room let this person in with the answer itself: the page is entering.
   const [entering, setEntering] = useState(false);
   const [name, setName] = useState("");

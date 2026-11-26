@@ -1707,7 +1707,9 @@ describe("browser adapters", () => {
     expect(css).toContain("clamp(300px, min(32vw, calc((100dvh - 280px) * 0.8889)), 600px)");
     expect(css).toContain(".classroom-media-tile { position: relative; container-type: size; aspect-ratio: 16 / 9;");
     expect(css).toContain(".classroom-media-tile video-player { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }");
-    expect(css).not.toContain("max(100cqw");
+    // The one cover rule left is the test-only render choice's (RENDER-3).
+    expect(css.match(/max\(100cqw/g)).toHaveLength(1);
+    expect(css).toContain(".classroom-zoom-videos[data-zoom-render] .classroom-media-tile video-player { inset: auto;");
   });
 
   test("FILL-2: on a touch screen held upright the page's own video is 9:16 (Zoom does not report it); turning the screen re-shapes it; leaving stops listening", async () => {
@@ -2234,5 +2236,51 @@ describe("device limits", () => {
     expect(lcicPhone).toMatchObject({ whiteboard: "unknown", documents: "unknown", screenShare: "none", recording: "limited" });
     expect(deviceLimits("tencent-lcic", "desktop").map(limit => limit.name)).toEqual(["fileTransfer", "recording"]);
     expect(Object.values(CLASSROOM_CAPABILITIES.synthetic).every(row => Object.values(row).every(cell => cell.level === "simulated"))).toBe(true);
+  });
+});
+
+// Round 18c (the third real-Zoom sitting, 2026-11-27): a test-only choice of how Zoom draws the videos.
+describe("the test-only render choice (?zoom-render=…)", () => {
+  const page = (hostname, search, stored = new Map()) => {
+    const sessionStorage = { getItem: key => (stored.has(key) ? stored.get(key) : null), setItem: (key, value) => { stored.set(key, String(value)); }, removeItem: key => { stored.delete(key); } };
+    vi.stubGlobal("window", { location: { hostname, search }, sessionStorage });
+    return stored;
+  };
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  test("RENDER-1: never on the live site's domain, whatever the address says; nothing is kept there", async () => {
+    const { zoomRenderChoice } = await import("../lib/classroom-zoom-render.ts");
+    for (const host of ["www.ihearus.org", "ihearus.org", "example.com", "ihear-classroom-p3-test.vercel.app.example.com"]) {
+      const stored = page(host, "?zoom-render=webgl");
+      expect(zoomRenderChoice(), host).toBeNull();
+      expect(stored.size, host).toBe(0);
+    }
+  });
+
+  test("RENDER-2: on the test site's own address or this computer: videotag 1, webgl 2, webgl2 3; kept for the tab; off or an unknown value forgets it", async () => {
+    const { zoomRenderChoice, ZOOM_RENDER_KEY } = await import("../lib/classroom-zoom-render.ts");
+    const stored = page("ihear-classroom-p3-test.vercel.app", "?zoom-render=webgl");
+    expect(zoomRenderChoice()).toBe(2);
+    expect(stored.get(ZOOM_RENDER_KEY)).toBe("webgl");
+    // The classroom page the door leads to has no ?zoom-render: the tab's choice holds.
+    page("ihear-classroom-p3-test.vercel.app", "", stored);
+    expect(zoomRenderChoice()).toBe(2);
+    page("ihear-classroom-p3-test.vercel.app", "?zoom-render=off", stored);
+    expect(zoomRenderChoice()).toBeNull();
+    expect(stored.has(ZOOM_RENDER_KEY)).toBe(false);
+    for (const [asked, type] of [["videotag", 1], ["webgl2", 3], ["webgpu", null], ["constructor", null], ["", null]]) {
+      page("localhost", `?zoom-render=${asked}`, new Map());
+      expect(zoomRenderChoice(), asked).toBe(type);
+    }
+    // A tab with nothing asked and nothing kept: Zoom's default drawing.
+    page("127.0.0.1", "", new Map());
+    expect(zoomRenderChoice()).toBeNull();
+  });
+
+  test("RENDER-3: the page's rules: the cover is only for players Zoom draws inside themselves (the test-only choice); otherwise a player is exactly its tile", () => {
+    const css = readFileSync(new URL("../app/classroom/[lessonId]/classroom.css", import.meta.url), "utf8");
+    expect(css).toContain(".classroom-media-tile video-player { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }");
+    expect(css).toContain(".classroom-zoom-videos[data-zoom-render] .classroom-media-tile video-player { inset: auto;");
+    expect(css.match(/max\(100cqw/g)).toHaveLength(1);
   });
 });
