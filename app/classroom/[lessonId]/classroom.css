@@ -187,11 +187,6 @@
    tile's round corners (Zoom draws its canvas videos with the player's border radius). */
 .classroom-zoom-videos .classroom-media-tile[data-video="shown"], .classroom-zoom-videos .classroom-media-tile.self[data-video="shown"] { background: transparent; }
 .classroom-media-tile video-player { border-radius: inherit; }
-/* Round 18i (eighth real-Zoom sitting, 2026-11-28): Zoom leaves the edges of a canvas-drawn video that
-   does not fill its place in the videos container's background colour (SDK 2.6.0 getRGBA), which was
-   none, so on a phone's row (on the page's light background) they showed white. There they are the
-   tiles' dark blue; the people view stands on its own dark stage already, and computers draw a <video>. */
-@media (max-width: 600px) { .room2:not([data-mode="people"]) .classroom-zoom-videos { background-color: #1d2c55; border-radius: 12px; } }
 /* Round 18h (the user, 2026-11-28: 「說話的人優先」): on a phone the people not picked for the short row
    (classroom-entry.tsx, stripPicks) wait in "N more", which then sits under the row, not over a tile. */
 .classroom-media-tile[data-strip-hidden] { display: none; }
@@ -223,7 +218,9 @@
    <video-player-container> covers the tile (Zoom writes display: block and position: relative on it),
    so Zoom's canvas for that video is the tile's size; the player is larger, in the video's shape, and
    the canvas's edge (or the tile, for a <video>) cuts off the rest. */
-.classroom-media-tile > .classroom-tile-canvas { position: absolute !important; inset: 0; display: block !important; border-radius: inherit; overflow: hidden; }
+/* Round 18k: Zoom fills whatever its canvas does not cover with its container's background colour (SDK 2.6.0
+   getRGBA): the tile's dark blue, inside the tile only (round 18i's dark row beside the tiles is gone). */
+.classroom-media-tile > .classroom-tile-canvas { position: absolute !important; inset: 0; display: block !important; border-radius: inherit; overflow: hidden; background-color: #1d2c55; }
 .classroom-media-tile > .classroom-tile-canvas video-player { inset: auto; left: 50%; top: 50%; transform: translate(-50%, -50%);
   width: max(100cqw, calc(100cqh * var(--video-ratio, 1.7778))); height: max(100cqh, calc(100cqw / var(--video-ratio, 1.7778))); }
 .classroom-media-tile:is([data-video="off"], [data-video="waiting"]) video-player { opacity: 0; }

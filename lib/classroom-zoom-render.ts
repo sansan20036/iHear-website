@@ -27,32 +27,34 @@ export function zoomRenderChoice(): number | null {
   }
 }
 
-// Round 18j (the eighth real-Zoom sitting, 2026-11-28): a TEST-ONLY choice, "the tile's own canvas".
-// On an Android phone Zoom drew the other person's video on the videos container's single canvas,
-// letterboxed although its player said fill-mode="true". With this choice each person's player sits in
-// a <video-player-container> of its own inside the tile, so Zoom draws that video on a canvas the size of
-// the tile; the player is made larger than the tile in the video's shape, and the canvas's edge cuts off
-// the rest: the video fills the tile whatever Zoom does with fill-mode. Off unless turned on from the test
-// site's video check (it reloads the page); only on the test site's own address or this computer.
+// Round 18j (the eighth real-Zoom sitting, 2026-11-28): "the tile's own canvas". On an Android phone Zoom
+// drew the other person's video on the videos container's single canvas, letterboxed. With it each person's
+// player sits in a <video-player-container> of its own inside the tile, so Zoom draws that video on a
+// canvas the size of the tile; the player is made larger than the tile in the video's shape, and the
+// canvas's edge cuts off the rest: the video fills the tile whatever Zoom does with fill-mode.
+// Round 18k (the ninth sitting, 2026-11-28 02:55: it filled; the user chose "like the Zoom app"): on by
+// default on phones and tablets (the page says which, `fallback`); computers draw a <video>, filled by
+// classroom.css. On the test site's own address or this computer the video check may turn it on or off
+// for the tab (it reloads the page); the live site always takes the default.
 export const ZOOM_TILE_CANVAS_KEY = "ihear-zoom-tile-canvas";
 
-export function zoomTileCanvasChoice(): boolean {
-  if (typeof window === "undefined") return false;
+export function zoomTileCanvasChoice(fallback = false): boolean {
+  if (typeof window === "undefined") return fallback;
   const host = window.location.hostname;
-  if (!(host.endsWith(".vercel.app") || host === "localhost" || host === "127.0.0.1")) return false;
+  if (!(host.endsWith(".vercel.app") || host === "localhost" || host === "127.0.0.1")) return fallback;
   try {
-    return window.sessionStorage.getItem(ZOOM_TILE_CANVAS_KEY) === "on";
+    const kept = window.sessionStorage.getItem(ZOOM_TILE_CANVAS_KEY);
+    return kept === "on" ? true : kept === "off" ? false : fallback;
   } catch {
-    return false;
+    return fallback;
   }
 }
 
-/** Turns the choice on or off for this tab and reloads the page, so the room joins again with it. */
+/** Turns it on or off for this tab (the test site only) and reloads the page, so the room joins again. */
 export function setZoomTileCanvas(on: boolean) {
   if (typeof window === "undefined") return;
   try {
-    if (on) window.sessionStorage.setItem(ZOOM_TILE_CANVAS_KEY, "on");
-    else window.sessionStorage.removeItem(ZOOM_TILE_CANVAS_KEY);
+    window.sessionStorage.setItem(ZOOM_TILE_CANVAS_KEY, on ? "on" : "off");
   } catch {
     return;
   }

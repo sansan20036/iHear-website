@@ -362,7 +362,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   const [roomBoardShown, setRoomBoardShown] = useState(true);
   // Round 18f: the online test site's video check, and "fill" off for this page (never on the live site).
   const testTools = useMemo(() => testToolsAllowed(), []);
-  const tileCanvasOn = useMemo(() => zoomTileCanvasChoice(), []);
+  const tileCanvasOn = useMemo(() => zoomTileCanvasChoice(device !== "desktop"), [device]);
   const [videoCheck, setVideoCheck] = useState(false);
   const [fillOff, setFillOff] = useState(false);
   const shareBefore = useRef(media.share);
@@ -523,7 +523,8 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
     let current: ClassroomMediaAdapter;
     try {
       // A phone or tablet draws at most 9 videos, a computer 25 (P3-Multi rooms hold up to 10).
-      current = createMediaAdapter(joined.provider, { maxVideos: deviceRef.current === "desktop" ? MAX_REMOTE_VIDEOS.desktop : MAX_REMOTE_VIDEOS.mobile });
+      // Round 18k: phones and tablets give each video a canvas of its own, so it fills its tile.
+      current = createMediaAdapter(joined.provider, { maxVideos: deviceRef.current === "desktop" ? MAX_REMOTE_VIDEOS.desktop : MAX_REMOTE_VIDEOS.mobile, tileCanvas: deviceRef.current !== "desktop" });
     } catch (error) {
       if (!(error instanceof MediaAdapterUnavailableError)) throw error;
       setMedia((state) => ({ ...state, available: false }));

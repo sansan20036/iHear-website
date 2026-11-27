@@ -1739,8 +1739,9 @@ describe("browser adapters", () => {
     // The page's rules: a tile with a shown video has no background (Zoom's canvas lies under it).
     const css = readFileSync(new URL("../app/classroom/[lessonId]/classroom.css", import.meta.url), "utf8");
     expect(css).toContain('.classroom-zoom-videos .classroom-media-tile[data-video="shown"], .classroom-zoom-videos .classroom-media-tile.self[data-video="shown"] { background: transparent; }');
-    // Round 18i: on a phone's row the edges Zoom leaves are the tiles' dark blue, not the page's white.
-    expect(css).toContain('@media (max-width: 600px) { .room2:not([data-mode="people"]) .classroom-zoom-videos { background-color: #1d2c55;');
+    // Round 18k: the edges Zoom leaves are the tile's dark blue, inside the tile only (not a dark row).
+    expect(css).toContain(".classroom-media-tile > .classroom-tile-canvas { position: absolute !important; inset: 0; display: block !important; border-radius: inherit; overflow: hidden; background-color: #1d2c55; }");
+    expect(css).not.toContain(".room2:not([data-mode=\"people\"]) .classroom-zoom-videos { background-color");
   });
 
   test("FILL-6: with the test-only tile canvas choice, each player sits in a <video-player-container> of its own in the person's tile, is never moved out of it, and goes with it when the video stops", async () => {
@@ -1760,6 +1761,30 @@ describe("browser adapters", () => {
       // The camera goes off: the player and its own container leave the tile.
       zoom.handlers.get("peer-video-state-change")({ action: "Stop", userId: 2 }); await settle();
       expect(tileOf(2).children).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  test("FILL-7: phones and tablets give each video a canvas of its own by default (round 18k); the test site may turn it off; the page's player is made even before Zoom has defined <video-player>", async () => {
+    // Zoom has not defined <video-player> yet (ninth sitting: the other's video came first).
+    vi.stubGlobal("customElements", { get: () => undefined });
+    const stored = new Map();
+    vi.stubGlobal("window", { location: { hostname: "localhost", search: "" }, sessionStorage: { getItem: (key) => stored.get(key) ?? null, setItem: (key, value) => stored.set(key, value), removeItem: (key) => stored.delete(key) } });
+    try {
+      const first = await joined({ others: [{ userId: 2 }] }, { tileCanvas: true });
+      first.zoom.handlers.get("peer-video-state-change")({ action: "Start", userId: 2 }); await settle();
+      const tile = first.videos.children.find(cell => cell.attributes["data-person"] === "2");
+      expect(tile.children[0].className).toBe("classroom-tile-canvas");
+      expect(tile.children[0].children[0].attributes["fill-mode"]).toBe("true");
+      // The test site's video check turned it off for the tab: one canvas again, the page's player still.
+      stored.set("ihear-zoom-tile-canvas", "off");
+      const second = await joined({ others: [{ userId: 2 }] }, { tileCanvas: true });
+      second.zoom.handlers.get("peer-video-state-change")({ action: "Start", userId: 2 }); await settle();
+      const again = second.videos.children.find(cell => cell.attributes["data-person"] === "2");
+      expect(again.children).toHaveLength(1);
+      expect(again.children[0].attributes["data-ihear-fill"]).toBe("");
+      expect(second.videos.attributes["data-zoom-tile-canvas"]).toBeUndefined();
     } finally {
       vi.unstubAllGlobals();
     }

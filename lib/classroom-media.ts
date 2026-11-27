@@ -929,9 +929,10 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
   private boardAllowed: boolean | null = null;
   private toolsKey = "null|null";
 
-  constructor(private readonly load: () => Promise<ZoomVideoSdk> = loadZoomVideoSdkPackage, private readonly now: () => number = Date.now, options: { deviceStartMs?: number; maxVideos?: number; speakingMs?: number; resyncRetryMs?: number; videoCheckMs?: number } = {}) {
+  constructor(private readonly load: () => Promise<ZoomVideoSdk> = loadZoomVideoSdkPackage, private readonly now: () => number = Date.now, options: { deviceStartMs?: number; maxVideos?: number; tileCanvas?: boolean; speakingMs?: number; resyncRetryMs?: number; videoCheckMs?: number } = {}) {
     this.deviceStartMs = options.deviceStartMs ?? DEVICE_START_MS;
     this.maxVideos = options.maxVideos ?? MAX_REMOTE_VIDEOS.desktop;
+    this.tileCanvasDefault = options.tileCanvas === true;
     this.speakingMs = options.speakingMs ?? SPEAKING_MS;
     this.resyncRetryMs = options.resyncRetryMs ?? RESYNC_RETRY_MS;
     this.videoCheckMs = options.videoCheckMs ?? VIDEO_CHECK_MS;
@@ -948,8 +949,10 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
   // part is placed once, here, before anything is drawn, and never moved afterwards.
   // Round 18c: the test-only render choice (null: Zoom's default drawing).
   private renderType: number | null = null;
-  // Round 18j: the test-only "tile's own canvas" choice (false: one canvas for the videos container).
+  // Round 18j/18k: "the tile's own canvas" (false: one canvas for the videos container); by default on
+  // phones and tablets (the page says, options.tileCanvas), which the test site may turn on or off.
   private tileCanvas = false;
+  private readonly tileCanvasDefault: boolean;
 
   mount(element: HTMLElement, videos?: HTMLElement) {
     const part = (tag: string, name: string, hidden: boolean) => {
@@ -976,7 +979,7 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
       this.stage.videos.setAttribute("data-zoom-render", String(this.renderType));
     }
     // Round 18j: the test-only "tile's own canvas" choice (lib/classroom-zoom-render.ts).
-    this.tileCanvas = zoomTileCanvasChoice();
+    this.tileCanvas = zoomTileCanvasChoice(this.tileCanvasDefault);
     if (this.tileCanvas) this.stage.videos.setAttribute("data-zoom-tile-canvas", "");
     this.peopleTiles = new MediaTiles(this.stage.videos);
   }
@@ -2034,7 +2037,10 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
   // (attachVideo's documented third argument: "VideoPlayer Element value: Specified element"). Only once
   // Zoom has defined <video-player>; otherwise Zoom makes the player as before.
   private fillingPlayer(userId: number): VideoPlayer | null {
-    if (!this.peopleTiles || typeof customElements === "undefined" || !customElements.get("video-player")) return null;
+    // Round 18k (ninth sitting: the other person's video joined before Zoom had defined <video-player>, so
+    // Zoom made its own player, without fill-mode): made even then; Zoom checks only its tag name and
+    // upgrades it when it defines the element. Not outside a browser.
+    if (!this.peopleTiles || typeof customElements === "undefined") return null;
     const cell = this.peopleTiles.cellOf(String(userId));
     // Round 18j, the test-only choice: the player in a container of its own, so Zoom gives it a canvas
     // the size of the tile (classroom.css makes the player larger, in the video's shape).
@@ -2248,11 +2254,11 @@ export class LcicEmbedAdapter implements ClassroomMediaAdapter {
   }
 }
 
-export type MediaAdapterOptions = SyntheticOptions & { loadZoomSdk?: () => Promise<ZoomVideoSdk>; maxVideos?: number };
+export type MediaAdapterOptions = SyntheticOptions & { loadZoomSdk?: () => Promise<ZoomVideoSdk>; maxVideos?: number; tileCanvas?: boolean };
 
 export function createMediaAdapter(provider: string, options?: MediaAdapterOptions): ClassroomMediaAdapter {
   if (provider === "synthetic") return new SyntheticMediaAdapter(options);
-  if (provider === "zoom-video-sdk") return new ZoomVideoSdkMediaAdapter(options?.loadZoomSdk, undefined, { maxVideos: options?.maxVideos });
+  if (provider === "zoom-video-sdk") return new ZoomVideoSdkMediaAdapter(options?.loadZoomSdk, undefined, { maxVideos: options?.maxVideos, tileCanvas: options?.tileCanvas });
   if (provider === "tencent-lcic") return new LcicEmbedAdapter();
   throw new MediaAdapterUnavailableError(provider);
 }
