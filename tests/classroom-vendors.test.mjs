@@ -1710,6 +1710,10 @@ describe("browser adapters", () => {
     // The one cover rule left is the test-only render choice's (RENDER-3).
     expect(css.match(/max\(100cqw/g)).toHaveLength(1);
     expect(css).toContain(".classroom-zoom-videos[data-zoom-render] .classroom-media-tile video-player { inset: auto;");
+    // Round 18e (fifth real-Zoom sitting): every person's video fills its tile, cropped (Zoom's
+    // video-player > div > video); a shared screen is never cropped.
+    expect(css).toContain(".classroom-media-tile video-player video { object-fit: cover !important; }");
+    expect(css.match(/object-fit: cover/g)).toHaveLength(1);
   });
 
   test("FILL-2: on a touch screen held upright the page's own video is 9:16 (Zoom does not report it); turning the screen re-shapes it; leaving stops listening", async () => {

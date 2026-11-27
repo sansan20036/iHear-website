@@ -97,6 +97,64 @@ async function layout(page, name, { material = false } = {}) {
   }
   return m;
 }
+// Round 18e (the fifth real-Zoom sitting, 2026-11-27; the user: 「我是要像電腦一樣填滿」): every
+// person's video fills its tile, cropped. Real Zoom puts a <video> in each player (SDK 2.6.0:
+// video-player > div > video, each 100%); the stand-in has none, so this builds that in every tile
+// with a shown video, playing an upright picture (360x640, a phone held upright), and checks that
+// the video is exactly its tile and fills it (object-fit: cover), with a picture to look at.
+async function fills(page, name) {
+  await page.evaluate(() => window.scrollTo(0, 0));
+  const built = await page.evaluate(async () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 360; canvas.height = 640;
+    const pen = canvas.getContext('2d');
+    pen.fillStyle = '#c0392b'; pen.fillRect(0, 0, 360, 640);
+    pen.fillStyle = '#f1c40f'; pen.fillRect(0, 0, 360, 80); pen.fillRect(0, 560, 360, 80);
+    const stream = canvas.captureStream(5);
+    window.__fills = { stream, made: [] };
+    for (const tile of document.querySelectorAll('.classroom-media-tile[data-video="shown"]')) {
+      const player = document.createElement('video-player');
+      const inner = document.createElement('div');
+      inner.style.cssText = 'width: 100%; height: 100%; position: relative; border-radius: inherit;';
+      const video = document.createElement('video');
+      video.muted = true; video.autoplay = true; video.playsInline = true;
+      video.style.width = '100%'; video.style.height = '100%'; video.style.borderRadius = 'inherit';
+      video.srcObject = stream;
+      inner.append(video); player.append(inner); tile.append(player);
+      window.__fills.made.push({ tile, player, video });
+    }
+    await Promise.all(window.__fills.made.map(({ video }) => new Promise((resolve) => {
+      if (video.videoWidth) { resolve(); return; }
+      video.addEventListener('loadedmetadata', () => resolve(), { once: true });
+      setTimeout(resolve, 3000);
+    })));
+    return window.__fills.made.length;
+  });
+  await shot(page, `${name}-fill`);
+  const rows = await page.evaluate(() => {
+    const out = window.__fills.made.map(({ tile, video }) => {
+      // Inside the tile's border (the own tile in the corner has a 2px frame).
+      const v = video.getBoundingClientRect();
+      return { who: tile.classList.contains('self') ? 'self' : 'remote', fit: getComputedStyle(video).objectFit, tile: [tile.clientWidth, tile.clientHeight], video: [Math.round(v.width), Math.round(v.height)], picture: [video.videoWidth, video.videoHeight] };
+    });
+    for (const { player } of window.__fills.made) player.remove();
+    window.__fills.stream.getTracks().forEach((track) => track.stop());
+    delete window.__fills;
+    return out;
+  });
+  report.fills = [...(report.fills ?? []), { name, rows }];
+  const problems = [];
+  if (!built) problems.push('no tile with a shown video');
+  for (const row of rows) {
+    if (row.fit !== 'cover') problems.push(`${row.who}: object-fit ${row.fit}`);
+    if (Math.abs(row.video[0] - row.tile[0]) > 1 || Math.abs(row.video[1] - row.tile[1]) > 1) problems.push(`${row.who}: video ${row.video.join('x')} is not its tile ${row.tile.join('x')}`);
+  }
+  if (problems.length) {
+    report.layoutProblems.push({ name: `${name}-fill`, problems });
+    console.log(`FILL ${name}: ${problems.join('; ')}`);
+    if (!soft) throw new Error(`${name} fill: ${problems.join('; ')}`);
+  }
+}
 const simulate = async (page, scenario) => {
   const panel = page.locator('details.classroom-room-simulator');
   if (!(await panel.evaluate(element => element.open))) await panel.locator('summary').click();
@@ -135,6 +193,7 @@ try {
     await simulate(page, '對方進入');
     await expect(page.locator('.room2')).toHaveAttribute('data-mode', 'people');
     await layout(page, 'student-1440-people');
+    await fills(page, 'student-1440-people');
     // A student has no share or whiteboard buttons, and raises a hand from the toolbar.
     await expect(page.locator('[data-tool="share"], [data-tool="whiteboard"]')).toHaveCount(0);
     await expect(page.getByRole('button', { name: '舉手', exact: true })).toBeVisible();
@@ -553,6 +612,7 @@ try {
       await page.getByRole('button', { name: /^攝影機：/ }).click();
       await simulate(page, '對方進入');
       await layout(page, `${role}-${device.sizes[0][0]}-people`);
+      await fills(page, `${role}-${device.sizes[0][0]}-people`);
       // Phones and tablets cannot share a screen: no share button in the toolbar.
       await expect(page.locator('.room2-bar [data-tool="share"]')).toHaveCount(0);
       await simulate(page, role === 'tutor' ? '對方開啟白板' : '對方分享畫面');
@@ -561,6 +621,7 @@ try {
         await page.setViewportSize({ width: size[0], height: size[1] });
         const m = await layout(page, `${role}-${size[0]}-${role === 'tutor' ? 'whiteboard' : 'share'}-group`, { material: true });
         if (kind === 'phone') expect(m.offStrip).toMatch(/^另 \d+ 位$/);
+        if (size === device.sizes[0]) await fills(page, `${role}-${size[0]}-${role === 'tutor' ? 'whiteboard' : 'share'}-group`);
       }
       await page.getByRole('button', { name: /^聊天/ }).click();
       for (const size of device.sizes) {
