@@ -84,14 +84,24 @@ describe("fixed classroom links", () => {
     expect((await manage("bogus", {})).body.code).toBe("INVALID_ACTION");
   });
 
-  test("FR-3: a request needs the room's current link and a name in Chinese or English (round 16); a wrong key is the same as no room; the answer gives the typed name and a ticket that opens nothing yet", async () => {
+  test("FR-INFO: the door shows the room's name and whether it is recorded to someone holding its current link only (round 18l); an older link says replaced; anything else is no room", async () => {
+    const r = await room("Classroom A");
+    const info = (key, roomId = r.id) => rooms.roomDoorInfo({ store, roomId, key });
+    expect(await info(r.key)).toEqual({ status: 200, body: { ok: true, label: "Classroom A", recorded: false, disabled: false } });
+    expect((await info("not-the-key")).body.code).toBe("NOT_FOUND");
+    expect((await info(r.key, "FR-00000000000000000000000000000000")).body.code).toBe("NOT_FOUND");
+    expect((await info(null)).body.code).toBe("NOT_FOUND");
+    expect(await manage("replace_link", { room: r.id })).toMatchObject({ status: 200 });
+    expect((await info(r.key)).body.code).toBe("LINK_REPLACED");
+  });
+
+  test("FR-3: a request needs the room's current link and an English name (round 18l; Chinese was allowed from round 16); a wrong key is the same as no room; the answer gives the typed name and a ticket that opens nothing yet", async () => {
     const r = await room();
     expect((await ask(r, "Kyle", { key: "not-the-key" })).body.code).toBe("NOT_FOUND");
     expect((await rooms.requestEntry({ store, roomId: "FR-00000000000000000000000000000000", key: r.key, name: "Kyle", now: START })).body.code).toBe("NOT_FOUND");
     expect((await rooms.requestEntry({ store, roomId: "../etc", key: r.key, name: "Kyle", now: START })).body.code).toBe("NOT_FOUND");
-    for (const bad of ["小明2", "小明（2）", "Kyle😀", "Ky\u200Ble", "Кyle", "小".repeat(21)]) expect((await ask(r, bad)).body.code, JSON.stringify(bad)).toBe("INVALID_NAME");
-    expect((await ask(r, "小明")).body).toMatchObject({ ok: true, name: "小明" });
-    expect((await ask(r, "　王　晓明 ")).body).toMatchObject({ ok: true, name: "王 晓明" });
+    for (const bad of ["小明", "王 晓明", "小明2", "小明（2）", "Kyle2", "Kyle😀", "Ky​le", "Кyle", "K".repeat(41)]) expect((await ask(r, bad)).body.code, JSON.stringify(bad)).toBe("INVALID_NAME");
+    expect((await ask(r, "　Mary　Ann ")).body).toMatchObject({ ok: true, name: "Mary Ann" });
     const asked = await ask(r, "  Kyle ");
     expect(asked.body).toMatchObject({ ok: true, name: "Kyle" });
     expect(asked.body.ticket).toMatch(/^[A-Za-z0-9_-]{43}$/);
@@ -142,13 +152,9 @@ describe("fixed classroom links", () => {
     const first = await join(lessonId, kyle.body.ticket), second = await join(lessonId, twin.body.ticket);
     expect(first.body.displayName).toBe("Kyle");
     expect(second.body.displayName).toBe("kyle B");
-    // Round 16: a Chinese name the same way; the second gets "（2）", never folded with 陈 for 陳.
-    const wang = await ask(r, "王小明"), wang2 = await ask(r, "王 小明"), chen = await ask(r, "陳大文"), chen2 = await ask(r, "陈大文");
-    expect([wang.body.name, wang2.body.name, chen.body.name, chen2.body.name]).toEqual(["王小明", "王 小明", "陳大文", "陈大文"]);
-    for (const asked of [wang, wang2, chen, chen2]) await manage("admit", { room: r.id, request: asked.body.requestId });
-    const joinedAs = await Promise.all([wang, wang2, chen, chen2].map((asked) => join(lessonId, asked.body.ticket)));
-    expect(joinedAs.map((answer) => answer.body.displayName)).toEqual(["王小明", "王 小明（2）", "陳大文", "陈大文"]);
-    expect(JSON.stringify(joinedAs.map((answer) => claimsOf(answer.body.session.token)))).not.toMatch(/[王陳陈]/);
+    // Round 18l (the user, 2026-11-28): the door takes English names only; a Chinese one is refused there
+    // (names an earlier version recorded still read back, below).
+    for (const chinese of ["王小明", "陳大文"]) expect((await ask(r, chinese)).body.code).toBe("INVALID_NAME");
     // The token never carries the name; the code stays the person's identity in the lesson.
     expect(JSON.stringify(claimsOf(first.body.session.token))).not.toMatch(/kyle/i);
     expect(first.body.participantCode).toMatch(/^R[0-9a-f]{8}-[0-9a-f]{6}$/);
@@ -392,12 +398,12 @@ describe("fixed classroom links", () => {
     expect(await manage("end_lesson", { room: r.id })).toMatchObject({ status: 200 });
   });
 
-  test("FR-D2: in a direct room a second Kyle is Kyle B and a second 小明 is 小明（2）; a full room refuses before anything is kept; taking someone out ends their ticket", async () => {
+  test("FR-D2: in a direct room a second Kyle is Kyle B (round 18l: names are English); a full room refuses before anything is kept; taking someone out ends their ticket", async () => {
     const r = await directRoom();
     expect(await manage("set_settings", { room: r.id, capacity: 3 })).toMatchObject({ status: 200 });
-    const first = await ask(r, "Kyle"), second = await ask(r, "kyle"), third = await ask(r, "小明");
+    const first = await ask(r, "Kyle"), second = await ask(r, "kyle"), third = await ask(r, "Mei");
     expect([first.body.admitted, second.body.admitted, third.body.admitted]).toEqual([true, true, true]);
-    expect((await view(r)).inRoom.map(person => person.name)).toEqual(["Kyle", "kyle B", "小明"]);
+    expect((await view(r)).inRoom.map(person => person.name)).toEqual(["Kyle", "kyle B", "Mei"]);
     const before = (await store.eventsFor([r.id])).length;
     expect((await ask(r, "Ann")).body.code).toBe("ROOM_FULL");
     expect((await store.eventsFor([r.id])).length).toBe(before);

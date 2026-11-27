@@ -35,7 +35,10 @@ const context = options => localContext(browser, origin, { external: report.exte
 // Refusals the checks provoke on purpose (a replaced link, a revoked key) are not page problems, and
 // neither is the connection R1b cuts on purpose, while it does.
 let cuttingAnswers = false;
+// Round 18l: R2 types a Chinese name on purpose, which the door refuses (400) while it is tried.
+let refusingName = false;
 const expectedRefusal = text => /Failed to load resource: the server responded with a status of (403|409|410)/.test(text)
+  || (refusingName && /Failed to load resource: the server responded with a status of 400/.test(text))
   || (cuttingAnswers && /net::ERR_CONNECTION_FAILED/.test(text));
 function watch(page, who) {
   page.on('console', message => { if (message.type() === 'error' && !expectedRefusal(message.text())) report.pageProblems.push(`${who}: ${message.text()}`); });
@@ -103,9 +106,22 @@ try {
   const kyle = watch(await (await context({})).newPage(), 'student-kyle');
   await check('R2', '學生打開連結：網址裡的金鑰立刻拿掉；輸入英文名字後等待，還沒有進教室', async () => {
     await kyle.goto(link);
-    await expect(kyle.getByLabel(/Please enter your first name \(English or Chinese\)/)).toBeVisible();
+    await expect(kyle.getByLabel(/Your English Name/)).toBeVisible();
     expect(new URL(kyle.url()).hash).toBe('');
-    await kyle.getByLabel(/Please enter your first name/).fill('  Kyle ');
+    // Round 18l (the user, 2026-11-28, the entry page's concept image): a welcome, the classroom's name,
+    // no tick box; the recording notice only where the room's lessons are recorded (not here).
+    await expect(kyle.locator('.classroom-join-welcome')).toHaveText('歡迎來到你的教室');
+    await expect(kyle.locator('[data-room-label] strong')).not.toBeEmpty();
+    await expect(kyle.locator('[data-room-recorded]')).toHaveCount(0);
+    await expect(kyle.locator('input[type="checkbox"]')).toHaveCount(0);
+    await shot(kyle, 'r2-door');
+    // A Chinese name is refused at the door now, with the reason (the 400 it gets is expected here).
+    refusingName = true;
+    await kyle.getByLabel(/Your English Name/).fill('小明');
+    await kyle.getByRole('button', { name: '進入教室' }).click();
+    await expect(kyle.locator('[data-room-problem]')).toContainText('請用英文字母輸入名字');
+    refusingName = false;
+    await kyle.getByLabel(/Your English Name/).fill('  Kyle ');
     await kyle.getByRole('button', { name: '進入教室' }).click();
     await expect(kyle.locator('[data-room-waiting]')).toBeVisible();
     await shot(kyle, 'r2-waiting');
@@ -204,7 +220,7 @@ try {
   await check('R4', '另一個人輸入同一個名字：只是另一位等待中的人（老師看到 kyle B），被婉拒後看到說明，進不了教室', async () => {
     const other = watch(await (await context({})).newPage(), 'student-impostor');
     await other.goto(link);
-    await other.getByLabel(/Please enter your first name/).fill('kyle');
+    await other.getByLabel(/Your English Name/).fill('kyle');
     await other.getByRole('button', { name: '進入教室' }).click();
     await expect(other.locator('[data-room-waiting]')).toBeVisible();
     const waiting = roomCard().locator('[data-waiting-person="kyle B"]');
@@ -214,7 +230,7 @@ try {
     await expect(roomCard().locator('[data-in-room-person]')).toHaveCount(1);
   });
 
-  await check('R5', '更換連結：舊連結輸入名字後看到「連結已經更換」；已經在教室裡的人不受影響；新連結可以用', async () => {
+  await check('R5', '更換連結：舊連結一打開就看到「連結已經更換」；已經在教室裡的人不受影響；新連結可以用', async () => {
     oldLink = link;
     await roomCard().getByRole('button', { name: '更換連結' }).click();
     // Round 18d (the user, 2026-11-27): a link made from a room's card is shown in that card.
@@ -226,13 +242,13 @@ try {
     await admin.getByRole('button', { name: '我已經記下連結' }).click();
     const late = watch(await (await context({})).newPage(), 'student-old-link');
     await late.goto(oldLink);
-    await late.getByLabel(/Please enter your first name/).fill('Ann');
-    await late.getByRole('button', { name: '進入教室' }).click();
+    // Round 18l: the door asks with the link first, so an old link says so before any name is typed.
     await expect(late.locator('[data-room-final]')).toHaveText('這個教室連結已經更換。請向老師要新的連結。');
+    await expect(late.getByLabel(/Your English Name/)).toHaveCount(0);
     await expect(kyle.locator('.room2-top .classroom-room-connection')).toHaveText('已連線');
     ann = watch(await (await context({})).newPage(), 'student-new-link');
     await ann.goto(link);
-    await ann.getByLabel(/Please enter your first name/).fill('Ann');
+    await ann.getByLabel(/Your English Name/).fill('Ann');
     await ann.getByRole('button', { name: '進入教室' }).click();
     await expect(ann.locator('[data-room-waiting]')).toBeVisible();
   });
@@ -246,7 +262,7 @@ try {
     await expect(ann.locator('.room2-top .classroom-room-connection')).toHaveAttribute('data-room-moves', '0');
     const cy = watch(await (await context({})).newPage(), 'student-cy');
     await cy.goto(link);
-    await cy.getByLabel(/Please enter your first name/).fill('Cy');
+    await cy.getByLabel(/Your English Name/).fill('Cy');
     await cy.getByRole('button', { name: '進入教室' }).click();
     await expect(cy.locator('[data-room-waiting]')).toBeVisible();
     await expect(roomCard().locator('[data-waiting-person="Cy"]')).toBeVisible();
@@ -310,7 +326,7 @@ try {
     await expect(roomCard().locator('[data-waiting-person]')).toHaveCount(0);
     const bea = watch(await (await context({})).newPage(), 'student-room-disabled');
     await bea.goto(link);
-    await bea.getByLabel(/Please enter your first name/).fill('Bea');
+    await bea.getByLabel(/Your English Name/).fill('Bea');
     await bea.getByRole('button', { name: '進入教室' }).click();
     await expect(bea.locator('[data-room-problem]')).toHaveText('這間教室目前停用。請向老師確認。');
     await shot(admin, 'r6b-disabled');
@@ -339,7 +355,7 @@ try {
     const dana = await context({});
     const first = watch(await dana.newPage(), 'student-dana');
     await first.goto(direct);
-    await first.getByLabel(/Please enter your first name/).fill('Dana');
+    await first.getByLabel(/Your English Name/).fill('Dana');
     await first.getByRole('button', { name: '進入教室' }).click();
     await expect(first).toHaveURL(new RegExp(`${origin}/classroom/L-[0-9a-f]{32}$`));
     await first.getByRole('button', { name: '進入教室' }).click();

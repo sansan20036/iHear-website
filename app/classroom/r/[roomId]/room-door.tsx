@@ -51,6 +51,8 @@ export default function RoomDoor({ roomId }: { roomId: string }) {
   const [sending, setSending] = useState(false);
   const [problem, setProblem] = useState("");
   const [final, setFinal] = useState("");
+  // Round 18l: the room's name and whether its lessons are recorded, shown before a name is typed.
+  const [info, setInfo] = useState<{ label: string; recorded: boolean } | null>(null);
   const saved = useRef<Saved>({ key: null });
   const text = COPY[locale];
 
@@ -68,6 +70,27 @@ export default function RoomDoor({ roomId }: { roomId: string }) {
     setPhase(saved.current.requestId && saved.current.ticket ? "waiting" : saved.current.key || saved.current.pass ? "form" : "nolink");
   }, [roomId]);
   useEffect(() => { document.documentElement.lang = htmlLangOf(locale); }, [locale]);
+
+  // Round 18l: what the room's link opens (its name, whether it is recorded), asked once with the link.
+  useEffect(() => {
+    if (phase !== "form" || !saved.current.key || saved.current.pass) return;
+    let stopped = false;
+    void (async () => {
+      try {
+        const response = await fetch(`/api/classroom/rooms/${encodeURIComponent(roomId)}/door/info`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: saved.current.key }),
+        });
+        const data = await response.json().catch(() => null);
+        if (stopped) return;
+        if (response.ok && data?.ok && typeof data.label === "string") setInfo({ label: data.label, recorded: data.recorded === true });
+        else if (data?.code === "LINK_REPLACED") { setFinal(text.reasons.LINK_REPLACED); setPhase("done"); }
+        else if (response.status === 404) setProblem(text.reasons.NOT_FOUND);
+      } catch {
+        /* the form still works; the room's name is only shown */
+      }
+    })();
+    return () => { stopped = true; };
+  }, [phase, roomId, text]);
 
   // While waiting: where the request stands, every few seconds (not while the tab is hidden).
   useEffect(() => {
@@ -144,6 +167,7 @@ export default function RoomDoor({ roomId }: { roomId: string }) {
     <main className="classroom-room classroom-join" data-room-door={phase}>
       <section className="classroom-room-card classroom-join-card">
         <h1>{text.title}</h1>
+        <p className="classroom-join-welcome">{text.welcome}</p>
         {phase === "nolink" && <p className="classroom-room-problem" role="alert" data-room-problem="nolink">{text.noLink}</p>}
         {phase === "form" && saved.current.pass && (
           <form className="classroom-join-form" onSubmit={requestEntry} data-room-form="pass">
@@ -154,12 +178,19 @@ export default function RoomDoor({ roomId }: { roomId: string }) {
         )}
         {phase === "form" && !saved.current.pass && (
           <form className="classroom-join-form" onSubmit={requestEntry} data-room-form>
+            {info && (
+              <div className="classroom-join-room" data-room-label>
+                <span>{text.classroom}</span>
+                <strong>{info.label}</strong>
+              </div>
+            )}
             <label htmlFor="classroom-room-name">
               <span lang="en">{text.prompt}</span>
               {text.promptLocal && <span>{text.promptLocal}</span>}
             </label>
-            <input id="classroom-room-name" name="name" autoComplete="name" autoCapitalize="words" spellCheck={false} maxLength={40} required
+            <input id="classroom-room-name" name="name" autoComplete="given-name" autoCapitalize="words" spellCheck={false} maxLength={40} required lang="en" inputMode="text"
               value={name} onChange={(event) => setName(event.target.value)} />
+            {info?.recorded && <p className="classroom-join-recorded" data-room-recorded>{text.recorded}</p>}
             <p className="classroom-join-note">{text.note}</p>
             {problem && <p className="classroom-room-problem" role="alert" data-room-problem>{problem}</p>}
             <button type="submit" className="classroom-room-primary" disabled={sending || !name.trim()}>{sending ? text.entering : text.enter}</button>

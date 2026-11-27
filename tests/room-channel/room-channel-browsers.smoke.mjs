@@ -261,7 +261,7 @@ try {
       const loadAt = Date.now();
       await page.goto(link, { timeout: 45_000 });
       (report.notes.firstLoadMs ??= {})[engine.name] = Date.now() - loadAt;
-      await page.getByLabel(/Please enter your first name/).fill(engine.person);
+      await page.getByLabel(/Your English Name/).fill(engine.person);
       await page.getByRole('button', { name: '進入教室' }).click();
       // The door itself lets the person in and takes the page on to the lesson: the owner's page is not touched.
       await expect(page).toHaveURL(new RegExp(`${origin}/classroom/L-[0-9a-f]{32}$`), { timeout: 30_000 });

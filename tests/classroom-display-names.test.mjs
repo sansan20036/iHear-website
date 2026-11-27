@@ -68,9 +68,14 @@ describe("display names: Chinese and English (round 16)", () => {
     }
   });
 
-  test("DN-7: the door takes the display rule; a room's list of students (names in Drive's file names) keeps English letters only", () => {
-    expect(entryNameOf("王小明")).toBe("王小明");
+  test("DN-7: the door takes an English name (round 18l, the user 2026-11-28), as a room's list of students (names in Drive's file names) does", () => {
+    expect(entryNameOf("王小明")).toBeNull();
+    expect(entryNameOf("陳 Amy")).toBeNull();
     expect(entryNameOf(" Ｋｙｌｅ ")).toBe("Kyle");
+    expect(entryNameOf("  Mary   Ann ")).toBe("Mary Ann");
+    expect(entryNameOf("O’Brien")).toBe("O'Brien");
+    expect(entryNameOf("Kyle2")).toBeNull();
+    expect(entryNameOf("K".repeat(41))).toBeNull();
     expect(rosterNameOf("Kyle")).toBe("Kyle");
     expect(rosterNameOf("王小明")).toBeNull();
     expect(rosterNameOf("陳 Amy")).toBeNull();

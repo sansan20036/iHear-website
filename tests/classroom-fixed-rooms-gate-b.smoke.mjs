@@ -109,7 +109,7 @@ try {
   await check('G3', '用教室連結申請的人：老師指定他是名單上的 Bo（ST-G2），確認後讓他進入；教室裡顯示「您指定的名單學生」', async () => {
     const bo = watch(await (await context({})).newPage(), 'student-room-link');
     await bo.goto(link);
-    await bo.getByLabel(/Please enter your first name/).fill('Bo');
+    await bo.getByLabel(/Your English Name/).fill('Bo');
     await bo.getByRole('button', { name: '進入教室' }).click();
     await expect(bo.locator('[data-room-waiting]')).toBeVisible();
     const waiting = roomCard().locator('[data-waiting-person="Bo"]');

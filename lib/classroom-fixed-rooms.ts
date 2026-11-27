@@ -226,6 +226,22 @@ export async function readRoom(store: ClassroomStore, roomId: unknown): Promise<
 const inRoom = (room: FixedRoom, now: number) => room.requests.filter((request) => requestState(room, request, now) === "admitted");
 const waiting = (room: FixedRoom, now: number) => room.requests.filter((request) => requestState(room, request, now) === "waiting");
 
+// Round 18l (the user, 2026-11-28: the entry page as the concept image, "Classroom A" and the notice that
+// the lesson is recorded): what the door shows before a name is typed. Only to someone holding the
+// room's current link, with the door's own answers otherwise (an older link: replaced; anything else:
+// not found). `recorded`: the room's lessons are recorded (the site may record fixed rooms, and the room
+// is set to), so the page says so before anyone comes in.
+export async function roomDoorInfo({ store, roomId, key }: { store: ClassroomStore; roomId: unknown; key: unknown }) {
+  if (!fixedRoomsEnabled()) return refused(404, "NOT_FOUND", "Not found");
+  const room = await readRoom(store, roomId);
+  if (!room || typeof key !== "string" || !key || !room.links.length) return refused(404, "NOT_FOUND", "Not found");
+  const keyHash = hashKey(key);
+  if (keyHash !== room.links.at(-1)!.keyHash) {
+    return room.links.some((link) => link.keyHash === keyHash) ? refused(410, "LINK_REPLACED", "This link was replaced; ask your teacher for the new one") : refused(404, "NOT_FOUND", "Not found");
+  }
+  return { status: 200, body: { ok: true, label: room.label, recorded: fixedRoomRecordingEnabled() && room.recording, disabled: room.disabled } };
+}
+
 // A person asks to come in: the room's current link and a first name. They wait; the answer holds
 // a ticket only their page keeps (the server keeps its hash), which, once they are let in, is their
 // personal key to the room's lesson. Nothing in the answer says who else is there.
@@ -246,7 +262,7 @@ export async function requestEntry({ store, roomId, key, name, pass, now }: { st
   // gets "not found" above.
   if (room.disabled) return refused(409, "ROOM_DISABLED", "This classroom is not in use now; please check with your teacher");
   const clean = entryNameOf(name);
-  if (!clean) return refused(400, "INVALID_NAME", "Enter your name in Chinese or English letters");
+  if (!clean) return refused(400, "INVALID_NAME", "Enter your name in English letters");
   const present = inRoom(room, now), queued = waiting(room, now);
   if (present.length >= room.capacity) return refused(409, "ROOM_FULL", "The classroom is full now; please ask your teacher");
   if (queued.length >= WAITING_MAX) return refused(409, "TOO_MANY_WAITING", "Many people are waiting; please try again in a moment");

@@ -87,7 +87,7 @@ try {
     const page = await (await windowFor({})).newPage();
     await place(page, index, NAMES.length);
     await page.goto(link);
-    await page.getByLabel(/Please enter your first name/).fill(name);
+    await page.getByLabel(/Your English Name/).fill(name);
     await page.getByRole('button', { name: '進入教室' }).click();
     await page.locator('[data-room-waiting]').waitFor();
     await card.locator(`[data-waiting-person="${name}"]`).getByRole('button', { name: '讓他進入', exact: true }).click();

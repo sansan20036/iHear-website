@@ -71,7 +71,7 @@ try {
       const page = await context.newPage();
       page.on('pageerror', error => report.pageProblems.push(`${profile}: ${error.message}`));
       await page.goto(link);
-      const field = page.getByLabel(/Please enter your first name/);
+      const field = page.getByLabel(/Your English Name/);
       await expect(field).toBeVisible();
       expect(await noSideways(page), 'no sideways scrolling on the name screen').toBe(true);
       const enter = page.getByRole('button', { name: '進入教室' });

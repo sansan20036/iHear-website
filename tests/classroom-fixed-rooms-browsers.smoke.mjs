@@ -107,7 +107,7 @@ try {
 
       // The door: in the browser's language, the key leaves the address at once, typed and sent by keyboard.
       await page.goto(link);
-      const field = page.getByLabel(/Please enter your first name/);
+      const field = page.getByLabel(/Your English Name/);
       await expect(field).toBeVisible();
       expect(new URL(page.url()).hash).toBe('');
       await expect(page.locator('html')).toHaveAttribute('lang', words.lang);

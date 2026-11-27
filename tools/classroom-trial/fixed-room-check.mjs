@@ -270,7 +270,7 @@ try {
     for (const who of ['TestA', 'TestB', 'TestC']) {
       const { page } = people[who];
       await page.goto(roomLink);
-      await page.getByLabel(/Please enter your first name/).fill(who);
+      await page.getByLabel(/Your English Name/).fill(who);
       await page.getByRole('button', { name: '進入教室' }).click();
       await expect(page.locator('[data-room-waiting]')).toBeVisible();
       await card().locator(`[data-waiting-person="${who}"]`).getByRole('button', { name: '讓他進入', exact: true }).click();

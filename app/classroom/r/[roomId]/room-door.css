@@ -10,3 +10,11 @@
 .classroom-join-form input { font: inherit; font-size: 18px; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--room-line, #c9c3b6); min-height: 48px; }
 .classroom-join-note { margin: 0; font-size: 13px; color: var(--room-muted, #5b5547); }
 .classroom-join-again { display: grid; gap: 8px; }
+/* Round 18l (the user, 2026-11-28, the entry page's concept image): a welcome under the title, the
+   classroom's name above the English name, and the notice that its lessons are recorded (no tick box). */
+.classroom-join-welcome { margin: -8px 0 0; color: var(--room-muted, #5b5547); }
+.classroom-join-room { display: grid; gap: 2px; padding: 10px 14px; border-radius: 12px; background: var(--room-soft, #f4f1ea); }
+.classroom-join-room span { font-size: 13px; font-weight: 700; color: var(--room-muted, #5b5547); }
+.classroom-join-room strong { font-size: 18px; }
+.classroom-join-recorded { margin: 0; padding: 8px 12px; border-radius: 10px; background: #eef4ff; color: #1d3a7a; font-size: 14px; line-height: 1.5; }
+.classroom-join-recorded::before { content: "ⓘ "; font-weight: 700; }

@@ -174,7 +174,7 @@ try {
       const own = await context(options);
       const page = watch(await own.newPage(), name);
       await page.goto(link);
-      await page.getByLabel(/Please enter your first name/).fill(name);
+      await page.getByLabel(/Your English Name/).fill(name);
       await page.getByRole('button', { name: '進入教室' }).click();
       await expect(page.locator('[data-room-waiting]')).toBeVisible();
       await roomCard().locator(`[data-waiting-person="${name}"]`).getByRole('button', { name: '讓他進入', exact: true }).click();
@@ -624,7 +624,7 @@ try {
     const asked = [];
     page.on('request', request => { if (request.url().includes('/room-channel')) asked.push(request.url()); });
     await page.goto(offLink);
-    await page.getByLabel(/Please enter your first name/).fill('Kyle');
+    await page.getByLabel(/Your English Name/).fill('Kyle');
     await page.getByRole('button', { name: '進入教室' }).click();
     await expect(page.locator('[data-room-waiting]')).toBeVisible();
     await teacher.locator('[data-room="Room 1"]').locator('[data-waiting-person="Kyle"]').getByRole('button', { name: '讓他進入', exact: true }).click();

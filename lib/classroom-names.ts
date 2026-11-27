@@ -11,15 +11,23 @@
 //     own decision about file names.
 
 import { FILE_NAME_SAFE } from "../tools/recording-pathway/classroom/block-naming.mjs";
-import { distinctName, typedNameOf } from "./classroom-display-names";
+import { distinctName } from "./classroom-display-names";
 
 export { distinctName };
 
 // The longest name on a room's list (FILE_NAME_SAFE allows 60; room is left for " B" and the like).
 const NAME_MAX = 40;
 
-// The name typed at a fixed room's door: Chinese or English, see lib/classroom-display-names.ts.
-export const entryNameOf = (raw: unknown): string | null => typedNameOf(raw);
+// The name typed at a fixed room's door. Round 18l (the user, 2026-11-28: 「輸入自己的英文名字」, the entry
+// page's "Your English Name"): English, the same rule as a room's list and Drive's file names (letters
+// first, then letters, spaces, . and '), at most 40; full-width letters and curly quotes made plain first.
+// It replaces round 16's Chinese-or-English rule for the door (typedNameOf still names other places).
+export function entryNameOf(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const name = raw.normalize("NFKC").replace(/[’‘ʼ]/g, "'").trim().replace(/\s+/g, " ");
+  if (!name || name.length > NAME_MAX || !FILE_NAME_SAFE.test(name)) return null;
+  return name;
+}
 
 // A student's first name on a room's list: spaces tidied; English letters first, then letters,
 // spaces, . and ' (the block's rule for names in Drive's file names: "-" and "_" separate a file

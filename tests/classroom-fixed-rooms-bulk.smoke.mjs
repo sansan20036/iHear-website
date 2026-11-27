@@ -109,7 +109,7 @@ try {
   const kyle = watch(await (await context({})).newPage(), 'student-kyle');
   await check('B3', '清單裡 Room3 的連結能用；「只顯示有人的教室」只留下 Room3；用名稱找教室', async () => {
     await kyle.goto(first[2][1]);
-    await kyle.getByLabel(/Please enter your first name/).fill('Kyle');
+    await kyle.getByLabel(/Your English Name/).fill('Kyle');
     await kyle.getByRole('button', { name: '進入教室' }).click();
     await expect(kyle.locator('[data-room-waiting]')).toBeVisible();
     await expect(admin.locator('[data-room="Room3"] [data-waiting-person="Kyle"]')).toBeVisible();
@@ -167,12 +167,12 @@ try {
     await expect(admin.locator('[data-room="Room1"]')).toContainText('連結第 2 版');
     const late = watch(await (await context({})).newPage(), 'student-old-link');
     await late.goto(first[0][1]);
-    await late.getByLabel(/Please enter your first name/).fill('Ann');
+    await late.getByLabel(/Your English Name/).fill('Ann');
     await late.getByRole('button', { name: '進入教室' }).click();
     await expect(late.locator('[data-room-final]')).toHaveText('這個教室連結已經更換。請向老師要新的連結。');
     const fresh = watch(await (await context({})).newPage(), 'student-new-link');
     await fresh.goto(second[0][1]);
-    await fresh.getByLabel(/Please enter your first name/).fill('Ann');
+    await fresh.getByLabel(/Your English Name/).fill('Ann');
     await fresh.getByRole('button', { name: '進入教室' }).click();
     await expect(fresh.locator('[data-room-waiting]')).toBeVisible();
     await expect(admin.locator('[data-room="Room1"] [data-waiting-person="Ann"]')).toBeVisible();
@@ -257,7 +257,7 @@ try {
   const tryLink = async (address, name) => {
     const page = watch(await (await context({})).newPage(), `student-${name}`);
     await page.goto(address);
-    await page.getByLabel(/Please enter your first name/).fill(name);
+    await page.getByLabel(/Your English Name/).fill(name);
     await page.getByRole('button', { name: '進入教室' }).click();
     const result = await Promise.race([
       page.locator('[data-room-waiting]').waitFor().then(() => 'waiting'),

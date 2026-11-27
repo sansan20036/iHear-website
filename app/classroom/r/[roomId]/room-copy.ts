@@ -1,11 +1,14 @@
 // Classroom 3.0 round 3 (2026-11-21): the words of a fixed room's page (/classroom/r/<room>), three
 // languages. The prompt stays in English in every language, as the iHear teacher asked.
 // Round 16 (2026-11-24, the user): a name may be Chinese (Traditional or Simplified) or English.
+// Round 18l (2026-11-28, the user, with the entry page's concept image): an English name only; the
+// page welcomes, names the classroom, and says when its lessons are recorded (a notice, no tick box).
 
 export const ROOM_COPY = {
   zhHant: {
-    title: "iHear 線上教室", prompt: "Please enter your first name (English or Chinese)", promptLocal: "請輸入你的名字（中文或英文）",
-    note: "名字只用來讓老師認出你，不是登入。", enter: "進入教室", entering: "送出中…",
+    title: "iHear 線上教室", welcome: "歡迎來到你的教室", classroom: "教室", prompt: "Your English Name", promptLocal: "請輸入你的英文名字",
+    recorded: "本堂課程將自動錄影，並儲存至 iHear 指定的 Google Drive。",
+    note: "名字只用來顯示，讓大家認出你，不是登入。", enter: "進入教室", entering: "送出中…",
     waiting: "已經通知老師。老師讓你進入後，這個頁面會自動帶你進教室。請不要關掉這個頁面。",
     directEntering: "正在進入教室…",
     admitted: "老師已經讓你進入，正在帶你進教室…",
@@ -26,7 +29,7 @@ export const ROOM_COPY = {
     reasons: {
       NOT_FOUND: "找不到這間教室。請確認你用的是老師給你的完整連結。",
       LINK_REPLACED: "這個教室連結已經更換。請向老師要新的連結。",
-      INVALID_NAME: "請用中文或英文字母輸入名字（可以有空格、. 、' 和 ·），中文最多 20 個字，英文最多 40 個字母。不能用數字、括號或表情符號。",
+      INVALID_NAME: "請用英文字母輸入名字（可以有空格、. 和 '），最多 40 個字母。不能用中文、數字、括號或表情符號。",
       ROOM_FULL: "教室已經滿了。請聯絡老師。",
       TOO_MANY_WAITING: "等待的人很多，請過一會兒再試。",
       NAME_TAKEN: "同名的人太多了，請加上姓氏（或英文姓氏的第一個字母）。",
@@ -34,8 +37,9 @@ export const ROOM_COPY = {
     } as Record<string, string>,
   },
   en: {
-    title: "iHear Classroom", prompt: "Please enter your first name (English or Chinese)", promptLocal: "",
-    note: "Your name only helps your teacher recognize you; it is not a sign-in.", enter: "Join Classroom", entering: "Sending…",
+    title: "iHear Classroom", welcome: "Welcome to your classroom", classroom: "Classroom", prompt: "Your English Name", promptLocal: "",
+    recorded: "This lesson is recorded automatically and saved to iHear's Google Drive.",
+    note: "Your name is only shown so others recognize you; it is not a sign-in.", enter: "Join Classroom", entering: "Sending…",
     waiting: "Your teacher has been told. Once they let you in, this page takes you into the classroom. Please keep this page open.",
     directEntering: "Entering the classroom…",
     admitted: "Your teacher let you in; taking you to the classroom…",
@@ -56,7 +60,7 @@ export const ROOM_COPY = {
     reasons: {
       NOT_FOUND: "This classroom cannot be found. Please check that you used the full link your teacher gave you.",
       LINK_REPLACED: "This classroom link has been replaced. Please ask your teacher for the new link.",
-      INVALID_NAME: "Please use English letters or Chinese characters (spaces, ., ' and · are fine): at most 40 letters or 20 Chinese characters, no digits, brackets or emoji.",
+      INVALID_NAME: "Please use English letters (spaces, . and ' are fine), at most 40: no Chinese characters, digits, brackets or emoji.",
       ROOM_FULL: "The classroom is full. Please contact your teacher.",
       TOO_MANY_WAITING: "Many people are waiting; please try again in a moment.",
       NAME_TAKEN: "Too many people have this name; add the first letter of your family name.",
@@ -64,8 +68,9 @@ export const ROOM_COPY = {
     } as Record<string, string>,
   },
   zhHans: {
-    title: "iHear 在线教室", prompt: "Please enter your first name (English or Chinese)", promptLocal: "请输入你的名字（中文或英文）",
-    note: "名字只用来让老师认出你，不是登录。", enter: "进入教室", entering: "发送中…",
+    title: "iHear 在线教室", welcome: "欢迎来到你的教室", classroom: "教室", prompt: "Your English Name", promptLocal: "请输入你的英文名字",
+    recorded: "本堂课程将自动录影，并储存至 iHear 指定的 Google Drive。",
+    note: "名字只用来显示，让大家认出你，不是登录。", enter: "进入教室", entering: "发送中…",
     waiting: "已经通知老师。老师让你进入后，这个页面会自动带你进教室。请不要关掉这个页面。",
     directEntering: "正在进入教室…",
     admitted: "老师已经让你进入，正在带你进教室…",
@@ -86,7 +91,7 @@ export const ROOM_COPY = {
     reasons: {
       NOT_FOUND: "找不到这间教室。请确认你用的是老师给你的完整链接。",
       LINK_REPLACED: "这个教室链接已经更换。请向老师要新的链接。",
-      INVALID_NAME: "请用中文或英文字母输入名字（可以有空格、. 、' 和 ·），中文最多 20 个字，英文最多 40 个字母。不能用数字、括号或表情符号。",
+      INVALID_NAME: "请用英文字母输入名字（可以有空格、. 和 '），最多 40 个字母。不能用中文、数字、括号或表情符号。",
       ROOM_FULL: "教室已经满了。请联系老师。",
       TOO_MANY_WAITING: "等待的人很多，请过一会儿再试。",
       NAME_TAKEN: "同名的人太多了，请加上姓氏（或英文姓氏的第一个字母）。",
