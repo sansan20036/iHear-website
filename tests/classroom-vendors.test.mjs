@@ -1730,6 +1730,7 @@ describe("browser adapters", () => {
       zoom.handlers.get("peer-video-state-change")({ action: "Start", userId: 2 }); await settle();
       const player = zoom.players.filter(video => video.tag === "video:2").at(-1);
       expect(player.attributes["fill-mode"]).toBe("true");
+      expect(player.attributes["data-ihear-fill"]).toBe("");
       // Exactly once: never appended again (moving a <video-player> restarts Zoom's video).
       expect(tileOf(2).children).toEqual([player]);
     } finally {
@@ -1738,6 +1739,8 @@ describe("browser adapters", () => {
     // The page's rules: a tile with a shown video has no background (Zoom's canvas lies under it).
     const css = readFileSync(new URL("../app/classroom/[lessonId]/classroom.css", import.meta.url), "utf8");
     expect(css).toContain('.classroom-zoom-videos .classroom-media-tile[data-video="shown"], .classroom-zoom-videos .classroom-media-tile.self[data-video="shown"] { background: transparent; }');
+    // Round 18i: on a phone's row the edges Zoom leaves are the tiles' dark blue, not the page's white.
+    expect(css).toContain('@media (max-width: 600px) { .room2:not([data-mode="people"]) .classroom-zoom-videos { background-color: #1d2c55;');
   });
 
   test("FILL-2: on a touch screen held upright the page's own video is 9:16 (Zoom does not report it); turning the screen re-shapes it; leaving stops listening", async () => {

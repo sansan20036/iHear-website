@@ -2014,6 +2014,8 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     const cell = this.peopleTiles.cellOf(String(userId));
     const player = cell.ownerDocument.createElement("video-player");
     player.setAttribute("fill-mode", "true");
+    // For the test site's video check (round 18i): this player is the page's own.
+    player.setAttribute("data-ihear-fill", "");
     cell.append(player);
     return player as unknown as VideoPlayer;
   }

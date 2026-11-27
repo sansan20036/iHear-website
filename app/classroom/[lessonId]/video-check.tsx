@@ -26,22 +26,40 @@ function videoOf(element: HTMLVideoElement) {
   ].join(" ");
 }
 
-function lineOf(tile: HTMLElement): Line {
-  const who = tile.querySelector(".room2-tile-name")?.textContent?.trim() || tile.dataset.person || "?";
-  const player = tile.querySelector("video-player");
-  if (!player) return { who, video: tile.dataset.video ?? "?", detail: "no player" };
+// Round 18i (the eighth real-Zoom sitting: the computer's video on an Android phone was letterboxed):
+// every player in the tile, whether the page made it (data-ihear-fill), its fill-mode, and what Zoom
+// says of it (its render kind and the fill it read), read from Zoom's own element, if it says.
+function playerOf(player: Element, index: number) {
+  const zoom = player as Element & { render?: { renderType?: unknown }; debugRenderLabel?: (type: unknown) => unknown; getRenderParams?: () => { fillMode?: unknown } };
+  let kind: unknown = "?";
+  let read: unknown = "?";
+  try {
+    const type = zoom.render?.renderType;
+    kind = typeof zoom.debugRenderLabel === "function" && type !== undefined ? zoom.debugRenderLabel(type) : type ?? "none";
+    read = typeof zoom.getRenderParams === "function" ? zoom.getRenderParams()?.fillMode : "?";
+  } catch {
+    kind = "unreadable";
+  }
   const box = player.getBoundingClientRect();
   const parts = [...player.querySelectorAll("video, canvas")].map((element) =>
     element instanceof HTMLVideoElement ? videoOf(element) : `canvas ${(element as HTMLCanvasElement).width}x${(element as HTMLCanvasElement).height}`);
-  const inside = parts.length ? parts.join(" | ") : `player holds ${[...player.querySelectorAll("*")].map((element) => element.tagName.toLowerCase()).join(">") || "nothing"}`;
-  return { who, video: tile.dataset.video ?? "?", detail: `player ${Math.round(box.width)}x${Math.round(box.height)} · ${inside}` };
+  const inside = parts.length ? parts.join(" | ") : `holds ${[...player.querySelectorAll("*")].map((element) => element.tagName.toLowerCase()).join(">") || "nothing"}`;
+  return `p${index + 1}${player.hasAttribute("data-ihear-fill") ? " ours" : " zoom's"} node ${player.getAttribute("node-id") ?? "-"} fill-mode ${player.getAttribute("fill-mode") ?? "-"} (Zoom read ${String(read)}) kind ${String(kind)} ${Math.round(box.width)}x${Math.round(box.height)} · ${inside}`;
+}
+
+function lineOf(tile: HTMLElement): Line {
+  const who = tile.querySelector(".room2-tile-name")?.textContent?.trim() || tile.dataset.person || "?";
+  const players = [...tile.querySelectorAll("video-player")];
+  if (!players.length) return { who, video: tile.dataset.video ?? "?", detail: "no player" };
+  return { who, video: tile.dataset.video ?? "?", detail: `${players.length} player(s): ${players.map(playerOf).join(" || ")}` };
 }
 
 function containerLine() {
   const container = document.querySelector<HTMLElement>(".classroom-zoom-videos");
   if (!container) return "videos container: none (not Zoom)";
   const canvas = container.shadowRoot?.querySelector("canvas");
-  return `videos container: display ${getComputedStyle(container).display}, Zoom canvas ${canvas ? `${canvas.width}x${canvas.height}` : "none"}`;
+  const style = getComputedStyle(container);
+  return `videos container: display ${style.display}, background ${style.backgroundColor}, Zoom canvas ${canvas ? `${canvas.width}x${canvas.height}` : "none"}`;
 }
 
 export function VideoCheck({ fill, onFill, onClose, text }: {
