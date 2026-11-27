@@ -14,6 +14,7 @@
 // Video SDK key of a trial account.
 
 import type ZoomVideo from "@zoom/videosdk";
+import type { VideoPlayer } from "@zoom/videosdk";
 import { zoomRenderChoice } from "./classroom-zoom-render";
 
 import { chatNameOf, chatTextOf, handCommand, parseHandCommand, type ChatFrom, type ChatLine, type RaisedHand } from "./classroom-chat";
@@ -655,7 +656,7 @@ export type ZoomStream = {
   startVideo(): Promise<unknown>; stopVideo(): Promise<unknown>; isCapturingVideo(): boolean;
   // Round 18c, the test-only render choice: each received video's width and height ("video-detailed-data-change").
   subscribeVideoStatisticData?(type?: { encode?: boolean; decode?: boolean; detailed?: boolean }): unknown;
-  attachVideo(userId: number, quality: number): Promise<unknown>; detachVideo(userId: number): Promise<unknown>;
+  attachVideo(userId: number, quality: number, element?: VideoPlayer): Promise<unknown>; detachVideo(userId: number): Promise<unknown>;
   // Materials: the tutor shares a screen, window or tab; the other side sees it in a container of its own.
   isStartShareScreenWithVideoElement(): boolean;
   startShareScreen(target: HTMLCanvasElement | HTMLVideoElement): Promise<unknown>;
@@ -1983,18 +1984,38 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     if (this.tiles.size >= this.maxVideos) { this.waitingVideos.add(userId); return; }
     // Claimed before the wait, so Zoom's report and the finished call never draw one video twice.
     this.tiles.set(userId, null);
+    const own = this.fillingPlayer(userId);
     try {
-      const element = await this.stream.attachVideo(userId, this.tiles.size > 3 ? VIDEO_360P : VIDEO_720P);
+      const element = await this.stream.attachVideo(userId, this.tiles.size > 3 ? VIDEO_360P : VIDEO_720P, ...(own ? [own] : []));
       this.tiles.set(userId, element);
       if (userId === this.client?.getCurrentUserInfo()?.userId) this.shapeOwnVideo(userId);
       else shapePlayer(element, this.videoShapes.get(userId) ?? null);
-      // Into the person's own tile inside the videos container (Zoom's documented pattern).
-      if (isNode(element)) (this.peopleTiles?.cellOf(String(userId)) ?? this.stage.videos).append(element);
+      // Into the person's own tile inside the videos container (Zoom's documented pattern). A player
+      // already there (round 18g: the page made it) is not moved: moving a <video-player> makes Zoom
+      // stop and start its video again (disconnected, then connected).
+      const home = this.peopleTiles?.cellOf(String(userId)) ?? this.stage.videos;
+      if (isNode(element) && (element as unknown as { parentNode?: unknown }).parentNode !== home) home.append(element);
     } catch (error) {
       this.tiles.delete(userId);
+      if (own && typeof (own as ChildNode).remove === "function") (own as ChildNode).remove();
       throw error;
     }
     this.reportPeople();
+  }
+
+  // Round 18g (the seventh real-Zoom sitting, 2026-11-28): on an Android phone Zoom drew the other
+  // person's video on its own canvas under the tiles (the player held no <video>), where it does not
+  // fill its place unless the player says fill-mode="true" (SDK 2.6.0 reads it when the video starts,
+  // getParsedParams). So the player is made here with it, in the person's tile, and given to Zoom
+  // (attachVideo's documented third argument: "VideoPlayer Element value: Specified element"). Only once
+  // Zoom has defined <video-player>; otherwise Zoom makes the player as before.
+  private fillingPlayer(userId: number): VideoPlayer | null {
+    if (!this.peopleTiles || typeof customElements === "undefined" || !customElements.get("video-player")) return null;
+    const cell = this.peopleTiles.cellOf(String(userId));
+    const player = cell.ownerDocument.createElement("video-player");
+    player.setAttribute("fill-mode", "true");
+    cell.append(player);
+    return player as unknown as VideoPlayer;
   }
 
   // Round 16 (the fixed room's share turn): who shares now by participant id, whose share is shown.

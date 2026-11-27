@@ -623,8 +623,10 @@ describe("browser adapters", () => {
         capturing = true;
       },
       stopVideo: async () => { calls.push("stopVideo"); capturing = false; }, isCapturingVideo: () => capturing,
-      attachVideo: async (userId, quality) => {
+      attachVideo: async (userId, quality, given) => {
         calls.push(`attach:${userId}`); qualities.push([userId, quality]);
+        // Round 18g: a player the page made itself is the one Zoom uses (attachVideo's third argument).
+        if (given) { given.tag = `video:${userId}`; players.push(given); return given; }
         const video = { nodeType: 1, tag: `video:${userId}`, parentNode: null, remove() { if (video.parentNode) video.parentNode.children = video.parentNode.children.filter(child => child !== video); video.parentNode = null; },
           // Round 17: the player's inline style, as far as the page sets it (the video's shape).
           style: { props: {}, setProperty(name, value) { this.props[name] = value; }, removeProperty(name) { delete this.props[name]; } } };
@@ -1718,6 +1720,24 @@ describe("browser adapters", () => {
     // Round 18f (sixth real-Zoom sitting): Zoom's container writes display: block on itself; the
     // people's grid stays (a phone with a board open showed the tiles stacked full width).
     expect(css).toContain(".room2-videos-host > :not([hidden]) { display: grid !important; }");
+  });
+
+  test("FILL-5: once Zoom has defined <video-player>, the page makes each player itself with fill-mode=\"true\", in the person's tile, and gives it to Zoom (seventh sitting: Zoom drew the other's video on its canvas there)", async () => {
+    vi.stubGlobal("customElements", { get: (name) => (name === "video-player" ? class {} : undefined) });
+    try {
+      const { zoom, videos } = await joined({ others: [{ userId: 2 }, { userId: 3 }] });
+      const tileOf = (id) => videos.children.find(cell => cell.attributes["data-person"] === String(id));
+      zoom.handlers.get("peer-video-state-change")({ action: "Start", userId: 2 }); await settle();
+      const player = zoom.players.filter(video => video.tag === "video:2").at(-1);
+      expect(player.attributes["fill-mode"]).toBe("true");
+      // Exactly once: never appended again (moving a <video-player> restarts Zoom's video).
+      expect(tileOf(2).children).toEqual([player]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    // The page's rules: a tile with a shown video has no background (Zoom's canvas lies under it).
+    const css = readFileSync(new URL("../app/classroom/[lessonId]/classroom.css", import.meta.url), "utf8");
+    expect(css).toContain('.classroom-media-tile[data-video="shown"], .classroom-media-tile.self[data-video="shown"] { background: transparent; }');
   });
 
   test("FILL-2: on a touch screen held upright the page's own video is 9:16 (Zoom does not report it); turning the screen re-shapes it; leaving stops listening", async () => {

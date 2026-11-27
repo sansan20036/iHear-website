@@ -180,6 +180,13 @@
 
 .classroom-media-tile { position: relative; container-type: size; aspect-ratio: 16 / 9; border-radius: 14px; overflow: hidden; background: linear-gradient(140deg, #34508f, #1d2c55); }
 .classroom-media-tile.self { background: linear-gradient(140deg, #3f8c8c, #24566a); order: 5; }
+/* Round 18g (seventh real-Zoom sitting, 2026-11-28; the test site's video check on an Android phone):
+   Zoom drew the other person's video on its own canvas, which lies under the tiles (the player held no
+   <video>), and the tile's background hid it. A tile with a shown video has no background of its own,
+   so that canvas shows through; a <video> in the player covers the tile as before. The player keeps the
+   tile's round corners (Zoom draws its canvas videos with the player's border radius). */
+.classroom-media-tile[data-video="shown"], .classroom-media-tile.self[data-video="shown"] { background: transparent; }
+.classroom-media-tile video-player { border-radius: inherit; }
 .classroom-media-tile[data-host="true"]:not(.self) { order: -2; }
 .classroom-media-tile[data-spotlight] { order: -5; }
 .classroom-media-tile[data-speaking] { box-shadow: 0 0 0 3px var(--room-orange), 0 0 18px rgba(232, 150, 79, .45); }
