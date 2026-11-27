@@ -209,9 +209,6 @@ const RESYNC_RETRY_MS = 2_000;
 // microphone, raised hand and the rest into them. Only plain facts go on a tile, never words.
 export class MediaTiles {
   private readonly cells = new Map<string, HTMLElement>();
-  // Round 18d (the fourth real-Zoom sitting, 2026-11-27): the shape of the video in a person's tile
-  // (--video-ratio), kept for a tile that comes later; classroom.css lets a large tile take it.
-  private readonly shapes = new Map<string, number>();
   constructor(private readonly container: HTMLElement) {}
 
   // A tile for each person now in the room, in the order they came; the tiles of people who left go.
@@ -221,7 +218,6 @@ export class MediaTiles {
       if (here.has(id)) continue;
       cell.remove();
       this.cells.delete(id);
-      this.shapes.delete(id);
     }
     for (const person of people) {
       const cell = this.cellOf(person.id);
@@ -240,32 +236,13 @@ export class MediaTiles {
       cell.setAttribute("data-person", id);
       this.cells.set(id, cell);
       this.container.append(cell);
-      const known = this.shapes.get(id);
-      if (known != null) MediaTiles.shapeCell(cell, known);
     }
     return cell;
-  }
-
-  /** The shape of the video now in this person's tile, or null when there is none (round 18d). */
-  shape(id: string, ratio: number | null) {
-    if (ratio == null) this.shapes.delete(id);
-    else this.shapes.set(id, ratio);
-    const cell = this.cells.get(id);
-    if (cell) MediaTiles.shapeCell(cell, ratio);
-  }
-
-  // The tile's shape, and data-shape "tall" (a phone held upright) or "wide": on a phone or a tablet the
-  // own tile goes below a wide video and stays in the corner of a tall one (classroom.css).
-  private static shapeCell(cell: HTMLElement, ratio: number | null) {
-    shapePlayer(cell, ratio);
-    if (ratio == null) cell.removeAttribute?.("data-shape");
-    else cell.setAttribute("data-shape", ratio < 1 ? "tall" : "wide");
   }
 
   clear() {
     for (const cell of this.cells.values()) cell.remove();
     this.cells.clear();
-    this.shapes.clear();
   }
 }
 
@@ -754,11 +731,7 @@ export function ownVideoRatio(): number | null {
   }
 }
 
-/**
- * A video's shape (--video-ratio) on its player and, round 18d, on its person's tile: classroom.css
- * lets a large tile take that shape, so the video fills it on Zoom's own drawing (Zoom's guide sets
- * the video-player's aspect-ratio the same way), with nothing cut off.
- */
+/** The player takes the video's shape (--video-ratio); classroom.css makes it cover its tile. */
 function shapePlayer(element: unknown, ratio: number | null) {
   const style = (element as { style?: { setProperty?: (name: string, value: string) => void; removeProperty?: (name: string) => void } } | null)?.style;
   if (!style?.setProperty) return;
@@ -1085,10 +1058,8 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
       // Round 17: Zoom says when a video's real shape differs from its player's (a phone held upright
       // sends 9:16); the player takes that shape and covers its tile (classroom.css).
       listen("video-aspect-ratio-change", (payload) => this.videoShape(payload as { userId?: number; aspectRatio?: number }));
-      // The shape also from each received video's size (Zoom's reference: userId, width, height). Round
-      // 18d: always, since the event above did not come on Zoom's own drawing (second sitting, 11/26)
-      // and each large tile now takes its video's shape.
-      listen("video-detailed-data-change", (payload) => {
+      // Round 18c, the test-only render choice: the shape also from each received video's size.
+      if (this.renderType !== null) listen("video-detailed-data-change", (payload) => {
         const seen = payload as { userId?: number; width?: number; height?: number };
         if (typeof seen?.width === "number" && typeof seen?.height === "number" && seen.height > 0) this.videoShape({ userId: seen.userId, aspectRatio: seen.width / seen.height });
       });
@@ -1137,8 +1108,8 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
       await zoom.join(input.sessionName, input.sessionToken, zoomDisplayNameOf(input));
       if (await overtaken()) return;
       this.stream = zoom.getMediaStream();
-      // Zoom reports each received video's size once asked to (round 18d: always, for the tiles' shape).
-      {
+      // Round 18c, the test-only render choice: Zoom reports each received video's size once asked to.
+      if (this.renderType !== null) {
         try { void Promise.resolve(this.stream.subscribeVideoStatisticData?.({ decode: true, detailed: true })).catch(() => undefined); } catch { /* an older SDK */ }
       }
       for (const ready of [...this.streamWaiters]) ready();
@@ -1822,7 +1793,6 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     const player = this.tiles.get(userId);
     this.tiles.delete(userId);
     this.videoShapes.delete(userId);
-    this.peopleTiles?.shape(String(userId), null);
     // As Zoom's documentation does after detachVideo: the empty video-player leaves the page. The
     // person's tile stays (Classroom 2.0), now without video.
     if (isNode(player) && typeof (player as ChildNode).remove === "function") (player as ChildNode).remove();
@@ -1987,18 +1957,12 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
   // The page's own tile follows the screen turning (ownVideoRatio); undone when the session ends.
   private turnWatch: (() => void) | null = null;
 
-  // Round 18d: the player and the person's tile take the video's shape together.
-  private shapeVideo(userId: number, player: unknown, ratio: number | null) {
-    shapePlayer(player, ratio);
-    this.peopleTiles?.shape(String(userId), ratio);
-  }
-
   private shapeOwnVideo(self: number) {
-    this.shapeVideo(self, this.tiles.get(self), ownVideoRatio());
+    shapePlayer(this.tiles.get(self), ownVideoRatio());
     if (this.turnWatch || typeof matchMedia !== "function") return;
     try {
       const query = matchMedia("(orientation: portrait)");
-      const turned = () => { const own = this.client?.getCurrentUserInfo()?.userId; if (own != null && this.tiles.get(own)) this.shapeVideo(own, this.tiles.get(own), ownVideoRatio()); };
+      const turned = () => { const own = this.client?.getCurrentUserInfo()?.userId; if (own != null) shapePlayer(this.tiles.get(own), ownVideoRatio()); };
       query.addEventListener("change", turned);
       this.turnWatch = () => query.removeEventListener("change", turned);
     } catch {
@@ -2009,13 +1973,8 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
   private videoShape(payload: { userId?: number; aspectRatio?: number }) {
     const ratio = videoRatioOf(payload?.aspectRatio);
     if (payload?.userId == null || ratio == null) return;
-    // Round 18d: Zoom's size report comes again and again; a shape within 2% of the one kept changes
-    // nothing on the page (no tile resized for a rounding).
-    const kept = this.videoShapes.get(payload.userId);
-    if (kept != null && Math.abs(kept - ratio) / kept < 0.02) return;
     this.videoShapes.set(payload.userId, ratio);
-    const player = this.tiles.get(payload.userId);
-    if (player) this.shapeVideo(payload.userId, player, ratio);
+    shapePlayer(this.tiles.get(payload.userId), ratio);
   }
 
   private async attach(userId: number) {
@@ -2028,7 +1987,7 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
       const element = await this.stream.attachVideo(userId, this.tiles.size > 3 ? VIDEO_360P : VIDEO_720P);
       this.tiles.set(userId, element);
       if (userId === this.client?.getCurrentUserInfo()?.userId) this.shapeOwnVideo(userId);
-      else this.shapeVideo(userId, element, this.videoShapes.get(userId) ?? null);
+      else shapePlayer(element, this.videoShapes.get(userId) ?? null);
       // Into the person's own tile inside the videos container (Zoom's documented pattern).
       if (isNode(element)) (this.peopleTiles?.cellOf(String(userId)) ?? this.stage.videos).append(element);
     } catch (error) {
