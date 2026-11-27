@@ -25,6 +25,8 @@ const OWN_PROTECTION = {
   // request only waits (an owner lets the person in); its status is read with the person's ticket.
   'classroom/rooms/[roomId]/door/route.ts POST': [/isSameOrigin\(/, 'fixed room (off by default): same origin, rate limit, a request that waits for an owner'],
   'classroom/rooms/[roomId]/door/status/route.ts POST': [/isSameOrigin\(/, 'fixed room (off by default): same origin, rate limit, read-only status by ticket'],
+  // Round 18l: what the door shows before a name is typed (the room's name, whether it is recorded).
+  'classroom/rooms/[roomId]/door/info/route.ts POST': [/isSameOrigin\(/, 'fixed room (off by default): same origin, rate limit, read-only room name by the current link'],
   'classroom/blocks/[blockId]/choice/route.ts POST': [/isSameOrigin\(/, 'classroom (closed): participant session'],
   'classroom/blocks/[blockId]/manage/route.ts POST': [/isSameOrigin\(/, 'classroom (closed): tutor session'],
   'classroom/blocks/[blockId]/where/route.ts POST': [/isSameOrigin\(/, 'classroom (closed): participant session'],
