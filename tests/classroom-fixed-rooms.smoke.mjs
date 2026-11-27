@@ -217,6 +217,8 @@ try {
   await check('R5', '更換連結：舊連結輸入名字後看到「連結已經更換」；已經在教室裡的人不受影響；新連結可以用', async () => {
     oldLink = link;
     await roomCard().getByRole('button', { name: '更換連結' }).click();
+    // Round 18d (the user, 2026-11-27): a link made from a room's card is shown in that card.
+    await expect(roomCard().locator('[data-room-link][data-room-link-in="card"] code')).toContainText('/classroom/r/FR-');
     const shown = admin.locator('[data-room-link] code');
     await expect(shown).toContainText('/classroom/r/FR-');
     link = (await shown.innerText()).trim();

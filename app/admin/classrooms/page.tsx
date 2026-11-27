@@ -30,6 +30,7 @@ const copy = {
     noAnomalies: "No problems recorded.", open: "Open", resolved: "Cleared", handled: "Handled", unhandled: "Needs handling", earlier: "Handled before it came back", note: "What was done", save: "Record handling", firstSeen: "First seen", lastSeen: "Last seen",
     lessons: "Lessons", houseTimes: "Times on this page are US Eastern (New York) unless marked otherwise.", house: "US Eastern", taipei: "Taiwan", enteredIn: "Entered as",
     copyLink: "Copy link", copied: "Copied",
+    findLesson: "Find a lesson by its code (e.g. TEST-R25)", showRooms: "Also show the fixed rooms' lessons (ROOM-…)", hiddenRooms: "fixed-room lesson(s) not shown (see Fixed rooms)", noMatch: "No lesson matches.",
     revokeLink: "Revoke student link", reissueLink: "Reissue student link", cancelLesson: "Cancel lesson", cancelledMark: "Cancelled",
     confirmRevoke: "Revoke the student's link? It can no longer be used to enter, and no new link is made. Someone already in the room is not disconnected at once: the classroom page normally leaves within about 15 seconds, but this cannot be guaranteed.",
     confirmReissue: "Make a new student link? The current link can no longer be used to enter. Someone already in the room with it is not disconnected at once: the classroom page normally leaves within about 15 seconds, but this cannot be guaranteed.",
@@ -58,6 +59,7 @@ const copy = {
     noAnomalies: "目前沒有異常紀錄。", open: "未解除", resolved: "已解除", handled: "已處置", unhandled: "待處置", earlier: "先前處置（之後又再發生）", note: "處置說明", save: "記錄處置", firstSeen: "首次發現", lastSeen: "最後出現",
     lessons: "課程", houseTimes: "本頁時間除另有標示外，皆為美東時間（紐約）。", house: "美東", taipei: "台灣", enteredIn: "建立時輸入",
     copyLink: "複製連結", copied: "已複製",
+    findLesson: "用課程代碼找課（例如 TEST-R25）", showRooms: "也顯示固定教室的課（ROOM-…）", hiddenRooms: "堂固定教室的課沒有顯示（請看「固定教室」頁）", noMatch: "沒有符合的課程。",
     revokeLink: "撤銷學生連結", reissueLink: "重發學生連結", cancelLesson: "取消課程", cancelledMark: "已取消",
     confirmRevoke: "確定撤銷學生連結？目前的連結會立即無法再用來進入，也不會產生新連結。已在教室裡的人不會立即斷線：教室頁面通常會在約 15 秒內自行離開，但無法保證。",
     confirmReissue: "確定重發學生連結？目前的連結會立即無法再用來進入。已用舊連結在教室裡的人不會立即斷線：教室頁面通常會在約 15 秒內自行離開，但無法保證。",
@@ -86,6 +88,7 @@ const copy = {
     noAnomalies: "目前没有异常记录。", open: "未解除", resolved: "已解除", handled: "已处置", unhandled: "待处置", earlier: "先前处置（之后又再发生）", note: "处置说明", save: "记录处置", firstSeen: "首次发现", lastSeen: "最后出现",
     lessons: "课程", houseTimes: "本页时间除另有标示外，均为美东时间（纽约）。", house: "美东", taipei: "台湾", enteredIn: "建立时输入",
     copyLink: "复制链接", copied: "已复制",
+    findLesson: "用课程代码找课（例如 TEST-R25）", showRooms: "也显示固定教室的课（ROOM-…）", hiddenRooms: "堂固定教室的课没有显示（请看「固定教室」页）", noMatch: "没有符合的课程。",
     revokeLink: "撤销学生链接", reissueLink: "重发学生链接", cancelLesson: "取消课程", cancelledMark: "已取消",
     confirmRevoke: "确定撤销学生链接？目前的链接会立即无法再用来进入，也不会产生新链接。已在教室里的人不会立即断线：教室页面通常会在约 15 秒内自行离开，但无法保证。",
     confirmReissue: "确定重发学生链接？目前的链接会立即无法再用来进入。已用旧链接在教室里的人不会立即断线：教室页面通常会在约 15 秒内自行离开，但无法保证。",
@@ -146,6 +149,9 @@ export default function ClassroomsPage() {
   const [tickFailed, setTickFailed] = useState(false);
   const [refreshedAt, setRefreshedAt] = useState<string | null>(null);
   const [checking, setChecking] = useState("");
+  // Round 18d (the user: 「內容太亂了」): one-to-one lessons by default, a fixed room's lessons on demand; find by code.
+  const [lessonSearch, setLessonSearch] = useState("");
+  const [showRoomLessons, setShowRoomLessons] = useState(false);
   const [stopping, setStopping] = useState("");
   const [resuming, setResuming] = useState("");
   const [notes, setNotes] = useState<Record<string, string>>({});
@@ -287,7 +293,11 @@ export default function ClassroomsPage() {
     await refresh();
   });
 
-  const counts = overview?.dashboard.counts ?? {};
+  const isRoomLesson = (code: string) => code.startsWith("ROOM-");
+  const wanted = lessonSearch.trim().toLowerCase();
+  const shownIn = (group: string) => (overview?.dashboard.groups[group] ?? []).filter((card) => (showRoomLessons || !isRoomLesson(card.lessonCode)) && (!wanted || card.lessonCode.toLowerCase().includes(wanted)));
+  const hiddenRoomLessons = showRoomLessons ? 0 : GROUPS.reduce((sum, group) => sum + (overview?.dashboard.groups[group] ?? []).filter((card) => isRoomLesson(card.lessonCode)).length, 0);
+  const counts = Object.fromEntries(GROUPS.map((group) => [group, shownIn(group).length]));
   // Open and not yet handled first, then open, then cleared; most recent first within each.
   const rank = (item: Anomaly) => (item.resolvedAt ? 2 : item.handled ? 1 : 0);
   const anomalies = [...(overview?.anomalies ?? [])].sort((a, b) => rank(a) - rank(b) || String(b.lastSeenAt).localeCompare(String(a.lastSeenAt)));
@@ -301,29 +311,31 @@ export default function ClassroomsPage() {
       {tickFailed && <p className="admin-alert" role="status">{text.tickFailed}</p>}
       {error && <p className="admin-alert" role="alert">{error}</p>}
 
+      <div className="admin-toolbar classroom-lesson-filter" data-lesson-filter>
+        <input className="admin-search" type="search" value={lessonSearch} placeholder={text.findLesson} aria-label={text.findLesson} onChange={(event) => setLessonSearch(event.target.value)} />
+        <label className="admin-muted"><input type="checkbox" checked={showRoomLessons} onChange={(event) => setShowRoomLessons(event.target.checked)} /> {text.showRooms}</label>
+        {hiddenRoomLessons > 0 && <span className="admin-muted" data-hidden-room-lessons={hiddenRoomLessons}>{hiddenRoomLessons} {text.hiddenRooms}</span>}
+      </div>
       <div className="classroom-counts">
         {GROUPS.map((group) => <div key={group} className={`classroom-count classroom-${group.toLowerCase()}`}><span>{text.groups[group]}</span><strong>{counts[group] ?? 0}</strong></div>)}
       </div>
 
       {overview && !GROUPS.some((group) => overview.dashboard.groups[group]?.length) && <p className="admin-muted">{text.empty}</p>}
-      {GROUPS.filter((group) => overview?.dashboard.groups[group]?.length).map((group) => (
+      {overview && GROUPS.some((group) => overview.dashboard.groups[group]?.length) && !GROUPS.some((group) => shownIn(group).length) && <p className="admin-muted">{text.noMatch}</p>}
+      {GROUPS.filter((group) => shownIn(group).length).map((group) => (
         <section key={group} className="classroom-group" aria-label={text.groups[group]}>
-          <h2>{text.groups[group]}（{overview!.dashboard.groups[group].length}）</h2>
+          <h2>{text.groups[group]}（{shownIn(group).length}）</h2>
           <div className="classroom-cards">
-            {overview!.dashboard.groups[group].map((card) => (
+            {shownIn(group).map((card) => (
               <article key={card.lessonCode} className={`classroom-card${group === "ANOMALY" ? " is-problem" : ""}`}>
                 <div className="classroom-card-head">
                   <strong>{card.lessonCode}</strong>
                   <span className={`classroom-data ${card.dataState.value}`}>{card.dataState.label}</span>
                 </div>
                 <dl>
-                  <div><dt>{text.scheduled}</dt><dd>{stamp(card.scheduledStart)}　{text.started} {stamp(card.actualStart)}　{card.phase.label}</dd></div>
-                  {card.tutor && <div><dt>{text.tutor}</dt><dd>{card.tutor.code}　{card.tutor.label}</dd></div>}
-                  {card.students.map((student) => <div key={student.code}><dt>{text.student}</dt><dd>{student.code}　{student.label}</dd></div>)}
-                  <div><dt>{text.recording}</dt><dd>{card.recording.label}{card.recording.basis === "confirmed" && card.recording.source ? <span className="classroom-basis">（{SOURCE[card.recording.source] ?? card.recording.source}確認）</span> : null}</dd></div>
-                  {card.filing.label && <div><dt>{text.filing}</dt><dd>{card.filing.label}{card.filing.reasonLabel ? `（${card.filing.reasonLabel}）` : null}</dd></div>}
+                  {/* Round 18d: the recording files first, so a filed recording is seen at once. */}
                   {card.filing.items && card.filing.items.length > 0 && (
-                    <div><dt>{text.files}</dt><dd>
+                    <div className="classroom-files-row" data-files-first><dt>{text.files}</dt><dd>
                       <ul className="classroom-files">
                         {card.filing.items.map((item, index) => (
                           <li key={`${item.name ?? item.extension}-${index}`}>
@@ -338,6 +350,11 @@ export default function ClassroomsPage() {
                       </ul>
                     </dd></div>
                   )}
+                  <div><dt>{text.scheduled}</dt><dd>{stamp(card.scheduledStart)}　{text.started} {stamp(card.actualStart)}　{card.phase.label}</dd></div>
+                  {card.tutor && <div><dt>{text.tutor}</dt><dd>{card.tutor.code}　{card.tutor.label}</dd></div>}
+                  {card.students.map((student) => <div key={student.code}><dt>{text.student}</dt><dd>{student.code}　{student.label}</dd></div>)}
+                  <div><dt>{text.recording}</dt><dd>{card.recording.label}{card.recording.basis === "confirmed" && card.recording.source ? <span className="classroom-basis">（{SOURCE[card.recording.source] ?? card.recording.source}確認）</span> : null}</dd></div>
+                  {card.filing.label && <div><dt>{text.filing}</dt><dd>{card.filing.label}{card.filing.reasonLabel ? `（${card.filing.reasonLabel}）` : null}</dd></div>}
                   <div><dt>{text.data}</dt><dd>{card.dataState.lastConfirmedAt ? stamp(card.dataState.lastConfirmedAt) : "—"}</dd></div>
                 </dl>
                 {card.anomalies.length > 0 && <ul className="classroom-alerts">{card.anomalies.map((item) => <li key={item.code} className={item.severity}>{item.label}</li>)}</ul>}

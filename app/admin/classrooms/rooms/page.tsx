@@ -36,7 +36,8 @@ type Room = {
   recording?: { on: boolean; available: boolean; status?: string; label?: string; anomalies?: { code: string; severity: string }[]; consentLacking?: { inRoom: number; takenOut: string[] } }; members?: Member[];
 };
 // A room's link, or (Gate B) one student's own link: shown once.
-type Shown = { room: string; link: string; student?: string } | null;
+// roomId (round 18d): the link was made from that room's card, and is shown there.
+type Shown = { room: string; link: string; student?: string; roomId?: string } | null;
 // One list of links being gathered: the rooms it is about (asked, by name), each link's version
 // before the first change (baseline), the newest link received per room (made), where each room
 // stands (states), whether those states were read from the server after the last change (checked),
@@ -263,12 +264,12 @@ export default function FixedRoomsPage() {
       }
       if (typeof data.link === "string") {
         const room = (data.room as { label?: string } | undefined)?.label ?? before?.find((entry) => entry.id === input.room)?.label ?? String(input.room ?? "");
-        setShown({ room, link: data.link });
+        setShown({ room, link: data.link, ...(input.room ? { roomId: String(input.room) } : {}) });
       }
       if (typeof data.passLink === "string") {
         const room = before?.find((entry) => entry.id === input.room)?.label ?? String(input.room ?? "");
         const member = data.member as Member | undefined;
-        setShown({ room, link: data.passLink, student: member ? `${member.name}（代碼 ${member.code}）` : String(input.code ?? "") });
+        setShown({ room, link: data.passLink, student: member ? `${member.name}（代碼 ${member.code}）` : String(input.code ?? ""), ...(input.room ? { roomId: String(input.room) } : {}) });
       }
       if (data.activity === "not_recorded") setProblem(ERRORS.ACTIVITY_NOT_RECORDED);
       await load();
@@ -440,6 +441,17 @@ export default function FixedRoomsPage() {
   const ready = list ? rowsToExport(list.made, list.states) : [];
   const creating = list?.kind === "create";
   const needLinks = summary ? [...summary.lost, ...summary.replacedAgain] : [];
+  // A link shown this once (round 18d: in the room's card when it was made there, else at the top).
+  const linkBox = (value: NonNullable<Shown>) => (
+    <div role="status" data-room-link data-room-link-in={value.roomId ? "card" : "top"}>
+      {value.student
+        ? <p data-pass-link>「{value.room}」裡 {value.student} 的個人連結（只顯示這一次，請只交給這位學生；遺失或給錯人時請按「重發個人連結」）：</p>
+        : <p>「{value.room}」的教室連結（只顯示這一次，請直接交給這間教室的人；遺失時請更換連結）：</p>}
+      <p><code>{`${window.location.origin}${value.link}`}</code></p>
+      <button type="button" onClick={() => setShown(null)}>我已經記下連結</button>
+    </div>
+  );
+
   return (
     <section className="admin-panel" data-fixed-rooms>
       <h1>固定教室</h1>
@@ -465,15 +477,7 @@ export default function FixedRoomsPage() {
       </details>
       {problem && <p role="alert" className="admin-error">{problem}</p>}
       {note && <p role="status" data-rooms-note>{note}</p>}
-      {shown && (
-        <div role="status" data-room-link>
-          {shown.student
-            ? <p data-pass-link>「{shown.room}」裡 {shown.student} 的個人連結（只顯示這一次，請只交給這位學生；遺失或給錯人時請按「重發個人連結」）：</p>
-            : <p>「{shown.room}」的教室連結（只顯示這一次，請直接交給這間教室的人；遺失時請更換連結）：</p>}
-          <p><code>{`${window.location.origin}${shown.link}`}</code></p>
-          <button type="button" onClick={() => setShown(null)}>我已經記下連結</button>
-        </div>
-      )}
+      {shown && !shown.roomId && linkBox(shown)}
       {list && summary && (
         <div role="status" data-room-links-list data-complete={summary.complete ? "yes" : "no"}>
           <p data-links-title>
@@ -513,6 +517,7 @@ export default function FixedRoomsPage() {
       {rooms === null ? <p>載入中…</p> : rooms.length === 0 ? <p>還沒有固定教室。</p> : visible.length === 0 ? <p data-rooms-none>沒有符合的教室。</p> : visible.map((room) => (
         <article key={room.id} className="admin-card" data-room={room.label} data-room-in-use={room.disabled ? "no" : "yes"}>
           <h2>{room.label}{room.disabled ? "（停用中）" : ""}</h2>
+          {shown && shown.roomId === room.id && linkBox(shown)}
           <p>{room.lesson ? `上課中，最晚到 ${time(room.lesson.endsAt)}` : "目前沒有在上課"}・教室裡 {room.inRoom.length}/{room.capacity} 人・連結第 {room.linkGeneration} 版</p>
           <p data-room-settings-now={`${room.form ?? "group"}:${room.capacity}:${room.minutes ?? 120}:${room.entry ?? "approval"}`}>{room.entry === "direct" ? "直接進入" : "老師讓他進入"}・{room.form === "one_to_one" ? "一對一" : "小組"}・最多 {room.capacity} 人・每次上課 {room.minutes ?? 120} 分鐘（可延長，最長 180 分鐘）</p>
           {room.disabled && <p role="note" data-room-disabled>這間教室停用中：拿連結的人不能申請進入，也不能讓人進來。連結沒有改變，重新啟用後原本的連結可以再用。</p>}
