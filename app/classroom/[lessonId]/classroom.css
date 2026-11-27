@@ -185,8 +185,12 @@
    <video>), and the tile's background hid it. A tile with a shown video has no background of its own,
    so that canvas shows through; a <video> in the player covers the tile as before. The player keeps the
    tile's round corners (Zoom draws its canvas videos with the player's border radius). */
-.classroom-media-tile[data-video="shown"], .classroom-media-tile.self[data-video="shown"] { background: transparent; }
+.classroom-zoom-videos .classroom-media-tile[data-video="shown"], .classroom-zoom-videos .classroom-media-tile.self[data-video="shown"] { background: transparent; }
 .classroom-media-tile video-player { border-radius: inherit; }
+/* Round 18h (the user, 2026-11-28: 「說話的人優先」): on a phone the people not picked for the short row
+   (classroom-entry.tsx, stripPicks) wait in "N more", which then sits under the row, not over a tile. */
+.classroom-media-tile[data-strip-hidden] { display: none; }
+.room2[data-strip="short"] .room2-more-chip { position: static; transform: none; align-self: flex-end; margin-top: 6px; }
 .classroom-media-tile[data-host="true"]:not(.self) { order: -2; }
 .classroom-media-tile[data-spotlight] { order: -5; }
 .classroom-media-tile[data-speaking] { box-shadow: 0 0 0 3px var(--room-orange), 0 0 18px rgba(232, 150, 79, .45); }

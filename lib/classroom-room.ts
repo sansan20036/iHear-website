@@ -85,3 +85,24 @@ export function devicesToOffer(wanted: Readonly<Record<DeviceKind, boolean>> | n
   if (!wanted) return [];
   return (["microphone", "camera"] as const).filter((kind) => wanted[kind] && devices[kind] === "off");
 }
+
+// Round 18h (the user, seventh real-Zoom sitting, 2026-11-28: with ten people a phone's row is full;
+// they chose 「說話的人優先」): which people a short row shows on a phone, the rest waiting in
+// "N more". In order: this page's own person; the one enlarged on this page; the last one who spoke;
+// the anchor (the host, else the earliest still here with a camera on, else the earliest); then the
+// others in the order they came, cameras on first. `people` comes in the order they came.
+export function stripPicks(people: readonly RoomPerson[], lastSpeaker: string | null, limit: number, spotlight: string | null = null): Set<string> {
+  const picks = new Set<string>();
+  const here = new Map(people.map((person) => [person.id, person]));
+  const add = (id: string | null | undefined) => {
+    if (id && picks.size < limit && here.has(id)) picks.add(id);
+  };
+  const others = people.filter((person) => !person.self);
+  add(people.find((person) => person.self)?.id);
+  add(spotlight);
+  add(lastSpeaker);
+  add((others.find((person) => person.host) ?? others.find((person) => person.camera) ?? others[0])?.id);
+  for (const person of others.filter((item) => item.camera)) add(person.id);
+  for (const person of others) add(person.id);
+  return picks;
+}

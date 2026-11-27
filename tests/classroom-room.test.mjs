@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { connectionStep, devicesToOffer, HAND_NOTICE_MS, initialsOf, newHands, orderPeople, personLabel, soundOffered, spotlightOf, stageModeOf } from "../lib/classroom-room";
+import { connectionStep, devicesToOffer, HAND_NOTICE_MS, initialsOf, newHands, orderPeople, personLabel, soundOffered, spotlightOf, stageModeOf, stripPicks } from "../lib/classroom-room";
 import { SYNTHETIC_SCENARIOS } from "../lib/classroom-media";
 
 const { roomCopy } = await import("../app/classroom/[lessonId]/classroom-copy");
@@ -163,5 +163,32 @@ describe("Turn on sound: when the room offers it, and what it says", () => {
     expect(words("en")).not.toMatch(/\p{Script=Han}/u);
     expect(words("zhHant")).not.toMatch(/[这个页标签设备进们说时间开关请显视频务连线摄头对听吗启声没浏览挡试启置刷]/u);
     expect(words("zhHans")).not.toMatch(/[這個頁標籤設備進們說時間開關請顯視頻螢務連線攝頭對聽嗎啟聲沒瀏覽擋試設]/u);
+  });
+});
+
+// Round 18h (the user, 2026-11-28: 「說話的人優先」): a phone's short row of people.
+describe("who a phone's short row shows (speaker first)", () => {
+  // In the order they came: two students without a camera came before the tutor.
+  const room = [person("TEST-S05", { camera: false }), person("TEST-S06", { camera: false }), person("TEST-S01"), person("me", { self: true }), person("TEST-S02"), person("TEST-S03"), person("TEST-S04")];
+  const ids = (set) => [...set];
+
+  test("STRIP-1: this page's person, the last speaker, then the anchor: the earliest with a camera on when nobody hosts", () => {
+    expect(ids(stripPicks(room, "TEST-S03", 3))).toEqual(["me", "TEST-S03", "TEST-S01"]);
+    // Nobody has spoken yet: the anchor, then the others with a camera on, in the order they came.
+    expect(ids(stripPicks(room, null, 3))).toEqual(["me", "TEST-S01", "TEST-S02"]);
+    // The speaker changes: the row follows.
+    expect(ids(stripPicks(room, "TEST-S04", 3))).toEqual(["me", "TEST-S04", "TEST-S01"]);
+    // This page's own voice does not take a place twice.
+    expect(ids(stripPicks(room, "me", 3))).toEqual(["me", "TEST-S01", "TEST-S02"]);
+  });
+
+  test("STRIP-2: a host is the anchor; the one enlarged on this page stays; a speaker who left is skipped; six places in the people view", () => {
+    const hosted = room.map((item) => (item.id === "TEST-S06" ? { ...item, host: true } : item));
+    expect(ids(stripPicks(hosted, "TEST-S03", 3))).toEqual(["me", "TEST-S03", "TEST-S06"]);
+    expect(ids(stripPicks(room, "TEST-S03", 3, "TEST-S04"))).toEqual(["me", "TEST-S04", "TEST-S03"]);
+    expect(ids(stripPicks(room, "TEST-GONE", 3))).toEqual(["me", "TEST-S01", "TEST-S02"]);
+    expect(ids(stripPicks(room, "TEST-S06", 6))).toEqual(["me", "TEST-S06", "TEST-S01", "TEST-S02", "TEST-S03", "TEST-S04"]);
+    // Fewer people than places: everyone.
+    expect(stripPicks(room.slice(0, 3), null, 6).size).toBe(3);
   });
 });

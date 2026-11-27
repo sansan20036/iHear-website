@@ -12,7 +12,7 @@ import {
 import { classroomDeviceOf, deviceLimits, type CapabilityName, type ClassroomDevice } from "../../../lib/classroom-capabilities";
 import { entryEndedBy, reasonShown, rejoinRoom, requestJoin, type JoinedSession } from "../../../lib/classroom-join-client";
 import { browserClassroomLocale, CLASSROOM_LOCALES, htmlLangOf, intlLocaleOf, LOCALE_NAMES, type ClassroomLocale } from "../../../lib/classroom-locale";
-import { connectionStep, devicesToOffer, soundOffered, HAND_NOTICE_MS, initialsOf, newHands, orderPeople, personLabel, spotlightOf, stageModeOf } from "../../../lib/classroom-room";
+import { connectionStep, devicesToOffer, soundOffered, HAND_NOTICE_MS, initialsOf, newHands, orderPeople, personLabel, spotlightOf, stageModeOf, stripPicks } from "../../../lib/classroom-room";
 import { claimLessonTab, lessonTabName, type TabClaim } from "../../../lib/classroom-tab";
 import { roomCopy as copy, vendorCopy } from "./classroom-copy";
 import { RoomIcon, type RoomIconName } from "./classroom-icons";
@@ -277,6 +277,10 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   chatOpenNow.current = chatOpen;
   const [people, setPeople] = useState<RoomPerson[]>([]);
   const [speaking, setSpeaking] = useState<string[]>([]);
+  // Round 18h (「說話的人優先」): the last one other than this page's person who spoke, and whether the
+  // screen is a phone's (the short row of people).
+  const [lastSpeaker, setLastSpeaker] = useState<string | null>(null);
+  const [narrow, setNarrow] = useState(false);
   const [focus, setFocus] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [spotlight, setSpotlight] = useState<string | null>(null);
@@ -658,6 +662,26 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   useEffect(() => {
     setSpotlight((current) => spotlightOf(current, people));
   }, [people]);
+  useEffect(() => {
+    const own = people.find((person) => person.self)?.id;
+    const someone = speaking.find((id) => id !== own);
+    if (someone) setLastSpeaker(someone);
+  }, [speaking, people]);
+  useEffect(() => {
+    if (typeof matchMedia !== "function") return;
+    const query = matchMedia("(max-width: 600px)");
+    const follow = () => setNarrow(query.matches);
+    follow();
+    query.addEventListener("change", follow);
+    return () => query.removeEventListener("change", follow);
+  }, []);
+  // The short row's marks (round 18h), after every render: who is picked is worked out below, where
+  // the stage's mode is known.
+  const stripPicked = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    const picked = stripPicked.current;
+    for (const [id, cell] of tiles) cell.toggleAttribute("data-strip-hidden", !!picked && !picked.has(id));
+  });
   useEffect(() => {
     for (const [id, cell] of tiles) {
       cell.toggleAttribute("data-spotlight", id === spotlight);
@@ -1231,6 +1255,15 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   const reading = !boardOnStage && mode === "share" && media.share === "receiving";
   // The room's own board is on the stage the way Zoom's was (the material first).
   const shownMode = boardOnStage ? "board" : mode;
+  // Round 18h (the user, 2026-11-28: 「說話的人優先」): on a phone the row beside a board or a share shows
+  // three people and the people view six: this page's own, the one enlarged, the last speaker and the
+  // anchor first (lib/classroom-room.ts stripPicks); the rest wait in "N more", which opens the list.
+  const stripLimit = narrow ? (shownMode === "people" ? 6 : 3) : 0;
+  // A plain value here (after the not-joined return no hook may be added); the marks are written by
+  // the effect above that return, from stripPicked.
+  const picks = stripLimit > 0 && people.length > stripLimit ? stripPicks(people, lastSpeaker, stripLimit, spotlight) : null;
+  stripPicked.current = picks;
+  const moreCount = hiddenInStrip + (picks ? people.length - picks.size : 0);
   const zoomed = reading && shareZoom > 1;
   const roomName = roomLabel === "Lobby" ? (locale === "en" ? "Lobby" : "主會議室") : roomLabel;
   const headcount = blockMode && media.remote.others != null ? media.remote.others + 1 : null;
@@ -1293,7 +1326,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   return (
     <Shell className="classroom-room room2" data-mode={shownMode} data-panel={panel} data-focus={focus ? "on" : "off"} data-role={joined.role}
       data-provider={provider} data-device={device} data-count={people.length} data-spot={spotlight ? "on" : "off"}
-      data-reading={reading ? "on" : "off"} data-share-zoom={zoomed ? "zoomed" : "fit"} data-zoom-fill={fillOff ? "off" : "on"}
+      data-reading={reading ? "on" : "off"} data-share-zoom={zoomed ? "zoomed" : "fit"} data-zoom-fill={fillOff ? "off" : "on"} data-strip={picks ? "short" : "all"}
       {...(roomBoard || roomChat || roomTurn ? { "data-room-channel": "", "data-you": channel.you ?? "", "data-stopped": channel.stopped ?? "", "data-online": String(channel.online), "data-room-board-shown": String(boardOnStage) } : {})}
       style={reading ? ({ "--share-zoom": String(shareZoom) } as CSSProperties) : undefined}>
       <div className="room2-shell">
@@ -1438,8 +1471,8 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
                   {simulator && <span className="classroom-room-tile-sub"> {text.syntheticOther}</span>}
                 </p>
               )}
-              {hiddenInStrip > 0 && (
-                <button type="button" className="room2-more-chip" onClick={(event) => togglePanel("people", event.currentTarget)}>{text.moreOthers(hiddenInStrip)}</button>
+              {moreCount > 0 && (
+                <button type="button" className="room2-more-chip" onClick={(event) => togglePanel("people", event.currentTarget)}>{text.moreOthers(moreCount)}</button>
               )}
               {simulator && <p className="classroom-room-stage-note">{text.noVideo}</p>}
               {[...tiles].map(([id, cell]) => {

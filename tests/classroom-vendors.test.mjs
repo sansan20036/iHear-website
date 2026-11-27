@@ -1737,7 +1737,7 @@ describe("browser adapters", () => {
     }
     // The page's rules: a tile with a shown video has no background (Zoom's canvas lies under it).
     const css = readFileSync(new URL("../app/classroom/[lessonId]/classroom.css", import.meta.url), "utf8");
-    expect(css).toContain('.classroom-media-tile[data-video="shown"], .classroom-media-tile.self[data-video="shown"] { background: transparent; }');
+    expect(css).toContain('.classroom-zoom-videos .classroom-media-tile[data-video="shown"], .classroom-zoom-videos .classroom-media-tile.self[data-video="shown"] { background: transparent; }');
   });
 
   test("FILL-2: on a touch screen held upright the page's own video is 9:16 (Zoom does not report it); turning the screen re-shapes it; leaving stops listening", async () => {

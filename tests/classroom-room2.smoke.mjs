@@ -165,7 +165,8 @@ async function zoomWritesBlock(page, name) {
     const container = document.querySelector('.room2-videos-host > *');
     container.style.display = 'block';
     container.style.position = 'relative';
-    const out = [...container.querySelectorAll('.classroom-media-tile')].map((tile) => { const r = tile.getBoundingClientRect(); return { top: Math.round(r.top), width: Math.round(r.width) }; });
+    // The tiles on show (round 18h: on a phone the short row keeps the others in "N more").
+    const out = [...container.querySelectorAll('.classroom-media-tile')].map((tile) => tile.getBoundingClientRect()).filter((r) => r.width > 0).map((r) => ({ top: Math.round(r.top), width: Math.round(r.width) }));
     return { display: getComputedStyle(container).display, out };
   });
   await shot(page, `${name}-zoom-block`);
@@ -675,6 +676,14 @@ try {
         if (kind === 'phone') expect(m.offStrip).toMatch(/^另 \d+ 位$/);
         if (size === device.sizes[0]) await fills(page, `${role}-${size[0]}-${role === 'tutor' ? 'whiteboard' : 'share'}-group`);
         if (size === device.sizes[0] && kind === 'phone') await zoomWritesBlock(page, `${role}-${size[0]}-${role === 'tutor' ? 'whiteboard' : 'share'}-group`);
+        // Round 18h (the user, 2026-11-28: 「說話的人優先」): seven people, a phone's row shows three, this
+        // page's own among them; the other four wait in "N more".
+        if (kind === 'phone') {
+          const shown = await page.evaluate(() => [...document.querySelectorAll('.classroom-media-tile')].filter((tile) => tile.getBoundingClientRect().width > 0).map((tile) => (tile.classList.contains('self') ? 'self' : tile.dataset.person)));
+          expect(shown).toHaveLength(3);
+          expect(shown).toContain('self');
+          await expect(page.locator('.room2-more-chip')).toHaveText('另 4 位');
+        }
       }
       await page.getByRole('button', { name: /^聊天/ }).click();
       for (const size of device.sizes) {
