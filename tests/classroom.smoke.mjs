@@ -138,8 +138,10 @@ try {
     await expect(admin.locator('section[aria-label="等待開始"] .classroom-card', { hasText: lesson.code })).toBeVisible();
   });
 
-  await check('synthetic consent for the student and the tutor notice are entered on the overview', async () => {
-    for (const [code, role] of [[lesson.studentCode, 'student'], [lesson.tutorCode, 'tutor']]) {
+  await check('synthetic consent for the student and the tutor notice are entered on the overview; each save says which lesson it reached, and a code no lesson has is warned of', async () => {
+    // Round 18d (the fourth real-Zoom sitting): a code typed differently from the lesson's (TEST-T4 for
+    // TEST-T24) reached no lesson and nobody saw it. The first save here is such a code.
+    for (const [code, role] of [[`${lesson.studentCode}X`, 'student'], [lesson.studentCode, 'student'], [lesson.tutorCode, 'tutor']]) {
       await admin.getByPlaceholder('人員代碼').fill(code);
       await admin.getByLabel('角色').selectOption(role);
       const [response] = await Promise.all([
@@ -147,6 +149,9 @@ try {
         admin.getByRole('button', { name: '儲存' }).click(),
       ]);
       expect(response.status()).toBe(200);
+      const notice = admin.locator('.classroom-notice[role="status"]');
+      if (code.endsWith('X')) await expect(notice).toContainText(`${code}：已儲存，但昨天到明天之間沒有任何課用這個代碼`);
+      else await expect(notice).toHaveText(`${code}：已儲存，套用到這些課： ${lesson.code}`);
     }
   });
 
