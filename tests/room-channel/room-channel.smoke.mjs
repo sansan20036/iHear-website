@@ -451,6 +451,24 @@ try {
     }
   });
 
+  await check('D5b', '白板開關全班同步（使用者 11/28）：一個人按「白板」關掉，每個人的白板都收起；另一個人再打開，大家都看到；「只在我的畫面收起」只影響自己，再按「白板」只在自己的畫面顯示', async () => {
+    const [first, second, third] = here;
+    for (const person of here) await showBoard(person.page);
+    await first.page.locator(PAGE.boardToggle).click();
+    for (const person of here) await expect(person.page.locator(PAGE.boardStage)).toHaveCount(0, { timeout: 15_000 });
+    await second.page.locator(PAGE.boardToggle).click();
+    for (const person of here) await expect(person.page.locator(PAGE.boardStage)).toHaveCount(1, { timeout: 15_000 });
+    await third.page.locator('[data-room-board-hide-here]').click();
+    await expect(third.page.locator(PAGE.boardStage)).toHaveCount(0);
+    await first.page.waitForTimeout(3_000);
+    await expect(first.page.locator(PAGE.boardStage)).toHaveCount(1);
+    await expect(second.page.locator(PAGE.boardStage)).toHaveCount(1);
+    await third.page.locator(PAGE.boardToggle).click();
+    await expect(third.page.locator(PAGE.boardStage)).toHaveCount(1);
+    await first.page.waitForTimeout(3_000);
+    for (const person of here) await expect(person.page.locator(PAGE.boardStage)).toHaveCount(1);
+  });
+
   await check('D7', '連續重新整理：回到教室後馬上再重新整理，一共四次，每一次都回得到教室（頁面自己帶回，或畫面出現「回到教室」按鈕、按了就回來）；白板和聊天都在，自己還是同一個人', async () => {
     // Dee has not reloaded before. Found on 2026-11-24 with four browsers: a second reload within
     // about 15 seconds of the first left the person on a refusal screen for good.

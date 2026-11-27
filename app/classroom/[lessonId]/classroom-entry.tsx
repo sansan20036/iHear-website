@@ -377,7 +377,28 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
       setRoomBoardShown(true);
     }
   }, [media.share]);
-  const pressBoard = () => { boardHiddenByShare.current = false; setRoomBoardShown((shown) => !shown); };
+  // Round 18m (the user, 2026-11-28: 「同步白板的教學狀態，但保留個人的顯示控制權」): the board is open or
+  // closed for the whole room (the channel's board.open); this page follows each change of it, and may
+  // still hide it for itself ("hide on my screen only") until the room's state changes again. The board
+  // button turns the room's state, except when the board is open for the room but hidden here: then it
+  // shows it on this page only.
+  const roomBoardOpen = channel.board.open;
+  const openBefore = useRef(roomBoardOpen);
+  useEffect(() => {
+    if (openBefore.current === roomBoardOpen) return;
+    openBefore.current = roomBoardOpen;
+    boardHiddenByShare.current = false;
+    setRoomBoardShown(roomBoardOpen);
+  }, [roomBoardOpen]);
+  const pressBoard = () => {
+    boardHiddenByShare.current = false;
+    if (roomBoardOpen && !roomBoardShown) { setRoomBoardShown(true); return; }
+    const next = !roomBoardOpen;
+    openBefore.current = next;
+    setRoomBoardShown(next);
+    channel.board.setOpen(next);
+  };
+  const hideBoardHere = () => { boardHiddenByShare.current = false; setRoomBoardShown(false); };
   // The room's chat: messages from others not yet seen while the chat is closed.
   const roomChatSeen = useRef(0);
   const roomChatNewest = channel.chat.messages.at(-1)?.seq ?? 0;
@@ -1432,6 +1453,11 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
             <div className="room2-stage-bar">
               <span className="room2-stage-label">{stageLabel}</span>
               <div className="room2-stage-tools">
+                {boardOnStage && (
+                  <button type="button" className="room2-stage-tool" data-room-board-hide-here aria-label={v.roomBoardHideHere} onClick={hideBoardHere}>
+                    <RoomIcon name="whiteboard" /><span>{v.roomBoardHideHere}</span>
+                  </button>
+                )}
                 {reading && (
                   <div className="room2-zoom" role="group" aria-label={text.zoomLevel(Math.round(shareZoom * 100))} data-share-zoom-level={Math.round(shareZoom * 100)}>
                     <button type="button" className="room2-stage-tool" aria-label={text.zoomOut} disabled={shareZoom <= SHARE_ZOOMS[0]} onClick={() => setShareZoom((value) => stepZoom(value, -1))}>−</button>
@@ -1650,7 +1676,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
                 onClick: () => void (roomTurn ? (channel.share.sharing ? channel.share.stop() : channel.share.start()) : toggleShare()),
               })}
               {roomBoard && toolButton({
-                tool: "room-board", icon: "whiteboard", label: v.whiteboardShort, name: boardOnStage ? v.roomBoardHide : v.roomBoardShow,
+                tool: "room-board", icon: "whiteboard", label: v.whiteboardShort, name: boardOnStage ? v.roomBoardCloseAll : roomBoardOpen ? v.roomBoardShow : v.roomBoardOpenAll,
                 pressed: boardOnStage, marks: { "data-room-board-toggle": "" }, onClick: pressBoard,
               })}
               {boardTools && toolButton({

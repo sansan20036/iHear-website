@@ -716,3 +716,24 @@ test('CL-15: the lesson\'s status rides in the channel\'s own requests: asked ev
   assert.equal(askedBetween(w, 'P-1', from, w.clock.now).filter(entry => entry.status).length, 2);
   assert.equal(a.client.lessonStatus().status, 403);
 });
+
+// Round 18m (the user, 2026-11-28): the board open or closed for the whole room, through the server.
+test('CL-VIEW: one page closes the board for the room: every page hears it, and a page that comes in later starts closed; opened again the same way; the drawing stays', async () => {
+  const w = world();
+  const a = w.page('P-1'), b = w.page('P-2');
+  a.client.start(); b.client.start();
+  await w.advance(200);
+  assert.deepEqual([a.client.view().board.open, b.client.view().board.open], [true, true]);
+  draw(a.client, [[10, 10], [20, 20]]);
+  a.client.openBoard(false);
+  await w.advance(1500);
+  assert.deepEqual([a.client.view().board.open, b.client.view().board.open], [false, false]);
+  assert.equal(w.boardOf(b).length, 1, 'closing hides nothing drawn');
+  const c = w.page('P-3');
+  c.client.start();
+  await w.advance(500);
+  assert.equal(c.client.view().board.open, false);
+  b.client.openBoard(true);
+  await w.advance(1500);
+  assert.deepEqual([a.client.view().board.open, b.client.view().board.open, c.client.view().board.open], [true, true, true]);
+});

@@ -319,3 +319,35 @@ test('RB-14: someone a little behind is handed what they missed; someone far beh
   // From the beginning of a long lesson: the picture, whatever the number of operations kept.
   assert.equal(since(state, { by: 'P-1', member: true, cursor: 0, now }).fresh, true);
 });
+
+// Round 18m (the user, 2026-11-28: 「同步白板的教學狀態，但保留個人的顯示控制權」): the board open or closed
+// for the whole room is one more operation in the server's order; nothing drawn changes with it.
+test('RB-VIEW: open or closed for the room: in form, in the order, in the picture, followed by every page; the drawing stays', () => {
+  const view = open => ({ kind: 'view', op: opName(), open });
+  assert.equal(invalidRequest({ kind: 'view', op: 'v1', open: 'yes' }), 'OPEN');
+  assert.equal(invalidRequest({ kind: 'view', op: 'v1' }), 'FIELDS');
+  assert.equal(invalidRequest({ kind: 'view', op: 'v1', open: false, extra: 1 }), 'FIELDS');
+  assert.equal(snapshot(fresh(), T0).open, true);
+  const { state, answers, now } = run(fresh(), [
+    ['P-1', stroke('a', 0, [[1, 1], [2, 2]], { done: true })],
+    ['P-2', view(false)],
+  ]);
+  assert.equal(state.open, false);
+  assert.deepEqual(answers[1].entry, { seq: 2, at: answers[1].entry.at, by: 'P-2', kind: 'view', open: false });
+  const picture = snapshot(state, now);
+  assert.equal(picture.open, false);
+  assert.deepEqual(picture.lines.map(line => line.line), ['P-1:a']);
+  // A page that follows the order sees the same, and so does one that comes in with the picture.
+  const page = pictureFrom(snapshot(fresh(), T0));
+  for (const entry of since(state, { by: 'P-3', member: true, cursor: 0, now }).entries) moveOn(page, entry);
+  assert.equal(page.open, false);
+  assert.equal(pictureFrom(picture).open, false);
+  // Opened again by anyone; the same request twice counts once.
+  const again = view(true);
+  const opened = apply(state, { by: 'P-1', member: true, input: again, now: now + 1000 });
+  assert.equal(opened.state.open, true);
+  assert.equal(apply(opened.state, { by: 'P-1', member: true, input: again, now: now + 2000 }).answer.duplicate, true);
+  // Only someone in the room, and not after the lesson.
+  assert.equal(apply(state, { by: 'P-9', member: false, input: view(true), now }).answer.error, 'NOT_IN_ROOM');
+  assert.equal(apply(end(state, now), { by: 'P-1', member: true, input: view(true), now }).answer.error, 'LESSON_ENDED');
+});

@@ -36,7 +36,7 @@ export type ChatMessage = { seq: number; at: number; by: string; name: string; t
 export type RoomChannelNotice = { part: string; code: string; at: number };
 type View = {
   you: string | null; stopped: string | null; waiting: number;
-  board: { seq: number; ended: boolean; lines: BoardLine[]; undo: { clear: number; until: number } | null };
+  board: { seq: number; ended: boolean; open: boolean; lines: BoardLine[]; undo: { clear: number; until: number } | null };
   chat: { messages: ChatMessage[]; ended: boolean };
   turn: { holder: string | null; offeredTo: string | null; mine: boolean; offeredToMe: boolean };
   people: readonly { id: string; name: string }[];
@@ -48,7 +48,7 @@ export type RoomChannelLessonStatus = { status: number; body: unknown; at: numbe
 type Client = {
   start(): void; stop(): void; setIdle(value: boolean): void; view(): View; lessonStatus(): RoomChannelLessonStatus | null;
   beginLine(options: { color: number; width: number }): string; addPoints(line: string, points: [number, number][]): boolean; endLine(line: string): void;
-  erase(line: string): void; clear(): void; undoClear(): void; say(text: string): void;
+  erase(line: string): void; clear(): void; undoClear(): void; openBoard(open: boolean): void; say(text: string): void;
   claimTurn(): void; releaseTurn(): void; handOver(to: string): void; showsShareOf(person: string): boolean;
   parting(what: { turn: boolean }): unknown;
 };
@@ -59,7 +59,7 @@ const makeClient = createRoomClient as unknown as (options: { post: (body: unkno
 const makeShare = createShareControl as unknown as (options: { client: Client; media: RoomChannelMedia; notify: (what: { sharing: boolean; notice?: string }) => void }) => ShareControl;
 const boardPoint = toBoard as unknown as (x: number, y: number, width: number, height: number) => [number, number];
 
-const EMPTY: View = { you: null, stopped: null, waiting: 0, board: { seq: 0, ended: false, lines: [], undo: null }, chat: { messages: [], ended: false }, turn: { holder: null, offeredTo: null, mine: false, offeredToMe: false }, people: [] };
+const EMPTY: View = { you: null, stopped: null, waiting: 0, board: { seq: 0, ended: false, open: true, lines: [], undo: null }, chat: { messages: [], ended: false }, turn: { holder: null, offeredTo: null, mine: false, offeredToMe: false }, people: [] };
 const REQUEST_MS = 10_000;
 // A media adapter that does nothing, for a page that mounts the board and the chat without the turn.
 const NO_MEDIA: RoomChannelMedia = { startShare: async () => false, stopShare: async () => undefined, sharers: () => [], onSharersChange: () => () => undefined, showShareOf: () => undefined };
@@ -176,6 +176,9 @@ export function useRoomChannel({ lessonId, ticket, media = null, enabled = true,
         lines: view.board.lines, undo: view.board.undo,
         // The lesson is over: the board can be looked at, not changed.
         ended: view.board.ended,
+        // Round 18m: open or closed for the room, and the way to open or close it for everyone.
+        open: view.board.open,
+        setOpen: (open: boolean) => act((made) => made.openBoard(open), undefined),
         // What this page has drawn and not yet heard back about is shown from the page's own copy: look at it again now.
         refresh: () => { if (client.current) setView(client.current.view()); },
         // A place in a box of the page (in pixels) as a point of the board.
