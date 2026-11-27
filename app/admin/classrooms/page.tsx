@@ -30,6 +30,7 @@ const copy = {
     noAnomalies: "No problems recorded.", open: "Open", resolved: "Cleared", handled: "Handled", unhandled: "Needs handling", earlier: "Handled before it came back", note: "What was done", save: "Record handling", firstSeen: "First seen", lastSeen: "Last seen",
     lessons: "Lessons", houseTimes: "Times on this page are US Eastern (New York) unless marked otherwise.", house: "US Eastern", taipei: "Taiwan", enteredIn: "Entered as",
     copyLink: "Copy link", copied: "Copied",
+    consentReached: "saved; it reaches these lessons:", consentReachedNone: "saved, but no lesson from yesterday to tomorrow has this code: check the lesson's codes for a typing mistake (e.g. TEST-T4 and TEST-T24).",
     findLesson: "Find a lesson by its code (e.g. TEST-R25)", showRooms: "Also show the fixed rooms' lessons (ROOM-…)", hiddenRooms: "fixed-room lesson(s) not shown (see Fixed rooms)", noMatch: "No lesson matches.",
     revokeLink: "Revoke student link", reissueLink: "Reissue student link", cancelLesson: "Cancel lesson", cancelledMark: "Cancelled",
     confirmRevoke: "Revoke the student's link? It can no longer be used to enter, and no new link is made. Someone already in the room is not disconnected at once: the classroom page normally leaves within about 15 seconds, but this cannot be guaranteed.",
@@ -59,6 +60,7 @@ const copy = {
     noAnomalies: "目前沒有異常紀錄。", open: "未解除", resolved: "已解除", handled: "已處置", unhandled: "待處置", earlier: "先前處置（之後又再發生）", note: "處置說明", save: "記錄處置", firstSeen: "首次發現", lastSeen: "最後出現",
     lessons: "課程", houseTimes: "本頁時間除另有標示外，皆為美東時間（紐約）。", house: "美東", taipei: "台灣", enteredIn: "建立時輸入",
     copyLink: "複製連結", copied: "已複製",
+    consentReached: "已儲存，套用到這些課：", consentReachedNone: "已儲存，但昨天到明天之間沒有任何課用這個代碼：請確認課程的小老師或學生代碼有沒有打錯（例如 TEST-T4 和 TEST-T24）。",
     findLesson: "用課程代碼找課（例如 TEST-R25）", showRooms: "也顯示固定教室的課（ROOM-…）", hiddenRooms: "堂固定教室的課沒有顯示（請看「固定教室」頁）", noMatch: "沒有符合的課程。",
     revokeLink: "撤銷學生連結", reissueLink: "重發學生連結", cancelLesson: "取消課程", cancelledMark: "已取消",
     confirmRevoke: "確定撤銷學生連結？目前的連結會立即無法再用來進入，也不會產生新連結。已在教室裡的人不會立即斷線：教室頁面通常會在約 15 秒內自行離開，但無法保證。",
@@ -88,6 +90,7 @@ const copy = {
     noAnomalies: "目前没有异常记录。", open: "未解除", resolved: "已解除", handled: "已处置", unhandled: "待处置", earlier: "先前处置（之后又再发生）", note: "处置说明", save: "记录处置", firstSeen: "首次发现", lastSeen: "最后出现",
     lessons: "课程", houseTimes: "本页时间除另有标示外，均为美东时间（纽约）。", house: "美东", taipei: "台湾", enteredIn: "建立时输入",
     copyLink: "复制链接", copied: "已复制",
+    consentReached: "已保存，套用到这些课：", consentReachedNone: "已保存，但昨天到明天之间没有任何课用这个代码：请确认课程的小老师或学生代码有没有打错（例如 TEST-T4 和 TEST-T24）。",
     findLesson: "用课程代码找课（例如 TEST-R25）", showRooms: "也显示固定教室的课（ROOM-…）", hiddenRooms: "堂固定教室的课没有显示（请看「固定教室」页）", noMatch: "没有符合的课程。",
     revokeLink: "撤销学生链接", reissueLink: "重发学生链接", cancelLesson: "取消课程", cancelledMark: "已取消",
     confirmRevoke: "确定撤销学生链接？目前的链接会立即无法再用来进入，也不会产生新链接。已在教室里的人不会立即断线：教室页面通常会在约 15 秒内自行离开，但无法保证。",
@@ -288,7 +291,10 @@ export default function ClassroomsPage() {
     });
   };
   const saveConsent = () => mutate(async () => {
-    await adminFetch("/api/admin/classrooms/consents", { method: "POST", body: JSON.stringify(consent) });
+    const saved = await adminFetch<{ lessons?: string[] }>("/api/admin/classrooms/consents", { method: "POST", body: JSON.stringify(consent) });
+    // Round 18d: which lessons it reached, or a warning that it reached none (a mistyped code).
+    const reached = Array.isArray(saved?.lessons) ? saved.lessons : [];
+    setNotice(reached.length ? `${consent.personCode.trim()}：${text.consentReached} ${reached.join("、")}` : `${consent.personCode.trim()}：${text.consentReachedNone}`);
     setConsent((current) => ({ ...current, personCode: "" }));
     await refresh();
   });

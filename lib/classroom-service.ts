@@ -1198,6 +1198,8 @@ async function lessonsWith(store: ClassroomStore, personCode: string, role: "stu
 
 // A consent or notice change is written to the person's lessons around now, so a lesson that
 // has not started yet is decided again; a live lesson keeps its decision.
+// Round 18d: it returns the lessons it reached, so the owner is told (a code typed differently from
+// the lesson's reaches none).
 async function markConsentChanged(store: ClassroomStore, personCode: string, role: "student" | "tutor", now: number) {
   const affected = await lessonsWith(store, personCode, role, now);
   await serverEvent(store, affected.map((lesson) => ({
@@ -1208,6 +1210,7 @@ async function markConsentChanged(store: ClassroomStore, personCode: string, rol
     receivedAt: now,
     key: `server.consent_changed:${lesson.id}:${personCode}:${now}`,
   })));
+  return affected.map((lesson) => lesson.code);
 }
 
 // Synthetic consent for local work only, while the consent policy is still Justine's to decide.
@@ -1220,8 +1223,7 @@ export async function setSyntheticConsent({ store, personCode, role, status, act
   const policy = consentPolicy();
   if (role === "tutor") {
     await store.setStaffNotice({ personCode, version: policy.staffNoticeVersion, acknowledgedAt: now, recordedBy: actor });
-    await markConsentChanged(store, personCode, "tutor", now);
-    return;
+    return { lessons: await markConsentChanged(store, personCode, "tutor", now) };
   }
   await store.setConsent({
     personCode,
@@ -1234,8 +1236,7 @@ export async function setSyntheticConsent({ store, personCode, role, status, act
     recordedBy: actor,
   });
   if (status !== "withdrawn") {
-    await markConsentChanged(store, personCode, "student", now);
-    return;
+    return { lessons: await markConsentChanged(store, personCode, "student", now) };
   }
   const affected = await lessonsWith(store, personCode, "student", now);
   await serverEvent(store, affected.map((lesson) => ({
@@ -1247,4 +1248,5 @@ export async function setSyntheticConsent({ store, personCode, role, status, act
     receivedAt: now,
     key: `server.consent_withdrawn:${lesson.id}:${personCode}`,
   })));
+  return { lessons: affected.map((lesson) => lesson.code) };
 }

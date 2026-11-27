@@ -34,11 +34,13 @@ export async function POST(request: Request) {
   if (!PERSON_CODE.test(personCode)) return respond({ error: "Use the person's code", issues: { personCode: "Invalid" } }, 400);
   if (mode !== "synthetic" && !TRIAL_CODE.test(personCode)) return pending();
   const pilot = mode === "pilot";
-  await setSyntheticConsent({ store: classroomStore(), personCode, role, status, actor: access.principal.email, now: Date.now(), synthetic: !pilot });
+  // Round 18d: the lessons (codes) this consent reached, so the owner sees a code typed differently from the lesson's.
+  const reached = await setSyntheticConsent({ store: classroomStore(), personCode, role, status, actor: access.principal.email, now: Date.now(), synthetic: !pilot });
+  const lessons = Array.isArray(reached?.lessons) ? reached.lessons : [];
   await appendAdminActivity({
     actorEmail: access.principal.email, actorRole: access.principal.role,
     action: `classroom.${pilot ? "pilot" : "synthetic"}_${role === "tutor" ? "notice" : "consent"}_set`, entityType: "classroom", entityId: personCode,
     changedFields: ["status"], entityStatus: role === "tutor" ? "acknowledged" : status, entityVersion: null,
   });
-  return respond(pilot ? { ok: true, synthetic: false, version: ADULT_PILOT_CONSENT_VERSION } : { ok: true, synthetic: true }, 200);
+  return respond(pilot ? { ok: true, synthetic: false, version: ADULT_PILOT_CONSENT_VERSION, lessons } : { ok: true, synthetic: true, lessons }, 200);
 }
