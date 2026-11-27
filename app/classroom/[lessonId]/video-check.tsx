@@ -44,7 +44,11 @@ function playerOf(player: Element, index: number) {
   const parts = [...player.querySelectorAll("video, canvas")].map((element) =>
     element instanceof HTMLVideoElement ? videoOf(element) : `canvas ${(element as HTMLCanvasElement).width}x${(element as HTMLCanvasElement).height}`);
   const inside = parts.length ? parts.join(" | ") : `holds ${[...player.querySelectorAll("*")].map((element) => element.tagName.toLowerCase()).join(">") || "nothing"}`;
-  return `p${index + 1}${player.hasAttribute("data-ihear-fill") ? " ours" : " zoom's"} node ${player.getAttribute("node-id") ?? "-"} fill-mode ${player.getAttribute("fill-mode") ?? "-"} (Zoom read ${String(read)}) kind ${String(kind)} ${Math.round(box.width)}x${Math.round(box.height)} · ${inside}`;
+  // Round 18j: the player's own container (the tile canvas test) and the canvas Zoom made in it.
+  const own = player.parentElement?.classList.contains("classroom-tile-canvas") ? player.parentElement : null;
+  const ownCanvas = own?.shadowRoot?.querySelector("canvas");
+  const where = own ? ` own container, canvas ${ownCanvas ? `${ownCanvas.width}x${ownCanvas.height}` : "none"}` : "";
+  return `p${index + 1}${where}${player.hasAttribute("data-ihear-fill") ? " ours" : " zoom's"} node ${player.getAttribute("node-id") ?? "-"} fill-mode ${player.getAttribute("fill-mode") ?? "-"} (Zoom read ${String(read)}) kind ${String(kind)} ${Math.round(box.width)}x${Math.round(box.height)} · ${inside}`;
 }
 
 function lineOf(tile: HTMLElement): Line {
@@ -59,12 +63,12 @@ function containerLine() {
   if (!container) return "videos container: none (not Zoom)";
   const canvas = container.shadowRoot?.querySelector("canvas");
   const style = getComputedStyle(container);
-  return `videos container: display ${style.display}, background ${style.backgroundColor}, Zoom canvas ${canvas ? `${canvas.width}x${canvas.height}` : "none"}`;
+  return `videos container: display ${style.display}, background ${style.backgroundColor}, Zoom canvas ${canvas ? `${canvas.width}x${canvas.height}` : "none"}, tile canvas test ${container.hasAttribute("data-zoom-tile-canvas") ? "on" : "off"}`;
 }
 
-export function VideoCheck({ fill, onFill, onClose, text }: {
-  fill: boolean; onFill: () => void; onClose: () => void;
-  text: { videoCheck: string; videoCheckClose: string; videoFillOn: string; videoFillOff: string };
+export function VideoCheck({ fill, onFill, tileCanvas, onTileCanvas, onClose, text }: {
+  fill: boolean; onFill: () => void; tileCanvas: boolean; onTileCanvas: () => void; onClose: () => void;
+  text: { videoCheck: string; videoCheckClose: string; videoFillOn: string; videoFillOff: string; tileCanvasOn: string; tileCanvasOff: string };
 }) {
   const [lines, setLines] = useState<Line[]>([]);
   const [head, setHead] = useState("");
@@ -82,6 +86,7 @@ export function VideoCheck({ fill, onFill, onClose, text }: {
       <div className="room2-video-check-bar">
         <strong>{text.videoCheck}</strong>
         <button type="button" data-video-fill={fill ? "on" : "off"} onClick={onFill}>{fill ? text.videoFillOn : text.videoFillOff}</button>
+        <button type="button" data-tile-canvas={tileCanvas ? "on" : "off"} onClick={onTileCanvas}>{tileCanvas ? text.tileCanvasOn : text.tileCanvasOff}</button>
         <button type="button" onClick={onClose}>{text.videoCheckClose}</button>
       </div>
       <p>{head}</p>

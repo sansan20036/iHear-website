@@ -1709,8 +1709,8 @@ describe("browser adapters", () => {
     expect(css).toContain("clamp(300px, min(32vw, calc((100dvh - 280px) * 0.8889)), 600px)");
     expect(css).toContain(".classroom-media-tile { position: relative; container-type: size; aspect-ratio: 16 / 9;");
     expect(css).toContain(".classroom-media-tile video-player { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }");
-    // The one cover rule left is the test-only render choice's (RENDER-3).
-    expect(css.match(/max\(100cqw/g)).toHaveLength(1);
+    // The two oversized players left are the test-only choices' (RENDER-3, round 18j's tile canvas).
+    expect(css.match(/max\(100cqw/g)).toHaveLength(2);
     expect(css).toContain(".classroom-zoom-videos[data-zoom-render] .classroom-media-tile video-player { inset: auto;");
     // Round 18e (fifth real-Zoom sitting): every person's video fills its tile, cropped (Zoom's
     // video-player > div > video); a shared screen is never cropped.
@@ -1741,6 +1741,28 @@ describe("browser adapters", () => {
     expect(css).toContain('.classroom-zoom-videos .classroom-media-tile[data-video="shown"], .classroom-zoom-videos .classroom-media-tile.self[data-video="shown"] { background: transparent; }');
     // Round 18i: on a phone's row the edges Zoom leaves are the tiles' dark blue, not the page's white.
     expect(css).toContain('@media (max-width: 600px) { .room2:not([data-mode="people"]) .classroom-zoom-videos { background-color: #1d2c55;');
+  });
+
+  test("FILL-6: with the test-only tile canvas choice, each player sits in a <video-player-container> of its own in the person's tile, is never moved out of it, and goes with it when the video stops", async () => {
+    vi.stubGlobal("customElements", { get: (name) => (name === "video-player" ? class {} : undefined) });
+    vi.stubGlobal("window", { location: { hostname: "localhost", search: "" }, sessionStorage: { getItem: (key) => (key === "ihear-zoom-tile-canvas" ? "on" : null), setItem() {}, removeItem() {} } });
+    try {
+      const { zoom, videos } = await joined({ others: [{ userId: 2 }] });
+      expect(videos.attributes["data-zoom-tile-canvas"]).toBe("");
+      const tileOf = (id) => videos.children.find(cell => cell.attributes["data-person"] === String(id));
+      zoom.handlers.get("peer-video-state-change")({ action: "Start", userId: 2 }); await settle();
+      const player = zoom.players.filter(video => video.tag === "video:2").at(-1);
+      const [box] = tileOf(2).children;
+      expect(box.tag).toBe("video-player-container");
+      expect(box.className).toBe("classroom-tile-canvas");
+      expect(box.children).toEqual([player]);
+      expect(player.attributes["fill-mode"]).toBe("true");
+      // The camera goes off: the player and its own container leave the tile.
+      zoom.handlers.get("peer-video-state-change")({ action: "Stop", userId: 2 }); await settle();
+      expect(tileOf(2).children).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   test("FILL-2: on a touch screen held upright the page's own video is 9:16 (Zoom does not report it); turning the screen re-shapes it; leaving stops listening", async () => {
@@ -2312,6 +2334,8 @@ describe("the test-only render choice (?zoom-render=…)", () => {
     const css = readFileSync(new URL("../app/classroom/[lessonId]/classroom.css", import.meta.url), "utf8");
     expect(css).toContain(".classroom-media-tile video-player { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }");
     expect(css).toContain(".classroom-zoom-videos[data-zoom-render] .classroom-media-tile video-player { inset: auto;");
-    expect(css.match(/max\(100cqw/g)).toHaveLength(1);
+    // Round 18j: the other oversized player is the tile canvas choice's, inside its own container.
+    expect(css).toContain(".classroom-media-tile > .classroom-tile-canvas video-player { inset: auto;");
+    expect(css.match(/max\(100cqw/g)).toHaveLength(2);
   });
 });

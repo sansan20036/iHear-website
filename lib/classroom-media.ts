@@ -15,7 +15,7 @@
 
 import type ZoomVideo from "@zoom/videosdk";
 import type { VideoPlayer } from "@zoom/videosdk";
-import { zoomRenderChoice } from "./classroom-zoom-render";
+import { zoomRenderChoice, zoomTileCanvasChoice } from "./classroom-zoom-render";
 
 import { chatNameOf, chatTextOf, handCommand, parseHandCommand, type ChatFrom, type ChatLine, type RaisedHand } from "./classroom-chat";
 import { shownNameIsSafe } from "./classroom-display-names";
@@ -740,6 +740,25 @@ function shapePlayer(element: unknown, ratio: number | null) {
   else style.setProperty("--video-ratio", String(ratio));
 }
 
+// Round 18j: whether a node is the given element or inside it (a player in its own container counts as
+// in its tile).
+function inside(node: unknown, home: unknown) {
+  let current = node as { parentNode?: unknown } | null | undefined;
+  while (current) {
+    if (current === home) return true;
+    current = current.parentNode as { parentNode?: unknown } | null | undefined;
+  }
+  return false;
+}
+
+// A player off the page, and the container the page made for it (round 18j's test-only choice).
+function dropPlayer(player: unknown) {
+  const node = player as { parentNode?: { className?: unknown; remove?: () => void } | null; remove?: () => void };
+  const box = node.parentNode;
+  if (typeof node.remove === "function") node.remove();
+  if (box && box.className === "classroom-tile-canvas" && typeof box.remove === "function") box.remove();
+}
+
 export async function loadZoomVideoSdkPackage(): Promise<ZoomVideoSdk> {
   if (typeof window === "undefined") throw new MediaAdapterUnavailableError("zoom-video-sdk", "The Zoom Video SDK runs only in a browser");
   const official = await import("@zoom/videosdk");
@@ -929,6 +948,8 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
   // part is placed once, here, before anything is drawn, and never moved afterwards.
   // Round 18c: the test-only render choice (null: Zoom's default drawing).
   private renderType: number | null = null;
+  // Round 18j: the test-only "tile's own canvas" choice (false: one canvas for the videos container).
+  private tileCanvas = false;
 
   mount(element: HTMLElement, videos?: HTMLElement) {
     const part = (tag: string, name: string, hidden: boolean) => {
@@ -954,6 +975,9 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
       this.stage.videos.setAttribute("inside-render-type", String(this.renderType));
       this.stage.videos.setAttribute("data-zoom-render", String(this.renderType));
     }
+    // Round 18j: the test-only "tile's own canvas" choice (lib/classroom-zoom-render.ts).
+    this.tileCanvas = zoomTileCanvasChoice();
+    if (this.tileCanvas) this.stage.videos.setAttribute("data-zoom-tile-canvas", "");
     this.peopleTiles = new MediaTiles(this.stage.videos);
   }
 
@@ -1060,7 +1084,7 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
       // sends 9:16); the player takes that shape and covers its tile (classroom.css).
       listen("video-aspect-ratio-change", (payload) => this.videoShape(payload as { userId?: number; aspectRatio?: number }));
       // Round 18c, the test-only render choice: the shape also from each received video's size.
-      if (this.renderType !== null) listen("video-detailed-data-change", (payload) => {
+      if (this.renderType !== null || this.tileCanvas) listen("video-detailed-data-change", (payload) => {
         const seen = payload as { userId?: number; width?: number; height?: number };
         if (typeof seen?.width === "number" && typeof seen?.height === "number" && seen.height > 0) this.videoShape({ userId: seen.userId, aspectRatio: seen.width / seen.height });
       });
@@ -1110,7 +1134,7 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
       if (await overtaken()) return;
       this.stream = zoom.getMediaStream();
       // Round 18c, the test-only render choice: Zoom reports each received video's size once asked to.
-      if (this.renderType !== null) {
+      if (this.renderType !== null || this.tileCanvas) {
         try { void Promise.resolve(this.stream.subscribeVideoStatisticData?.({ decode: true, detailed: true })).catch(() => undefined); } catch { /* an older SDK */ }
       }
       for (const ready of [...this.streamWaiters]) ready();
@@ -1796,7 +1820,7 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     this.videoShapes.delete(userId);
     // As Zoom's documentation does after detachVideo: the empty video-player leaves the page. The
     // person's tile stays (Classroom 2.0), now without video.
-    if (isNode(player) && typeof (player as ChildNode).remove === "function") (player as ChildNode).remove();
+    if (isNode(player)) dropPlayer(player);
     const next = this.waitingVideos.values().next();
     if (!next.done) { this.waitingVideos.delete(next.value); await this.attach(next.value).catch(() => undefined); }
   }
@@ -1994,10 +2018,10 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
       // already there (round 18g: the page made it) is not moved: moving a <video-player> makes Zoom
       // stop and start its video again (disconnected, then connected).
       const home = this.peopleTiles?.cellOf(String(userId)) ?? this.stage.videos;
-      if (isNode(element) && (element as unknown as { parentNode?: unknown }).parentNode !== home) home.append(element);
+      if (isNode(element) && !inside(element, home)) home.append(element);
     } catch (error) {
       this.tiles.delete(userId);
-      if (own && typeof (own as ChildNode).remove === "function") (own as ChildNode).remove();
+      if (own) dropPlayer(own);
       throw error;
     }
     this.reportPeople();
@@ -2012,11 +2036,15 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
   private fillingPlayer(userId: number): VideoPlayer | null {
     if (!this.peopleTiles || typeof customElements === "undefined" || !customElements.get("video-player")) return null;
     const cell = this.peopleTiles.cellOf(String(userId));
+    // Round 18j, the test-only choice: the player in a container of its own, so Zoom gives it a canvas
+    // the size of the tile (classroom.css makes the player larger, in the video's shape).
+    const home = this.tileCanvas ? cell.ownerDocument.createElement("video-player-container") : cell;
+    if (home !== cell) { home.className = "classroom-tile-canvas"; cell.append(home); }
     const player = cell.ownerDocument.createElement("video-player");
     player.setAttribute("fill-mode", "true");
     // For the test site's video check (round 18i): this player is the page's own.
     player.setAttribute("data-ihear-fill", "");
-    cell.append(player);
+    home.append(player);
     return player as unknown as VideoPlayer;
   }
 

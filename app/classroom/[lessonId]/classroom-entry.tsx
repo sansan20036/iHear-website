@@ -20,6 +20,7 @@ import ClassroomPrejoin from "./classroom-prejoin";
 import { RoomBoard, RoomChat, RoomTurn, useRoomChannel, type RoomChannelMedia } from "./room-channel";
 import { VideoCheck } from "./video-check";
 import { testToolsAllowed } from "../../../lib/classroom-test-tools";
+import { setZoomTileCanvas, zoomTileCanvasChoice } from "../../../lib/classroom-zoom-render";
 import { useLessonPreview } from "./use-lesson-preview";
 
 // The vendor-specific parts of the room (2026-10-30): Zoom draws its video in our page; LCIC is
@@ -361,6 +362,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   const [roomBoardShown, setRoomBoardShown] = useState(true);
   // Round 18f: the online test site's video check, and "fill" off for this page (never on the live site).
   const testTools = useMemo(() => testToolsAllowed(), []);
+  const tileCanvasOn = useMemo(() => zoomTileCanvasChoice(), []);
   const [videoCheck, setVideoCheck] = useState(false);
   const [fillOff, setFillOff] = useState(false);
   const shareBefore = useRef(media.share);
@@ -1717,7 +1719,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
         </div>
       </div>
 
-      {testTools && videoCheck && <VideoCheck fill={!fillOff} onFill={() => setFillOff((off) => !off)} onClose={() => setVideoCheck(false)} text={text} />}
+      {testTools && videoCheck && <VideoCheck fill={!fillOff} onFill={() => setFillOff((off) => !off)} tileCanvas={tileCanvasOn} onTileCanvas={() => setZoomTileCanvas(!tileCanvasOn)} onClose={() => setVideoCheck(false)} text={text} />}
       {simulator && (
         <details className="classroom-room-card classroom-room-simulator">
           <summary>{text.simulate}</summary>

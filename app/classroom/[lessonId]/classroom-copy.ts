@@ -133,6 +133,7 @@ export const roomCopy = {
     more: "More", info: "Lesson info", infoClose: "Close lesson info",
     // Round 18f: the online test site's own video check (never on the live site).
     videoCheck: "Video check (test site)", videoCheckClose: "Close the video check", videoFillOn: "Fill: on (press to turn off)", videoFillOff: "Fill: off (press to turn on)",
+    tileCanvasOn: "Tile canvas test: on (press to turn off; the page reloads)", tileCanvasOff: "Tile canvas test: off (press to turn on; the page reloads)",
     focus: "Focus mode", focusExit: "Exit focus mode", fullscreen: "Full screen", fullscreenExit: "Exit full screen", language: "Language",
     continueHere: "Continue in this tab",
     dragToMove: "Drag to move the enlarged material.",
@@ -258,6 +259,7 @@ export const roomCopy = {
     peopleButton: (count: number, hands: number) => `參與者（${count} 位${hands ? `，${hands} 位舉手` : ""}）`,
     more: "更多", info: "課堂資訊", infoClose: "關閉課堂資訊",
     videoCheck: "影像診斷（測試網站）", videoCheckClose: "關閉影像診斷", videoFillOn: "填滿：開（按一下關掉）", videoFillOff: "填滿：關（按一下打開）",
+    tileCanvasOn: "畫布實驗：開（按一下關掉，頁面會重新整理）", tileCanvasOff: "畫布實驗：關（按一下打開，頁面會重新整理）",
     focus: "專注模式", focusExit: "結束專注模式", fullscreen: "全螢幕", fullscreenExit: "結束全螢幕", language: "語言",
     continueHere: "在這個分頁繼續",
     dragToMove: "按住拖曳可以移動放大的教材。",
@@ -378,6 +380,7 @@ export const roomCopy = {
     peopleButton: (count: number, hands: number) => `参与者（${count} 位${hands ? `，${hands} 位举手` : ""}）`,
     more: "更多", info: "课堂信息", infoClose: "关闭课堂信息",
     videoCheck: "影像诊断（测试网站）", videoCheckClose: "关闭影像诊断", videoFillOn: "填满：开（按一下关掉）", videoFillOff: "填满：关（按一下打开）",
+    tileCanvasOn: "画布实验：开（按一下关掉，页面会重新整理）", tileCanvasOff: "画布实验：关（按一下打开，页面会重新整理）",
     focus: "专注模式", focusExit: "退出专注模式", fullscreen: "全屏", fullscreenExit: "退出全屏", language: "语言",
     continueHere: "在这个标签页继续",
     dragToMove: "按住拖动可以移动放大的教材。",

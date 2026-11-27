@@ -229,6 +229,8 @@ try {
     await expect(check).toBeVisible();
     await expect(check).toContainText('videos container:');
     await expect(check.locator('li')).toHaveCount(2);
+    // Round 18j: the tile canvas test is offered there (off; pressing it reloads the page).
+    await expect(check.getByRole('button', { name: '畫布實驗：關（按一下打開，頁面會重新整理）' })).toBeVisible();
     await shot(page, 'student-1440-video-check');
     const fitNow = () => page.evaluate(() => {
       const tile = document.querySelector('.classroom-media-tile');
