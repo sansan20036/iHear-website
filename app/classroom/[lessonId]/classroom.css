@@ -162,6 +162,10 @@
 .room2[data-mode="people"] .room2-videos { container-type: size; border-radius: 20px; background: radial-gradient(120% 90% at 50% 0%, #22346a 0%, var(--room-stage) 62%); padding: 12px; }
 .room2-strip { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; border-radius: 14px; }
 .room2-videos-host > * { display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr); grid-auto-rows: max-content; align-content: start; }
+/* Round 18f (sixth real-Zoom sitting, 2026-11-27): Zoom's video-player-container writes display: block on
+   itself when it joins the page (SDK 2.6.0, connectedCallback), which undid the grid above: on a phone
+   with a board open the tiles stacked full width instead of a row. The page's layout keeps the grid. */
+.room2-videos-host > :not([hidden]) { display: grid !important; }
 .room2:not([data-mode="people"]) .room2-videos-host > :has(> .classroom-media-tile:nth-child(4)) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .room2[data-mode="people"] .room2-videos-host > * { min-height: 100cqh; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); align-content: center; }
 .room2[data-mode="people"]:is([data-count="1"], [data-count="2"]) .room2-videos-host > * { grid-template-columns: minmax(0, 1fr); justify-items: center; }
@@ -193,7 +197,8 @@
    video above the tile's own background, which only that path does), and a <video> fits its picture
    inside by default (blank bars). "important" because Zoom styles that <video> inline (its size)
    and must not set the fit back. A shared screen keeps the whole picture (not under a tile). */
-.classroom-media-tile video-player video { object-fit: cover !important; }
+/* Round 18f: the test site's video check can turn fill off for its page (data-zoom-fill="off"). */
+.room2:not([data-zoom-fill="off"]) .classroom-media-tile video-player video { object-fit: cover !important; }
 /* Round 18c, the test-only render choice (lib/classroom-zoom-render.ts): each player draws inside itself,
    so it may be as large as needed to cover its tile in the video's own shape; the tile crops the rest. */
 .classroom-zoom-videos[data-zoom-render] .classroom-media-tile video-player { inset: auto; left: 50%; top: 50%; transform: translate(-50%, -50%);
@@ -440,3 +445,10 @@ body:has(.classroom-room) > :is(.site-theme-trigger, .ihear-layout-trigger, .ihe
 @media (max-width: 1023px) { .room2-room-board { height: auto; } }
 .room2-tabpanel.room2-room-chat { overflow: hidden; grid-template-rows: minmax(0, 1fr); align-content: stretch; }
 .room2-turn { margin: 0; font-weight: 600; }
+
+/* Round 18f: the online test site's video check (video-check.tsx); never on the live site. */
+.room2-video-check { position: fixed; top: 8px; left: 8px; right: 8px; z-index: 60; max-height: 45vh; overflow: auto; padding: 8px 10px; border-radius: 12px; background: rgba(10, 16, 36, .9); color: #fff; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.room2-video-check-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.room2-video-check-bar button { min-height: 36px; padding: 4px 10px; border: 1px solid rgba(255, 255, 255, .5); border-radius: 8px; background: rgba(255, 255, 255, .12); color: #fff; font: inherit; cursor: pointer; }
+.room2-video-check p, .room2-video-check ol { margin: 6px 0 0; padding-left: 18px; word-break: break-word; }
+.room2-video-check p { padding-left: 0; }

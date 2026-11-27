@@ -751,6 +751,9 @@ try {
       await page.locator('.classroom-lessons tr', { hasText: code }).getByRole('button', { name: '重發學生連結', exact: true }).click();
       const reissued = page.locator(`.classroom-link[data-link-code="${code}"][data-link-kind="reissued"]`);
       await expect(reissued).toContainText(`課程 ${code} 的新學生連結`);
+      // Round 18f: shown right under the lesson's row, where it was asked for (not at the form).
+      await expect(reissued).toHaveAttribute('data-link-in', 'row');
+      await expect(page.locator('.classroom-lessons tr.classroom-link-row .classroom-link')).toHaveCount(1);
       const newKey = await reissued.locator('code').evaluate(node => new URL(node.textContent).hash.slice(3));
       expect(newKey === key).toBe(false);
       await add.click();

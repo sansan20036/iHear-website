@@ -155,6 +155,32 @@ async function fills(page, name) {
     if (!soft) throw new Error(`${name} fill: ${problems.join('; ')}`);
   }
 }
+// Round 18f (the sixth real-Zoom sitting, 2026-11-27): Zoom's video-player-container writes display:
+// block on itself when it joins the page; on a phone with a board open the tiles then stacked full
+// width. This writes the same on the stand-in's container and checks the people stay one row of small
+// tiles (all at one height, none wider than the row's 150px column).
+async function zoomWritesBlock(page, name) {
+  await page.evaluate(() => window.scrollTo(0, 0));
+  const tiles = await page.evaluate(() => {
+    const container = document.querySelector('.room2-videos-host > *');
+    container.style.display = 'block';
+    container.style.position = 'relative';
+    const out = [...container.querySelectorAll('.classroom-media-tile')].map((tile) => { const r = tile.getBoundingClientRect(); return { top: Math.round(r.top), width: Math.round(r.width) }; });
+    return { display: getComputedStyle(container).display, out };
+  });
+  await shot(page, `${name}-zoom-block`);
+  await page.evaluate(() => { const container = document.querySelector('.room2-videos-host > *'); container.style.removeProperty('display'); container.style.removeProperty('position'); });
+  report.zoomBlock = [...(report.zoomBlock ?? []), { name, ...tiles }];
+  const problems = [];
+  if (tiles.display !== 'grid') problems.push(`the container is ${tiles.display}`);
+  if (new Set(tiles.out.map((tile) => tile.top)).size > 1) problems.push(`tiles on ${new Set(tiles.out.map((tile) => tile.top)).size} rows`);
+  if (tiles.out.some((tile) => tile.width > 151)) problems.push(`a tile ${Math.max(...tiles.out.map((tile) => tile.width))}px wide`);
+  if (problems.length) {
+    report.layoutProblems.push({ name: `${name}-zoom-block`, problems });
+    console.log(`ZOOM-BLOCK ${name}: ${problems.join('; ')}`);
+    if (!soft) throw new Error(`${name} zoom block: ${problems.join('; ')}`);
+  }
+}
 const simulate = async (page, scenario) => {
   const panel = page.locator('details.classroom-room-simulator');
   if (!(await panel.evaluate(element => element.open))) await panel.locator('summary').click();
@@ -194,6 +220,32 @@ try {
     await expect(page.locator('.room2')).toHaveAttribute('data-mode', 'people');
     await layout(page, 'student-1440-people');
     await fills(page, 'student-1440-people');
+    // Round 18f: the test site's video check (this computer counts as the test site): it lists each
+    // tile, and its button turns fill off for this page and on again.
+    await page.getByRole('button', { name: '更多', exact: true }).click();
+    await page.getByRole('menuitemcheckbox', { name: '影像診斷（測試網站）' }).click();
+    const check = page.locator('[data-video-check]');
+    await expect(check).toBeVisible();
+    await expect(check).toContainText('videos container:');
+    await expect(check.locator('li')).toHaveCount(2);
+    await shot(page, 'student-1440-video-check');
+    const fitNow = () => page.evaluate(() => {
+      const tile = document.querySelector('.classroom-media-tile');
+      const player = document.createElement('video-player');
+      const video = document.createElement('video');
+      player.append(video); tile.append(player);
+      const fit = getComputedStyle(video).objectFit;
+      player.remove();
+      return fit;
+    });
+    await check.getByRole('button', { name: '填滿：開（按一下關掉）' }).click();
+    await expect(page.locator('.room2')).toHaveAttribute('data-zoom-fill', 'off');
+    expect(await fitNow()).toBe('contain');
+    await check.getByRole('button', { name: '填滿：關（按一下打開）' }).click();
+    await expect(page.locator('.room2')).toHaveAttribute('data-zoom-fill', 'on');
+    expect(await fitNow()).toBe('cover');
+    await check.getByRole('button', { name: '關閉影像診斷' }).click();
+    await expect(check).toHaveCount(0);
     // A student has no share or whiteboard buttons, and raises a hand from the toolbar.
     await expect(page.locator('[data-tool="share"], [data-tool="whiteboard"]')).toHaveCount(0);
     await expect(page.getByRole('button', { name: '舉手', exact: true })).toBeVisible();
@@ -622,6 +674,7 @@ try {
         const m = await layout(page, `${role}-${size[0]}-${role === 'tutor' ? 'whiteboard' : 'share'}-group`, { material: true });
         if (kind === 'phone') expect(m.offStrip).toMatch(/^另 \d+ 位$/);
         if (size === device.sizes[0]) await fills(page, `${role}-${size[0]}-${role === 'tutor' ? 'whiteboard' : 'share'}-group`);
+        if (size === device.sizes[0] && kind === 'phone') await zoomWritesBlock(page, `${role}-${size[0]}-${role === 'tutor' ? 'whiteboard' : 'share'}-group`);
       }
       await page.getByRole('button', { name: /^聊天/ }).click();
       for (const size of device.sizes) {

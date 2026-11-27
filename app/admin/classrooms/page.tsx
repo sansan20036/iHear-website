@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { useAdmin } from "../admin-context";
 import { adminFetch, displayError } from "../admin-api";
 import { HOUSE_TIME_ZONE, wallIn } from "../../../lib/zoned-time";
@@ -290,6 +290,17 @@ export default function ClassroomsPage() {
       await refresh();
     });
   };
+  // Round 18f (the user, sixth real-Zoom sitting: the same as fixed rooms, 「連結我希望在卡片中顯示」):
+  // a link reissued from a lesson's row is shown right under that row; a new lesson's link stays beside
+  // the form that made it.
+  const linkBoxView = (where: "row" | "top") => linkBox && (
+          <div className="classroom-link" role="status" data-link-code={linkBox.code} data-link-kind={linkBox.kind} data-link-in={where}>
+            <p>{linkBox.kind === "created" ? words.linkCreated(linkBox.code) : words.linkReissued(linkBox.code)}</p>
+            <code>{linkBox.url}</code>
+            <button type="button" className="admin-button secondary" onClick={() => navigator.clipboard?.writeText(linkBox.url).then(() => setCopied(true), () => setCopied(false))}>{copied ? text.copied : text.copyLink}</button>
+            {linkBox.kind === "created" && <p className="classroom-link-note">{words.copyFirst}</p>}
+          </div>
+  );
   const saveConsent = () => mutate(async () => {
     const saved = await adminFetch<{ lessons?: string[] }>("/api/admin/classrooms/consents", { method: "POST", body: JSON.stringify(consent) });
     // Round 18d: which lessons it reached, or a warning that it reached none (a mistyped code).
@@ -304,6 +315,8 @@ export default function ClassroomsPage() {
   const shownIn = (group: string) => (overview?.dashboard.groups[group] ?? []).filter((card) => (showRoomLessons || !isRoomLesson(card.lessonCode)) && (!wanted || card.lessonCode.toLowerCase().includes(wanted)));
   const hiddenRoomLessons = showRoomLessons ? 0 : GROUPS.reduce((sum, group) => sum + (overview?.dashboard.groups[group] ?? []).filter((card) => isRoomLesson(card.lessonCode)).length, 0);
   const counts = Object.fromEntries(GROUPS.map((group) => [group, shownIn(group).length]));
+  // Round 18f: a reissued link goes right under its lesson's row in the list, where it was asked for.
+  const linkInRow = linkBox?.kind === "reissued" && !!overview?.lessons.some((item) => item.code === linkBox.code);
   // Open and not yet handled first, then open, then cleared; most recent first within each.
   const rank = (item: Anomaly) => (item.resolvedAt ? 2 : item.handled ? 1 : 0);
   const anomalies = [...(overview?.anomalies ?? [])].sort((a, b) => rank(a) - rank(b) || String(b.lastSeenAt).localeCompare(String(a.lastSeenAt)));
@@ -419,14 +432,7 @@ export default function ClassroomsPage() {
 
       <div className="admin-panel classroom-panel classroom-add-panel">
         <LessonForm locale={locale} busy={busy} scheduling={overview?.scheduling ?? null} onSubmit={addLesson} onChange={hideLink} />
-        {linkBox && (
-          <div className="classroom-link" role="status" data-link-code={linkBox.code} data-link-kind={linkBox.kind}>
-            <p>{linkBox.kind === "created" ? words.linkCreated(linkBox.code) : words.linkReissued(linkBox.code)}</p>
-            <code>{linkBox.url}</code>
-            <button type="button" className="admin-button secondary" onClick={() => navigator.clipboard?.writeText(linkBox.url).then(() => setCopied(true), () => setCopied(false))}>{copied ? text.copied : text.copyLink}</button>
-            {linkBox.kind === "created" && <p className="classroom-link-note">{words.copyFirst}</p>}
-          </div>
-        )}
+        {linkBox && !linkInRow && linkBoxView("top")}
         {hiddenLink && !linkBox && <p className="classroom-link-hidden" role="status" data-link-hidden={hiddenLink}>{words.linkHidden(hiddenLink)}</p>}
         {notice && <p className="classroom-notice" role="status">{notice}</p>}
         <p className="admin-muted classroom-list-note" data-list-window>{words.listNote}</p>
@@ -435,7 +441,8 @@ export default function ClassroomsPage() {
             <table className="admin-table classroom-lessons">
               <tbody>
                 {overview.lessons.map((item) => (
-                  <tr key={item.lessonId} className={item.cancelled ? "is-cancelled" : undefined}>
+                  <Fragment key={item.lessonId}>
+                  <tr className={item.cancelled ? "is-cancelled" : undefined}>
                     <td><strong>{item.code}</strong>{item.cancelled && <span className="classroom-cancelled">{text.cancelledMark}</span>}</td>
                     <td className="classroom-lesson-time">
                       <div><span className="classroom-zone-label">{text.house}</span> {shortStamp(Date.parse(item.startsAt), HOUSE, locale)}–{wallIn(Date.parse(item.endsAt), HOUSE).time} {zoneMark(Date.parse(item.startsAt), HOUSE)}</div>
@@ -452,6 +459,8 @@ export default function ClassroomsPage() {
                       <button type="button" className="admin-button secondary" disabled={busy || item.cancelled} onClick={() => changeAccess(item, "cancel")}>{text.cancelLesson}</button>
                     </td>
                   </tr>
+                  {linkInRow && linkBox?.code === item.code && <tr className="classroom-link-row"><td colSpan={5}>{linkBoxView("row")}</td></tr>}
+                  </Fragment>
                 ))}
               </tbody>
             </table>

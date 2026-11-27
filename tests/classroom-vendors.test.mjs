@@ -1712,8 +1712,12 @@ describe("browser adapters", () => {
     expect(css).toContain(".classroom-zoom-videos[data-zoom-render] .classroom-media-tile video-player { inset: auto;");
     // Round 18e (fifth real-Zoom sitting): every person's video fills its tile, cropped (Zoom's
     // video-player > div > video); a shared screen is never cropped.
-    expect(css).toContain(".classroom-media-tile video-player video { object-fit: cover !important; }");
+    // Round 18f: the test site's video check can turn it off for its page.
+    expect(css).toContain('.room2:not([data-zoom-fill="off"]) .classroom-media-tile video-player video { object-fit: cover !important; }');
     expect(css.match(/object-fit: cover/g)).toHaveLength(1);
+    // Round 18f (sixth real-Zoom sitting): Zoom's container writes display: block on itself; the
+    // people's grid stays (a phone with a board open showed the tiles stacked full width).
+    expect(css).toContain(".room2-videos-host > :not([hidden]) { display: grid !important; }");
   });
 
   test("FILL-2: on a touch screen held upright the page's own video is 9:16 (Zoom does not report it); turning the screen re-shapes it; leaving stops listening", async () => {

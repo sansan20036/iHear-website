@@ -18,6 +18,8 @@ import { roomCopy as copy, vendorCopy } from "./classroom-copy";
 import { RoomIcon, type RoomIconName } from "./classroom-icons";
 import ClassroomPrejoin from "./classroom-prejoin";
 import { RoomBoard, RoomChat, RoomTurn, useRoomChannel, type RoomChannelMedia } from "./room-channel";
+import { VideoCheck } from "./video-check";
+import { testToolsAllowed } from "../../../lib/classroom-test-tools";
 import { useLessonPreview } from "./use-lesson-preview";
 
 // The vendor-specific parts of the room (2026-10-30): Zoom draws its video in our page; LCIC is
@@ -353,6 +355,10 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   // coming in puts the share first; when it ends the board comes back by itself, unless the person
   // pressed the board button meanwhile (then their choice stays).
   const [roomBoardShown, setRoomBoardShown] = useState(true);
+  // Round 18f: the online test site's video check, and "fill" off for this page (never on the live site).
+  const testTools = useMemo(() => testToolsAllowed(), []);
+  const [videoCheck, setVideoCheck] = useState(false);
+  const [fillOff, setFillOff] = useState(false);
   const shareBefore = useRef(media.share);
   const boardHiddenByShare = useRef(false);
   useEffect(() => {
@@ -1287,7 +1293,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   return (
     <Shell className="classroom-room room2" data-mode={shownMode} data-panel={panel} data-focus={focus ? "on" : "off"} data-role={joined.role}
       data-provider={provider} data-device={device} data-count={people.length} data-spot={spotlight ? "on" : "off"}
-      data-reading={reading ? "on" : "off"} data-share-zoom={zoomed ? "zoomed" : "fit"}
+      data-reading={reading ? "on" : "off"} data-share-zoom={zoomed ? "zoomed" : "fit"} data-zoom-fill={fillOff ? "off" : "on"}
       {...(roomBoard || roomChat || roomTurn ? { "data-room-channel": "", "data-you": channel.you ?? "", "data-stopped": channel.stopped ?? "", "data-online": String(channel.online), "data-room-board-shown": String(boardOnStage) } : {})}
       style={reading ? ({ "--share-zoom": String(shareZoom) } as CSSProperties) : undefined}>
       <div className="room2-shell">
@@ -1662,6 +1668,12 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
                       <RoomIcon name="download" />{v.exportBoard}
                     </button>
                   )}
+                  {testTools && (
+                    <button type="button" role="menuitemcheckbox" aria-checked={videoCheck} data-video-check-toggle
+                      onClick={() => { setMenuOpen(false); setVideoCheck((open) => !open); }}>
+                      <RoomIcon name="info" />{text.videoCheck}
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -1672,6 +1684,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
         </div>
       </div>
 
+      {testTools && videoCheck && <VideoCheck fill={!fillOff} onFill={() => setFillOff((off) => !off)} onClose={() => setVideoCheck(false)} text={text} />}
       {simulator && (
         <details className="classroom-room-card classroom-room-simulator">
           <summary>{text.simulate}</summary>
