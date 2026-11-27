@@ -170,6 +170,14 @@
 .room2[data-mode="people"][data-spot="on"] .room2-videos-host > * { grid-template-columns: repeat(auto-fill, minmax(min(100%, 180px), 1fr)); align-content: start; }
 .room2[data-mode="people"][data-spot="on"] .classroom-media-tile[data-spotlight] { grid-column: 1 / -1; width: min(100%, calc((100cqh - 150px) * 16 / 9)); justify-self: center; }
 .room2:not([data-mode="people"]) .classroom-media-tile[data-spotlight] { grid-column: 1 / -1; }
+/* Round 18d (the fourth real-Zoom sitting, 2026-11-27: a phone held upright was a narrow strip with
+   blank sides): a tile shown large takes its video's shape (--video-ratio, which the adapter puts on
+   the tile from Zoom's report), so the video fills it with no bars and nothing cut off; its player
+   stays exactly the tile (round 18c). Without a shown video, in a grid of three or more and beside a
+   board or a share, the tiles keep one shape for all. */
+.room2[data-mode="people"][data-count="1"] .classroom-media-tile[data-video="shown"], .room2[data-mode="people"][data-count="2"] .classroom-media-tile.remote[data-video="shown"] { aspect-ratio: var(--video-ratio, 16 / 9); width: min(100%, calc((100cqh - 24px) * var(--video-ratio, 1.7778))); }
+.room2[data-mode="people"][data-count="2"] .classroom-media-tile.self[data-video="shown"] { aspect-ratio: var(--video-ratio, 16 / 9); width: min(clamp(150px, 22%, 280px), calc(40cqh * var(--video-ratio, 1.7778))); }
+.room2[data-mode="people"][data-spot="on"] .classroom-media-tile[data-spotlight][data-video="shown"] { aspect-ratio: var(--video-ratio, 16 / 9); width: min(100%, calc((100cqh - 150px) * var(--video-ratio, 1.7778))); }
 /* Share or whiteboard with a panel open: the people in one row that scrolls sideways. */
 .room2:is([data-mode="share"], [data-mode="board"]):not([data-panel="none"]) .room2-videos-host > * { grid-auto-flow: column; grid-template-columns: none; grid-auto-columns: 164px; }
 .room2[data-focus="on"]:not([data-mode="people"]) .room2-videos-host > * { grid-auto-flow: column; grid-template-columns: none; grid-auto-columns: 150px; }
@@ -309,6 +317,17 @@
   .room2[data-mode="people"][data-count="1"] .classroom-media-tile, .room2[data-mode="people"][data-count="2"] .classroom-media-tile.remote { width: 100%; }
   .room2[data-mode="people"][data-count="2"] .classroom-media-tile.self { right: 20px; bottom: 20px; width: clamp(120px, 28%, 220px); }
   .room2[data-mode="people"][data-spot="on"] .classroom-media-tile[data-spotlight] { width: 100%; }
+  /* Round 18d: a tile in its video's shape is as tall as the screen leaves (the people's area here
+     measures only its width). */
+  .room2[data-mode="people"][data-count="1"] .classroom-media-tile[data-video="shown"], .room2[data-mode="people"][data-count="2"] .classroom-media-tile.remote[data-video="shown"] { width: min(100%, calc((100dvh - var(--room2-chrome, 330px)) * var(--video-ratio, 1.7778))); }
+  .room2[data-mode="people"][data-count="2"] .classroom-media-tile.self[data-video="shown"] { width: min(clamp(120px, 28%, 220px), calc(26dvh * var(--video-ratio, 1.7778))); }
+  .room2[data-mode="people"][data-spot="on"] .classroom-media-tile[data-spotlight][data-video="shown"] { width: min(100%, calc((100dvh - var(--room2-chrome, 330px) - 130px) * var(--video-ratio, 1.7778))); }
+  /* Below a wide video (a computer's) or one not shown, the own tile is not over it but under it, both
+     whole, in the room the screen leaves (--room2-below); over a tall video (a phone held upright) it
+     stays small in the corner. */
+  .room2 { --room2-side: 52px; --room2-below: clamp(110px, calc(100dvh - var(--room2-chrome, 330px) - (100vw - var(--room2-side)) * .5625 - 10px), 420px); }
+  .room2[data-mode="people"][data-count="2"]:not(:has(.classroom-media-tile.remote[data-video="shown"][data-shape="tall"])) .classroom-media-tile.self { position: relative; right: auto; bottom: auto; justify-self: center; z-index: auto; width: min(100%, calc(var(--room2-below) * 1.3333)); aspect-ratio: 4 / 3; }
+  .room2[data-mode="people"][data-count="2"]:not(:has(.classroom-media-tile.remote[data-video="shown"][data-shape="tall"])) .classroom-media-tile.self[data-video="shown"] { width: min(100%, calc(var(--room2-below) * var(--video-ratio, 1.7778))); aspect-ratio: var(--video-ratio, 16 / 9); }
   /* The people in one row that scrolls sideways: as many as fit, the rest a swipe away ("N more"). */
   .room2:not([data-mode="people"]) .room2-videos-host > *, .room2:not([data-mode="people"]) .room2-videos-host > :has(> .classroom-media-tile:nth-child(4)) { grid-auto-flow: column; grid-template-columns: none; grid-auto-columns: clamp(150px, 26vw, 220px); }
   .room2[data-focus="on"]:not([data-mode="people"]) .room2-videos { position: static; width: auto; max-height: none; margin: 0; }
@@ -350,6 +369,9 @@
   .room2[data-mode="people"]:not([data-count="1"]):not([data-count="2"]) .room2-videos-host > * { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .room2[data-mode="people"][data-count="2"] .classroom-media-tile.remote { aspect-ratio: 4 / 3; }
   .room2[data-mode="people"][data-count="2"] .classroom-media-tile.self { right: 16px; bottom: 16px; width: 32%; aspect-ratio: 3 / 4; }
+  /* Round 18d: the small own tile in its video's shape, at most 150 px tall (over a tall video only). */
+  .room2[data-mode="people"][data-count="2"] .classroom-media-tile.self[data-video="shown"] { width: min(32%, calc(min(150px, 20dvh) * var(--video-ratio, 1.7778))); }
+  .room2 { --room2-side: 36px; }
   .room2:not([data-mode="people"]) .room2-videos-host > *, .room2:not([data-mode="people"]) .room2-videos-host > :has(> .classroom-media-tile:nth-child(4)) { grid-auto-columns: clamp(104px, 30vw, 150px); gap: 8px; }
   .room2:not([data-mode="people"]) .classroom-media-tile { aspect-ratio: 4 / 3; border-radius: 12px; }
   .room2-tile { padding: 6px 6px 34px; }

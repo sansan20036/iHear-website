@@ -97,6 +97,50 @@ async function layout(page, name, { material = false } = {}) {
   }
   return m;
 }
+// Round 18d (the fourth real-Zoom sitting, 2026-11-27): with two people, a tile whose video is shown
+// takes its video's shape. The adapter puts --video-ratio on the tile from Zoom's report; the stand-in
+// has none, so this sets it as Zoom's report would. Case A: the other person's phone held upright
+// (9:16) and this page's own camera 16:9; case B: the other's computer (16:9) and this page's own
+// phone held upright. Each tile must have that shape and be wholly in sight above the toolbar; on a
+// phone or a tablet the own tile goes below a wide video (case B), never over it.
+async function shapes(page, name) {
+  await page.evaluate(() => window.scrollTo(0, 0));
+  const cases = { A: { remote: 0.5625, self: 1.7778 }, B: { remote: 1.7778, self: 0.5625 } };
+  const problems = [];
+  for (const [label, ratios] of Object.entries(cases)) {
+    const rows = await page.evaluate(async (wanted) => {
+      const frame = () => new Promise(resolve => { requestAnimationFrame(() => { requestAnimationFrame(resolve); }); });
+      const tiles = Object.fromEntries(['remote', 'self'].map(who => [who, document.querySelector(`.room2[data-mode="people"][data-count="2"] .classroom-media-tile.${who}[data-video="shown"]`)]));
+      for (const [who, tile] of Object.entries(tiles)) {
+        tile?.style.setProperty('--video-ratio', String(wanted[who]));
+        tile?.setAttribute('data-shape', wanted[who] < 1 ? 'tall' : 'wide');
+      }
+      await frame();
+      const bar = document.querySelector('.room2-bar').getBoundingClientRect();
+      return Object.entries(tiles).map(([who, tile]) => {
+        if (!tile) return { who, missing: true };
+        const r = tile.getBoundingClientRect();
+        return { who, ratio: wanted[who], width: Math.round(r.width), height: Math.round(r.height), top: Math.round(r.top), bottom: Math.round(r.bottom), left: Math.round(r.left), right: Math.round(r.right), barTop: Math.round(bar.top), vw: window.innerWidth };
+      });
+    }, ratios);
+    report.shapes = [...(report.shapes ?? []), { name, case: label, rows }];
+    await shot(page, `${name}-shape-${label}`);
+    for (const row of rows) {
+      if (row.missing) { problems.push(`${label}: no shown ${row.who} tile`); continue; }
+      if (Math.abs(row.width / row.height - row.ratio) / row.ratio > 0.03) problems.push(`${label}: ${row.who} ${row.width}x${row.height} is not ${row.ratio}`);
+      if (row.top < 0 || row.left < 0 || row.right > row.vw || row.bottom > row.barTop + 1) problems.push(`${label}: ${row.who} not wholly in sight ${JSON.stringify(row)}`);
+    }
+    const [remote, self] = rows;
+    const over = !remote.missing && !self.missing && self.top < remote.bottom && self.bottom > remote.top && self.left < remote.right && self.right > remote.left;
+    if (label === 'B' && remote.vw < 1024 && over) problems.push(`B: the own tile covers the wide video ${JSON.stringify({ remote, self })}`);
+  }
+  await page.evaluate(() => { for (const tile of document.querySelectorAll('.classroom-media-tile')) { tile.style.removeProperty('--video-ratio'); tile.removeAttribute('data-shape'); } });
+  if (problems.length) {
+    report.layoutProblems.push({ name: `${name}-shape`, problems });
+    console.log(`SHAPE ${name}: ${problems.join('; ')}`);
+    if (!soft) throw new Error(`${name} shape: ${problems.join('; ')}`);
+  }
+}
 const simulate = async (page, scenario) => {
   const panel = page.locator('details.classroom-room-simulator');
   if (!(await panel.evaluate(element => element.open))) await panel.locator('summary').click();
@@ -135,6 +179,10 @@ try {
     await simulate(page, '對方進入');
     await expect(page.locator('.room2')).toHaveAttribute('data-mode', 'people');
     await layout(page, 'student-1440-people');
+    await shapes(page, 'student-1440-people');
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await shapes(page, 'student-1280-people');
+    await page.setViewportSize({ width: 1440, height: 900 });
     // A student has no share or whiteboard buttons, and raises a hand from the toolbar.
     await expect(page.locator('[data-tool="share"], [data-tool="whiteboard"]')).toHaveCount(0);
     await expect(page.getByRole('button', { name: '舉手', exact: true })).toBeVisible();
@@ -553,6 +601,11 @@ try {
       await page.getByRole('button', { name: /^攝影機：/ }).click();
       await simulate(page, '對方進入');
       await layout(page, `${role}-${device.sizes[0][0]}-people`);
+      for (const size of device.sizes) {
+        await page.setViewportSize({ width: size[0], height: size[1] });
+        await shapes(page, `${role}-${size[0]}-people`);
+      }
+      await page.setViewportSize({ width: device.sizes[0][0], height: device.sizes[0][1] });
       // Phones and tablets cannot share a screen: no share button in the toolbar.
       await expect(page.locator('.room2-bar [data-tool="share"]')).toHaveCount(0);
       await simulate(page, role === 'tutor' ? '對方開啟白板' : '對方分享畫面');

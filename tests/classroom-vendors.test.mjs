@@ -555,6 +555,9 @@ describe("browser adapters", () => {
           replaceChildren(...nodes) { for (const child of element.children) child.parentNode = null; element.children = []; element.append(...nodes); },
           remove() { element.removed = true; if (element.parentNode) element.parentNode.children = element.parentNode.children.filter(child => child !== element); element.parentNode = null; },
           setAttribute(name, value) { element.attributes[name] = String(value); },
+          removeAttribute(name) { delete element.attributes[name]; },
+          // Round 18d: a tile's inline style, as far as the page sets it (its video's shape).
+          style: { props: {}, setProperty(name, value) { this.props[name] = value; }, removeProperty(name) { delete this.props[name]; } },
         };
         return element;
       },
@@ -569,6 +572,8 @@ describe("browser adapters", () => {
     const calls = [];
     // Round 17: every video player handed out, to read the shape the page gives it.
     const players = [];
+    // Round 18d: each subscribeVideoStatisticData call (Zoom's size report of each received video).
+    const statistics = [];
     // In-class chat and the command channel (2026-11-12), recorded apart from `calls` so the older
     // checks of the call order stay as they were. A *Answer option stands for Zoom's failure answer.
     const chatSent = [], privileges = [], commandsSent = [];
@@ -632,6 +637,7 @@ describe("browser adapters", () => {
         return video;
       },
       detachVideo: async (userId) => calls.push(`detach:${userId}`),
+      subscribeVideoStatisticData: async (type) => { statistics.push(type); return ""; },
       isStartShareScreenWithVideoElement: () => true,
       startShareScreen: async (target) => { calls.push(`share:${target.tag}`); if (shareError) throw shareError; },
       stopShareScreen: async () => calls.push("stopShare"),
@@ -695,7 +701,7 @@ describe("browser adapters", () => {
     const failViews = (error, times) => { failingView = error; viewFailures = times; };
     const setSharePrivilege = value => { sharePrivilege = value; };
     const setCanBoard = value => { canBoard = value; };
-    return { calls, players, handlers, users, sdk, created, listening, holdNextJoin, holdNextView, holdNextAudio, failNextAudio, isMuted: () => audioMuted, setPresenter, setSharer, failViews, setSharePrivilege, setCanBoard, releaseJoin: () => releaseJoin(), releaseVideo: () => releaseVideo(), qualities, chatSent, privileges, commandsSent };
+    return { calls, players, statistics, handlers, users, sdk, created, listening, holdNextJoin, holdNextView, holdNextAudio, failNextAudio, isMuted: () => audioMuted, setPresenter, setSharer, failViews, setSharePrivilege, setCanBoard, releaseJoin: () => releaseJoin(), releaseVideo: () => releaseVideo(), qualities, chatSent, privileges, commandsSent };
   }
   const zoomJoin = { sessionToken: "synthetic.jwt.token", sessionName: "ihear-l-test-v01", lessonCode: "TEST-V01", participantCode: "TEST-T01", role: "tutor" };
   // Zoom calls its handlers without waiting; let their asynchronous work finish.
@@ -1710,6 +1716,47 @@ describe("browser adapters", () => {
     // The one cover rule left is the test-only render choice's (RENDER-3).
     expect(css.match(/max\(100cqw/g)).toHaveLength(1);
     expect(css).toContain(".classroom-zoom-videos[data-zoom-render] .classroom-media-tile video-player { inset: auto;");
+  });
+
+  test("FILL-4: the person's tile takes the video's shape with its player (round 18d); Zoom's size report of each received video gives it on Zoom's own drawing; a rounding changes nothing; the shape goes with the video", async () => {
+    const { zoom, adapter, videos } = await joined({ others: [{ userId: 2 }] });
+    // Asked for once at joining, without the test-only render choice.
+    expect(zoom.statistics).toEqual([{ decode: true, detailed: true }]);
+    const tileOf = (id) => videos.children.find(cell => cell.attributes["data-person"] === String(id));
+    const playerOf = (id) => zoom.players.filter(video => video.tag === `video:${id}`).at(-1);
+    const size = (payload) => zoom.handlers.get("video-detailed-data-change")(payload);
+    // A size reported before the video is drawn is kept for it.
+    size({ userId: 2, width: 720, height: 1280 });
+    zoom.handlers.get("peer-video-state-change")({ action: "Start", userId: 2 }); await settle();
+    expect(playerOf(2).style.props).toEqual({ "--video-ratio": "0.5625" });
+    expect(tileOf(2).style.props).toEqual({ "--video-ratio": "0.5625" });
+    expect(tileOf(2).attributes["data-shape"]).toBe("tall");
+    // Zoom reports again and again: within 2% nothing changes; a real turn re-shapes both.
+    size({ userId: 2, width: 722, height: 1280 });
+    expect(tileOf(2).style.props).toEqual({ "--video-ratio": "0.5625" });
+    size({ userId: 2, width: 1280, height: 720 });
+    expect(playerOf(2).style.props).toEqual({ "--video-ratio": "1.7778" });
+    expect(tileOf(2).style.props).toEqual({ "--video-ratio": "1.7778" });
+    expect(tileOf(2).attributes["data-shape"]).toBe("wide");
+    // Nonsense is ignored.
+    for (const bad of [{ userId: 2, width: 0, height: 0 }, { userId: 2, width: 1280 }, { width: 720, height: 1280 }]) size(bad);
+    expect(tileOf(2).style.props).toEqual({ "--video-ratio": "1.7778" });
+    // The camera goes off: the tile loses the shape with the video (classroom.css shapes only a shown video).
+    zoom.handlers.get("peer-video-state-change")({ action: "Stop", userId: 2 }); await settle();
+    expect(tileOf(2).style.props).toEqual({});
+    expect(tileOf(2).attributes["data-shape"]).toBeUndefined();
+    // The page's own video on a computer: no shape (16:9).
+    expect(await adapter.setDevice("camera", true)).toBe("on"); await settle();
+    expect(tileOf(1).style.props).toEqual({});
+    await adapter.leave(); await settle();
+    expect(zoom.handlers.get("video-detailed-data-change")).toBeUndefined();
+    // The page's rules: the large tiles of the two-person view and the spotlight follow the shape on
+    // computers, tablets and phones; the player stays exactly its tile.
+    const css = readFileSync(new URL("../app/classroom/[lessonId]/classroom.css", import.meta.url), "utf8");
+    expect(css).toContain('.room2[data-mode="people"][data-count="2"] .classroom-media-tile.remote[data-video="shown"] { aspect-ratio: var(--video-ratio, 16 / 9);');
+    expect(css).toContain('.room2[data-mode="people"][data-spot="on"] .classroom-media-tile[data-spotlight][data-video="shown"] { aspect-ratio: var(--video-ratio, 16 / 9);');
+    expect(css.split('[data-video="shown"] { width: min(').length - 1).toBeGreaterThanOrEqual(4);
+    expect(css).toContain(".classroom-media-tile video-player { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }");
   });
 
   test("FILL-2: on a touch screen held upright the page's own video is 9:16 (Zoom does not report it); turning the screen re-shapes it; leaving stops listening", async () => {
