@@ -21,7 +21,8 @@ describe("whole links never end up in test pictures or in the repository", () =>
     expect(await readFile("app/admin/classrooms/page.tsx", "utf8")).toMatch(/className="classroom-link"[\s\S]{0,300}<code>\{linkBox\.url\}<\/code>/);
     expect(await readFile("app/admin/classrooms/blocks/page.tsx", "utf8")).toMatch(/data-student-link=\{entry\.code\}>\{entry\.code\}：<code>/);
     expect(await readFile("app/admin/classrooms/schedule/page.tsx", "utf8")).toMatch(/data-student-link=\{entry\.code\}>\{entry\.code\}：<code>/);
-    expect(await readFile("app/admin/classrooms/rooms/page.tsx", "utf8")).toMatch(/<div role="status" data-room-link>[\s\S]{0,300}<code>/);
+    // Round 18d: one link box, in the room's card or at the top (data-room-link-in); both are masked.
+    expect(await readFile("app/admin/classrooms/rooms/page.tsx", "utf8")).toMatch(/<div role="status" data-room-link data-room-link-in=\{[^}]{0,60}\}>[\s\S]{0,400}<code>/);
     // GitHub CI runs this in a container where the checkout belongs to another user: git then refuses
     // the repository ("dubious ownership") unless told it is safe, which only the command line or the
     // global settings may say. Only this read of our own checkout is told so.
