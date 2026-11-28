@@ -29,6 +29,11 @@ export type RoomChannelMedia = {
   onSharersChange(listener: () => void): () => void;
   // Which one stream the page shows (null: none).
   showShareOf(userKey: string | null): void;
+  // Round 18n (2026-11-28): a short "there is news" word over the meeting's own message line, so
+  // the others ask the channel at once instead of at their next turn (a few seconds later). The
+  // word carries nothing of the room: each page still reads what changed from the channel.
+  nudge?(): void;
+  onNews?(listener: () => void): () => void;
 };
 export type RoomChannelParts = { board: boolean; chat: boolean; turn: boolean };
 export type BoardLine = { line: string; by: string | null; color: number; width: number; points: [number, number][]; done: boolean; unconfirmed?: boolean };
@@ -51,11 +56,12 @@ type Client = {
   erase(line: string): void; clear(): void; undoClear(): void; openBoard(open: boolean): void; say(text: string): void;
   claimTurn(): void; releaseTurn(): void; handOver(to: string): void; showsShareOf(person: string): boolean;
   parting(what: { turn: boolean }): unknown;
+  askNow(): void;
 };
 type ShareControl = { sharing: boolean; holding: boolean; changed(what: Changed): void; start(): Promise<boolean>; stop(): Promise<void>; handOver(to: string): Promise<void>; close(): void };
 
 // The plain-JavaScript pieces, with the shapes this hook uses of them.
-const makeClient = createRoomClient as unknown as (options: { post: (body: unknown) => Promise<{ status: number; body: unknown }>; key: string; changed: (what: Changed) => void; lessonStatusEveryMs?: number }) => Client;
+const makeClient = createRoomClient as unknown as (options: { post: (body: unknown) => Promise<{ status: number; body: unknown }>; key: string; changed: (what: Changed) => void; lessonStatusEveryMs?: number; delivered?: () => void }) => Client;
 const makeShare = createShareControl as unknown as (options: { client: Client; media: RoomChannelMedia; notify: (what: { sharing: boolean; notice?: string }) => void }) => ShareControl;
 const boardPoint = toBoard as unknown as (x: number, y: number, width: number, height: number) => [number, number];
 
@@ -128,7 +134,16 @@ export function useRoomChannel({ lessonId, ticket, media = null, enabled = true,
         if (refused) setNotice({ part: refused.part, code: refused.error, at: Date.now() });
         control.current?.changed(what);
       },
+      // Round 18n: something of ours was taken in (a line, a message, the board opened or closed,
+      // the turn): tell the others there is news (the adapter sends at most a few words a second).
+      delivered: () => { if (alive) mediaNow.current.nudge?.(); },
     });
+    // Round 18n: another page said there is news: ask the channel now. (The media may be given
+    // later or change, as for the sharers above.)
+    let newsFrom = mediaNow.current;
+    const heard = () => { if (alive) made.askNow(); };
+    let offNews = newsFrom.onNews?.(heard) ?? (() => undefined);
+    const newsAgain = window.setInterval(() => { if (mediaNow.current !== newsFrom) { offNews(); newsFrom = mediaNow.current; offNews = newsFrom.onNews?.(heard) ?? (() => undefined); } }, 2000);
     control.current = makeShare({ client: made, media: adapter, notify: (what) => { if (!alive) return; setSharing(what.sharing); if (what.notice) setNotice({ part: "turn", code: what.notice, at: Date.now() }); } });
     client.current = made;
     share.current = control.current;
@@ -153,6 +168,8 @@ export function useRoomChannel({ lessonId, ticket, media = null, enabled = true,
       alive = false;
       document.removeEventListener("visibilitychange", seen);
       window.removeEventListener("pagehide", part);
+      window.clearInterval(newsAgain);
+      offNews();
       part();
       control.current?.close();
       made.stop();

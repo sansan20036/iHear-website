@@ -17,7 +17,7 @@ import type ZoomVideo from "@zoom/videosdk";
 import type { VideoPlayer } from "@zoom/videosdk";
 import { zoomRenderChoice, zoomTileCanvasChoice } from "./classroom-zoom-render";
 
-import { chatNameOf, chatTextOf, handCommand, parseHandCommand, type ChatFrom, type ChatLine, type RaisedHand } from "./classroom-chat";
+import { chatNameOf, chatTextOf, handCommand, isRoomNewsCommand, parseHandCommand, ROOM_NEWS_COMMAND, type ChatFrom, type ChatLine, type RaisedHand } from "./classroom-chat";
 import { shownNameIsSafe } from "./classroom-display-names";
 
 export const MEDIA_PROVIDERS = ["synthetic", "zoom-video-sdk", "tencent-lcic"] as const;
@@ -69,6 +69,8 @@ export type MediaEvent =
   | { type: "chat"; line: ChatLine; at: number }
   // The hands raised in the room right now (this page's own among them, marked self).
   | { type: "hands"; raised: RaisedHand[]; at: number }
+  // Round 18n: someone else's page says the room channel has news (ask it now).
+  | { type: "room-news"; at: number }
   // Classroom 2.0 (2026-11-12): everyone in the room (this page's person among them, marked self),
   // for the names on the video tiles and the participants list; and who is talking right now
   // (Zoom's active speakers, loudest first). Neither is reported to iHear or saved.
@@ -144,6 +146,8 @@ export interface ClassroomMediaAdapter {
   shareKeys?(): string[];
   onShareKeysChange?(listener: () => void): () => void;
   showShareOf?(key: string | null): void;
+  // Round 18n: tell the others in the room that the room channel has news (Zoom's command channel).
+  nudgeRoom?(): Promise<boolean>;
   setWhiteboard?(on: boolean): Promise<boolean>;
   exportWhiteboard?(name: string): Promise<void>;
   // A chat line to everyone in the room; true once it was sent. A student raises or lowers their
@@ -203,6 +207,11 @@ const VIDEO_CHECK_MS = 1_000;
 // After Zoom's own reconnect: how long to wait before asking Zoom a second time, when its first answer
 // would close something on this page or it could not answer yet (2026-11-18).
 const RESYNC_RETRY_MS = 2_000;
+// Round 18n: the shortest gap between two "the room channel has news" notices from one page. While
+// someone draws, the others already ask every second (the channel's busy pace); the notice matters
+// for the first change after a quiet while, so once a second is enough, and the others' requests
+// stay about as many as before.
+const NUDGE_GAP_MS = 1_000;
 
 // Classroom 2.0 (2026-11-12): one tile per person inside the videos container, the way Zoom's own
 // documentation places a video (a video-player inside a tile inside the video-player-container).
@@ -1172,6 +1181,7 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
   }
 
   async leave() {
+    if (this.nudgeLater) { clearTimeout(this.nudgeLater); this.nudgeLater = null; }
     if (!this.client && !this.joining) return;
     // A join still on its way stops, and leaves again what it joined (connect's `overtaken`).
     this.attempt += 1;
@@ -1589,6 +1599,21 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
     return true;
   }
 
+  // Round 18n: "the room channel has news" to everyone else in the session, at most once every
+  // NUDGE_GAP_MS; one asked for meanwhile goes at the end of the gap.
+  private nudgedAt = -Infinity;
+  private nudgeLater: ReturnType<typeof setTimeout> | null = null;
+  async nudgeRoom(): Promise<boolean> {
+    if (!this.client) return false;
+    const wait = this.nudgedAt + NUDGE_GAP_MS - this.now();
+    if (wait > 0) {
+      this.nudgeLater ??= setTimeout(() => { this.nudgeLater = null; void this.nudgeRoom(); }, wait);
+      return true;
+    }
+    this.nudgedAt = this.now();
+    return this.sendCommand(ROOM_NEWS_COMMAND);
+  }
+
   private async sendCommand(text: string) {
     const channel = this.client?.getCommandClient?.();
     if (!channel) return false;
@@ -1616,6 +1641,11 @@ export class ZoomVideoSdkMediaAdapter implements ClassroomMediaAdapter {
   // A hand raised or lowered by someone in the session. Lowering someone else's counts only from the
   // host (the tutor); anything else on the channel is not ours and is ignored.
   private receiveCommand(payload: { senderId?: number; text?: string }) {
+    // Round 18n: another page says the room channel has news (this page's own is not news to it).
+    if (isRoomNewsCommand(payload?.text)) {
+      if (typeof payload?.senderId === "number" && payload.senderId !== this.client?.getCurrentUserInfo()?.userId) this.emit({ type: "room-news", at: this.now() });
+      return;
+    }
     const command = parseHandCommand(payload?.text);
     const sender = payload?.senderId;
     if (!command || typeof sender !== "number") return;

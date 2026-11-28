@@ -48,6 +48,13 @@ export function handCommand(up: boolean, forUser?: number): string {
   return JSON.stringify(forUser === undefined ? { ihear: 1, hand: up } : { ihear: 1, hand: false, for: forUser });
 }
 
+// Round 18n (the eleventh real-Zoom sitting, 2026-11-28: the room's board opened and closed for everyone
+// only after about 10 s, the room channel's quiet pace): {"ihear":1,"news":"room"} on the command
+// channel says "the room channel has news, ask it now". It carries nothing else: what changed is read
+// from our server, which stays the one source (and a page that comes in later gets it there too).
+export const ROOM_NEWS_COMMAND = JSON.stringify({ ihear: 1, news: "room" });
+export const isRoomNewsCommand = (text: unknown) => text === ROOM_NEWS_COMMAND;
+
 // Anything else on the channel, or anything malformed, is not ours and is ignored.
 export function parseHandCommand(text: unknown): HandCommand | null {
   if (typeof text !== "string" || text.length > 200) return null;

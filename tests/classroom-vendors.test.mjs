@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { CLASSROOM_CAPABILITIES, classroomDeviceOf, deviceLimits } from "../lib/classroom-capabilities";
-import { handCommand } from "../lib/classroom-chat";
+import { handCommand, ROOM_NEWS_COMMAND } from "../lib/classroom-chat";
 import { hostReportFor, LcicEmbedAdapter, LCIC_FRAME_PERMISSIONS, MediaAdapterUnavailableError, ownVideoRatio, videoRatioOf, ZoomVideoSdkMediaAdapter, zoomDisplayNameOf } from "../lib/classroom-media";
 import { ClassroomProviderUnavailableError, classroomProvider } from "../lib/classroom-provider";
 import { isTestLesson, LcicApiError, lcicStatusOf, memoryRoomRegistry, tc3Sign, tencentLcicConfig, tencentLcicProvider, verifyLcicCallback } from "../lib/classroom-vendors/tencent-lcic";
@@ -985,6 +985,47 @@ describe("browser adapters", () => {
     const { adapter, events } = await studentJoined({ commandAnswer: { type: "INVALID_OPERATION", reason: "channel not ready", errorCode: 7 } });
     expect(await adapter.setHand(true)).toBe(false);
     expect(handsOf(events)).toEqual([]);
+  });
+
+  // Round 18n (2026-11-28): the room channel's "there is news" word over Zoom's command channel.
+  test("Round 18n: 'the room channel has news' goes to the others at most once a second (one asked for meanwhile at the end of the gap); another page's word is news here, this page's own is not, and it is never a hand", async () => {
+    let clock = 10_000;
+    const zoom = fakeZoom(), dom = fakeDom();
+    const adapter = new ZoomVideoSdkMediaAdapter(async () => zoom.sdk, () => clock);
+    const events = recorded(adapter);
+    adapter.mount(dom.root);
+    expect(await adapter.nudgeRoom()).toBe(false);
+    await adapter.join(zoomJoin);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      expect(await adapter.nudgeRoom()).toBe(true);
+      expect(zoom.commandsSent).toEqual([ROOM_NEWS_COMMAND]);
+      clock = 10_300;
+      expect(await adapter.nudgeRoom()).toBe(true);
+      clock = 10_600;
+      expect(await adapter.nudgeRoom()).toBe(true);
+      expect(zoom.commandsSent).toHaveLength(1);
+      clock = 11_000;
+      vi.advanceTimersByTime(700);
+      expect(zoom.commandsSent).toEqual([ROOM_NEWS_COMMAND, ROOM_NEWS_COMMAND]);
+      vi.advanceTimersByTime(5_000);
+      expect(zoom.commandsSent).toHaveLength(2);
+      const command = zoom.handlers.get("command-channel-message");
+      command({ senderId: 1, text: ROOM_NEWS_COMMAND });
+      command({ text: ROOM_NEWS_COMMAND });
+      expect(events.filter(event => event.type === "room-news")).toHaveLength(0);
+      command({ senderId: 2, text: ROOM_NEWS_COMMAND });
+      expect(events.filter(event => event.type === "room-news")).toHaveLength(1);
+      expect(events.filter(event => event.type === "hands" || event.type === "chat")).toHaveLength(0);
+      // One asked for just before leaving is not sent after it.
+      clock = 11_200;
+      expect(await adapter.nudgeRoom()).toBe(true);
+      await adapter.leave();
+      vi.advanceTimersByTime(5_000);
+      expect(zoom.commandsSent).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("Zoom: microphone starts audio once, then mutes; the camera starts video and shows it; a refusal is 'denied'", async () => {

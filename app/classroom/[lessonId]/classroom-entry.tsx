@@ -339,7 +339,11 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
   // user key); the adapter says who shares (shareKeys) and shows the holder's share only.
   const shareKeyListeners = useRef(new Set<() => void>());
   const turnOffered = useRef(false);
+  // Round 18n: the channel's "there is news" word, sent and heard over the meeting's message line.
+  const roomNewsListeners = useRef(new Set<() => void>());
   const channelMedia = useMemo<RoomChannelMedia>(() => ({
+    nudge: () => { void adapter.current?.nudgeRoom?.().catch(() => false); },
+    onNews: (listener) => { roomNewsListeners.current.add(listener); return () => { roomNewsListeners.current.delete(listener); }; },
     startShare: async () => Boolean(await adapter.current?.setScreenShare?.(true).catch(() => false)),
     stopShare: async () => { await adapter.current?.setScreenShare?.(false).catch(() => false); },
     sharers: () => adapter.current?.shareKeys?.() ?? [],
@@ -605,6 +609,8 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
         setElsewhere(event.count);
       } else if (event.type === "tools") {
         setTools({ share: event.share, whiteboard: event.whiteboard });
+      } else if (event.type === "room-news") {
+        for (const listener of roomNewsListeners.current) listener();
       }
       // A session id changes nothing on screen; it is reported only when the join answer asked.
       if (joined.role === "tutor") {

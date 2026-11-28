@@ -737,3 +737,89 @@ test('CL-VIEW: one page closes the board for the room: every page hears it, and 
   await w.advance(1500);
   assert.deepEqual([a.client.view().board.open, b.client.view().board.open, c.client.view().board.open], [true, true, true]);
 });
+
+// Round 18n (the eleventh real-Zoom sitting, 2026-11-28: the board closed on the other page only
+// about 10 seconds later): a page whose own change the server took says so (delivered), the meeting's
+// message line carries "there is news" to the others (here: at once), and they ask now (askNow).
+test('CL-NEWS: told there is news, a quiet page asks at once; only a change of its own that the server took makes a page tell the others; a hidden page keeps its slow pace and asks as soon as it is looked at again', async () => {
+  const w = world();
+  const told = { 'P-1': 0, 'P-2': 0 };
+  const pages = {};
+  const relay = from => () => { told[from] += 1; for (const [id, other] of Object.entries(pages)) if (id !== from) other.client.askNow(); };
+  pages['P-1'] = w.page('P-1', { ...AS_A_PAGE, delivered: relay('P-1') });
+  pages['P-2'] = w.page('P-2', { ...AS_A_PAGE, delivered: relay('P-2') });
+  const a = pages['P-1'], b = pages['P-2'];
+  a.client.start(); b.client.start();
+  await w.advance(30_000);
+  assert.deepEqual(told, { 'P-1': 0, 'P-2': 0 }, 'asking is not news: nobody is told');
+  // The room is quiet (one request every 5 seconds). One page closes the board: the other hears within a second.
+  let seenAt = null;
+  b.hooks.changed = what => { if (what.board && seenAt === null) seenAt = w.clock.now; };
+  const closedAt = w.clock.now;
+  a.client.openBoard(false);
+  await w.advance(2_000);
+  assert.equal(b.client.view().board.open, false);
+  assert.ok(seenAt - closedAt <= 300, `seen ${seenAt - closedAt} ms after it was closed`);
+  assert.equal(told['P-1'], 1);
+  assert.equal(told['P-2'], 0, 'hearing news is not news');
+  // A line drawn and a chat message: the same.
+  seenAt = null;
+  const drawnAt = w.clock.now;
+  draw(a.client, [[100, 100], [200, 200]]);
+  await w.advance(2_000);
+  assert.equal(w.boardOf(b).length, 1);
+  assert.ok(seenAt - drawnAt <= 800, `seen ${seenAt - drawnAt} ms after it was drawn`);
+  let chatAt = null;
+  a.hooks.changed = what => { if (what.chat && chatAt === null) chatAt = w.clock.now; };
+  const saidAt = w.clock.now;
+  b.client.say('TEST: hello');
+  await w.advance(2_000);
+  assert.equal(a.client.view().chat.messages.length, 1);
+  assert.ok(chatAt - saidAt <= 300, `heard ${chatAt - saidAt} ms after it was said`);
+  // A hidden page is not hurried by news; looked at again, it asks at once.
+  await w.advance(30_000);
+  b.client.setIdle(true);
+  await w.advance(20_000);
+  const hiddenFrom = w.clock.now;
+  a.client.openBoard(true);
+  await w.advance(1_000);
+  assert.equal(askedBetween(w, 'P-2', hiddenFrom, w.clock.now).length, 0, 'news does not wake a hidden page');
+  b.client.setIdle(false);
+  await w.advance(100);
+  assert.equal(askedBetween(w, 'P-2', w.clock.now - 100, w.clock.now).length, 1, 'looked at again: asked at once');
+  assert.equal(b.client.view().board.open, true);
+});
+
+test('CL-NEWS-2: news heard while a request is on its way is asked for right after its answer; a stopped page asks nothing', async () => {
+  const w = world();
+  const held = [];
+  let asked = 0;
+  const lessonOf = () => w.lesson;
+  const client = createRoomClient({
+    key: 'ticket-P-1', now: () => w.clock.now, timer: w.timer, pace: QUICK,
+    post: async body => {
+      asked += 1;
+      const at = asked;
+      if (at === 2) await new Promise(resolve => { held.push(resolve); });
+      const result = await w.channel.exchange({ lesson: lessonOf(), who: { id: 'P-1', name: 'P-1', member: true }, on: ON, cursors: body.cursors, send: body.send, now: w.clock.now });
+      return { status: 200, body: { ...result, you: 'P-1', people: [] } };
+    },
+  });
+  client.start();
+  await w.advance(10);
+  assert.equal(asked, 1);
+  // The page's next request (at its quiet pace) is held on its way; news comes meanwhile.
+  await w.advance(QUICK.idleMs);
+  assert.equal(asked, 2);
+  client.askNow();
+  await w.advance(10);
+  assert.equal(asked, 2, 'never two requests at once');
+  held.shift()();
+  await w.settle();
+  await w.advance(10);
+  assert.equal(asked, 3, 'asked again right after the held answer');
+  client.stop();
+  client.askNow();
+  await w.advance(5_000);
+  assert.equal(asked, 3);
+});
