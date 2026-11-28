@@ -57,7 +57,7 @@ async function measure(page) {
     const buttons = [...document.querySelectorAll('button')].filter(button => box(button));
     const room = document.querySelector('.room2');
     return {
-      mode: room?.dataset.mode, panel: room?.dataset.panel, focus: room?.dataset.focus, device: room?.dataset.device,
+      mode: room?.dataset.mode, panel: room?.dataset.panel, focus: room?.dataset.focus, device: room?.dataset.device, zoomBoard: room?.dataset.zoomBoard,
       viewport: { width: window.innerWidth, height: window.innerHeight },
       sideways: document.documentElement.scrollWidth > window.innerWidth,
       titleLines: title ? Math.round(title.getBoundingClientRect().height / parseFloat(getComputedStyle(title).lineHeight)) : 0,
@@ -88,7 +88,10 @@ async function layout(page, name, { material = false } = {}) {
       const seen = Math.min(m.panelBox.top, m.stage.bottom) - m.stage.top;
       if (seen / m.stage.height < 0.6) problems.push(`the sheet covers the material (${Math.round(100 * seen / m.stage.height)}% seen)`);
     }
-    if (m.stage.bottom > m.viewport.height) problems.push(`the material goes below the screen (${m.stage.bottom} > ${m.viewport.height})`);
+    // Round 18o: on a computer, Zoom's board makes the stage tall enough for its menus and the page scrolls (by design).
+    const tallBoard = m.zoomBoard === 'on' && m.viewport.width >= 1024;
+    if (tallBoard && m.stage.height < 960) problems.push(`Zoom's board on a stage too short for its menus (${m.stage.height} px)`);
+    if (!tallBoard && m.stage.bottom > m.viewport.height) problems.push(`the material goes below the screen (${m.stage.bottom} > ${m.viewport.height})`);
   }
   if (problems.length) {
     report.layoutProblems.push({ name, problems });
@@ -567,12 +570,28 @@ try {
     await expect(board).toHaveAccessibleName('關閉白板');
     await expect(share).toHaveAttribute('aria-pressed', 'false');
     await expect(shareConflict).toHaveCount(0);
-    // Round 18 (the user, 2026-11-26: Zoom's whiteboard menus were cut off): the press that opens the
-    // board also takes the stage full screen; the stage bar's button leaves it, and the layout is as before.
-    await expect.poll(() => page.evaluate(() => document.fullscreenElement?.classList.contains('room2-stage') ?? false)).toBe(true);
-    await expect(page.locator('[data-stage-fullscreen]')).toHaveAttribute('aria-pressed', 'true');
-    await page.locator('[data-stage-fullscreen]').click();
-    await expect.poll(() => page.evaluate(() => document.fullscreenElement === null)).toBe(true);
+    // Round 18o (the thirteenth real-Zoom sitting, 2026-11-28; round 18 took the stage full screen here,
+    // which the user found inconvenient): opening the board leaves the page as it is, the stage is tall
+    // enough for Zoom's menus, the page scrolls, and the toolbar stays in sight all the way down.
+    await expect(page.locator('.room2')).toHaveAttribute('data-zoom-board', 'on');
+    await page.waitForTimeout(300);
+    expect(await page.evaluate(() => document.fullscreenElement)).toBe(null);
+    const tall = await page.evaluate(async () => {
+      const stage = document.querySelector('.room2-stage'), bar = document.querySelector('.room2-bar');
+      // The site's sheet scrolls smoothly (html { scroll-behavior: smooth }): jump instead.
+      window.scrollTo({ top: 0, behavior: 'instant' });
+      const top = { stage: stage.getBoundingClientRect().height, bar: bar.getBoundingClientRect().bottom, page: document.scrollingElement.scrollHeight };
+      window.scrollTo({ top: document.scrollingElement.scrollHeight, behavior: 'instant' });
+      await new Promise(resolve => { requestAnimationFrame(() => { requestAnimationFrame(resolve); }); });
+      const end = { stage: stage.getBoundingClientRect().bottom, bar: bar.getBoundingClientRect().top, barBottom: bar.getBoundingClientRect().bottom, scrolled: window.scrollY };
+      window.scrollTo({ top: 0, behavior: 'instant' });
+      return { top, end, height: window.innerHeight };
+    });
+    const said = JSON.stringify(tall);
+    if (tall.top.stage < 960) throw new Error(`the stage is too short for Zoom's menus: ${said}`);
+    if (!(tall.top.page > tall.height && tall.end.scrolled > 0)) throw new Error(`the page does not scroll: ${said}`);
+    if (tall.top.bar > tall.height + 1 || tall.end.barBottom > tall.height + 1) throw new Error(`the toolbar leaves the screen: ${said}`);
+    if (tall.end.stage > tall.end.bar + 1) throw new Error(`the end of the stage stays under the toolbar: ${said}`);
     // The material alone, full screen, works for the whiteboard too.
     await expect(page.locator('[data-stage-fullscreen]')).toBeVisible();
     await layout(page, 'tutor-1440-whiteboard', { material: true });
@@ -587,10 +606,8 @@ try {
     await board.click();
     await expect(page.locator('.room2')).toHaveAttribute('data-mode', 'board');
     await expect(share).toHaveAttribute('aria-pressed', 'false');
-    // This press opened the board too, so the stage is full screen again; leave it for the checks below.
-    await expect.poll(() => page.evaluate(() => document.fullscreenElement?.classList.contains('room2-stage') ?? false)).toBe(true);
-    await page.locator('[data-stage-fullscreen]').click();
-    await expect.poll(() => page.evaluate(() => document.fullscreenElement === null)).toBe(true);
+    // This press opened the board too, and again nothing went full screen.
+    expect(await page.evaluate(() => document.fullscreenElement)).toBe(null);
     // Focus mode from the stage, and Escape leaves it.
     await page.locator('.room2-stage-tool', { hasText: '專注模式' }).click();
     await expect(page.locator('.room2')).toHaveAttribute('data-focus', 'on');

@@ -472,3 +472,13 @@ body:has(.classroom-room) > :is(.site-theme-trigger, .ihear-layout-trigger, .ihe
 .room2-video-check-bar button { min-height: 36px; padding: 4px 10px; border: 1px solid rgba(255, 255, 255, .5); border-radius: 8px; background: rgba(255, 255, 255, .12); color: #fff; font: inherit; cursor: pointer; }
 .room2-video-check p, .room2-video-check ol { margin: 6px 0 0; padding-left: 18px; word-break: break-word; }
 .room2-video-check p { padding-left: 0; }
+
+/* Round 18o (the thirteenth real-Zoom sitting, 2026-11-28): Zoom's board is an iframe whose "+" menu is
+   cut off in a short stage, and taking the stage full screen on opening it (round 18) was inconvenient.
+   On a computer, while Zoom's board is open, the stage is at least 960 px tall (in full screen 1080 px
+   showed the whole menu) and the page scrolls instead; the toolbar stays at the bottom (it is sticky).
+   Phones and tablets only view Zoom's board (real Zoom, 2026-11-28), so they keep the stage as it was. */
+@media (min-width: 1024px) {
+  .room2[data-device="desktop"][data-zoom-board="on"] .room2-shell { height: auto; min-height: 100vh; min-height: 100dvh; }
+  .room2[data-device="desktop"][data-zoom-board="on"] .room2-stage { min-height: 960px; }
+}

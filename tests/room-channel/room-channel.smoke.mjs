@@ -277,6 +277,31 @@ try {
     await input(Kyle.page).press('Enter');
     await expect(Bo.page.locator('[data-room-chat]')).toHaveAttribute('data-messages', '2');
     await shot(Bo.page, 'c7-chat');
+    // Round 18o (the twelfth real-Zoom sitting, 2026-11-28: the chat sat in the middle of its tab with
+    // empty space above and below, the messages squeezed into a small box under the box to write in):
+    // the chat fills its tab, the messages take the room left, and nothing overlaps.
+    const box = await Bo.page.evaluate(() => {
+      const rect = selector => { const element = document.querySelector(selector); if (!element) return null; const r = element.getBoundingClientRect(); return { top: Math.round(r.top), bottom: Math.round(r.bottom), height: Math.round(r.height) }; };
+      const panel = document.querySelector('[data-room-chat-panel]');
+      const style = panel ? getComputedStyle(panel) : null;
+      return {
+        panel: rect('[data-room-chat-panel]'), chat: rect('[data-room-chat]'), hint: rect('[data-room-chat] .room-channel-hint'),
+        list: rect('[data-room-chat] .room-channel-messages'), form: rect('[data-room-chat] .room-channel-send'),
+        panelStyle: style ? { rows: style.gridTemplateRows, alignContent: style.alignContent, alignItems: style.alignItems, paddingTop: style.paddingTop, paddingBottom: style.paddingBottom } : null,
+        padded: [...document.querySelectorAll('.classroom-room section')].filter(element => element.getClientRects().length && parseFloat(getComputedStyle(element).paddingTop) >= 60).map(element => element.className),
+        children: panel ? [...panel.children].map(child => { const r = child.getBoundingClientRect(); const s = getComputedStyle(child); return `${child.tagName.toLowerCase()}.${child.className} ${s.position} ${s.display} top ${Math.round(r.top)} h ${Math.round(r.height)} alignSelf ${s.alignSelf}`; }) : [],
+      };
+    });
+    const said = JSON.stringify(box);
+    if (!box.panel || !box.chat || !box.hint || !box.list || !box.form) throw new Error(`the chat's parts are not all there: ${said}`);
+    const padding = parseFloat(box.panelStyle.paddingTop) + parseFloat(box.panelStyle.paddingBottom);
+    if (box.chat.height < box.panel.height - padding - 4) throw new Error(`the chat does not fill its tab: ${said}`);
+    if (box.hint.top - box.panel.top > 24) throw new Error(`empty space above the chat: ${said}`);
+    if (box.panel.bottom - box.form.bottom > 24) throw new Error(`empty space under the box to write in: ${said}`);
+    if (box.list.bottom > box.form.top) throw new Error(`the messages run under the box to write in: ${said}`);
+    if (box.list.height < (box.panel.height - padding) * 0.45) throw new Error(`the messages get too little room: ${said}`);
+    // The site's own sheet gives every <section> 84 px above and below: no part of the classroom may take it.
+    if (box.padded.length) throw new Error(`a part of the classroom takes the site's section padding: ${said}`);
   });
 
   await check('C8', '分享權：一個人拿到後，其他人的按鈕不能按；他停止後別人才拿得到', async () => {

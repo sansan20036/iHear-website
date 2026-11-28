@@ -32,8 +32,11 @@
 .room-channel-canvas[data-touch="page"] { touch-action: manipulation; cursor: default; }
 .room-channel-canvas[data-tool="move"] { cursor: grab; }
 
-/* The chat: what it is, the messages, and one line to write in. */
-.room-channel-chat { display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto; gap: 8px; height: 100%; }
+/* The chat: what it is, the messages, and one line to write in. Round 18o (the twelfth real-Zoom
+   sitting, 2026-11-28): the site's own style sheet (public/assets/site.css) gives every <section>
+   84 px above and below (60 px on small screens); here that pushed the chat into the middle of its tab
+   and squeezed the messages under the box to write in. The chat and the turn set their own padding. */
+.room-channel-chat { display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto; gap: 8px; height: 100%; padding: 0; }
 .room-channel-messages { list-style: none; margin: 0; padding: 0; overflow-y: auto; display: grid; align-content: start; gap: 8px; min-height: 80px; }
 .room-channel-message { display: grid; gap: 2px; padding: 8px 10px; border-radius: 10px; background: #f3f5f9; overflow-wrap: anywhere; }
 .room-channel-message[data-own="true"] { background: #e7ecf8; }
@@ -46,7 +49,7 @@
 .room-channel-chat .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 /* The share turn: who shares now, and handing the share to one person. */
-.room-channel-turn { display: grid; gap: 8px; }
+.room-channel-turn { display: grid; gap: 8px; padding: 0; }
 .room-channel-turn-state { margin: 0; font-weight: 700; color: var(--rc-ink); line-height: 1.5; }
 .room-channel-give { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .room-channel-give label { font-size: 14px; color: var(--rc-muted); }

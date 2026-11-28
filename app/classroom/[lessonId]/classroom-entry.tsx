@@ -983,13 +983,11 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
     setToolProblem("");
     setBoardCode(null);
     const on = media.whiteboard !== "presenting";
-    // Round 18 (the user, 2026-11-26: Zoom's whiteboard menus were cut off; full screen showed them):
-    // Zoom's board is an iframe, so its menus fit only in a tall stage. Opening it takes the stage full
-    // screen in the same press (a browser allows that only during the press); closing the board leaves
-    // it again (the effect on media.whiteboard above). Nobody else is taken full screen: their stage bar
-    // offers it ("全螢幕檢視教材").
-    const refused = on && media.share !== "none" && media.share !== "sending";
-    if (on && !refused && canFullscreen && !document.fullscreenElement) void stageBox.current?.requestFullscreen?.().catch(() => undefined);
+    // Zoom's board is an iframe, so its menus fit only in a tall stage. Round 18 (2026-11-26) took the
+    // stage full screen on opening it; round 18o (the thirteenth real-Zoom sitting, 2026-11-28: the
+    // user found that inconvenient) no longer does: on a computer the stage is made tall enough for
+    // Zoom's menus and the page scrolls instead (data-zoom-board, classroom.css). Full screen stays
+    // one press away on the stage bar ("全螢幕檢視教材").
     // Zoom does not open its whiteboard during a screen share (its error 8002). This page's own share
     // is stopped first, so one press opens the board (2026-11-19); someone else's share is said at
     // once, and nothing is tried.
@@ -1001,8 +999,6 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
     }
     const started = await current.setWhiteboard(on).catch(() => false);
     if (on && !started) setToolProblem("board");
-    // A board that did not open leaves no empty full screen behind.
-    if (on && !started && document.fullscreenElement && document.fullscreenElement === stageBox.current) void document.exitFullscreen().catch(() => undefined);
   }
 
   // The side panel (Classroom 2.0): a toolbar button opens its panel or closes it again; closing
@@ -1357,6 +1353,7 @@ export default function ClassroomEntry({ lessonId, synthetic, joinKey: givenKey,
     <Shell className="classroom-room room2" data-mode={shownMode} data-panel={panel} data-focus={focus ? "on" : "off"} data-role={joined.role}
       data-provider={provider} data-device={device} data-count={people.length} data-spot={spotlight ? "on" : "off"}
       data-reading={reading ? "on" : "off"} data-share-zoom={zoomed ? "zoomed" : "fit"} data-zoom-fill={fillOff ? "off" : "on"} data-strip={picks ? "short" : "all"}
+      data-zoom-board={media.whiteboard !== "none" ? "on" : "off"}
       {...(roomBoard || roomChat || roomTurn ? { "data-room-channel": "", "data-you": channel.you ?? "", "data-stopped": channel.stopped ?? "", "data-online": String(channel.online), "data-room-board-shown": String(boardOnStage) } : {})}
       style={reading ? ({ "--share-zoom": String(shareZoom) } as CSSProperties) : undefined}>
       <div className="room2-shell">
