@@ -200,11 +200,11 @@ try {
     await play('對方關閉白板');
     await boardButton.click();
     await expect(boardButton).toHaveAttribute('aria-pressed', 'true');
-    // Round 18: the press that opens Zoom's board takes the stage full screen (its menus are not cut
-    // off); the stage's button leaves it, which the test panel below needs.
-    await expect.poll(() => kyle.evaluate(() => document.fullscreenElement?.classList.contains('room2-stage') ?? false)).toBe(true);
-    await kyle.locator('[data-stage-fullscreen]').click();
-    await expect.poll(() => kyle.evaluate(() => document.fullscreenElement === null)).toBe(true);
+    // Round 18o (2026-11-28; round 18 took the stage full screen here, which the user found
+    // inconvenient): opening Zoom's board leaves the page as it is; the stage is made tall instead.
+    await expect(kyle.locator('.room2')).toHaveAttribute('data-zoom-board', 'on');
+    await kyle.waitForTimeout(300);
+    expect(await kyle.evaluate(() => document.fullscreenElement)).toBe(null);
     await shot(kyle, 'r3b-whiteboard');
     await play('Zoom 只讓主持人開白板');
     await expect(boardButton).toHaveAttribute('aria-pressed', 'true');
